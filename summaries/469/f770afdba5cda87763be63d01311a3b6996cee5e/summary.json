@@ -1,0 +1,68 @@
+{
+ "version": 1,
+ "name": "Full gate in CI",
+ "project": "gate-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 469,
+  "title": "Plan running the full gate once per head, in CI",
+  "head": "f770afdba5cda87763be63d01311a3b6996cee5e",
+  "headRef": "gate-in-ci",
+  "base": "16c1fde68c298103ec33fb696587e44f3df04880",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's skills tell three parties to run a repository's full validation gate, its complete set of tests and checks, on every head of a pull request. The author or the fixer runs it before each push, CI runs it on the push, and the reviewer runs it again, through <code>project review gate</code> when <code>review.gate</code> is set in <code>.projector.toml</code>, or from the repository's instructions otherwise. Two of those three runs check code that was already checked.",
+   "This pull request adds only a plan, <code>docs/projects/gate-in-ci/readme.md</code>, at <code>status: ready</code>. The plan adds a <code>review.gate_checks</code> setting that names the GitHub Actions check runs that run a repository's suite. Where the setting is set:",
+   "<ul><li><b>The author and the fixer</b> run the tests that cover their change and the <code>review.gate</code> command before a push, not the full suite.</li><li><b>The reviewer</b> runs <code>project review gate</code>, which waits up to 30 minutes for the named check runs on the head and writes their result into the same gate record a local run writes. So the incremental review's rule, which asks for a passing gate when the merge base moved, reads a CI result without change. The gate reads CI for an untrusted head too, because reading a result runs none of the head's code, but it runs the <code>review.gate</code> command only on a trusted head.</li><li><b>The watch daemon</b> sends a new <code>CHECKS</code> event to the fixer when a check or status on the head fails, leaving out Projector's own <code>projector/review</code> status. It reads the rollup's counts by state and reads later pages of contexts only when those counts show a failure that the first 20 contexts lack.</li></ul>",
+   "A head that changed a file behind a named check, such as its workflow file or a local action that workflow uses, decided what its own check ran. So <code>gate</code> refuses to use CI for that head. A repository without the setting keeps today's behavior. The code, skills, and docs follow in a later pull request."
+  ],
+  "cards": [
+   {
+    "id": "exits",
+    "title": "What the gate's exit codes mean",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Exit</th><th>When</th><th>What the reviewer does</th></tr></thead><tbody><tr><td class=\"r\">0</td><td>The <code>review.gate</code> command, if it ran, passed and every named check concluded <code>success</code></td><td>Counts the gate as passed</td></tr><tr><td class=\"r\">1</td><td>The command failed, or a named check concluded <code>failure</code> or <code>timed_out</code></td><td>Treats it as a failing gate</td></tr><tr><td class=\"r\">75</td><td>CI gave no evidence: no completed run within 30 minutes, no run coming, or a check that was cancelled, skipped, or waits for approval</td><td>Runs the full gate locally on a trusted head, and reviews by reading on an untrusted one</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, of <code>16f042b</code>, opened four findings: a false <code>CHECKS</code> event from <code>projector/review</code>, a missing check that signed off untested, a local action that escaped the workflow refusal, and a check-runs read limited to one page. All four were fixed at <code>9aa0747</code>.</li><li>The review of <code>9aa0747</code> found that <code>CHECKS</code> read only the first 20 rollup contexts. That was fixed at <code>f770afd</code>, along with two suggestions about run statuses and conclusions.</li><li>The review of <code>f770afd</code> is clean, with one suggestion: leave a failed <code>projector/review</code> out of the counts before deciding to read another page.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The plan for running the gate in CI",
+   "kicker": "The problem, the new setting, the gate's CI wait, the files behind a check, and the CHECKS event",
+   "intro": [
+    "The plan is the whole change. § 2.1 walks through the flow after the change, step by step. § 2.2 defines the <code>review.gate_checks</code> setting, the two fields the gate record gains (<code>checks</code> and <code>source</code>), and the <code>CHECKS</code> event line. § 2.3 lists the change to each file. § 2.4 says how <code>gate</code> finds the files that decided what a check ran.",
+    "A <b>check run</b> is GitHub's record of one CI job on a commit. A <b>commit status</b> is a simpler state that any account with write access can post, which is how Projector posts its own <code>projector/review</code> sign-off. The <b>rollup</b> is GitHub's view of both kinds on a commit: an overall state and a paged list of <b>contexts</b>, one per check run or status. The gate counts only check runs from the <code>github-actions</code> app, so a commit status never counts as test evidence. The watch event reads the rollup's failed contexts."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A plan at <code>ready</code> claims it is executable, so every question that blocks implementation must be answered or deferred. Its two open questions, a configurable wait and merge-queue checks, are deferred in § 6, and § 5 defers measuring the watch query's cost to the implementation."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/gate-in-ci/readme.md",
+     "collapsed": false,
+     "note": "The new plan: why the gate runs three times today, how the CI gate works for trusted and untrusted heads, and how each skill changes.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "An untrusted head's passing CI record cannot allow an incremental review: <code>incremental_rules</code> in <code>src/projector/review.py</code> refuses an untrusted head before it reads <code>gate_passed</code>. Checked in the code at the base."
+      },
+      {
+       "kind": "verify",
+       "text": "The page read in § 2.1 step 7 ends when <code>hasNextPage</code> is false, and runs only when the counts show a failure the first page lacks. A GraphQL query on this pull request confirmed that the rollup's <code>contexts</code> connection has <code>checkRunCountsByState</code>, <code>statusContextCountsByState</code>, and <code>pageInfo</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
