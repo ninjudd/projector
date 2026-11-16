@@ -447,8 +447,8 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
 def note(folder: Path, now: float, transcript: Optional[str], *, unloaded: bool) -> dict:
     """Record a hook's host activity. Codex sends `SessionEnd` when it unloads a thread that sat idle, as
     well as on archive, delete, and exit, with no reason that tells them apart. So an end only marks the
-    thread unloaded: delivery stays enabled, `queue --resume` loads the thread again, and a transcript
-    missing at submission shows that the conversation is gone."""
+    thread unloaded: delivery stays enabled, `queue --resume` loads the thread again, and a missing
+    transcript shows that the conversation is gone."""
     with locked(folder):
         record = registration(folder)
         if record.get("enabled") and not unloaded:
