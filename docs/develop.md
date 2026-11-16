@@ -133,6 +133,10 @@ the Release workflow from the Actions page, or with
 `gh workflow run release.yml -f bump=patch`, and merge the pull request it
 opens. The workflow dispatches the Check workflow on that pull request, because
 GitHub runs no workflow for a pull request that a workflow's own token opened.
+It also posts the `projector/review` status that `main` requires on the
+release commit, because that commit changes only the version and needs no
+review. The status covers that commit alone, so a commit you push to the
+release branch waits for a Projector review like any other head.
 Merging tags the release and moves `v0`, which is what the installer,
 `project upgrade`, and every repository's site workflow use. When the publish
 job fails partway, re-run it from the Actions page. It finishes the steps the
