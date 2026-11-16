@@ -1012,6 +1012,7 @@ exits 0.
 Trusting Projector's hooks in Codex's `/hooks` is a step only you can take,
 so the check does not look at it. A checkout install is not checked, because
 its `status` compares the install with the checkout rather than a release.
+
 ### Know when to run `init` again
 
 After the installer's rows, `upgrade` prints rows of its own, in the same

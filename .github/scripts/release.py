@@ -11,10 +11,10 @@ it runs `bump` on a release/vX.Y.Z branch and opens the release pull request.
 When a change to pyproject.toml reaches main, it runs `released`, and when that
 exits 3 it runs `tag`: that pushes the immutable vX.Y.Z tag, creates the
 GitHub release for vX.Y.Z with generated notes (--no-release skips that step),
-and then force-moves the major tag that the installer, marketplaces, and the
-site action follow. The major tag moves last because `project upgrade` reads
-the newest GitHub release, and a release published after the major tag moved
-would leave a window in which the two name different versions.
+and then force-moves the major tag that the installer and the site action
+follow; marketplaces follow the default branch instead. The major tag moves
+last because `project upgrade` reads the newest GitHub release, so once the
+major tag names a release, `project upgrade` already finds that release.
 
 A version is released once its tag and the major tag name the same commit and
 its GitHub release exists. `tag` does only the steps the remote lacks, in that
