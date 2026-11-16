@@ -1,0 +1,162 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index a231cc30..b2d3dd07 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -280,7 +280,7 @@ not subscribed to before.
+ ```text
+   /projector                            1 pull request · 1 review request  12s   [-]
+    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
+-   #258 findings grace Name the reviewed head i… reviewing · checks passing 5m
++   #258 findings grace Name the reviewed head in a rev… reviewing · passing 5m
+         reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
+         7: Discuss  8: Dismiss
+         open in github  open in projector
+@@ -341,13 +341,11 @@ the cancel still counts, so such a head can read `failing` with a
+ `cancelled` note. So a signed-off pull request whose checks fail reads
+ `failing` with a green `clean` after its title, and a draft that conflicts
+ says `draft` as well as its italic number.
+-No note names `conflict`, which always takes the state. While a pull
+-request's drawer is open, its row spells the holds out as `checks failing`
+-and `changes requested`, and names the one its state already says as well.
+-It spells `passing` out as `checks passing` too. The row never counts the
+-findings, open or closed, and `findings` has nothing to spell out, so an
+-open row whose state is `findings` does not repeat it; the drawer counts each
+-file's findings. The ` · ` between two notes keeps
++No note names `conflict`, which always takes the state, and no note repeats
++the state. The row never counts the findings; the drawer counts each file's.
++Opening a pull request's drawer leaves its row as it was, so the row reads
++the same open or closed. The drawer's facts line gives the checks in full,
++such as `checks failing`. The ` · ` between two notes keeps
+ the default text color. The line ends with how long ago the pull request
+ last changed, in the column where the inbox's items end with their ages.
+ Only the title shortens on a narrow terminal. A pull request that the watch
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index ecb35178..d825736c 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -817,7 +817,7 @@ test('a panel.background the panel does not take leaves the color to the theme,
+   await ui.unmount()
+ })
+ 
+-test('a row’s notes name every other status that applies, and an open drawer spells its row’s holds out', async ($, on) => {
++test('a row’s notes name every other status that applies, and read the same with its drawer open', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\no/r#22\no/r#23\no/r#24\n' })
+@@ -869,35 +869,13 @@ test('a row’s notes name every other status that applies, and an open drawer s
+     ],
+   })
+ 
+-  // An open drawer spells its row's holds out, the one its word names as well, and leaves the other rows short.
+-  await ui.press({ key: 'pr:o/r#21' })
+-  await clock.settle()
+-  expect(await notesOf('Signed-off change failing its checks')).toEqual([
+-    ['checks failing', 'error'],
+-    ' · ',
+-    ['clean', 'success'],
+-  ])
+-  expect(await notesOf('Change held back')).toEqual([['changes', 'warning'], ' · ', ['findings', 'warning']])
+-  await ui.press({ key: 'pr:o/r#10' })
+-  await clock.settle()
+-  // The row counts no threads, open or closed; the drawer counts each file's.
+-  expect(await notesOf('Change held back')).toEqual([['changes requested', 'warning'], ' · ', ['findings', 'warning']])
+-  expect(await notesOf('Signed-off change failing its checks')).toEqual([['clean', 'success']])
+-  await ui.press({ key: 'pr:o/r#11' })
+-  await clock.settle()
+-  // Findings are this row's word, and have nothing more to say spelled out, so the open row does not repeat them.
+-  expect(await notesOf('Approved change')).toEqual([['approved', 'success']])
+-
+-  // An open drawer spells passing checks out too.
+-  await ui.press({ key: 'pr:o/r#24' })
+-  await clock.settle()
+-  expect(await notesOf('Approved change whose checks pass')).toEqual([
+-    ['approved', 'success'],
+-    ' · ',
+-    ['checks passing', 'success'],
+-    ' · ',
+-    ['cancelled', 'subtle'],
+-  ])
++  // Opening a drawer changes nothing on any row: every row reads as it did closed, its own included.
++  const closed = await allNotes()
++  for (const key of ['o/r#21', 'o/r#10', 'o/r#11', 'o/r#12', 'o/r#24']) {
++    await ui.press({ key: `pr:${key}` })
++    await clock.settle()
++    expect(await allNotes()).toEqual(closed)
++  }
+ 
+   // A head whose only run was cancelled is ready, not failing, though its gathering job failed after the cancel,
+   // and its drawer says its checks were cancelled, muted.
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index f9a5beee..9ea466e7 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1279,12 +1279,6 @@ const findingCount = (count: number) => `${count} finding${count === 1 ? '' : 's
+ 
+ type Hold = {
+   status: string
+-  /**
+-   * The hold in full, which the row's notes give while its drawer is open,
+-   * the one that is the row's word included. A hold without one gives its
+-   * status word in both, and only when another hold took the word.
+-   */
+-  phrase?: string
+   color: 'error' | 'warning'
+   holds: (pr: PullRequest) => boolean
+ }
+@@ -1297,13 +1291,8 @@ type Hold = {
+ const HOLDS: Hold[] = [
+   // First, so a conflict is always the row's word and never one of its notes.
+   { status: 'conflict', color: 'error', holds: pr => pr.isConflicting },
+-  { status: 'failing', phrase: 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
+-  {
+-    status: 'changes',
+-    phrase: 'changes requested',
+-    color: 'warning',
+-    holds: pr => pr.reviewDecision === 'CHANGES_REQUESTED',
+-  },
++  { status: 'failing', color: 'error', holds: pr => pr.checks === 'failing' },
++  { status: 'changes', color: 'warning', holds: pr => pr.reviewDecision === 'CHANGES_REQUESTED' },
+   // Each unresolved review thread is a finding. The row counts none; the drawer counts each file's.
+   { status: 'findings', color: 'warning', holds: pr => pr.openThreads > 0 },
+ ]
+@@ -1328,23 +1317,19 @@ const reviewLabel = (pr: PullRequest) => REVIEW_LABELS.find(label => hasLabel(pr
+  * What a row says after the title: every other status that applies, in the
+  * order the word takes them, then its approval, then `passing` while the
+  * head's checks pass, and last `cancelled` while a workflow's newest run on
+- * the head was cancelled. While the row's drawer
+- * `isOpen`, the holds show in full, and the one that is the row's word shows
+- * as well. A draft's italic number is easy to miss, so a draft says so too
+- * when another status takes the word.
++ * the head was cancelled. A draft's italic number is easy to miss, so a draft
++ * says so too when another status takes the word. Opening the row's drawer
++ * changes none of it, so the row reads the same as the drawer opens.
+  */
+-function notesOf(pr: PullRequest, isOpen: boolean): Note[] {
++function notesOf(pr: PullRequest): Note[] {
+   const shown = rowState(pr).text
+-  const notes = HOLDS.flatMap(({ status, phrase, color, holds }): Note[] => {
+-    const isSpelled = isOpen && phrase !== undefined
+-    return holds(pr) && (isSpelled || status !== shown)
+-      ? [{ text: isSpelled ? phrase : status, color }]
+-      : []
+-  })
++  const notes = HOLDS.flatMap(({ status, color, holds }): Note[] =>
++    holds(pr) && status !== shown ? [{ text: status, color }] : [],
++  )
+   notes.push(...REVIEW_LABELS.filter(label => label.text !== shown && hasLabel(pr, label.text)))
+   if (pr.isDraft && shown !== 'draft') notes.push({ text: 'draft', isItalic: true })
+   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
+-  if (pr.checks === 'passing') notes.push({ text: isOpen ? 'checks passing' : 'passing', color: 'success' })
++  if (pr.checks === 'passing') notes.push({ text: 'passing', color: 'success' })
+   if (pr.isCancelled) notes.push({ text: 'cancelled', color: 'subtle' })
+   return notes
+ }
+@@ -2520,7 +2505,7 @@ export const register: Register = on => {
+     const drawRow = (row: Row) => {
+       const { pr } = row
+       const key = keyOf(pr)
+-      const notes = notesOf(pr, opened === key)
++      const notes = notesOf(pr)
+       const state = rowState(pr)
+       // A pull request the daemon has no result for yet holds only its
+       // reference, so its line says it is loading in its title's place.
