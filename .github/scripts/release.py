@@ -4,18 +4,21 @@
     .github/scripts/release.py bump patch|minor|major   raise one part of the version and write it
     .github/scripts/release.py set X.Y.Z                write an exact version instead
     .github/scripts/release.py released                 exit 0 if origin/main's version is fully released, 3 if not
-    .github/scripts/release.py tag                      tag vX.Y.Z at origin/main, move the vX major tag, and publish the GitHub release
+    .github/scripts/release.py tag                      tag vX.Y.Z at origin/main, publish its GitHub release, and move the vX major tag
 
 The Release workflow runs these. Started by hand with patch, minor, or major,
 it runs `bump` on a release/vX.Y.Z branch and opens the release pull request.
 When a change to pyproject.toml reaches main, it runs `released`, and when that
-exits 3 it runs `tag`: that pushes the immutable vX.Y.Z tag, force-moves the
-major tag that marketplaces and the site action follow, and creates the
-GitHub release for vX.Y.Z with generated notes; --no-release skips that step.
+exits 3 it runs `tag`: that pushes the immutable vX.Y.Z tag, creates the
+GitHub release for vX.Y.Z with generated notes (--no-release skips that step),
+and then force-moves the major tag that the installer, marketplaces, and the
+site action follow. The major tag moves last because `project upgrade` reads
+the newest GitHub release, and a release published after the major tag moved
+would leave a window in which the two name different versions.
 
 A version is released once its tag and the major tag name the same commit and
-its GitHub release exists. `tag` does only the steps the remote lacks, so
-running it again finishes a release that stopped partway.
+its GitHub release exists. `tag` does only the steps the remote lacks, in that
+order, so running it again finishes a release that stopped partway.
 """
 
 from __future__ import annotations
@@ -199,10 +202,10 @@ def released(root: Path, remote: str = "origin", branch: str = "main") -> tuple[
     """The merged version and the parts of its release the remote still lacks."""
     state = merged(root, remote, branch)
     missing = [] if state.tagged else [f"the {state.name} tag"]
-    if not state.major_moved:
-        missing.append(f"{state.major} at {state.commit[:9]}")
     if not published(root, remote, state.name):
         missing.append("the GitHub release")
+    if not state.major_moved:
+        missing.append(f"{state.major} at {state.commit[:9]}")
     return state, missing
 
 
@@ -219,18 +222,18 @@ def tag(root: Path, remote: str = "origin", branch: str = "main", github_release
             git(root, "tag", "--force", "-a", state.name, state.commit, "-m", f"Projector {state.version}")
             git(root, "push", "--quiet", remote, f"refs/tags/{state.name}")
             did.append(f"tagged {state.name}")
-        if state.major_moved:
-            found.append(state.major)
-        else:
-            git(root, "tag", "--force", "-a", state.major, state.commit, "-m", f"Projector {state.version}")
-            git(root, "push", "--quiet", "--force", remote, f"refs/tags/{state.major}")
-            did.append(f"moved {state.major}")
         if github_release:
             if published(root, remote, state.name):
                 found.append("the GitHub release")
             else:
                 create_release(root, remote, state.name)
                 did.append("published the GitHub release")
+        if state.major_moved:
+            found.append(state.major)
+        else:
+            git(root, "tag", "--force", "-a", state.major, state.commit, "-m", f"Projector {state.version}")
+            git(root, "push", "--quiet", "--force", remote, f"refs/tags/{state.major}")
+            did.append(f"moved {state.major}")
     except ReleaseError as exc:
         before = f" Before that it {', '.join(did)}." if did else ""
         raise ReleaseError(f"{exc}.{before} Run tag again, or re-run the Release workflow, "
@@ -249,7 +252,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     r = sub.add_parser("released", help=f"exit 0 when the merged version is fully released, {NOT_RELEASED} when it is not")
     r.add_argument("--remote", default="origin")
     r.add_argument("--branch", default="main")
-    t = sub.add_parser("tag", help="do the release steps the remote lacks: the version tag, the major tag, the GitHub release")
+    t = sub.add_parser("tag", help="do the release steps the remote lacks: the version tag, the GitHub release, the major tag")
     t.add_argument("--remote", default="origin")
     t.add_argument("--branch", default="main")
     t.add_argument("--no-release", action="store_true", help="push the tags without creating the GitHub release")

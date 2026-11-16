@@ -176,13 +176,25 @@ installs the CLI with `pipx` from the source archive of `PROJECTOR_REF`
 (default `v0`, which every release moves), or, without `pipx`, into a virtual
 environment under `~/.local/share/projector` with `project` linked into
 `~/.local/bin`. It adds the `PROJECTOR_REPO` marketplace (default
-`ninjudd/projector`) to each host. `status` compares the installed versions
-with the release's. `project upgrade` downloads and runs the same installer,
-and every `project` command warns on stderr when a newer release is out (see
-[the CLI guide](cli.md#know-when-a-release-is-out)). projector.bot serves
-`install.sh` from the `v0` tag, so it is always the newest release's
-installer. Set `PROJECTOR_REF` to install a particular release, such as
-`v0.5.7`, and `PROJECTOR_REPO` to install from a fork.
+`ninjudd/projector`) to each host. Set `PROJECTOR_REF` to install a
+particular release, such as `v0.5.7`, and `PROJECTOR_REPO` to install from a
+fork.
+
+`status` compares the installed versions with the release's: `cli-` rows for
+the command, `plugin-` rows for each host's `projector` plugin, and a `hooks`
+or `hooks-absent` row for Codex's `projector-hooks` plugin. A `plugin-ahead`
+row means that a host installed a plugin newer than the release. Each host's
+marketplace follows the default branch, which carries a new version a few
+minutes before its release is published, so run the installer again once the
+release is out.
+
+projector.bot serves `install.sh` from the `v0` tag, which every release
+moves, and caches it for a few minutes, so just after a release it can serve
+the one before. `project upgrade` avoids that cache: it runs `install.sh` from
+the newest release's own tag, such as `v0.9.0`, and then checks what it
+installed against that release (see [the CLI guide](cli.md#upgrade)). Every
+`project` command also warns on stderr when a newer release is out (see
+[Know when a release is out](cli.md#know-when-a-release-is-out)).
 
 The installer also installs or moves the `gh-stack` plugin on each host,
 since `claude plugin update` neither installs a dependency a plugin newly
@@ -1054,7 +1066,8 @@ marker, when that source is a local path and the checkout names a repository
 to move it to: the plugin goes stale with the checkout until `./install.sh
 <host>` moves it. `plugin-current` reports an installed plugin at the
 checkout's manifest version, `plugin-stale` one at another version, and
-`plugin-absent` a host with none.
+`plugin-absent` a host with none. `hooks-absent` reports a Codex without the
+`projector-hooks` plugin, and `hooks` names the one it has.
 
 The first row is about the checkout itself. The installer fetches the current
 branch's upstream and prints `repo-current` when the checkout matches it,
@@ -1141,7 +1154,7 @@ gh workflow run release.yml --repo ninjudd/projector -f bump=patch
 Actions tab. The workflow writes the next version to all three files on a
 `release/vX.Y.Z` branch and opens a pull request for it. Merging that pull
 request is the decision to ship: the same workflow runs on the merge, tags
-the merged version, moves the major tag, and creates the GitHub release. The
+the merged version, creates the GitHub release, and moves the major tag. The
 workflow opens the pull request with its own token, which needs **Allow
 GitHub Actions to create and approve pull requests** turned on under the
 repository's **Settings > Actions > General**.
@@ -1187,9 +1200,12 @@ change, whether there is anything to release:
 
 `tag` reads the version from `origin/main`, not from the checkout, so an
 unmerged bump cannot name a release. It does only the steps the remote still
-lacks: it pushes an immutable `v0.6.0` tag, force-moves `v0` to the same
-commit, and creates the GitHub release for `v0.6.0` with generated notes. It
-prints what it did and what it found already done. `released` needs an
+lacks, in this order: it pushes an immutable `v0.6.0` tag, creates the GitHub
+release for `v0.6.0` with generated notes, and force-moves `v0` to the same
+commit. `v0` moves last because `project upgrade` installs the newest GitHub
+release while projector.bot serves the installer at `v0`, so by the time
+`v0` names a release, `project upgrade` finds that release too. `tag` prints
+what it did and what it found already done. `released` needs an
 authenticated `gh`, because it looks for the GitHub release, and so does `tag`
 unless you pass `--no-release`, which pushes only the tags and never calls
 `gh`.

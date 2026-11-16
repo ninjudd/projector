@@ -19,9 +19,9 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 from urllib.parse import urlparse
-from urllib.request import url2pathname, urlopen
+from urllib.request import Request, url2pathname, urlopen
 
 from . import agents, codex_watch, inbox, instructions, ios, loop, permissions, relay, review, site, summary, watch
 from .permissions import allow_commands
@@ -103,25 +103,99 @@ def github_repository(url: str) -> Optional[str]:
     return f"{match.group(1)}/{match.group(2)}" if match else None
 
 
-def release_installer(record: dict) -> tuple[str, dict[str, str]]:
-    """The released installer to run, and the environment that points it at this install's repository.
+RELEASE_LOOKUP_TIMEOUT = 15
+GITHUB_API = "https://api.github.com"
 
-    An install from Projector's own repository upgrades through the installer
-    projector.bot serves, which is the one from the newest release. One from a
-    fork upgrades from that fork, through its own released installer.
+
+def release_tag(repository: str) -> tuple[Optional[str], str]:
+    """The tag of `repository`'s newest GitHub release, or None and the reason it could not be read.
+
+    `gh` answers when it is signed in, which also spares the anonymous API's
+    rate limit. Without it, or when it fails, the anonymous API answers.
+    """
+
+    reasons = []
+    gh = shutil.which(os.environ.get("PROJECTOR_GH_COMMAND", "gh"))
+    if gh is not None:
+        try:
+            result = subprocess.run(
+                [gh, "api", "--hostname", "github.com", f"repos/{repository}/releases/latest", "--jq", ".tag_name"],
+                capture_output=True, text=True, timeout=RELEASE_LOOKUP_TIMEOUT, check=False,
+            )
+            if result.returncode == 0 and plain_ref(result.stdout.strip()):
+                return result.stdout.strip(), ""
+            said = result.stderr.strip().splitlines()
+            reasons.append(f"gh: {said[-1] if said else f'exit {result.returncode}'}")
+        except (OSError, subprocess.SubprocessError) as error:
+            reasons.append(f"gh: {error}")
+    request = Request(f"{GITHUB_API}/repos/{repository}/releases/latest",
+                      headers={"Accept": "application/vnd.github+json", "User-Agent": "projector-cli"})
+    try:
+        with urlopen(request, timeout=RELEASE_LOOKUP_TIMEOUT) as response:
+            release = json.loads(response.read())
+    except (OSError, ValueError, http.client.HTTPException) as error:
+        reasons.append(f"GitHub API: {error}")
+    else:
+        tag = release.get("tag_name") if isinstance(release, dict) else None
+        if isinstance(tag, str) and plain_ref(tag):
+            return tag, ""
+        reasons.append("GitHub API: the newest release names no tag")
+    return None, "; ".join(reasons)
+
+
+def plain_ref(ref: str) -> bool:
+    """Whether `ref` is a tag name that fits in a raw.githubusercontent.com path as it is."""
+
+    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", ref) is not None
+
+
+class ReleaseInstaller(NamedTuple):
+    url: str
+    environment: dict[str, str]
+    # The tag the installer and the CLI come from, or None when they come from the moving `v0`.
+    tag: Optional[str]
+
+
+def release_installer(record: dict) -> ReleaseInstaller:
+    """The released installer to run, the environment that points it at the release, and that release's tag.
+
+    The installer, and the CLI it installs, come from one release tag: the
+    newest GitHub release's, unless `PROJECTOR_REF` names one. A tag never
+    moves, so no cache can serve an older copy of it. When the newest release
+    cannot be read, the installer comes from `v0`, which every release moves:
+    for Projector's own repository through projector.bot, which caches it for a
+    few minutes. `PROJECTOR_REPO`, or a fork's archive, names the repository.
     """
 
     environment = dict(os.environ)
-    override = os.environ.get("PROJECTOR_INSTALLER_URL")
-    repository = github_repository(record.get("url", "")) or UPSTREAM
+    repository = release_repository(record)
     if repository.lower() != UPSTREAM:
-        environment.setdefault("PROJECTOR_REPO", repository)
-    ref = environment.get("PROJECTOR_REF", "v0")
-    if override:
-        return override, environment
-    if repository.lower() == UPSTREAM:
-        return INSTALLER_URL, environment
-    return f"https://raw.githubusercontent.com/{repository}/{ref}/install.sh", environment
+        environment["PROJECTOR_REPO"] = repository
+    tag, reason = environment.get("PROJECTOR_REF"), ""
+    if not tag:
+        tag, reason = release_tag(repository)
+    if tag:
+        environment["PROJECTOR_REF"] = tag
+        url = f"{raw_url(repository, tag)}/install.sh"
+    elif repository.lower() == UPSTREAM:
+        url = INSTALLER_URL
+    else:
+        url = f"{raw_url(repository, 'v0')}/install.sh"
+    url = environment.get("PROJECTOR_INSTALLER_URL") or url
+    if reason:
+        print(f"warning: could not read the newest release of {repository} ({reason}); upgrading with {url} "
+              "instead, which can trail a new release by a few minutes", file=sys.stderr)
+    return ReleaseInstaller(url, environment, tag)
+
+
+def release_repository(record: dict) -> str:
+    """owner/repo that a release install upgrades from: `PROJECTOR_REPO`, the fork it came from, or Projector's."""
+
+    return os.environ.get("PROJECTOR_REPO") or github_repository(record.get("url", "")) or UPSTREAM
+
+
+def raw_url(repository: str, ref: str) -> str:
+    return f"https://raw.githubusercontent.com/{repository}/{ref}"
 
 
 def fetch_installer(url: str, target: Path) -> None:
@@ -216,14 +290,77 @@ def report_init_changes(before: dict[str, dict[str, str]], succeeded: bool) -> N
         installer_row("init-current", "nothing project init writes changed")
 
 
-def run_installer(record: dict, targets: list[str]) -> int:
-    """Run the installer from anywhere, with the same targets, output, and exit status.
+class ReleaseCheck(NamedTuple):
+    """The rows that say whether an install matches its release, and whether something does not."""
+
+    rows: list[tuple[str, str, bool]]
+    mismatched: bool
+
+
+MISMATCHED = 1
+# The rows of `install.sh status` that name something the install left wrong, each with the command that fixes it.
+MISMATCH_ROWS = {"cli-missing", "cli-stale", "plugin-absent", "plugin-stale", "plugin-ahead", "hooks-absent"}
+# The rows it prints when it has no release version to compare with.
+UNCOMPARED_ROWS = {"cli-installed", "plugin"}
+TARGET_SCOPES = {"all": {"cli", "claude", "codex"}, "cli": {"cli"}, "claude": {"claude"}, "codex": {"codex"}}
+
+
+def check_release(script: Path, environment: dict[str, str], targets: list[str],
+                  tag: Optional[str]) -> Optional[ReleaseCheck]:
+    """Compare what the install left with its release, by the released installer's own `status`.
+
+    `status` asks the `project` on PATH for its version, since this process
+    still runs the command the install replaced, and asks each host for its
+    plugins. A host that is not installed is not a mismatch, and a target
+    the installer does not install, such as `status`, has nothing to check.
+    """
+
+    scopes = TARGET_SCOPES.get(targets[0] if targets else "all")
+    if scopes is None:
+        return None
+    release = f"the {tag} release" if tag else "the newest release"
+    unchecked = ReleaseCheck([("unverified", f"could not compare what this upgrade installed with {release} -- "
+                               "run project upgrade status to compare", True)], False)
+    try:
+        status = subprocess.run(["bash", str(script), "status"], env=environment, capture_output=True, text=True,
+                                timeout=300, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return unchecked
+    if status.returncode != 0:
+        return unchecked
+    seen, uncompared, mismatches = set(), False, []
+    for line in status.stdout.splitlines():
+        name, _, text = line.partition(" ")
+        text = text.strip()
+        if name.startswith("cli"):
+            scope = "cli"
+        elif name.startswith(("plugin", "hooks-")) or name == "host-missing":
+            scope = text.split(" ", 1)[0]
+        else:
+            continue
+        if scope not in scopes:
+            continue
+        seen.add(scope)
+        if name in MISMATCH_ROWS:
+            mismatches.append((name, text, True))
+        uncompared = uncompared or name in UNCOMPARED_ROWS
+    if mismatches:
+        return ReleaseCheck([*mismatches, ("mismatch", f"what this upgrade installed does not match {release} -- "
+                                           "run the command each row above names", True)], True)
+    if uncompared or seen != scopes:
+        return unchecked
+    return ReleaseCheck([("verified", f"what this upgrade installed matches {release}", False)], False)
+
+
+def run_installer(record: dict, targets: list[str]) -> tuple[int, Optional[ReleaseCheck]]:
+    """Run the installer from anywhere, with the same targets and output, and check a release install.
 
     Installation belongs to the installer, which already knows how to place
     the CLI and each host plugin, so nothing here decides what an upgrade is.
     A checkout install runs the checkout's `install.sh`. Any other install --
     from a release archive or a Git URL -- downloads the released installer
-    and runs that, which reinstalls from the newest release without git.
+    and runs that, which reinstalls from the newest release without git, and
+    then checks what it installed against that release.
     """
 
     source = checkout(record)
@@ -233,17 +370,21 @@ def run_installer(record: dict, targets: list[str]) -> int:
             raise EnvironmentError(f"cannot upgrade: {script} does not exist")
         command = [str(script), *targets]
         print(f"+ {shlex.join(command)}", file=sys.stderr)
-        return subprocess.run(command, check=False).returncode
-    url, environment = release_installer(record)
+        return subprocess.run(command, check=False).returncode, None
+    url, environment, tag = release_installer(record)
     with tempfile.TemporaryDirectory(prefix="projector-upgrade-") as scratch:
         script = Path(scratch) / "install.sh"
         fetch_installer(url, script)
-        print(f"+ curl -fsSL {url} | bash -s -- {shlex.join(targets)}".rstrip(), file=sys.stderr)
-        return subprocess.run(["bash", str(script), *targets], env=environment, check=False).returncode
+        chosen = [f"{name}={shlex.quote(environment[name])}" for name in ("PROJECTOR_REPO", "PROJECTOR_REF")
+                  if name in environment and environment[name] != os.environ.get(name)]
+        print(f"+ curl -fsSL {url} | {' '.join([*chosen, 'bash'])} -s -- {shlex.join(targets)}".rstrip(),
+              file=sys.stderr)
+        code = subprocess.run(["bash", str(script), *targets], env=environment, check=False).returncode
+        return code, check_release(script, environment, targets, tag) if code == 0 else None
 
 
 def run_upgrade(targets: list[str]) -> int:
-    """Run the installer, then list what it changed in what `init` writes."""
+    """Run the installer, list what it changed in what `init` writes, and say whether it matches the release."""
 
     record = install_record()
     # `install.sh cli` rewrites this package under the running interpreter,
@@ -251,9 +392,13 @@ def run_upgrade(targets: list[str]) -> int:
     # Everything else this process still needs is imported already, so nothing
     # after it reaches for a file the reinstall is in the middle of replacing.
     before = init_digests()
-    code = run_installer(record, targets)
+    code, check = run_installer(record, targets)
     report_init_changes(before, code == 0)
-    return code
+    if check is None:
+        return code
+    for row in check.rows:
+        installer_row(*row)
+    return MISMATCHED if check.mismatched else code
 
 
 RELEASE_CHECK_SECONDS = 24 * 60 * 60
@@ -263,9 +408,7 @@ RELEASE_CHECK_TIMEOUT = 2
 def release_manifest_url(record: dict) -> str:
     """The plugin manifest of the release `upgrade` would install, which carries the CLI's version too."""
 
-    repository = github_repository(record.get("url", "")) or UPSTREAM
-    ref = os.environ.get("PROJECTOR_REF", "v0")
-    return f"https://raw.githubusercontent.com/{repository}/{ref}/.claude-plugin/plugin.json"
+    return f"{raw_url(release_repository(record), os.environ.get('PROJECTOR_REF', 'v0'))}/.claude-plugin/plugin.json"
 
 
 def release_cache_file() -> Path:

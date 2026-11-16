@@ -2458,6 +2458,18 @@ class UpgradeTests(unittest.TestCase):
         # The command the fake installer "installs" writes what this one does.
         self.answer = mock.patch.object(cli, "installed_init_digests", return_value=cli.init_digests())
         self.installed = self.patch(self.answer)
+        # The newest release is read from a fake gh and a GitHub API on disk, never
+        # from GitHub, and no override from the environment running the tests leaks in.
+        self.bin = self.root / "fake-bin"
+        self.bin.mkdir()
+        self.gh_log = self.root / "gh.log"
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ("PROJECTOR_REF", "PROJECTOR_REPO", "PROJECTOR_INSTALLER_URL")}
+        environment["PROJECTOR_GH_COMMAND"] = str(self.bin / "gh")
+        self.patch(mock.patch.dict(os.environ, environment, clear=True))
+        self.api = self.root / "api"
+        self.patch(mock.patch.object(cli, "GITHUB_API", self.api.as_uri()))
+        self.newest_release(gh="v9.9.9")
 
     def patch(self, patcher: object) -> object:
         started = patcher.start()
@@ -2543,65 +2555,150 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual(["1", "cli"], self.log.read_text().splitlines())
 
-    def served_installer(self, exit_code: int = 0) -> str:
-        """A released installer at a file:// URL, which is where `upgrade` fetches it from."""
+    def newest_release(self, *, gh: str | None = None, api: str | None = None) -> None:
+        """Make the fake gh answer `gh`, or fail as a gh that is not signed in, and the API on disk answer `api`."""
 
-        served = self.root / "served" / "install.sh"
-        served.parent.mkdir()
-        served.write_text(
-            f'#!/bin/sh\nprintf "%s\\n" "$#" "$@" "repo=${{PROJECTOR_REPO:-}}" > "{self.log}"\nexit {exit_code}\n'
+        if gh:
+            answer = f'printf "%s\\n" {shlex.quote(gh)}'
+        else:
+            answer = 'echo "To get started with GitHub CLI, please run:  gh auth login" >&2; exit 4'
+        (self.bin / "gh").write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{self.gh_log}"\n{answer}\n')
+        (self.bin / "gh").chmod(0o755)
+        shutil.rmtree(self.api, ignore_errors=True)
+        if api:
+            for repository in ("ninjudd/projector", "someone/projector"):
+                latest = self.api / "repos" / repository / "releases" / "latest"
+                latest.parent.mkdir(parents=True)
+                latest.write_text(json.dumps({"tag_name": api, "name": api}))
+
+    def served_installer(self, exit_code: int = 0) -> list[str]:
+        """Serve an installer that logs each run, and return the URLs `upgrade` fetches it from."""
+
+        script = self.root / "served-install.sh"
+        script.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$*|ref=${{PROJECTOR_REF:-}}|repo=${{PROJECTOR_REPO:-}}" >> "{self.log}"\n'
+            f'[ "$1" = status ] || exit {exit_code}\n'
         )
-        self.patch(mock.patch.dict(os.environ, {"PROJECTOR_INSTALLER_URL": served.as_uri()}))
-        return served.as_uri()
+        fetched: list[str] = []
 
-    def test_a_release_install_runs_the_released_installer(self) -> None:
-        self.installed_from({"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz",
-                             "archive_info": {"hash": "sha256=0"}})
-        url = self.served_installer(exit_code=3)
+        def fetch(url: str, target: Path) -> None:
+            fetched.append(url)
+            shutil.copy(script, target)
+
+        self.patch(mock.patch.object(cli, "fetch_installer", side_effect=fetch))
+        return fetched
+
+    def runs(self) -> list[str]:
+        return self.log.read_text().splitlines() if self.log.exists() else []
+
+    RELEASE = {"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz", "archive_info": {"hash": "sha256=0"}}
+
+    def test_a_release_install_runs_the_installer_from_the_newest_release_tag(self) -> None:
+        # The bug: the installer comes through projector.bot's cached v0, which
+        # can serve the previous release's installer after v0 moves.
+        self.installed_from(self.RELEASE)
+        fetched = self.served_installer(exit_code=3)
 
         code, stdout, stderr = self.invoke("all")
 
-        self.assertEqual(3, code, stderr)
-        self.assertEqual(["1", "all", "repo="], self.log.read_text().splitlines())
-        self.assertEqual("", stdout)
-        self.assertIn(f"+ curl -fsSL {url} | bash -s -- all", stderr)
+        self.assertEqual((3, ""), (code, stdout), stderr)
+        self.assertEqual(["https://raw.githubusercontent.com/ninjudd/projector/v9.9.9/install.sh"], fetched)
+        self.assertEqual(["all|ref=v9.9.9|repo="], self.runs())
+        self.assertIn(f"+ curl -fsSL {fetched[0]} | PROJECTOR_REF=v9.9.9 bash -s -- all", stderr)
+        self.assertNotIn("warning", stderr)
+        self.assertEqual(["api --hostname github.com repos/ninjudd/projector/releases/latest --jq .tag_name"],
+                         self.gh_log.read_text().splitlines())
 
-    def test_a_git_install_upgrades_the_same_way(self) -> None:
-        self.installed_from({"url": "https://github.com/ninjudd/projector.git",
-                             "vcs_info": {"vcs": "git", "commit_id": "0" * 40}})
-        self.served_installer()
+    def test_without_a_signed_in_gh_the_anonymous_api_names_the_release(self) -> None:
+        self.installed_from(self.RELEASE)
+        for case, gh_command in (("gh fails", self.bin / "gh"), ("no gh", self.root / "no-gh")):
+            with self.subTest(case):
+                self.log.unlink(missing_ok=True)
+                os.environ["PROJECTOR_GH_COMMAND"] = str(gh_command)
+                self.newest_release(api="v9.9.8")
+                fetched = self.served_installer(exit_code=3)
 
-        code, _, stderr = self.invoke("status")
+                _, _, stderr = self.invoke("cli")
 
-        self.assertEqual(0, code, stderr)
-        self.assertEqual(["1", "status", "repo="], self.log.read_text().splitlines())
+                self.assertEqual(["https://raw.githubusercontent.com/ninjudd/projector/v9.9.8/install.sh"], fetched)
+                self.assertEqual(["cli|ref=v9.9.8|repo="], self.runs())
+                self.assertNotIn("warning", stderr)
 
-    def test_a_fork_upgrades_from_its_own_repository(self) -> None:
-        self.installed_from({"url": "https://github.com/someone/projector/archive/v0.tar.gz", "archive_info": {}})
-        self.served_installer()
+    def test_an_unreadable_release_falls_back_to_v0_with_one_warning(self) -> None:
+        # No network, a rate limit, or no release yet must not stop the
+        # upgrade: it runs the installer v0 serves, and says why.
+        self.newest_release()
+        for record, url, repository in (
+            (self.RELEASE, "https://projector.bot/install.sh", ""),
+            ({"url": "git+https://github.com/ninjudd/projector.git", "vcs_info": {}},
+             "https://projector.bot/install.sh", ""),
+            ({"url": "https://example.com/projector.tar.gz", "archive_info": {}}, "https://projector.bot/install.sh", ""),
+            ({"url": "https://github.com/someone/projector/archive/v0.tar.gz", "archive_info": {}},
+             "https://raw.githubusercontent.com/someone/projector/v0/install.sh", "someone/projector"),
+        ):
+            with self.subTest(record["url"]):
+                self.log.unlink(missing_ok=True)
+                self.installed_from(record)
+                fetched = self.served_installer(exit_code=3)
+
+                code, _, stderr = self.invoke("all")
+
+                self.assertEqual(3, code, stderr)
+                self.assertEqual([url], fetched)
+                self.assertEqual([f"all|ref=|repo={repository}"], self.runs())
+                warnings = [line for line in stderr.splitlines() if line.startswith("warning:")]
+                self.assertEqual(1, len(warnings), stderr)
+                self.assertIn(f"could not read the newest release of {repository or 'ninjudd/projector'} (gh: ",
+                              warnings[0])
+                self.assertIn("gh auth login; GitHub API: ", warnings[0])
+                self.assertIn(f"upgrading with {url} instead", warnings[0])
+
+    def test_an_explicit_ref_is_installed_without_a_lookup(self) -> None:
+        self.installed_from(self.RELEASE)
+        os.environ["PROJECTOR_REF"] = "v0.5.7"
+        fetched = self.served_installer(exit_code=3)
 
         self.invoke("cli")
 
-        self.assertEqual(["1", "cli", "repo=someone/projector"], self.log.read_text().splitlines())
+        self.assertEqual(["https://raw.githubusercontent.com/ninjudd/projector/v0.5.7/install.sh"], fetched)
+        self.assertEqual(["cli|ref=v0.5.7|repo="], self.runs())
+        self.assertFalse(self.gh_log.exists(), "PROJECTOR_REF names the release, so nothing asks GitHub")
 
-    def test_the_installer_comes_from_projector_bot_or_the_fork(self) -> None:
-        self.patch(mock.patch.dict(os.environ, {}, clear=False))
-        os.environ.pop("PROJECTOR_INSTALLER_URL", None)
-        os.environ.pop("PROJECTOR_REF", None)
+    def test_projector_repo_and_a_fork_name_the_repository_to_upgrade_from(self) -> None:
+        for record, override in (
+            ({"url": "https://github.com/someone/projector/archive/v0.tar.gz", "archive_info": {}}, None),
+            (self.RELEASE, "someone/projector"),
+        ):
+            with self.subTest(override=override):
+                self.log.unlink(missing_ok=True)
+                self.gh_log.unlink(missing_ok=True)
+                os.environ.pop("PROJECTOR_REPO", None)
+                if override:
+                    os.environ["PROJECTOR_REPO"] = override
+                self.installed_from(record)
+                fetched = self.served_installer(exit_code=3)
 
-        upstream, _ = cli.release_installer({"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz"})
-        git, _ = cli.release_installer({"url": "git+https://github.com/ninjudd/projector.git"})
-        unknown, _ = cli.release_installer({"url": "https://example.com/projector.tar.gz"})
-        fork, environment = cli.release_installer({"url": "https://github.com/someone/projector/archive/v0.tar.gz"})
+                self.invoke("cli")
 
-        self.assertEqual({"https://projector.bot/install.sh"}, {upstream, git, unknown})
-        self.assertEqual("https://raw.githubusercontent.com/someone/projector/v0/install.sh", fork)
-        self.assertEqual("someone/projector", environment["PROJECTOR_REPO"])
+                self.assertEqual(["https://raw.githubusercontent.com/someone/projector/v9.9.9/install.sh"], fetched)
+                self.assertEqual(["cli|ref=v9.9.9|repo=someone/projector"], self.runs())
+                self.assertIn("repos/someone/projector/releases/latest", self.gh_log.read_text())
+
+    def test_an_installer_url_override_is_the_one_run(self) -> None:
+        self.installed_from(self.RELEASE)
+        served = self.root / "elsewhere-install.sh"
+        served.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*|ref=$PROJECTOR_REF" >> "{self.log}"\nexit 3\n')
+        os.environ["PROJECTOR_INSTALLER_URL"] = served.as_uri()
+
+        code, _, stderr = self.invoke("cli")
+
+        self.assertEqual(3, code, stderr)
+        self.assertEqual(["cli|ref=v9.9.9"], self.runs())
 
     def test_an_installer_that_cannot_be_fetched_is_named(self) -> None:
-        self.installed_from({"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz", "archive_info": {}})
+        self.installed_from(self.RELEASE)
         missing = (self.root / "nowhere" / "install.sh").as_uri()
-        self.patch(mock.patch.dict(os.environ, {"PROJECTOR_INSTALLER_URL": missing}))
+        os.environ["PROJECTOR_INSTALLER_URL"] = missing
 
         code, _, stderr = self.invoke()
 
@@ -2756,6 +2853,154 @@ class UpgradeTests(unittest.TestCase):
             self.assertIsNone(cli.installed_init_digests())
         with mock.patch.dict(os.environ, {"PATH": str(self.elsewhere)}):
             self.assertIsNone(cli.installed_init_digests())
+
+
+class UpgradeCheckTests(unittest.TestCase):
+    """`upgrade` checks what a release install left against that release, with the real installer's `status`.
+
+    This checkout's `install.sh` is served as the release's installer. pipx,
+    curl, gh, `project`, and both hosts are fakes on PATH that answer from
+    files a test writes, and HOME is a temporary directory, so nothing here
+    reaches the network or the machine's own install.
+    """
+
+    setUp_upgrade = UpgradeTests.setUp
+    patch = UpgradeTests.patch
+    installed_from = UpgradeTests.installed_from
+    invoke = UpgradeTests.invoke
+    newest_release = UpgradeTests.newest_release
+
+    def setUp(self) -> None:
+        self.setUp_upgrade()
+        self.installed_from(UpgradeTests.RELEASE)
+        self.state = self.root / "state"
+        self.state.mkdir()
+        self.curl_log = self.root / "curl.log"
+        installer = Path(__file__).parents[1] / "install.sh"
+        self.patch(mock.patch.object(cli, "fetch_installer",
+                                     side_effect=lambda url, target: shutil.copy(installer, target)))
+        fakes = {
+            "pipx": "exit 0",
+            # The release's manifest, which the installer reads its version from.
+            "curl": f'printf "%s\\n" "$*" >> "{self.curl_log}"\n'
+                    f'[ -f "{self.state}/release" ] || exit 22\n'
+                    f'printf \'{{\\n  "version": "%s"\\n}}\\n\' "$(cat "{self.state}/release")"',
+            "project": f'[ "$*" = version ] || exit 2\nprintf "project %s\\n" "$(cat "{self.state}/cli")"',
+            "host-claude": f'[ "$*" = "plugin list --json" ] && cat "{self.state}/claude.json"\nexit 0',
+            "host-codex": f'[ "$*" = "plugin list --json" ] && cat "{self.state}/codex.json"\nexit 0',
+        }
+        for name, body in fakes.items():
+            (self.bin / name).write_text(f"#!/bin/sh\n{body}\n")
+            (self.bin / name).chmod(0o755)
+        (self.bin / "python3").symlink_to(sys.executable)
+        home = self.root / "home"
+        home.mkdir()
+        for name in ("PROJECTOR_OFFLINE", "PROJECTOR_CLAUDE_DIR", "PROJECTOR_CODEX_DIR", "CLAUDE_CONFIG_DIR",
+                     "PROJECTOR_VENV", "PROJECTOR_BIN_DIR", "NO_COLOR"):
+            os.environ.pop(name, None)
+        os.environ.update({
+            "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
+            "HOME": str(home),
+            "PROJECTOR_USER_ROOT": str(home),
+            "PROJECTOR_CLAUDE_COMMAND": str(self.bin / "host-claude"),
+            "PROJECTOR_CODEX_COMMAND": str(self.bin / "host-codex"),
+        })
+
+    def left(self, *, release: str | None, cli_version: str, plugins: str, hooks: bool = True) -> None:
+        """The release's version, and what the install leaves: the CLI's version and each host's plugins."""
+
+        if release:
+            (self.state / "release").write_text(release)
+        (self.state / "cli").write_text(cli_version)
+        (self.state / "claude.json").write_text(json.dumps([{"id": "projector@projector", "version": plugins}]))
+        codex = [{"pluginId": "projector@projector", "version": plugins}]
+        if hooks:
+            codex.append({"pluginId": "projector-hooks@projector", "version": "1.0.0"})
+        (self.state / "codex.json").write_text(json.dumps({"installed": codex}))
+
+    def upgrade(self, *targets: str) -> tuple[int, list[str]]:
+        """Run `upgrade`, and return its status and the rows it printed after the installer's own."""
+
+        with tempfile.TemporaryFile() as installer_output:
+            saved = os.dup(1)
+            os.dup2(installer_output.fileno(), 1)
+            try:
+                code, stdout, stderr = self.invoke(*targets)
+            finally:
+                os.dup2(saved, 1)
+                os.close(saved)
+        rows = [line for line in stdout.splitlines() if not line.startswith("init-")]
+        return code, rows
+
+    def test_an_install_that_matches_its_release_says_so(self) -> None:
+        self.newest_release(gh="v0.9.0")
+        self.left(release="0.9.0", cli_version="0.9.0", plugins="0.9.0")
+
+        code, rows = self.upgrade("all")
+
+        self.assertEqual((0, ["verified       what this upgrade installed matches the v0.9.0 release"]), (code, rows))
+        # The version compared with is the tag's, which no cache can hold back the way it can v0's.
+        self.assertIn("https://raw.githubusercontent.com/ninjudd/projector/v0.9.0/.claude-plugin/plugin.json",
+                      self.curl_log.read_text())
+
+    def test_a_cli_behind_the_release_fails_the_upgrade_and_names_the_fix(self) -> None:
+        # The bug: an install that left the previous release's CLI printed success.
+        self.newest_release(gh="v0.9.0")
+        self.left(release="0.9.0", cli_version="0.8.18", plugins="0.9.0")
+
+        code, rows = self.upgrade()
+
+        self.assertEqual((1, [
+            "cli-stale      ⚠️  installed 0.8.18, release 0.9.0 -- run project upgrade cli",
+            "mismatch       ⚠️  what this upgrade installed does not match the v0.9.0 release -- run the command "
+            "each row above names",
+        ]), (code, rows))
+
+    def test_plugins_ahead_of_the_release_fail_the_upgrade(self) -> None:
+        # The default branch carries a release's version before its GitHub
+        # release is published, and both hosts install plugins from it.
+        self.newest_release(gh="v0.8.18")
+        self.left(release="0.8.18", cli_version="0.8.18", plugins="0.9.0")
+
+        code, rows = self.upgrade("all")
+
+        self.assertEqual(1, code)
+        self.assertEqual(["plugin-ahead", "plugin-ahead", "mismatch"], [row.split()[0] for row in rows])
+        self.assertIn("claude installed 0.9.0, release 0.8.18", rows[0])
+        self.assertIn("run project upgrade all again in a few minutes", rows[0])
+
+    def test_codex_without_its_hooks_plugin_fails_the_upgrade(self) -> None:
+        # The bug: an installer that never added projector-hooks left Codex
+        # without Projector's hooks, and the upgrade still printed success.
+        self.newest_release(gh="v0.9.0")
+        self.left(release="0.9.0", cli_version="0.9.0", plugins="0.9.0", hooks=False)
+
+        code, rows = self.upgrade("codex")
+
+        self.assertEqual((1, "hooks-absent   ⚠️  codex projector-hooks@projector -- run project upgrade codex"),
+                         (code, rows[0]))
+
+        # A target that leaves Codex alone does not fail over it.
+        code, rows = self.upgrade("claude")
+        self.assertEqual((0, "verified"), (code, rows[0].split()[0]))
+
+    def test_a_host_that_is_not_installed_does_not_fail_the_check(self) -> None:
+        self.newest_release(gh="v0.9.0")
+        self.left(release="0.9.0", cli_version="0.9.0", plugins="0.9.0", hooks=False)
+        os.environ["PROJECTOR_CODEX_COMMAND"] = str(self.root / "no-codex")
+
+        code, rows = self.upgrade("all")
+
+        self.assertEqual((0, ["verified       what this upgrade installed matches the v0.9.0 release"]), (code, rows))
+
+    def test_an_install_with_no_release_version_to_compare_is_not_called_verified(self) -> None:
+        self.newest_release(gh="v0.9.0")
+        self.left(release=None, cli_version="0.9.0", plugins="0.9.0")
+
+        code, rows = self.upgrade("all")
+
+        self.assertEqual((0, ["unverified     ⚠️  could not compare what this upgrade installed with the "
+                              "v0.9.0 release -- run project upgrade status to compare"]), (code, rows))
 
 
 class StaleReleaseWarningTests(unittest.TestCase):
