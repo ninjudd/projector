@@ -1,0 +1,702 @@
+diff --git a/.agents/plugins/marketplace.json b/.agents/plugins/marketplace.json
+index 104936eb..8d50050e 100644
+--- a/.agents/plugins/marketplace.json
++++ b/.agents/plugins/marketplace.json
+@@ -16,6 +16,18 @@
+       },
+       "category": "Productivity"
+     },
++    {
++      "name": "projector-hooks",
++      "source": {
++        "source": "local",
++        "path": "./codex-hooks"
++      },
++      "policy": {
++        "installation": "AVAILABLE",
++        "authentication": "ON_INSTALL"
++      },
++      "category": "Productivity"
++    },
+     {
+       "name": "gh-stack",
+       "source": {
+diff --git a/.codex-plugin/plugin.json b/.codex-plugin/plugin.json
+index 6c45c5cf..ea132edd 100644
+--- a/.codex-plugin/plugin.json
++++ b/.codex-plugin/plugin.json
+@@ -11,7 +11,6 @@
+   "license": "MIT",
+   "keywords": ["projects", "planning", "git", "agents", "code-review"],
+   "skills": "./skills/",
+-  "hooks": "./codex-hooks/hooks.json",
+   "interface": {
+     "displayName": "Projector",
+     "shortDescription": "Plan, implement, and review Git projects",
+diff --git a/codex-hooks/.codex-plugin/plugin.json b/codex-hooks/.codex-plugin/plugin.json
+new file mode 100644
+index 00000000..59d06396
+--- /dev/null
++++ b/codex-hooks/.codex-plugin/plugin.json
+@@ -0,0 +1,20 @@
++{
++  "name": "projector-hooks",
++  "version": "1.0.0",
++  "description": "Command hooks that deliver Projector's watch events to Codex sessions",
++  "author": {
++    "name": "Justin Balthrop",
++    "url": "https://github.com/ninjudd"
++  },
++  "homepage": "https://github.com/ninjudd/projector",
++  "repository": "https://github.com/ninjudd/projector",
++  "license": "MIT",
++  "hooks": "./hooks.json",
++  "interface": {
++    "displayName": "Projector hooks",
++    "shortDescription": "Wake Codex sessions when review or fix work arrives",
++    "developerName": "Justin Balthrop",
++    "category": "Productivity",
++    "websiteURL": "https://github.com/ninjudd/projector"
++  }
++}
+diff --git a/docs/cli.md b/docs/cli.md
+index 134a3c57..42b1f060 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2624,10 +2624,18 @@ host's monitor facility`` when nothing has renewed it in the last 5
+ minutes. With `--json`, `add` prints the lines it `added` and the
+ `delivery`, which is `mod`, `stream`, `codex`, or `none`.
+ 
++For a Codex session, `add` also asks `codex app-server` whether Codex runs
++Projector's five hooks. When Codex does not run them, because they are
++untrusted, modified, disabled, or missing, `add` names the problem and
++what to do after the `events:` line, and in `codex_hooks` with `--json`.
++`codex_hooks` is `null` when there is nothing to report.
++
+ ### Deliver events to Codex
+ 
+-With the Projector plugin installed in local Codex, review and trust its
+-command hooks through `/hooks` or the desktop app's hook settings. Use
++With the `projector-hooks` plugin installed in local Codex, review and trust
++its command hooks through `/hooks` or the desktop app's hook settings. The
++hooks ship apart from the main plugin, so a Projector upgrade leaves that
++trust in place. Use
+ Codex CLI 0.166.0 or newer with a running local daemon. Projector checks
+ that the native executable supports `queue --thread`, `--message`, and
+ `--resume`. Remote app-server selection and Windows batch-file shims are
+@@ -2671,11 +2679,15 @@ project watch status --json
+ 
+ The `deliveries` object reports the state, expiry, batch ID, and diagnostic
+ for each Codex registration, and `unloaded_at` while Codex has the thread
+-unloaded. `queued` means Codex accepted the message;
++unloaded. `codex_hooks` names what keeps Codex from running Projector's
++hooks, or is `null`. `queued` means Codex accepted the message;
+ it does not prove the thread resumed. Resume that thread when its warning
+ says it needs attention. `uncertain` means a timeout or interrupted
+-submission left acceptance unknown. After checking the thread, use an
+-explicit retry only when resending is intended:
++submission left acceptance unknown. Projector resends an uncertain batch
++30 minutes after submitting it, unless the conversation's transcript shows
++that it arrived first. A copy that arrives after the batch is consumed is
++blocked before it starts a turn. To resend sooner, check the thread, then
++retry:
+ 
+ ```sh
+ project watch codex-retry --session <id>
+@@ -2692,7 +2704,7 @@ project watch stream --session <id>
+ 
+ Disconnect keeps subscriptions and pending events. The stream takes
+ unsent events, while accepted and uncertain batches stay separate until
+-acknowledged or explicitly retried. Remove a PR's subscription to stop its
++acknowledged or resent. Remove a PR's subscription to stop its
+ work, rather than merely changing its transport. A message Codex already
+ accepted cannot be recalled; the skills recheck subscriptions before acting.
+ When hooks are unavailable, `events: none` reports the stream fallback.
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 0e4e029e..97364ae5 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -952,24 +952,38 @@ Add the same repository as a Codex marketplace and install the plugin:
+ ```sh
+ codex plugin marketplace add ninjudd/projector
+ codex plugin add projector@projector
++codex plugin add projector-hooks@projector
+ codex plugin add gh-stack@projector
+ ```
+ 
++Then review and trust the five `projector-hooks` command hooks in `/hooks`
++or the desktop app's hook settings. Each one runs
++`project watch codex-hook`.
++
+ Invoke a skill directly, for example:
+ 
+ ```text
+ $spec a safer deploy workflow
+ ```
+ 
+-The Codex manifest exposes the same `skills/` path as Claude Code. It adds
+-install-surface metadata and command hooks for local event delivery; it does
+-not wrap or rewrite skill instructions.
++The Codex manifest exposes the same `skills/` path as Claude Code and adds
++install-surface metadata. It does not wrap or rewrite skill instructions.
++
++The command hooks for local event delivery ship as `projector-hooks@projector`,
++a plugin of their own in `codex-hooks/`. Codex trusts a plugin's hooks by a
++hash of every file in the plugin, so hooks in the main plugin would need
++trusting again after every release. `codex-hooks/` holds only the hooks
++plugin's manifest and `hooks.json`, and its version changes only when they
++do. You therefore trust the hooks once, and they keep running across
++Projector upgrades. When you change `codex-hooks/hooks.json`, bump the
++version in `codex-hooks/.codex-plugin/plugin.json` in the same change. Codex
++then asks you to trust the new hooks.
+ 
+ Codex has no plugin dependencies, so `gh-stack@projector` is a plugin of its
+-own there, and the last command above installs it. Projector's skills work
+-without it. To update both, run `codex plugin marketplace upgrade projector`
+-and then both `codex plugin add` commands again, since `add` installs a
+-plugin again from the marketplace when it is already there.
++own there too. Projector's skills work without it. To update all three, run
++`codex plugin marketplace upgrade projector`, then each `codex plugin add`
++command again, since `add` installs a plugin again from the marketplace when
++it is already there.
+ 
+ ## Reach every session through the repository
+ 
+@@ -1206,6 +1220,7 @@ claude plugin update projector@projector
+ claude plugin update gh-stack@projector
+ codex plugin marketplace upgrade
+ codex plugin add projector@projector
++codex plugin add projector-hooks@projector
+ codex plugin add gh-stack@projector
+ ```
+ 
+diff --git a/install.sh b/install.sh
+index 8e6c6f80..00ecc7ed 100755
+--- a/install.sh
++++ b/install.sh
+@@ -392,6 +392,9 @@ install_codex() {
+     case "$marketplace" in git*) run_codex_with_retry plugin marketplace upgrade projector ;; esac
+   fi
+   run_codex plugin add projector@projector
++  # Codex trusts a plugin's hooks by a hash of every file in the plugin, so
++  # the hooks ship in a plugin of their own that a release leaves unchanged.
++  run_codex plugin add projector-hooks@projector
+   # Codex has no plugin dependencies, so GitHub's gh-stack skill is a plugin
+   # of its own here. Projector works without it, so a marketplace that does
+   # not serve it yet is reported rather than fatal.
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index a342c812..8cd0d5f1 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -410,6 +410,7 @@ The command's last line says how the session's events arrive:
+ | --- | --- | --- |
+ | `events: mod` | Projector's mod in Claude Code submits them as a prompt. | Nothing more. |
+ | `events: codex` | Trusted Codex hooks register the session; the daemon queues events as prompts. | Nothing more. Do not start a stream. |
++| `events: codex — but Codex is not running Projector's hooks …` | Codex stopped running the hooks, so nothing registers or acknowledges. | Tell the user what the line says to do, such as trusting the hooks in `/hooks`. Do not start a stream. |
+ | `events: stream` | A `project watch stream` that the session runs prints them. | Nothing more. |
+ | ``events: none — start `project watch stream --session <id>` …`` | Nothing delivers them yet. | Start the command the line names under the host's persistent process or monitor facility, where it runs until stopped. |
+ 
+@@ -419,9 +420,10 @@ so in its report, and the conversation that started it starts the stream.
+ 
+ For Codex delivery problems, inspect `project watch status --json`. A
+ queued batch can be waiting for its thread to resume. Never resend it just
+-because it has not run. An uncertain submission needs a decision to resend
+-before `project watch codex-retry --session <id>` is used, because the first
+-message may already be accepted. Stop delivery with `project watch
++because it has not run. Projector resends an uncertain submission 30
++minutes after it was sent unless it arrives first. Run
++`project watch codex-retry --session <id>` only to resend it sooner, because
++the first message may already be accepted. Stop delivery with `project watch
+ disconnect --session <id>` before switching transports. Recheck current
+ subscriptions and PR state before acting on every queued event.
+ 
+diff --git a/skills/implement/SKILL.md b/skills/implement/SKILL.md
+index 62df3ddb..605e7729 100644
+--- a/skills/implement/SKILL.md
++++ b/skills/implement/SKILL.md
+@@ -211,7 +211,9 @@ the pull request, and how its events arrive, from the `events:` line that
+   prompt.
+ - **`events: codex`** means trusted Codex hooks register the parent session
+   and the daemon queues events as prompts. Start no stream. Use the recovery
+-  rules in `../fix-pr/SKILL.md` if delivery needs attention.
++  rules in `../fix-pr/SKILL.md` if delivery needs attention. When the line
++  adds that Codex is not running Projector's hooks, tell the user what it
++  says to do, such as trusting them in `/hooks`.
+ - **`events: stream`** means a `project watch stream` that the session
+   runs prints them.
+ - **`events: none`** means nothing delivers them yet. Start the
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index cb84700f..f68f34bd 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -269,6 +269,7 @@ The command's last line says how the session's events arrive:
+ | --- | --- | --- |
+ | `events: mod` | Projector's mod in Claude Code submits them as a prompt. | Nothing more. |
+ | `events: codex` | Trusted Codex hooks register the session; the daemon queues events as prompts. | Nothing more. Do not start a stream. |
++| `events: codex — but Codex is not running Projector's hooks …` | Codex stopped running the hooks, so nothing registers or acknowledges. | Tell the user what the line says to do, such as trusting the hooks in `/hooks`. Do not start a stream. |
+ | `events: stream` | A `project watch stream` that the session runs prints them. | Nothing more. |
+ | ``events: none — start `project watch stream --session <id>` …`` | Nothing delivers them yet. | Start the command the line names under the host's persistent process or monitor facility, where it runs until stopped. |
+ 
+@@ -278,9 +279,10 @@ so in its report, and the conversation that started it starts the stream.
+ 
+ For Codex delivery problems, inspect `project watch status --json`. A
+ queued batch can be waiting for its thread to resume. Never resend it just
+-because it has not run. An uncertain submission needs a decision to resend
+-before `project watch codex-retry --session <id>` is used, because the first
+-message may already be accepted. Stop delivery with `project watch
++because it has not run. Projector resends an uncertain submission 30
++minutes after it was sent unless it arrives first. Run
++`project watch codex-retry --session <id>` only to resend it sooner, because
++the first message may already be accepted. Stop delivery with `project watch
+ disconnect --session <id>` before switching transports. Recheck current
+ subscriptions and PR state before acting on every queued event.
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index ae7f3668..0322137b 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1299,18 +1299,32 @@ def watch_subscription(arguments: argparse.Namespace, repo: str, number: Optiona
+     return watch.Subscription(repo, number, "review", arguments.model, watch_reviewer(arguments.reviewer))
+ 
+ 
+-def watch_delivery(root: Path, session: str) -> tuple[str, str]:
++def codex_hook_problem(root: Path, session: str, way: str) -> Optional[str]:
++    """Why Codex runs no Projector hooks for this session, or None. A Codex session whose hooks never ran
++    has no registration, so it is known by the `CODEX_SESSION_ID` Codex sets for the commands it runs."""
++    if way not in ("codex", "none"):
++        return None
++    record = codex_watch.registration(watch.session_folder(root, session))
++    if record.get("executable") and record.get("cwd"):
++        return codex_watch.hook_problem(record["executable"], record["cwd"])
++    if os.environ.get("CODEX_SESSION_ID") == session and (executable := shutil.which("codex")):
++        return codex_watch.hook_problem(executable, os.getcwd())
++    return None
++
++
++def watch_delivery(root: Path, session: str) -> tuple[str, str, Optional[str]]:
+     way = watch.delivery(root, session, time.time())
++    problem = codex_hook_problem(root, session, way)
+     if way != "none":
+-        return way, f"events: {way}"
+-    return way, (f"events: none — start `project watch stream --session {session}` under your host's monitor "
+-                 "facility")
++        return way, f"events: {way}" + (f" — but {problem}" if problem else ""), problem
++    advice = f"start `project watch stream --session {session}` under your host's monitor facility"
++    return way, "events: none — " + (f"{problem}; until then, {advice}" if problem else advice), problem
+ 
+ 
+ def report_added(root: Path, session: str, added: list[str], json_output: bool, unchanged: str) -> None:
+-    way, line = watch_delivery(root, session)
++    way, line, problem = watch_delivery(root, session)
+     if json_output:
+-        print(json_text({"added": added, "delivery": way}))
++        print(json_text({"added": added, "delivery": way, "codex_hooks": problem}))
+         return
+     for written in added:
+         print(f"added {written}")
+@@ -1357,6 +1371,10 @@ def run_watch(arguments: argparse.Namespace) -> int:
+     started = watch.ensure_daemon(root, version, newer_release)
+     if command == "status":
+         report = {"daemon": started, **watch.status(root, time.time())}
++        registered = [record for name in report["deliveries"]
++                      if (record := codex_watch.registration(watch.session_folder(root, name))).get("executable")]
++        report["codex_hooks"] = (codex_watch.hook_problem(registered[-1]["executable"], registered[-1]["cwd"])
++                                 if registered else None)
+         if json_output:
+             print(json_text(report))
+         else:
+@@ -1377,6 +1395,8 @@ def run_watch(arguments: argparse.Namespace) -> int:
+                 problems = "; ".join(part for part in (found.get("error"), *found.get("errors", [])) if part)
+                 print(f"relay {repo}: {found.get('state')}, {found.get('queued', 0)} queued, "
+                       f"{found.get('rejected', 0)} rejected" + (f"; {problems}" if problems else ""))
++            if report["codex_hooks"]:
++                print(f"codex hooks: {report['codex_hooks']}")
+             for session, found in report["deliveries"].items():
+                 expires = found["expires_at"]
+                 when = watch.stamp(expires) if isinstance(expires, (int, float)) else "unknown"
+diff --git a/src/projector/codex_watch.py b/src/projector/codex_watch.py
+index 390182f6..b259da16 100644
+--- a/src/projector/codex_watch.py
++++ b/src/projector/codex_watch.py
+@@ -6,10 +6,12 @@
+ import hashlib
+ import json
+ import os
++import queue
+ import re
+ import shlex
+ import shutil
+ import subprocess
++import threading
+ import time
+ import uuid
+ from concurrent.futures import Future, ThreadPoolExecutor
+@@ -21,7 +23,12 @@
+ 
+ LEASE = 24 * 3600
+ LIMIT = 8 * 1024
+-TIMEOUT = 15
++TIMEOUT = 60
++RESEND = 1800
++# An uncertain batch is resent after RESEND unless its transcript shows it arrived first. A copy that
++# arrives after the batch is consumed finds its receipt and is blocked before it starts a turn.
++SENDABLE = ("prepared", "failed", "uncertain")
++UNCERTAIN = "submission outcome unknown; Projector resends it in 30 minutes unless it arrives first"
+ CONFIRM_EVERY = 30
+ MARKER = re.compile(r"^PROJECTOR WATCH ([0-9a-f-]{36})\n")
+ TERMINAL = {"MERGED", "CLOSED", "MISSING", "MOVED"}
+@@ -107,7 +114,8 @@ def recover(folder: Path) -> None:
+         if receipt.exists():
+             path.unlink()
+         elif batch["state"] == "submitting" and not sending(folder):
+-            batch.update(state="uncertain", last_error="submission outcome unknown; use codex-retry")
++            batch.update(state="uncertain", next_attempt_at=batch.get("submitted_at", 0) + RESEND,
++                         last_error=UNCERTAIN)
+             write_json(path, batch)
+     items = queued(folder)
+     remaining = [item for item in items if item["key"] not in keys]
+@@ -161,7 +169,7 @@ def prepare(folder: Path, now: float) -> Optional[dict]:
+     batches = pending(folder)
+     if batches:
+         batch = batches[0][1]
+-        if batch["state"] not in ("prepared", "failed") or batch.get("next_attempt_at", 0) > now:
++        if batch["state"] not in SENDABLE or batch.get("next_attempt_at", 0) > now:
+             return None
+         return batch
+     items = [item for item in queued(folder) if eligible(folder, item)]
+@@ -346,6 +354,75 @@ def register(folder: Path, session: str, cwd: str, now: float, *, transcript: Op
+         return record
+ 
+ 
++HOOK_COMMAND = "project watch codex-hook"
++HOOK_EVENTS = {"sessionStart", "sessionEnd", "userPromptSubmit", "postToolUse", "stop"}
++
++
++def hook_problem(executable: str, cwd: str, *, popen: Callable = subprocess.Popen,
++                 timeout: float = 10.0) -> Optional[str]:
++    """What keeps Codex from running Projector's hooks, by Codex's own `hooks/list`, or None when it runs
++    all five or cannot say. Codex re-gates a plugin's hooks whenever any file in the plugin changes."""
++    hooks = listed_hooks(executable, cwd, popen=popen, timeout=timeout)
++    if hooks is None:
++        return None
++    ours = [hook for hook in hooks if hook.get("command") == HOOK_COMMAND]
++    running = {hook.get("eventName") for hook in ours
++               if hook.get("enabled") and hook.get("trustStatus") in ("trusted", "managed")}
++    if running >= HOOK_EVENTS:
++        return None
++    if not ours:
++        return ("Codex has no Projector hooks; run `codex plugin add projector-hooks@projector`, "
++                "then trust its hooks in /hooks")
++    states = sorted({str(hook.get("trustStatus")) if hook.get("enabled") else "disabled"
++                     for hook in ours if hook.get("eventName") not in running})
++    return f"Codex is not running Projector's hooks ({', '.join(states)}); trust them in /hooks"
++
++
++def listed_hooks(executable: str, cwd: str, *, popen: Callable, timeout: float) -> Optional[list[dict]]:
++    """Every hook `codex app-server` lists for `cwd`, over its stdio JSON-RPC. The server exits at the end
++    of its input before it answers, so stdin stays open until the answer arrives."""
++    try:
++        process = popen([executable, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
++                        stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", cwd=cwd)
++    except OSError:
++        return None
++    lines: queue.Queue = queue.Queue()
++
++    def read() -> None:
++        for line in process.stdout:
++            lines.put(line)
++        lines.put(None)
++
++    threading.Thread(target=read, daemon=True).start()
++    deadline = time.monotonic() + timeout
++
++    def send(message: dict) -> None:
++        process.stdin.write(json.dumps({"jsonrpc": "2.0", **message}) + "\n")
++        process.stdin.flush()
++
++    def call(number: int, method: str, params: dict) -> object:
++        send({"id": number, "method": method, "params": params})
++        while True:
++            line = lines.get(timeout=max(0.0, deadline - time.monotonic()))
++            if line is None:
++                raise EOFError
++            answer = json.loads(line)
++            if isinstance(answer, dict) and answer.get("id") == number:
++                return answer["result"]
++
++    try:
++        call(1, "initialize", {"clientInfo": {"name": "projector", "version": "1"},
++                               "capabilities": {"experimentalApi": True}})
++        send({"method": "initialized"})
++        result = call(2, "hooks/list", {"cwds": [cwd]})
++        return [hook for entry in result["data"] for hook in entry["hooks"] if isinstance(hook, dict)]
++    except (OSError, ValueError, EOFError, queue.Empty, KeyError, TypeError):
++        return None
++    finally:
++        process.kill()
++        process.wait()
++
++
+ def tool_output(event: dict) -> Optional[str]:
+     tool_input = event.get("tool_input")
+     command = tool_input.get("command") if isinstance(tool_input, dict) else None
+@@ -483,7 +560,9 @@ def tick(self, folders: list[Path]) -> None:
+                     prune_receipts(folder, self.wall())
+                     self.cleaned[folder] = self.wall()
+                 batches = pending(folder)
+-                if batches and batches[0][1]["state"] in ("queued", "uncertain") and not self.confirm(folder, *batches[0]):
++                waiting = batches[0][1] if batches else {}
++                if (waiting.get("state") in ("queued", "uncertain") and not self.confirm(folder, *batches[0])
++                        and not (waiting["state"] == "uncertain" and waiting.get("next_attempt_at", 0) <= self.wall())):
+                     continue
+                 batch = prepare(folder, self.wall())
+             if batch is not None:
+@@ -509,7 +588,7 @@ def _send(self, folder: Path, batch_id: str) -> None:
+         with locked(folder):
+             record = registration(folder)
+             batch = read_json(path)
+-            if not active(folder, self.wall()) or not batch or batch["state"] not in ("prepared", "failed"):
++            if not active(folder, self.wall()) or not batch or batch["state"] not in SENDABLE:
+                 return
+             batch["items"] = [item for item in batch["items"] if eligible(folder, item)]
+             if not batch["items"]:
+@@ -522,7 +601,8 @@ def _send(self, folder: Path, batch_id: str) -> None:
+                 write_json(path, batch)
+                 return
+             batch.update(state="submitting", attempts=batch["attempts"] + 1,
+-                         transcript_offset=Path(transcript).stat().st_size if transcript else 0)
++                         transcript_offset=Path(transcript).stat().st_size if transcript else 0,
++                         submitted_at=self.wall())
+             write_json(path, batch)
+         try:
+             result = self.run([record["executable"], "queue", "--thread", record["thread_id"],
+@@ -533,14 +613,15 @@ def _send(self, folder: Path, batch_id: str) -> None:
+             error = ("queued with a Codex warning; inspect the thread or resume it manually" if result.stderr else "") \
+                 if state == "queued" else "Codex queue failed; retry scheduled"
+         except subprocess.TimeoutExpired:
+-            state, error = "uncertain", "submission timed out; use codex-retry only if resending is intended"
++            state, error = "uncertain", UNCERTAIN
+         except OSError:
+             state, error = "failed", "Codex could not start; retry scheduled"
+         with locked(folder):
+             if (folder / "codex-receipts" / path.name).exists() or not path.exists():
+                 return
+             batch.update(state=state, last_error=error,
+-                         next_attempt_at=self.wall() + (30, 60, 120, 300)[min(batch["attempts"] - 1, 3)])
++                         next_attempt_at=batch["submitted_at"] + RESEND if state == "uncertain" else
++                         self.wall() + (30, 60, 120, 300)[min(batch["attempts"] - 1, 3)])
+             write_json(path, batch)
+ 
+     def close(self) -> None:
+diff --git a/tests/test_codex_watch.py b/tests/test_codex_watch.py
+index bffbba2a..f1c2024a 100644
+--- a/tests/test_codex_watch.py
++++ b/tests/test_codex_watch.py
+@@ -199,7 +199,7 @@ def run(*args, **kwargs):
+                                                     codex.message("session-A", batch), self.now))
+         self.assertEqual("consumed", codex.report(self.folder, self.now)["state"])
+ 
+-    def test_definite_failure_backs_off_and_timeout_requires_explicit_retry(self):
++    def test_definite_failure_backs_off_and_timeout_is_resent_after_the_resend_delay(self):
+         (self.root / "fail").touch()
+         self.enqueue()
+         self.send()
+@@ -207,14 +207,46 @@ def test_definite_failure_backs_off_and_timeout_requires_explicit_retry(self):
+         self.now += 30
+         batch = self.prepare()
+         self.assertIsNotNone(batch)
+-        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", 15))
++        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", codex.TIMEOUT))
+         self.dispatcher.send(self.folder, batch["batch_id"])
+-        self.now += 10000
+-        self.assertIsNone(self.prepare())
+         self.assertEqual("uncertain", codex.report(self.folder, self.now)["state"])
++        self.now += codex.RESEND - 1
++        self.assertIsNone(self.prepare())
+         codex.retry(self.folder, self.now)
+         self.assertEqual(batch["batch_id"], self.prepare()["batch_id"])
+ 
++    def test_timed_out_submission_is_resent_once_unless_the_transcript_shows_it_arrived(self):
++        transcript = self.transcript()
++        self.hook("SessionStart", transcript, source="startup")
++        self.enqueue()
++        batch = self.prepare()
++        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", codex.TIMEOUT))
++        self.dispatcher.send(self.folder, batch["batch_id"])
++        self.dispatcher.run = subprocess.run
++        self.now += codex.RESEND - 1
++        self.tick()
++        self.assertEqual([], self.calls())
++        self.now += 1
++        self.tick()
++        self.assertEqual(1, len(self.calls()))
++        self.assertEqual(batch["batch_id"], codex.pending(self.folder)[0][0].stem)
++        self.assertEqual("queued", codex.pending(self.folder)[0][1]["state"])
++
++    def test_timed_out_submission_that_arrived_is_consumed_instead_of_resent(self):
++        transcript = self.transcript()
++        self.hook("SessionStart", transcript, source="startup")
++        self.enqueue()
++        batch = self.prepare()
++        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", codex.TIMEOUT))
++        self.dispatcher.send(self.folder, batch["batch_id"])
++        self.dispatcher.run = subprocess.run
++        with transcript.open("a") as stream:
++            stream.write(json.dumps({"text": codex.message("session-A", batch)}) + "\n")
++        self.now += codex.RESEND
++        self.tick()
++        self.assertEqual([], self.calls())
++        self.assertTrue((self.folder / "codex-receipts" / f"{batch['batch_id']}.json").exists())
++
+     def test_repeated_queue_failures_wait_until_each_retry_deadline(self):
+         (self.root / "fail").touch()
+         self.enqueue()
+@@ -492,3 +524,42 @@ def test_wall_clock_expiry_wins_over_sleep_forgiveness_and_daemon_restart(self):
+         self.assertNotIn("codex-review", restarted.live)
+         self.daemon.scan(self.clock.mono())
+         self.assertNotIn("codex-review", self.daemon.live)
++
++
++class HookTrustTests(unittest.TestCase):
++    """`hook_problem` reads Codex's own `hooks/list` over `codex app-server`'s stdio."""
++
++    def setUp(self):
++        temporary = tempfile.TemporaryDirectory()
++        self.addCleanup(temporary.cleanup)
++        self.root = Path(temporary.name)
++
++    def fake(self, hooks, *, answers=True):
++        executable = self.root / "codex"
++        executable.write_text(f"#!{sys.executable}\nimport json, sys\nhooks = {hooks!r}\nanswers = {answers!r}\n" + '''
++for line in sys.stdin:
++    message = json.loads(line)
++    if not answers:
++        continue
++    if message.get("id") == 1:
++        print(json.dumps({"id": 1, "result": {}}), flush=True)
++    elif message.get("id") == 2:
++        print(json.dumps({"id": 2, "result": {"data": [{"hooks": hooks}]}}), flush=True)
++''')
++        executable.chmod(0o755)
++        return str(executable)
++
++    def hooks(self, status, command=codex.HOOK_COMMAND):
++        return [{"eventName": name, "command": command, "enabled": True, "trustStatus": status}
++                for name in sorted(codex.HOOK_EVENTS)]
++
++    def test_five_trusted_hooks_are_no_problem(self):
++        self.assertIsNone(codex.hook_problem(self.fake(self.hooks("trusted")), str(self.root)))
++
++    def test_missing_hooks_name_the_plugin_to_install(self):
++        problem = codex.hook_problem(self.fake(self.hooks("trusted", "trip on")), str(self.root))
++        self.assertIn("codex plugin add projector-hooks@projector", problem)
++
++    def test_a_silent_server_is_given_up_on_without_a_verdict(self):
++        executable = self.fake(self.hooks("modified"), answers=False)
++        self.assertIsNone(codex.hook_problem(executable, str(self.root), timeout=0.5))
+diff --git a/tests/test_install.py b/tests/test_install.py
+index cb1d3f8d..601bc6d1 100644
+--- a/tests/test_install.py
++++ b/tests/test_install.py
+@@ -300,6 +300,7 @@ def test_host_installs_remove_only_exact_legacy_links(self) -> None:
+         self.assertIn("claude plugin install projector@projector --scope user", log)
+         self.assertRegex(log, r"codex plugin marketplace add \S+\n")
+         self.assertIn("codex plugin add projector@projector", log)
++        self.assertIn("codex plugin add projector-hooks@projector\n", log)
+ 
+     def host_has(
+         self, host: str, *, marketplace: str, version: str, source: str | None = None
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index 7c91b2ea..9aab36dd 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -114,7 +114,9 @@ def test_only_claude_code_loads_the_hooks_module(self) -> None:
+         self.assertEqual("./hooks/types.d.ts", self.manifest("claude")["types"])
+         self.assertTrue((ROOT / "hooks" / "types.d.ts").is_file())
+         self.assertNotIn("types", self.manifest("codex"))
+-        codex_hooks = json.loads((ROOT / self.manifest("codex")["hooks"]).read_text())
++        self.assertNotIn("hooks", self.manifest("codex"))
++        hooks_plugin = json.loads((ROOT / "codex-hooks" / ".codex-plugin" / "plugin.json").read_text())
++        codex_hooks = json.loads((ROOT / "codex-hooks" / hooks_plugin["hooks"]).read_text())
+         self.assertNotIn("modules", codex_hooks)
+         commands = [handler["command"] for groups in codex_hooks["hooks"].values()
+                     for group in groups for handler in group["hooks"]]
+@@ -124,6 +126,23 @@ def test_only_claude_code_loads_the_hooks_module(self) -> None:
+             args = cli.parser().parse_args(command.split()[1:])
+             self.assertEqual("codex-hook", args.watch_command)
+ 
++    def test_codex_hooks_ship_in_a_plugin_that_a_release_leaves_unchanged(self) -> None:
++        # Codex trusts a plugin's hooks by a hash of every file in the plugin, so
++        # any file a release touches here would make every user trust the hooks
++        # again. The release bumps only the root manifests.
++        root = ROOT / "codex-hooks"
++        files = sorted(str(path.relative_to(root)) for path in root.rglob("*") if path.is_file())
++        self.assertEqual([".codex-plugin/plugin.json", "hooks.json"], files)
++        plugin = json.loads((root / ".codex-plugin" / "plugin.json").read_text())
++        self.assertEqual("projector-hooks", plugin["name"])
++        self.assertEqual("./hooks.json", plugin["hooks"])
++        self.assertNotEqual(self.manifest("codex")["version"], plugin["version"])
++        release = (ROOT / ".github" / "scripts" / "release.py").read_text()
++        self.assertNotIn("codex-hooks", release)
++        [entry] = [entry for entry in json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text())["plugins"]
++                   if entry["name"] == "projector-hooks"]
++        self.assertEqual({"source": "local", "path": "./codex-hooks"}, entry["source"])
++
+     def test_only_claude_code_declares_gh_stack_as_a_dependency(self) -> None:
+         # Codex has no plugin dependencies; install.sh adds gh-stack there.
+         self.assertEqual(["gh-stack"], self.manifest("claude")["dependencies"])
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index 5ff88e90..a9f335ee 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -2127,7 +2127,49 @@ def test_add_names_the_deliverer_that_renews_the_session(self) -> None:
+         code, out, err = self.project("add", "https://github.com/acme/app/pull/12/files", "--json")
+ 
+         self.assertEqual(0, code, err)
+-        self.assertEqual({"added": ["acme/app#12 fix"], "delivery": "mod", "schema_version": 2}, json.loads(out))
++        self.assertEqual({"added": ["acme/app#12 fix"], "delivery": "mod", "codex_hooks": None, "schema_version": 2},
++                         json.loads(out))
++
++    def fake_codex(self, status: str) -> Path:
++        """A `codex` whose `app-server` lists Projector's five hooks with `status`."""
++        executable = self.scratch / "codex"
++        hooks = [{"eventName": name, "command": "project watch codex-hook", "enabled": True, "trustStatus": status}
++                 for name in ("sessionStart", "sessionEnd", "userPromptSubmit", "postToolUse", "stop")]
++        executable.write_text(f"#!{sys.executable}\nimport json, sys\nhooks = {hooks!r}\n" + '''
++for line in sys.stdin:
++    message = json.loads(line)
++    if message.get("id") == 1:
++        print(json.dumps({"id": 1, "result": {}}), flush=True)
++    elif message.get("id") == 2:
++        print(json.dumps({"id": 2, "result": {"data": [{"hooks": hooks}]}}), flush=True)
++''')
++        executable.chmod(0o755)
++        return executable
++
++    def test_add_reports_codex_hooks_codex_has_stopped_running(self) -> None:
++        folder = watch.session_folder(self.root, "codex-A")
++        folder.mkdir(parents=True)
++        watch.write_json(folder / "codex.json", {"schema_version": 1, "thread_id": "codex-A", "enabled": True,
++                                           "executable": str(self.fake_codex("modified")), "cwd": str(self.cwd),
++                                           "expires_at": time.time() + 3600})
++
++        code, out, err = self.project("add", "acme/app#12", "--session", "codex-A")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual("added acme/app#12 fix\nevents: codex — but Codex is not running Projector's hooks "
++                         "(modified); trust them in /hooks\n", out)
++
++    def test_add_reports_untrusted_hooks_for_a_codex_session_they_never_registered(self) -> None:
++        executable = self.fake_codex("untrusted")
++        with mock.patch.dict(os.environ, {"CODEX_SESSION_ID": "codex-B"}), \
++                mock.patch.object(shutil, "which", lambda name: str(executable) if name == "codex" else None):
++            code, out, err = self.project("add", "acme/app#12", "--session", "codex-B", "--json")
++            _, trusted, _ = self.project("add", "acme/app#13", "--session", "top-level", "--json")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual("Codex is not running Projector's hooks (untrusted); trust them in /hooks",
++                         json.loads(out)["codex_hooks"])
++        self.assertIsNone(json.loads(trusted)["codex_hooks"])
+ 
+     def test_add_lands_in_the_session_the_host_names(self) -> None:
+         self.project("add", "acme/app#12")
