@@ -389,8 +389,9 @@ def listed_hooks(executable: str, cwd: str, *, popen: Callable, timeout: float) 
     lines: queue.Queue = queue.Queue()
 
     def read() -> None:
-        for line in process.stdout:
-            lines.put(line)
+        with process.stdout:
+            for line in process.stdout:
+                lines.put(line)
         lines.put(None)
 
     threading.Thread(target=read, daemon=True).start()
@@ -421,6 +422,8 @@ def listed_hooks(executable: str, cwd: str, *, popen: Callable, timeout: float) 
     finally:
         process.kill()
         process.wait()
+        with contextlib.suppress(OSError):
+            process.stdin.close()
 
 
 def tool_output(event: dict) -> Optional[str]:
