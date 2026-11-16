@@ -61,7 +61,7 @@ def require_tools() -> None:
 
 
 def tool(args: list[str]) -> str:
-    """Run one of Apple's tools, or Git or `open`, and return its output, or fail with what it printed."""
+    """Run one of Apple's tools, `cp`, or `open`, and return its output, or fail with what it printed."""
     result = subprocess.run(args, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if result.returncode:
         detail = (result.stderr.strip() or result.stdout.strip()).splitlines()

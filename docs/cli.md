@@ -3214,8 +3214,9 @@ build of pull request 12 even after you build another target. With no target,
 or one with a commit by an author who has no write access to the repository,
 is refused with exit 65, because `xcodebuild` runs the project's build
 scripts as you. Read its build phases and scripts, then pass
-`--allow-untrusted` to build it. A second `project ios` run in the same
-repository waits for the first to finish.
+`--allow-untrusted` to build it. `build`, `install`, and `cleanup` take
+turns: while one runs in a repository, another of the three waits for it to
+finish. `devices`, `crashes`, and `logs` never wait.
 
 Each of `build`, `install`, `crashes`, and `logs` takes these options:
 
