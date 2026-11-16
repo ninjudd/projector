@@ -120,19 +120,63 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning' | 'subtle'> =
   cancelled: 'subtle',
 }
 
-/** The fill of a label whose color the panel has yet to read: GitHub's gray. */
-const UNKNOWN_LABEL_COLOR = '#ededed'
-
 /**
- * How a drawer draws a label, as GitHub's light theme does: on its own color,
- * in black when the color's perceived lightness passes GitHub's threshold of
- * 0.453, and in white otherwise.
+ * The contrast a drawer keeps between a label's name and the panel's
+ * background: WCAG's 3:1, its minimum for large text. WCAG asks 4.5:1 of
+ * text this size, but that would move GitHub's mid-tone colors, its green and
+ * purple among them, off the colors people know their labels by. A label
+ * below 3:1 is mixed toward white or black, whichever stands further from the
+ * background, one `LABEL_MIX_STEPS`th at a time, and stops at the first mix
+ * that reaches 3:1, so it keeps as much of its own color as it can.
+ * A background whose shade the panel cannot know, such as `inverseText` or
+ * `ansi256(n)`, is taken as black, so only a dark label changes, and only
+ * to a mid tone that white sets off as well.
  */
-function labelStyle(color: string | null): { backgroundColor: string; color: string } {
-  const fill = color ?? UNKNOWN_LABEL_COLOR
-  const [red, green, blue] = [1, 3, 5].map(at => Number.parseInt(fill.slice(at, at + 2), 16) / 255)
-  const lightness = 0.2126 * (red ?? 0) + 0.7152 * (green ?? 0) + 0.0722 * (blue ?? 0)
-  return { backgroundColor: fill, color: lightness > 0.453 ? '#000000' : '#ffffff' }
+const LABEL_CONTRAST = 3
+const LABEL_MIX_STEPS = 20
+
+type Rgb = readonly [number, number, number]
+
+const BLACK: Rgb = [0, 0, 0]
+const WHITE: Rgb = [255, 255, 255]
+
+/** The channels of a literal `#rgb`, `#rrggbb`, or `rgb(r,g,b)` color, or undefined for any other color. */
+function rgbOf(value: string): Rgb | undefined {
+  const digits = HEX_COLOR.exec(value)?.[1]
+  const pairs = digits?.length === 3 ? [...digits].map(digit => digit + digit) : digits?.match(/../g)
+  const channels = pairs?.map(pair => Number.parseInt(pair, 16)) ?? RGB_COLOR.exec(value)?.slice(1).map(Number)
+  const [red, green, blue] = channels ?? []
+  return red === undefined || green === undefined || blue === undefined ? undefined : [red, green, blue]
+}
+
+/** A color's relative luminance as WCAG defines it, from 0 for black to 1 for white. */
+function luminanceOf(rgb: Rgb): number {
+  const [red, green, blue] = rgb.map(channel => {
+    const value = channel / 255
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * (red ?? 0) + 0.7152 * (green ?? 0) + 0.0722 * (blue ?? 0)
+}
+
+/** The WCAG contrast ratio between two luminances, from 1 to 21. */
+function contrastOf(one: number, other: number): number {
+  return (Math.max(one, other) + 0.05) / (Math.min(one, other) + 0.05)
+}
+
+/** The color a drawer draws a label's name in on `background`, as `LABEL_CONTRAST` describes. */
+function labelColor(color: string, background: string): string {
+  const fill = rgbOf(color)
+  const behind = luminanceOf(rgbOf(background) ?? BLACK)
+  if (fill === undefined || contrastOf(luminanceOf(fill), behind) >= LABEL_CONTRAST) return color
+  const toward = contrastOf(1, behind) >= contrastOf(0, behind) ? WHITE : BLACK
+  for (let step = 1; step <= LABEL_MIX_STEPS; step++) {
+    const mix = (at: 0 | 1 | 2) => Math.round(fill[at] + ((toward[at] - fill[at]) * step) / LABEL_MIX_STEPS)
+    const mixed: Rgb = [mix(0), mix(1), mix(2)]
+    if (contrastOf(luminanceOf(mixed), behind) >= LABEL_CONTRAST) {
+      return `#${mixed.map(channel => channel.toString(16).padStart(2, '0')).join('')}`
+    }
+  }
+  return color
 }
 
 /**
@@ -287,7 +331,8 @@ const BACKGROUND_ALIASES = new Map([
  * allowed after `(`, each comma, and before `)`. Each number is at most 255.
  */
 const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
-const NUMBERED_COLORS = [/^rgb\( ?(\d{1,3}), ?(\d{1,3}), ?(\d{1,3}) ?\)$/, /^ansi256\( ?(\d{1,3}) ?\)$/]
+const RGB_COLOR = /^rgb\( ?(\d{1,3}), ?(\d{1,3}), ?(\d{1,3}) ?\)$/
+const NUMBERED_COLORS = [RGB_COLOR, /^ansi256\( ?(\d{1,3}) ?\)$/]
 
 /** What the panel draws for a `panel.background` value other than `auto`, or undefined when it takes none. */
 function backgroundFor(value: string): string | undefined {
@@ -2396,12 +2441,15 @@ export const register: Register = on => {
             {isLoaded && ` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
             {pr.checks !== null && ' · '}
             {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
-            {pr.labels.length > 0 && ' ·'}
             {pr.labels.flatMap(label => [
-              ' ',
-              <Text key={`label:${label.name}`} {...labelStyle(label.color)}>
-                {` ${label.name} `}
-              </Text>,
+              ' · ',
+              label.color === null ? (
+                label.name
+              ) : (
+                <Text key={`label:${label.name}`} color={labelColor(label.color, color)}>
+                  {label.name}
+                </Text>
+              ),
             ])}
           </Text>
           {drawActions(

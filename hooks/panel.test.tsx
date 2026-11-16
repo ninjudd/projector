@@ -98,6 +98,7 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
           { name: 'clean', color: '0E8A16' },
           { name: 'good first issue', color: '7057ff' },
           { name: 'Docs', color: 'fbca04' },
+          { name: 'breaking', color: 'b60205' },
           { name: 'legacy' },
         ],
       },
@@ -1003,46 +1004,79 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   await ui.unmount()
 })
 
-test('a drawer ends its facts with every label as GitHub draws it, a clean the row’s word gave way to among them', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#17\n' })
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
-  const ui = await $.ui.mount(PANEL)
+// Each label is its name as GitHub spells it, set off by a `·` like the rest of the facts, in its own color but where
+// that color stands too close to the panel's background: GitHub's dark red, lightened toward white on the dark theme's
+// near-black, and its yellow, darkened toward black on the light theme's near-white. An ANSI theme's background has no
+// shade the panel can know, so it counts as black there: the red only just misses 3:1 on it and is lightened a step,
+// while the yellow is left alone. A label whose color is unknown keeps the default color.
+for (const [theme, labels] of [
+  [
+    'dark',
+    [
+      ['clean', '#0e8a16'],
+      ' · ',
+      ['good first issue', '#7057ff'],
+      ' · ',
+      ['Docs', '#fbca04'],
+      ' · ',
+      ['breaking', '#c1282b'],
+      ' · ',
+      'legacy',
+    ],
+  ],
+  [
+    'light',
+    [
+      ['clean', '#0e8a16'],
+      ' · ',
+      ['good first issue', '#7057ff'],
+      ' · ',
+      ['Docs', '#a38303'],
+      ' · ',
+      ['breaking', '#b60205'],
+      ' · ',
+      'legacy',
+    ],
+  ],
+  [
+    'light-ansi',
+    [
+      ['clean', '#0e8a16'],
+      ' · ',
+      ['good first issue', '#7057ff'],
+      ' · ',
+      ['Docs', '#fbca04'],
+      ' · ',
+      ['breaking', '#ba0f12'],
+      ' · ',
+      'legacy',
+    ],
+  ],
+] as const) {
+  test(`a drawer ends its facts with every label in its color, made readable on the ${theme} theme, a clean the row’s word gave way to among them`, async ($, on) => {
+    const { clock } = panelWorld(on, { theme, files: { [REVIEW]: 'o/r#17\n' } })
+    await startSession($, clock)
+    const ui = await $.ui.mount(PANEL)
 
-  // The conflict is the row's word, and the failing checks and the clean label it beat are its notes.
-  expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
-  expect(partsOf(await ui.find({ type: 'Text', text: /^failing · clean$/ }))).toEqual([
-    ['failing', 'error'],
-    ' · ',
-    ['clean', 'success'],
-  ])
+    // The conflict is the row's word, and the failing checks and the clean label it beat are its notes.
+    expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
+    expect(partsOf(await ui.find({ type: 'Text', text: /^failing · clean$/ }))).toEqual([
+      ['failing', 'error'],
+      ' · ',
+      ['clean', 'success'],
+    ])
 
-  await ui.press({ key: 'pr:o/r#17' })
-  await clock.settle()
-  const facts = await ui.find({ type: 'Text', text: /^reviewer · .* · checks failing · / })
-  const pieces = (facts?.children ?? []) as (string | { props: Record<string, unknown>; children: string[] })[]
-  const labels = pieces.slice(pieces.findIndex(piece => piece === ' ·') + 1)
-  // Each label is spaced off the one before it and drawn on its own color, as GitHub spells it: in white on a dark
-  // color, in black on a light one, and on GitHub's gray where the color is unknown.
-  expect(
-    labels.map(piece =>
-      typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.backgroundColor, piece.props.color],
-    ),
-  ).toEqual([
-    ' ',
-    [' clean ', '#0e8a16', '#ffffff'],
-    ' ',
-    [' good first issue ', '#7057ff', '#ffffff'],
-    ' ',
-    [' Docs ', '#fbca04', '#000000'],
-    ' ',
-    [' legacy ', '#ededed', '#000000'],
-  ])
-  await ui.unmount()
-})
+    await ui.press({ key: 'pr:o/r#17' })
+    await clock.settle()
+    const facts = partsOf(await ui.find({ type: 'Text', text: /^reviewer · .* · checks failing · / }))
+    expect(facts.slice(facts.findIndex(piece => piece[0] === 'checks failing'))).toEqual([
+      ['checks failing', 'error'],
+      ' · ',
+      ...labels,
+    ])
+    await ui.unmount()
+  })
+}
 
 test('names pull requests by number alone when their one repository is spelled in two cases', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
