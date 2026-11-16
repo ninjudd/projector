@@ -1,0 +1,110 @@
+{
+ "version": 1,
+ "name": "Codex rules bare command",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 464,
+  "title": "Keep the Codex rules to the bare project command",
+  "head": "7e045ed29b5e55b0829d18345d148335deda0301",
+  "headRef": "codex-host-executable",
+  "base": "d759795ad403aade1170333d660f8be749e34e8a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project init</code> writes two sets of permission rules into the person's own settings: allow rules for Claude Code in <code>~/.claude/settings.json</code>, and allow rules for Codex in <code>~/.codex/rules/projector.rules</code>. Codex runs a command that an allow rule matches outside its sandbox and without asking, so the rules have to match only Projector's own <code>project</code> command.",
+   "They matched more than that. When Codex sees a command that starts with a path to a program, such as <code>/tmp/x/project summary publish</code> or <code>./project list</code>, it matches the rules written for the program's basename, <code>project</code>, unless a <code>host_executable</code> entry lists the paths it accepts. Projector's rules had no such entry, so any program named <code>project</code>, one an agent wrote into a temporary directory included, ran unsandboxed and unasked.",
+   "This change ends the generated rules file with <code>host_executable(name = \"project\", paths = [])</code>. An empty list accepts no path, so a path to a <code>project</code> program goes to Codex's usual approval, while the bare <code>project</code> that every skill runs stays allowed. Claude Code needs no change, because it matches the command text, and <code>Bash(project *)</code> never matched a path.",
+   "A Codex that cannot parse <code>host_executable</code> falls back to an empty policy, which drops the person's own rules as well as Projector's. So the change also states Codex 0.107 as the minimum version in the README and in the <code>init</code> documentation."
+  ],
+  "cards": [
+   {
+    "id": "decisions",
+    "title": "What Codex decides under each rules file",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Command</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td><code>project summary publish</code></td><td>allow</td><td class=\"r\">allow</td></tr><tr><td><code>/tmp/x/project summary publish</code></td><td>allow</td><td class=\"r\">usual approval</td></tr><tr><td><code>/usr/local/bin/project list --json</code></td><td>allow</td><td class=\"r\">usual approval</td></tr><tr><td><code>./project review publish 12</code></td><td>allow</td><td class=\"r\">usual approval</td></tr></tbody></table></div><p class=\"note\">Checked with Codex 0.169 and <code>codex execpolicy check --resolve-host-executables</code>, which resolves paths as a live session does.</p>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Rules file.</b> A Starlark file in Codex's rules directory. Codex loads every <code>.rules</code> file there when a session starts.</li><li><b><code>prefix_rule</code>.</b> A rule that matches a command whose first words equal its pattern.</li><li><b><code>host_executable</code>.</b> An entry that lists which absolute paths to a program may match the rules written for its bare name.</li><li><b>Usual approval.</b> What Codex does with a command no rule allows: run it in the sandbox, or ask, by the session's approval setting.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "rules",
+   "title": "The generated Codex rules",
+   "kicker": "The line that keeps the allow rules to the bare name",
+   "intro": [
+    "<code>CODEX_RULES</code> is the whole text <code>init</code> writes to <code>projector.rules</code>. It now ends with <code>CODEX_HOST_EXECUTABLE</code>, the <code>host_executable</code> entry with an empty list of paths. The hint <code>init</code> prints when it cannot write the file now names that line beside the <code>prefix_rule</code> entries, so a person who adds the rules by hand adds it too.",
+    "Because <code>init</code> compares the file whole, a file an earlier release wrote reads as out of date, and the next <code>init</code> at a terminal rewrites it. The <code>permission-rules</code> digest changes with the text, so sessions tell the person to run <code>init</code> again."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds <code>CODEX_HOST_EXECUTABLE</code>, appends it to <code>CODEX_RULES</code>, and names it in the hint for a kept file.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "With Codex 0.169, the base's rules allow <code>/tmp/x/project summary publish</code>, <code>/usr/local/bin/project list --json</code>, <code>./project review publish 12</code>, and <code>x/project list</code>, and the head's rules match none of them. The bare <code>project summary publish</code> is allowed under both."
+      },
+      {
+       "kind": "verify",
+       "text": "Codex's rules loader falls back to an empty policy when a file fails to parse, and only logs a warning, as the comment and the documentation say. Read in Codex's own source."
+      },
+      {
+       "kind": "context",
+       "text": "<code>init</code> does not check the installed Codex's version before it writes this line. On a Codex older than 0.107, the person's own rules, <code>forbidden</code> ones included, stop applying with nothing on screen to say why. The documentation tells the person to update Codex first, and the review lists a version check in <code>init</code> as a suggestion."
+      },
+      {
+       "kind": "verify",
+       "text": "Codex 0.107 is Projector's minimum, the first release whose rules parser registers <code>host_executable</code>; 0.106.0 has no such builtin. Live sessions resolve program paths from 0.108, whose <code>exec_policy.rs</code> first sets <code>resolve_host_executables: true</code>. Both read in Codex's own source.",
+       "line": 164
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "The permission tests",
+   "kicker": "Three path cases, checked against a real Codex where one is installed",
+   "intro": [
+    "<code>DECISIONS</code> is the table of command lines with the decision each host must reach under Projector's rules. It gains three lines that start with a path to <code>project</code>, and each must reach no decision on either host. The test that runs the real <code>codex</code> CLI now passes <code>--resolve-host-executables</code>, so it resolves paths as a live session does. It is the test that catches the hole: against the base's rules it fails on exactly the three new lines."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "<code>codex_decision</code>, the test's own model of Codex, compares words and never resolves a path, so it reaches <code>none</code> for the path cases at the base too. Only the test that runs <code>codex</code> tells the two rules files apart, and it is skipped where Codex is not installed."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Adds the path cases to <code>DECISIONS</code>, resolves paths in the real Codex check, and checks that the documentation shows the <code>host_executable</code> line."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The rules block, the minimum Codex version, and the check command",
+   "intro": [
+    "The <code>init</code> section of <code>docs/cli.md</code> shows the new last line of the rules file, says why it is there, and says what an older Codex does with it. Its example <code>codex execpolicy check</code> command gains <code>--resolve-host-executables</code>. The README's requirements name the minimum Codex version."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the <code>host_executable</code> line, the minimum Codex version, and the path-resolving check."
+    },
+    {
+     "path": "README.md",
+     "note": "Adds the minimum Codex version to the install requirements."
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,136 @@
+diff --git a/README.md b/README.md
+index 21e1dcfc..be0d4887 100644
+--- a/README.md
++++ b/README.md
+@@ -13,7 +13,7 @@ shared `now.md`, `next.md`, or `later.md` queue.
+ 
+ One command installs the `project` command from the newest release and the
+ plugin for Claude Code and Codex, whichever you have. It needs Python 3.11 or
+-newer, and no git:
++newer, Codex 0.107 or newer if you use Codex, and no git:
+ 
+ ```sh
+ curl -fsSL https://projector.bot/install.sh | bash
+diff --git a/docs/cli.md b/docs/cli.md
+index 134a3c57..1b8eb130 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -243,8 +243,20 @@ what it did to each:
+       pattern = ["project", "site", ["page", "status", "workflow"]],
+       decision = "allow",
+   )
++  host_executable(name = "project", paths = [])
+   ```
+ 
++  The last line keeps the rules to the bare name `project`. Codex matches an
++  absolute program path, such as `/tmp/x/project`, against the rules for its
++  basename unless a `host_executable` entry lists the paths it accepts. This
++  one lists none, so `/tmp/x/project summary publish` goes to Codex's usual
++  approval instead of running outside the sandbox, while the bare
++  `project summary publish` an agent runs stays allowed. Claude Code matches
++  the command text, so `Bash(project *)` never matches a path to a program.
++  The rules need Codex 0.107 or newer. An older Codex cannot parse
++  `host_executable`, and a rules file it cannot parse leaves it with no
++  rules at all, your own included, so update Codex before you run `init`.
++
+   No rule matches `project init`, `project upgrade`, `project config set` or
+   `unset`, `project create` or `project edit`, whose editor an agent could
+   drive, `project review gate`, `project site build` or `serve`,
+@@ -255,8 +267,9 @@ what it did to each:
+   decides them, in its sandbox. A command added to Projector later reaches
+   Codex once Projector names it and you run `init` again. To see what the
+   rules allow, run
+-  `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
+-  That checks the command alone. Codex checks each command of a chain such as
++  `codex execpolicy check --resolve-host-executables --rules ~/.codex/rules/projector.rules project summary publish`,
++  where `--resolve-host-executables` resolves a program path as a live
++  session does. That checks the command alone. Codex checks each command of a chain such as
+   `gh repo view && project summary publish` on its own and takes the
+   strictest result, so a command no rule names sends the whole call to its
+   usual approval, and an agent runs each `project` command as a call of its
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 9d812a13..0c8b95c7 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -88,6 +88,11 @@
+ take the strictest result, so a rule covers a `project` command only when
+ the call runs it alone, and the skills run each publish that way. No rule
+ allows `gh` or the shell to make a chain pass.
++
++Codex matches an absolute program path, such as `/tmp/x/project`, against the
++rules for its basename unless a `host_executable` entry lists the paths it
++accepts, so the Codex rules end with one that lists none. Claude Code matches
++the command text, so `Bash(project *)` never matched a path in the first place.
+ """
+ 
+ from __future__ import annotations
+@@ -152,6 +157,13 @@
+ # The Claude Code allow rules that match `PUBLISH`: the broad one, and the
+ # narrower one Projector wrote before it.
+ CLAUDE_PUBLISH_RULES = ("Bash(project *)", "Bash(project summary publish *)")
++# Codex 0.108 and newer resolve an absolute program path to its basename
++# before matching a rule, so without this line `/tmp/x/project summary` would
++# match the `project` rules and run outside the sandbox. An empty list keeps
++# every absolute path for `project` to Codex's usual approval, and leaves the
++# bare name, which the skills run, allowed. Codex before 0.107 cannot parse it
++# and drops the whole policy, so 0.107 is Projector's minimum Codex version.
++CODEX_HOST_EXECUTABLE = 'host_executable(name = "project", paths = [])'
+ # Codex loads every `.rules` file in its rules directory, and writes the
+ # approvals a person saves to `default.rules`, so Projector keeps its rules in
+ # a file of its own and rewrites that file whole.
+@@ -166,6 +178,8 @@
+     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
+               f'    justification = "{justification}",\n)\n'
+               for pattern, justification in CODEX_ALLOW)
++    + "# These rules allow only the bare name `project`, never a path to a program of that name.\n"
++    + CODEX_HOST_EXECUTABLE + "\n"
+ )
+ 
+ 
+@@ -309,7 +323,7 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
+ 
+     def kept(reason: str) -> FileAction:
+         return FileAction(name, "kept", f"{name} {reason}, so the Codex rules allowing {COMMANDS} were not added; "
+-                                        f"add {' and '.join(CODEX_PREFIX_RULES)} to a .rules file in "
++                                        f"add {' and '.join((*CODEX_PREFIX_RULES, CODEX_HOST_EXECUTABLE))} to a .rules file in "
+                                         f"{shown(path.parent, environ)} yourself")
+ 
+     existed = path.exists()
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 1becbcfe..57b4a160 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -95,6 +95,12 @@
+     ("LANG=C project list", "allow", "none"),
+     ("HOME=/tmp project init --publish-rule", "ask", "none"),
+     ("projector list", "none", "none"),
++    # A path to a program named `project` matches no rule: Claude Code matches
++    # the command text, and Codex resolves the path to its basename only for
++    # a path a `host_executable` entry lists, and the rules list none.
++    ("/tmp/x/project summary publish --summary summary.json", "none", "none"),
++    ("/usr/local/bin/project list --json", "none", "none"),
++    ("./project review publish 12 --body body.md", "none", "none"),
+     ("project ios devices --json", "allow", "allow"),
+     ("project ios install 12 --device 00008110-0001", "allow", "allow"),
+     ("project ios crashes --mac", "allow", "allow"),
+@@ -179,8 +185,9 @@ def test_codex_itself_reaches_the_same_decisions(self) -> None:
+         rules.write_text(permissions.CODEX_RULES)
+         for command, _, codex in DECISIONS:
+             with self.subTest(command):
+-                result = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules),
+-                                         *shlex.split(command)],
++                # A live session resolves program paths, which the check does only when asked.
++                result = subprocess.run(["codex", "execpolicy", "check", "--resolve-host-executables",
++                                         "--rules", str(rules), *shlex.split(command)],
+                                         check=True, capture_output=True, text=True,
+                                         env={**os.environ, "CODEX_HOME": home.name})
+                 self.assertEqual(codex, json.loads(result.stdout).get("decision", "none"))
+@@ -208,6 +215,8 @@ def test_the_documented_codex_rules_are_the_ones_init_writes(self) -> None:
+         documented = re.findall(r"^ *pattern = (\[.*\]),$", documentation, re.MULTILINE)
+ 
+         self.assertEqual([pattern for pattern, _ in permissions.CODEX_ALLOW], list(map(json.loads, documented)))
++        self.assertIn(f"  {permissions.CODEX_HOST_EXECUTABLE}\n", documentation)
++        self.assertTrue(permissions.CODEX_RULES.endswith(permissions.CODEX_HOST_EXECUTABLE + "\n"))
+ 
+     def test_each_command_line_is_one_the_parser_runs_or_refuses_for_its_leading_option(self) -> None:
+         incomplete = {"project", "project config", "projector list"}
