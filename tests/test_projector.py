@@ -82,6 +82,9 @@ class RepositoryTestCase(unittest.TestCase):
         # Commands run as an agent would, without a terminal, whatever runs the
         # tests; a test that stands for a person at a terminal says so.
         self.enterContext(mock.patch("sys.stdin.isatty", return_value=False))
+        # The Codex rules `init` writes depend on the installed Codex's version,
+        # so no test reads the version of whatever Codex runs the tests.
+        self.codex = self.enterContext(mock.patch.object(permissions, "codex_version", return_value=None))
 
     def at_a_terminal(self) -> None:
         self.enterContext(mock.patch("sys.stdin.isatty", return_value=True))
@@ -1308,6 +1311,35 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("updated ~/.codex/rules/projector.rules\n", self.invoke("init")[1])
         self.assertEqual(permissions.CODEX_RULES, self.codex_rules().read_text())
 
+    def test_init_leaves_host_executable_out_for_a_codex_too_old_to_parse_it(self) -> None:
+        # A Codex before 0.107 that meets `host_executable` drops its whole policy, the person's own rules
+        # included, and before 0.108 it resolves no program path, so the line closes no hole there.
+        self.at_a_terminal()
+        (self.home / ".codex").mkdir()
+        self.codex.return_value = (0, 106, 0)
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("created ~/.codex/rules/projector.rules\n", stdout)
+        written = self.codex_rules().read_text()
+        self.assertEqual(permissions.CODEX_RULES_WITHOUT_HOST_EXECUTABLE, written)
+        self.assertNotIn("host_executable", written)
+        self.assertTrue(permissions.CODEX_RULES.startswith(written), "only the line and its comment are left out")
+        self.assertTrue(permissions.codex_allows(written, permissions.PUBLISH))
+        self.assertIn("Codex 0.106.0 is older than 0.107", stderr)
+        self.assertIn("update Codex and run `project init` again", stderr)
+        self.assertIn("unchanged ~/.codex/rules/projector.rules\n", self.invoke("init")[1])
+
+        for version in ((0, 107, 0), (0, 169, 0), None):
+            with self.subTest(version=version):
+                self.codex.return_value = version
+                code, stdout, stderr = self.invoke("init")
+                self.assertEqual(0, code, stderr)
+                self.assertEqual(permissions.CODEX_RULES, self.codex_rules().read_text(),
+                                 "a current Codex, or one whose version is unknown, gets the line")
+                self.assertNotIn("older than", stderr)
+
     def test_init_leaves_codex_alone_where_codex_is_not_installed(self) -> None:
         self.at_a_terminal()
 
@@ -2005,6 +2037,27 @@ class ReviewRulesTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("review", "rules")
         self.assertEqual(0, code, stderr)
         self.assertEqual("allows ~/.claude/settings.json\nallows ~/.codex/rules/projector.rules\n", stdout)
+
+    def test_a_codex_too_old_for_the_rules_file_is_told_apart_from_a_missing_rule(self) -> None:
+        rules = self.home / ".codex" / "rules" / "projector.rules"
+        rules.parent.mkdir(parents=True)
+        rules.write_text(permissions.CODEX_RULES)
+        self.codex.return_value = (0, 100, 0)
+        before = self.home_tree()
+
+        code, stdout, stderr = self.invoke("review", "rules")
+
+        self.assertEqual(1, code, stderr)
+        self.assertEqual("allows ~/.claude/settings.json\nlacks ~/.codex/rules/projector.rules\n", stdout)
+        self.assertIn("which Codex 0.100.0 cannot parse, so Codex loads no rules at all", stderr)
+        self.assertNotIn("or pass --publish-rule", stderr, "the check names no command an agent could run")
+        self.assertEqual(before, self.home_tree())
+
+        rules.write_text(permissions.CODEX_RULES_WITHOUT_HOST_EXECUTABLE)
+        code, stdout, stderr = self.invoke("review", "rules")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("allows ~/.claude/settings.json\nallows ~/.codex/rules/projector.rules\n", stdout)
+        self.assertIn("Codex 0.100.0 is older than 0.107", stderr)
 
     def test_unreadable_settings_exit_1_and_stay_untouched(self) -> None:
         for content, reason in (

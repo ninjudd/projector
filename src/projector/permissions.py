@@ -100,6 +100,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Optional
@@ -162,8 +164,11 @@ CLAUDE_PUBLISH_RULES = ("Bash(project *)", "Bash(project summary publish *)")
 # match the `project` rules and run outside the sandbox. An empty list keeps
 # every absolute path for `project` to Codex's usual approval, and leaves the
 # bare name, which the skills run, allowed. Codex before 0.107 cannot parse it
-# and drops the whole policy, so 0.107 is Projector's minimum Codex version.
+# and drops the whole policy, so `init` leaves it out for a Codex it finds to
+# be older, which resolves no path in any case.
 CODEX_HOST_EXECUTABLE = 'host_executable(name = "project", paths = [])'
+# The first Codex that parses `CODEX_HOST_EXECUTABLE`.
+HOST_EXECUTABLE_SINCE = (0, 107)
 # Codex loads every `.rules` file in its rules directory, and writes the
 # approvals a person saves to `default.rules`, so Projector keeps its rules in
 # a file of its own and rewrites that file whole.
@@ -181,6 +186,39 @@ CODEX_RULES = (
     + "# These rules allow only the bare name `project`, never a path to a program of that name.\n"
     + CODEX_HOST_EXECUTABLE + "\n"
 )
+# The rules for a Codex older than `HOST_EXECUTABLE_SINCE`: the same, without
+# the line it cannot parse and the comment that introduces it.
+CODEX_RULES_WITHOUT_HOST_EXECUTABLE = CODEX_RULES.split("# These rules allow only the bare name")[0]
+
+
+def codex_version(environ: Mapping[str, str] = os.environ) -> Optional[tuple[int, ...]]:
+    """The version `codex --version` reports, from the `codex` on `environ`'s `PATH`, or None when there is none.
+
+    A Codex that is missing, does not run, or prints no version reads as None,
+    which `codex_rules` treats as current, since a desktop app with no command
+    on `PATH` updates itself.
+    """
+
+    executable = shutil.which("codex", path=environ.get("PATH"))
+    if executable is None:
+        return None
+    try:
+        result = subprocess.run([executable, "--version"], capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", result.stdout) if result.returncode == 0 else None
+    return tuple(int(part) for part in found.groups()) if found else None
+
+
+def codex_rules(version: Optional[tuple[int, ...]]) -> str:
+    """The rules file for a Codex at `version`, which leaves out `CODEX_HOST_EXECUTABLE` for one too old to parse it."""
+
+    return CODEX_RULES if version is None or version >= HOST_EXECUTABLE_SINCE else CODEX_RULES_WITHOUT_HOST_EXECUTABLE
+
+
+def shown_version(version: tuple[int, ...]) -> str:
+    return ".".join(map(str, version))
 
 
 def settings_path(environ: Mapping[str, str] = os.environ) -> Path:
@@ -320,19 +358,33 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
     if path is None:
         return None
     name = shown(path, environ)
+    version = codex_version(environ)
+    expected = codex_rules(version)
+    too_old = version is not None and expected != CODEX_RULES
+    codex = f"Codex {shown_version(version)}" if version is not None else "Codex"
+    # Why the file leaves out `CODEX_HOST_EXECUTABLE`, and how to add it.
+    older = (f"{codex} is older than {shown_version(HOST_EXECUTABLE_SINCE)}, the first to parse "
+             f"`{CODEX_HOST_EXECUTABLE}`, so {name} leaves it out; update Codex and run `project init` again to "
+             "add it" if too_old else None)
 
     def kept(reason: str) -> FileAction:
+        lines = CODEX_PREFIX_RULES if too_old else (*CODEX_PREFIX_RULES, CODEX_HOST_EXECUTABLE)
         return FileAction(name, "kept", f"{name} {reason}, so the Codex rules allowing {COMMANDS} were not added; "
-                                        f"add {' and '.join((*CODEX_PREFIX_RULES, CODEX_HOST_EXECUTABLE))} to a .rules file in "
+                                        f"add {' and '.join(lines)} to a .rules file in "
                                         f"{shown(path.parent, environ)} yourself")
 
     existed = path.exists()
     text, unreadable = read_user_file(path, environ)
     if unreadable:
         return kept(unreadable)
-    if text == CODEX_RULES:
-        return FileAction(name, "unchanged")
+    if text == expected:
+        return FileAction(name, "unchanged", older)
     if not apply:
+        if too_old and text == CODEX_RULES:
+            return FileAction(name, "kept", f"{name} holds `{CODEX_HOST_EXECUTABLE}`, which {codex} cannot parse, so "
+                                            "Codex loads no rules at all, your own included; update Codex"
+                                            + (", or run `project init` yourself in a terminal, or pass "
+                                               "--publish-rule, to write the rules it can parse" if hint else ""))
         example = ("; it still allows `project summary publish`" if codex_allows(text, PUBLISH)
                    else ", such as `project summary publish`")
         return FileAction(name, "kept", f"{name} lacks Projector's current rules, without which Codex can ask "
@@ -341,10 +393,10 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
                                            "add them" if hint else ""))
     try:
-        write_through(path, CODEX_RULES)
+        write_through(path, expected)
     except OSError as error:
         return kept(f"could not be written ({error.strerror})")
-    return FileAction(name, "updated" if existed else "created")
+    return FileAction(name, "updated" if existed else "created", older)
 
 
 def codex_allows(text: str, command: Sequence[str]) -> bool:
