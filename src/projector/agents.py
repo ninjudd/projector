@@ -140,7 +140,7 @@ def register(root: Path, session: str, *, name: Optional[str], summary: Optional
              cwd: Path, now: float, environ: Optional[dict] = None) -> tuple[dict, str]:
     """Record the session's registration, and queue its presence for the relay when the relay runs for it.
     Answers the record and why the relay does not run, if it does not. Fields that are not given keep their
-    recorded values."""
+    recorded values, and Projector never replaces a summary given here with one it generates."""
     environ = os.environ if environ is None else environ
     if name is not None:
         name = name.lower()
@@ -156,10 +156,21 @@ def register(root: Path, session: str, *, name: Optional[str], summary: Optional
         raise UsageError("a session's first registration needs --name, --summary, or both")
     if not live(root, session, now):
         raise AgentError(NO_DELIVERY.format(session=session))
-    login = operator()
-    place = checkout(cwd)
+    given = {key: value for key, value in (("name", name), ("summary", summary), ("model", model))
+             if value is not None}
+    new, off = write_registration(root, session, operator(), checkout(cwd), cwd, now, environ, given)
+    return new or {}, off
+
+
+def write_registration(root: Path, session: str, login: str, place: dict, cwd: Path, now: float, environ: dict,
+                       given: Optional[dict]) -> tuple[Optional[dict], str]:
+    """Write the session's record with the fields `given`, queue its presence, and answer the record and why the
+    relay does not run. With no fields given, write only a first registration, with no name and a summary made
+    from the session's subscriptions, and answer no record when the session is registered already or
+    subscribes to nothing."""
     key, off = relay.command_key(environ) if place.get("repo") else (None, relay.NO_ORIGIN)
     folder = watch.session_folder(root, session)
+    name = (given or {}).get("name")
     with locked(root / "agents"):
         if name is not None:
             for other, found in records(root).items():
@@ -171,30 +182,137 @@ def register(root: Path, session: str, *, name: Optional[str], summary: Optional
                 if other != session and found.get("name") == name and found.get("login") == login:
                     raise AgentError(f"the live session {other} of {login} on {found.get('machine_name')} already "
                                      f"holds the name {name}; its summary: {found.get('summary') or '(none)'}")
-        old = record(root, session) or {}
-        given = {key: value for key, value in (("name", name), ("summary", summary), ("model", model))
-                 if value is not None}
-        new = {
-            "schema_version": 1, "login": login,
-            **{key: old[key] for key in ("name", "summary", "model") if key in old}, **given,
-            "host": host_of(root, session, now, environ), "machine": this_machine(root),
-            "machine_name": socket.gethostname().split(".")[0] or "unknown", "cwd": str(cwd), **place,
-            "relay_id": old.get("relay_id") or secrets.token_hex(8),
-            "registered_at": old.get("registered_at") or watch.stamp(now), "updated_at": watch.stamp(now),
-            "relay": "pending" if key else ("off" if place.get("repo") else "none"),
-        }
         with locked(folder):
+            if given is None:
+                if (folder / "agent.json").exists():
+                    return None, off
+                given = generated_fields(watch.subscriptions(folder), place.get("repo"))
+                if given is None:
+                    return None, off
+            old = record(root, session) or {}
+            kept = {key: old[key] for key in ("name", "summary", "model", "summary_auto") if key in old}
+            if "summary" in given and "summary_auto" not in given:
+                kept.pop("summary_auto", None)
+            new = {
+                "schema_version": 1, "login": login, **kept, **given,
+                "host": host_of(root, session, now, environ), "machine": this_machine(root),
+                "machine_name": socket.gethostname().split(".")[0] or "unknown", "cwd": str(cwd), **place,
+                "relay_id": old.get("relay_id") or secrets.token_hex(8),
+                "registered_at": old.get("registered_at") or watch.stamp(now), "updated_at": watch.stamp(now),
+                "relay": "pending" if key else ("off" if place.get("repo") else "none"),
+            }
             write_json(folder / "agent.json", new)
         if key:
             relay.publish(root, session, new, key, now)
     return new, off
 
 
-def mark_published(root: Path, session: str) -> None:
+def register_subscriber(root: Path, session: str, cwd: Path, now: float, config: Config,
+                        environ: Optional[dict] = None) -> Optional[dict]:
+    """Register a session that has just subscribed to a pull request, with no name and a summary made from its
+    subscriptions, so the user's other sessions can message it. Answers the record, or None when
+    `agent.auto_register` is false, the session is registered already, or `register` would refuse it. It never
+    raises, because the subscription it follows has already succeeded."""
+    folder = watch.session_folder(root, session)
+    if (config.setting("agent.auto_register") is False or (folder / "agent.json").exists()
+            or not live(root, session, now)):
+        return None
+    try:
+        login = running_operator(root) or watch.signed_in(watch.run_gh)
+        if login is None:
+            return None
+        return write_registration(root, session, login, checkout(cwd), cwd, now,
+                                  os.environ if environ is None else environ, None)[0]
+    except (ProjectorError, OSError):
+        return None
+
+
+def running_operator(root: Path) -> Optional[str]:
+    """The login the running watch daemon last read from `gh`, which spares asking `gh` again."""
+    found = (read_json(root / "daemon.json") or {}).get("operator") if watch.held(root) else None
+    return found if isinstance(found, str) and found else None
+
+
+# Generated summaries
+
+def generated_fields(lines: list[watch.Subscription], repo: Optional[str]) -> Optional[dict]:
+    """A first registration's fields from the session's subscriptions: the generated summary, and the model of a
+    review line, or None when the session subscribes to nothing."""
+    lines = [line for line in lines if not line.excluded]
+    summary = generated_summary(lines, repo)
+    if summary is None:
+        return None
+    model = next((line.model for line in lines if line.role == "review" and shaped(line.model, MODEL_ID)), None)
+    return {"summary": summary, "summary_auto": True, **({"model": model} if model else {})}
+
+
+def counted(count: int, one: str, many: str) -> str:
+    return f"{count} {one if count == 1 else many}"
+
+
+def series(phrases: list[str]) -> str:
+    return " and ".join(phrases) if len(phrases) < 3 else f"{', '.join(phrases[:-1])}, and {phrases[-1]}"
+
+
+def role_phrases(lines: list[watch.Subscription], repo: Optional[str], detail: int) -> list[str]:
+    """What the session covers in one role, from the most detail, 2, to the least, 0. Only the session's own
+    repository is ever named: the relay publishes the summary into that repository, which can be public while
+    another the session works in is private."""
+    own = (repo or "").lower()
+    wide = sorted({line.repo.lower() for line in lines if line.number is None})
+    pulls = sorted({(line.repo.lower(), line.number) for line in lines if line.number is not None})
+    if detail == 0:
+        return [*([f"pull requests in {counted(len(wide), 'repository', 'repositories')}"] if wide else []),
+                *([counted(len(pulls), "pull request", "pull requests")] if pulls else [])]
+    phrases = [f"{repo} pull requests"] if own in wide else []
+    others = len(wide) - len(phrases)
+    if others:
+        phrases.append(f"pull requests in {counted(others, 'other repository', 'other repositories')}")
+    if detail == 1:
+        return [*phrases, *([counted(len(pulls), "pull request", "pull requests")] if pulls else [])]
+    phrases += [f"{repo}#{number}" for name, number in pulls if name == own]
+    elsewhere = sum(1 for name, _ in pulls if name != own)
+    if elsewhere:
+        phrases.append(counted(elsewhere, "pull request in another repository", "pull requests in other repositories"))
+    return phrases
+
+
+def generated_summary(lines: list[watch.Subscription], repo: Optional[str]) -> Optional[str]:
+    """One line saying what the session reviews and fixes, in the most detail that fits in `MAX_SUMMARY`
+    characters, or None when it subscribes to nothing."""
+    text = ""
+    for detail in (2, 1, 0):
+        clauses = [f"{verb} {series(phrases)}" for verb, role in (("reviewing", "review"), ("fixing", "fix"))
+                   if (phrases := role_phrases([line for line in lines if line.role == role], repo, detail))]
+        text = "; ".join(clauses)
+        if len(text) <= MAX_SUMMARY:
+            break
+    return text[:1].upper() + text[1:] or None
+
+
+def refresh_summary(folder: Path, lines: list[str], now: float) -> None:
+    """Make a generated summary agree with the session's subscriptions, `lines`, and mark the session's
+    presence for the relay to publish again. The caller holds the session's lock."""
+    found = read_json(folder / "agent.json")
+    if not found or found.get("schema_version") != 1 or found.get("summary_auto") is not True:
+        return
+    parsed = [line for line in map(watch.Subscription.parse, lines) if line is not None and not line.excluded]
+    summary = generated_summary(parsed, found.get("repo"))
+    if summary == found.get("summary"):
+        return
+    new = {key: value for key, value in found.items() if key != "summary"}
+    new.update({**({"summary": summary} if summary else {}), "updated_at": watch.stamp(now),
+                **({"relay": "pending"} if found.get("relay") == "published" else {})})
+    write_json(folder / "agent.json", new)
+
+
+def mark_published(root: Path, session: str, landed: Optional[str]) -> None:
+    """Mark the session's presence published when the presence that landed, by its digest, says what the
+    registration says now. A summary refreshed while an older presence waited to be pushed stays pending."""
     folder = watch.session_folder(root, session)
     with locked(folder):
         found = record(root, session)
-        if found and found.get("relay") != "published":
+        if found and found.get("relay") != "published" and relay.digest(relay.presence(session, found, 0)) == landed:
             write_json(folder / "agent.json", {**found, "relay": "published"})
 
 

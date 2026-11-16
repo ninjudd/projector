@@ -280,7 +280,7 @@ not subscribed to before.
 ```text
   /projector                            1 pull request · 1 review request  12s   [-]
    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
-   #258 threads grace Name the reviewed head in a re… 2 threads · reviewing 5m
+   #258 threads grace Name the revi… 2 threads · reviewing · checks passing 5m
         reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
         7: Discuss  8: Dismiss
         open in github  open in projector
@@ -305,7 +305,14 @@ review wants something:
 - **`failing`**, in red, while the head's checks fail. The panel leaves out
   the `projector/review` status a review posts, as the drawer's checks do.
   A review fails that status when it finds something, which the row already
-  shows as `changes` or `threads`.
+  shows as `changes` or `threads`. It also leaves out a failed check run of
+  a cancelled workflow run, as a newer run in the same concurrency group
+  cancels it, such as one a review's label starts, when the check started
+  at or after the cancel. Only a job that runs `if: always()` to gather the
+  others starts then. A check that started before the cancel failed on its
+  own, so the panel leaves it out only once a newer run of the same
+  workflow tests the code again, by still running or by running a check of
+  the same name rather than skipping or cancelling it.
 - **`changes`**, in yellow, while a review requests changes.
 - **`threads`**, in yellow, while review threads are unresolved.
 - **`reviewing`**, in orange, while the pull request carries the
@@ -324,12 +331,19 @@ daemon's query of the pull request.
 
 Notes follow the title and name every other state that applies, in the
 order above and each in its color: `failing`, `changes`, `threads`,
-`reviewing`, and `clean`, then `approved` in green. So a signed-off pull
-request whose checks fail reads `failing` with a green `clean` after its
-title. No note names `conflict`, which always takes the state. While a pull
+`reviewing`, `clean`, and `draft` in italic, then `approved` in green,
+`passing` in green while the head's checks pass, and last `cancelled`,
+muted, while a workflow's newest run on the head was cancelled, so that
+nothing has run its checks since. A check that failed in that run before
+the cancel still counts, so such a head can read `failing` with a
+`cancelled` note. So a signed-off pull request whose checks fail reads
+`failing` with a green `clean` after its title, and a draft that conflicts
+says `draft` as well as its italic number.
+No note names `conflict`, which always takes the state. While a pull
 request's drawer is open, its row spells the holds out as `checks failing`,
 `changes requested`, and the threads' count, such as `2 threads`, and names
-the one its state already says as well. The ` · ` between two notes keeps
+the one its state already says as well. It spells `passing` out as `checks
+passing` too. The ` · ` between two notes keeps
 the default text color. The line ends with how long ago the pull request
 last changed, in the column where the inbox's items end with their ages.
 Only the title shortens on a narrow terminal. A pull request that the watch
@@ -408,25 +422,28 @@ branch, in the palette's cyan, its size, its checks, and every label it
 carries. The size reads as a diff stat: the insertions, such as `+84`, in
 green and the deletions, such as `−12`, in red. The checks' state takes a
 color of its own. It counts every check run and commit status on the head
-but the `projector/review` status, so a head whose only failure is a
-review's verdict reads `checks passing`, and one whose only check is that
-status shows no checks at all. The rest, ` in 5 files` and each `·` included, keeps
-the default text color. Each label is its name, as GitHub spells it, in
-the label's own color, set off from the one before it by a `·`. When that
-color is too close to the panel's background to read, below a 3:1 contrast
-ratio, the panel mixes it toward white on a dark background and toward
-black on a light one until it reaches 3:1, so a dark red stays red but
-lighter, and a pale yellow turns to a darker gold. When the panel cannot
-know how dark its background is, as with an ANSI theme or an `ansi256(n)`
-setting, it only lightens a label too dark to read on black. A label whose
-color the panel has not read yet, which a daemon cache from before the
-panel read colors leaves until its next poll, is drawn in the default text
-color. The labels come last on the line, so a narrow terminal cuts them
-first. Below
-that come two actions, side by side on one line, on the digits `7` and `8`,
-as [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
-describes. The links to the pull request follow, side by side on the next
-line, and then the unresolved review threads, gathered under their files:
+but the `projector/review` status and the failed check runs of a cancelled
+workflow run that the cancel caused or that a newer run tests again. So a
+head whose only failure is a review's verdict reads `checks passing`, one
+whose only check is that status shows no checks at all, and one with
+nothing failing or running whose every workflow's newest run was cancelled
+reads `checks cancelled`, muted. The rest, ` in 5 files` and each `·`
+included, keeps the default text color. Each label is its name, as GitHub
+spells it, in the label's own color, set off from the one before it by a
+`·`. When that color is too close to the panel's background to read, below
+a 3:1 contrast ratio, the panel mixes it toward white on a dark background
+and toward black on a light one until it reaches 3:1, so a dark red stays
+red but lighter, and a pale yellow turns to a darker gold. When the panel
+cannot know how dark its background is, as with an ANSI theme or an
+`ansi256(n)` setting, it only lightens a label too dark to read on black. A
+label whose color the panel has not read yet, which a daemon cache from
+before the panel read colors leaves until its next poll, is drawn in the
+default text color. The labels come last on the line, so a narrow terminal
+cuts them first. Below that come two actions, side by side on one line, on
+the digits `7` and `8`, as [Use the panel from the
+keyboard](#use-the-panel-from-the-keyboard) describes. The links to the
+pull request follow, side by side on the next line, and then the unresolved
+review threads, gathered under their files:
 
 - **Discuss** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` in lowercase when the panel

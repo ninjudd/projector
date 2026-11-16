@@ -101,8 +101,11 @@ LABEL_CHANGES = {
 # LABEL events. `rateLimit` reports what it cost. The panel reads the head's `statusCheckRollup` `state`, and
 # the daemon reads the rollup's contexts for CHECKS. GitHub's counts by state cover every context, so they say
 # when a failed one lies past the first page. The `projector/review` status is among them, so the query reads
-# it too, to take it out of the counts.
-CONTEXT_NODES = "nodes{ __typename ... on CheckRun{ name conclusion } ... on StatusContext{ context state } }"
+# it too, to take it out of the counts. Each check run's suite says whether its workflow run was cancelled, and
+# the check run's start, beside when the run's cancelled jobs ended, says whether the cancel caused its failure.
+# The run's workflow and start say whether a newer run of that workflow on the head tests the code again.
+CONTEXT_NODES = ("nodes{ __typename ... on CheckRun{ name conclusion startedAt completedAt checkSuite{ conclusion"
+                 " workflowRun{ databaseId createdAt workflow{ databaseId } } } } ... on StatusContext{ context state } }")
 QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
   repository(owner:$o,name:$r){ visibility nameWithOwner
     pullRequest(number:$n){
@@ -290,11 +293,14 @@ def subscriptions(folder: Path) -> list[Subscription]:
 
 
 def edit_subscriptions(folder: Path, edit: Callable[[list[str]], list[str]]) -> None:
+    from . import agents
     with locked(folder):
         before = read_lines(folder)
         after = edit(list(before))
         if after != before:
             write_text(folder / "subscriptions", "".join(f"{line}\n" for line in after))
+            with contextlib.suppress(OSError):
+                agents.refresh_summary(folder, after, time.time())
 
 
 def parse_target(text: str) -> tuple[str, Optional[int]]:
@@ -499,9 +505,10 @@ def unique(pairs: list[tuple[str, object]]) -> list[tuple[str, object]]:
     return kept
 
 
-def add_from_output(root: Path, session: str, text: str) -> tuple[list[str], list[str]]:
+def add_from_output(root: Path, session: str, text: str) -> tuple[list[str], list[str], bool]:
     """Subscribe the session to `fix auto` on each pull request the output opened or pushed to, and answer
-    the lines added and a problem for each branch whose pull request could not be looked up."""
+    the lines added, a problem for each branch whose pull request could not be looked up, and whether the
+    session now subscribes to any of those pull requests, through a line added or one it already had."""
     pulls, branches = pushed(text)
     found: list[tuple[str, object]] = list(pulls)
     problems = []
@@ -519,14 +526,16 @@ def add_from_output(root: Path, session: str, text: str) -> tuple[list[str], lis
         found += [(repo, pull["number"]) for pull in listed if isinstance(pull, dict)
                   and isinstance(pull.get("number"), int)]
     added = []
+    subscribed = False
     for repo, number in unique(found):
         try:
             line = add(root, session, Subscription(repo, number, "fix", auto=True))
         except Excluded:
             continue
+        subscribed = True
         if line:
             added.append(line)
-    return added, problems
+    return added, problems, subscribed
 
 
 # GitHub
@@ -633,17 +642,83 @@ def head_commit(pr: dict) -> dict:
     return (nodes(pr, "commits") or [{}])[-1].get("commit") or {}
 
 
-def failed_contexts(contexts: list[dict]) -> list[str]:
-    """The names of the failed check runs and commit statuses among `contexts`, less the `projector/review`
-    status, which a changes-requested verdict posts as `failure` and the VERDICT and FINDING events report."""
-    failed = []
+def failures(contexts: list[dict]) -> list[dict]:
+    """The failed check runs and commit statuses among `contexts`, as the rollup's counts count them, less the
+    `projector/review` status, which a changes-requested verdict posts as `failure` and the VERDICT and FINDING
+    events report."""
+    return [found for found in contexts
+            if (found.get("__typename") == "CheckRun" and found.get("conclusion") in CHECK_FAILURES)
+            or (found.get("__typename") == "StatusContext" and found.get("state") in STATUS_FAILURES
+                and found.get("context") != review.REVIEW_CONTEXT)]
+
+
+def workflow_run(found: dict) -> Optional[tuple[int, str]]:
+    """The workflow and start of the GitHub Actions run a check run belongs to, or None for a check run that no
+    workflow run made."""
+    run = (found.get("checkSuite") or {}).get("workflowRun") or {}
+    workflow, at = (run.get("workflow") or {}).get("databaseId"), run.get("createdAt")
+    return (workflow, at) if isinstance(workflow, int) and isinstance(at, str) else None
+
+
+def run_id(found: dict) -> Optional[int]:
+    """The id of the workflow run a check run belongs to, or None for a check run that no workflow run made."""
+    run = (found.get("checkSuite") or {}).get("workflowRun") or {}
+    return run.get("databaseId") if isinstance(run.get("databaseId"), int) else None
+
+
+def cancel_times(contexts: list[dict]) -> dict[int, str]:
+    """When each cancelled workflow run among `contexts` was cancelled: the earliest end of its check runs that
+    concluded `CANCELLED`. A cancelled run none of whose cancelled check runs was read has no time here."""
+    times: dict[int, str] = {}
     for found in contexts:
-        if found.get("__typename") == "CheckRun" and found.get("conclusion") in CHECK_FAILURES:
-            failed.append(found.get("name") or "?")
-        elif found.get("__typename") == "StatusContext" and found.get("state") in STATUS_FAILURES \
-                and found.get("context") != review.REVIEW_CONTEXT:
-            failed.append(found.get("context") or "?")
-    return failed
+        run, ended = run_id(found), found.get("completedAt")
+        if found.get("__typename") != "CheckRun" or run is None or not isinstance(ended, str) \
+                or found.get("conclusion") != "CANCELLED" \
+                or (found.get("checkSuite") or {}).get("conclusion") != "CANCELLED":
+            continue
+        times[run] = min(times.get(run, ended), ended)
+    return times
+
+
+def caused_by_cancel(found: dict, times: dict[int, str]) -> bool:
+    """Whether a failed check run of a cancelled workflow run started at or after the cancel, which only a job
+    that runs `if: always()` to gather the jobs it needs does: it starts once they end, so in a cancelled run it
+    starts after the cancel and fails though nothing in the code did. A failure that started before the cancel
+    is the code's, and so is one in a run whose cancel time is unknown."""
+    run, started = run_id(found), found.get("startedAt")
+    cancelled = times.get(run) if run is not None else None
+    return ((found.get("checkSuite") or {}).get("conclusion") == "CANCELLED" and cancelled is not None
+            and isinstance(started, str) and started >= cancelled)
+
+
+def superseded(found: dict, contexts: list[dict]) -> bool:
+    """Whether a check run belongs to a cancelled workflow run that a newer run of the same workflow on the head
+    tests again: one still running, or one whose check run of the same name ran rather than skipped or was
+    cancelled. A newer run in the same concurrency group cancels the one in progress, as a review's label does
+    where CI starts on `labeled`, and GitHub keeps the cancelled run's checks on the head, where a job that runs
+    `if: always()` to gather the others fails though nothing in the code did. The newer run's own result stands
+    for the code. A cancelled run with nothing newer, or whose newer run skipped the check, keeps each failure
+    that the cancel did not cause, since that check failed before the cancel."""
+    run = workflow_run(found)
+    if run is None or (found.get("checkSuite") or {}).get("conclusion") != "CANCELLED":
+        return False
+    for other in contexts:
+        newer = workflow_run(other) if other.get("__typename") == "CheckRun" else None
+        if newer is None or newer[0] != run[0] or newer[1] <= run[1]:
+            continue
+        if (other.get("checkSuite") or {}).get("conclusion") is None:
+            return True
+        if other.get("name") == found.get("name") and other.get("conclusion") not in {"SKIPPED", "CANCELLED"}:
+            return True
+    return False
+
+
+def failed_contexts(contexts: list[dict]) -> list[str]:
+    """The names of the failures among `contexts` that CHECKS reports: each but a check run of a cancelled run
+    that the cancel caused or that a newer run tests again."""
+    times = cancel_times(contexts)
+    return [found.get("name") or found.get("context") or "?" for found in failures(contexts)
+            if not caused_by_cancel(found, times) and not superseded(found, contexts)]
 
 
 def failure_count(commit: dict) -> int:
@@ -961,7 +1036,7 @@ class Daemon:
         wanted = failure_count(commit)
         read = [found for found in contexts.get("nodes") or [] if isinstance(found, dict)]
         page = contexts.get("pageInfo") or {}
-        while len(failed_contexts(read)) < wanted and page.get("hasNextPage") and page.get("endCursor"):
+        while len(failures(read)) < wanted and page.get("hasNextPage") and page.get("endCursor"):
             data = self.graphql(CONTEXTS_QUERY, now, "-f", f"o={owner}", "-f", f"r={name}", "-f", f"h={head}",
                                 "-f", f"c={page['endCursor']}") or {}
             paged = (data.get("repository") or {}).get("object") or {}

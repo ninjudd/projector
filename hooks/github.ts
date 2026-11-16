@@ -21,8 +21,10 @@ const FIELDS = `number title url state isDraft reviewDecision mergeable body
   labels(first: 20) { nodes { name color } }
   reviewThreads(first: 100) { nodes { isResolved } }
   commits(last: 1) { nodes { commit { status { context(name: "${REVIEW_CONTEXT}") { state } }
-    statusCheckRollup { state contexts(first: 1) {
-      checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }`
+    statusCheckRollup { state contexts(first: 20) {
+      checkRunCountsByState { state count } statusContextCountsByState { state count }
+      nodes { __typename ... on CheckRun { name conclusion startedAt completedAt
+        checkSuite { conclusion workflowRun { databaseId createdAt workflow { databaseId } } } } } } } } } }`
 
 // What an open drawer lists of its pull request's threads. GitHub counts
 // `comments` under `reviewThreads(first: 100)` as 100 requests, a point of
@@ -42,16 +44,19 @@ const CHECKS: Record<string, Checks> = {
   EXPECTED: 'pending',
 }
 
+const COUNT_KEYS = ['checkRunCountsByState', 'statusContextCountsByState'] as const
+
 /**
  * What each check run's and commit status's state counts as, with the
  * failures the watch daemon's CHECKS event counts. A state missing here,
  * such as `SKIPPED`, holds nothing back.
  */
-const CONTEXT_CHECKS: Record<'checkRunCountsByState' | 'statusContextCountsByState', Record<string, Checks>> = {
+const CONTEXT_CHECKS: Record<(typeof COUNT_KEYS)[number], Record<string, Checks>> = {
   checkRunCountsByState: {
     FAILURE: 'failing',
     TIMED_OUT: 'failing',
     STARTUP_FAILURE: 'failing',
+    CANCELLED: 'cancelled',
     QUEUED: 'pending',
     IN_PROGRESS: 'pending',
     WAITING: 'pending',
@@ -131,24 +136,126 @@ function threadOf(node: unknown): Thread | null {
   }
 }
 
-/**
- * The head's checks, less the `projector/review` status. GitHub's rollup
- * counts that status, which a review that requests changes sets to
- * `failure`, so a head with nothing else failing would read as failing.
- * Without that status the rollup's own state stands.
- */
-function checksOf(node: Record<string, unknown>): Checks | null {
+/** The pull request's head commit, as the query reads it. */
+function headOf(node: Record<string, unknown>): Record<string, unknown> {
   const [last] = nodesOf(node.commits)
-  const commit = isRecord(last) ? last.commit : undefined
-  const rollup = isRecord(commit) ? commit.statusCheckRollup : undefined
-  const state = isRecord(rollup) && typeof rollup.state === 'string' ? (CHECKS[rollup.state] ?? null) : null
-  const status = isRecord(commit) ? commit.status : undefined
-  const review = isRecord(status) && isRecord(status.context) ? stringOf(status.context.state) : null
-  if (review === null || !isRecord(rollup) || !isRecord(rollup.contexts)) return state
+  return isRecord(last) && isRecord(last.commit) ? last.commit : {}
+}
 
-  const { contexts } = rollup
-  const counts = { failing: 0, pending: 0, passing: 0 }
-  for (const key of ['checkRunCountsByState', 'statusContextCountsByState'] as const) {
+/** The suite of a check run the rollup lists, which says whether its workflow run was cancelled; none for a status. */
+function suiteOf(context: unknown): Record<string, unknown> | undefined {
+  return isRecord(context) && context.__typename === 'CheckRun' && isRecord(context.checkSuite)
+    ? context.checkSuite
+    : undefined
+}
+
+/** A check run's GitHub Actions run: its id, its workflow, its start, and its conclusion. */
+interface Run {
+  id: number | null
+  workflow: number
+  at: string
+  conclusion: string | null
+}
+
+/** The workflow run a check run belongs to, or none for a check run that no workflow run made. */
+function runOf(context: unknown): Run | undefined {
+  const suite = suiteOf(context)
+  const run = isRecord(suite?.workflowRun) ? suite.workflowRun : undefined
+  const workflow = isRecord(run?.workflow) ? run.workflow.databaseId : undefined
+  const at = stringOf(run?.createdAt)
+  const id = typeof run?.databaseId === 'number' ? run.databaseId : null
+  return typeof workflow === 'number' && at !== null
+    ? { id, workflow, at, conclusion: stringOf(suite?.conclusion) }
+    : undefined
+}
+
+/**
+ * When each cancelled workflow run was cancelled: the earliest end of its
+ * check runs that concluded `CANCELLED`. A cancelled run none of whose
+ * cancelled check runs the rollup listed has no time here.
+ */
+function cancelTimesOf(contexts: unknown[]): Map<number, string> {
+  const times = new Map<number, string>()
+  for (const context of contexts) {
+    const run = runOf(context)
+    const ended = isRecord(context) ? stringOf(context.completedAt) : null
+    if (run?.id == null || run.conclusion !== 'CANCELLED' || ended === null) continue
+    if (isRecord(context) && context.conclusion === 'CANCELLED') {
+      const seen = times.get(run.id)
+      if (seen === undefined || ended < seen) times.set(run.id, ended)
+    }
+  }
+  return times
+}
+
+/**
+ * Whether a failed check run of a cancelled workflow run started at or
+ * after the cancel, which only a job that runs `if: always()` to gather the
+ * jobs it needs does: it starts once they end, so in a cancelled run it
+ * starts after the cancel and fails though nothing in the code did. A
+ * failure that started before the cancel is the code's, and so is one in a
+ * run whose cancel time is unknown.
+ */
+function causedByCancel(context: unknown, times: Map<number, string>): boolean {
+  const run = runOf(context)
+  const started = isRecord(context) ? stringOf(context.startedAt) : null
+  const cancelled = run?.id == null ? undefined : times.get(run.id)
+  return run?.conclusion === 'CANCELLED' && cancelled !== undefined && started !== null && started >= cancelled
+}
+
+/**
+ * Whether a check run belongs to a cancelled workflow run that a newer run
+ * of the same workflow on the head tests again: one still running, or one
+ * whose check run of the same name ran rather than skipped or was
+ * cancelled. The newer run's own result stands for the code. A cancelled
+ * run with nothing newer, or whose newer run skipped the check, keeps each
+ * failure that the cancel did not cause, since that check failed before the
+ * cancel.
+ */
+function supersededOf(context: unknown, contexts: unknown[]): boolean {
+  const run = runOf(context)
+  if (run?.conclusion !== 'CANCELLED' || !isRecord(context)) return false
+  return contexts.some(other => {
+    const newer = runOf(other)
+    if (newer === undefined || !isRecord(other) || newer.workflow !== run.workflow || newer.at <= run.at) return false
+    const conclusion = stringOf(other.conclusion)
+    return newer.conclusion === null || (other.name === context.name && conclusion !== 'SKIPPED' && conclusion !== 'CANCELLED')
+  })
+}
+
+/** Each workflow's newest run on the head, among the check runs the rollup lists. */
+function newestRuns(contexts: unknown[]): Run[] {
+  const newest = new Map<number, Run>()
+  for (const context of contexts) {
+    const run = runOf(context)
+    if (run === undefined) continue
+    const seen = newest.get(run.workflow)
+    if (seen === undefined || run.at > seen.at) newest.set(run.workflow, run)
+  }
+  return [...newest.values()]
+}
+
+/**
+ * The head's checks from the rollup's counts, which cover every check run
+ * and commit status, less two kinds of failure that say nothing about the
+ * code: the `projector/review` status, which a review that requests changes
+ * sets to `failure`, and a failed check run of a cancelled workflow run that
+ * the cancel caused or that a newer run tests again. A newer run in the same
+ * concurrency group cancels the one in progress, as a review's label does
+ * where CI starts on `labeled`, and the cancelled run's `if: always()` job
+ * fails though nothing in the code did. GitHub keeps the cancelled run's
+ * checks on the head beside the newer run's. A head with nothing failing or
+ * pending reads `cancelled` when every workflow's newest run on it was
+ * cancelled. Without the counts the rollup's own state stands.
+ */
+function checksOf(commit: Record<string, unknown>): Checks | null {
+  const rollup = commit.statusCheckRollup
+  const state = isRecord(rollup) && typeof rollup.state === 'string' ? (CHECKS[rollup.state] ?? null) : null
+  const contexts = isRecord(rollup) && isRecord(rollup.contexts) ? rollup.contexts : undefined
+  if (contexts === undefined || !COUNT_KEYS.some(key => Array.isArray(contexts[key]))) return state
+
+  const counts: Record<Checks, number> = { failing: 0, pending: 0, passing: 0, cancelled: 0 }
+  for (const key of COUNT_KEYS) {
     const rows = Array.isArray(contexts[key]) ? (contexts[key] as unknown[]) : []
     for (const row of rows) {
       if (isRecord(row) && typeof row.state === 'string' && typeof row.count === 'number') {
@@ -156,10 +263,38 @@ function checksOf(node: Record<string, unknown>): Checks | null {
       }
     }
   }
-  counts[CONTEXT_CHECKS.statusContextCountsByState[review] ?? 'passing'] -= 1
+  const status = commit.status
+  const review = isRecord(status) && isRecord(status.context) ? stringOf(status.context.state) : null
+  if (review !== null) counts[CONTEXT_CHECKS.statusContextCountsByState[review] ?? 'passing'] -= 1
+  const nodes = nodesOf(contexts)
+  const times = cancelTimesOf(nodes)
+  for (const context of nodes) {
+    const conclusion = isRecord(context) ? stringOf(context.conclusion) : null
+    if (
+      CONTEXT_CHECKS.checkRunCountsByState[conclusion ?? ''] === 'failing' &&
+      (causedByCancel(context, times) || supersededOf(context, nodes))
+    ) {
+      counts.failing -= 1
+      counts.cancelled += 1
+    }
+  }
   if (counts.failing > 0) return 'failing'
   if (counts.pending > 0) return 'pending'
-  return counts.passing > 0 ? 'passing' : null
+  const newest = newestRuns(nodes)
+  if (newest.length > 0 && newest.every(run => run.conclusion === 'CANCELLED')) return 'cancelled'
+  return (['passing', 'cancelled'] as const).find(checks => counts[checks] > 0) ?? null
+}
+
+/**
+ * Whether a workflow's newest run on the head was cancelled, so nothing has
+ * run its checks since. A cancelled run that a newer one replaced says
+ * nothing, since a newer run in the same concurrency group cancels the one
+ * before it whenever, for one, a label starts it.
+ */
+function cancelledOf(commit: Record<string, unknown>): boolean {
+  const rollup = commit.statusCheckRollup
+  const contexts = isRecord(rollup) ? nodesOf(rollup.contexts) : []
+  return newestRuns(contexts).some(run => run.conclusion === 'CANCELLED')
 }
 
 const LABEL_COLOR = /^[0-9a-f]{6}$/i
@@ -195,7 +330,8 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
     additions: numberOf(node.additions),
     deletions: numberOf(node.deletions),
     changedFiles: numberOf(node.changedFiles),
-    checks: checksOf(node),
+    checks: checksOf(headOf(node)),
+    isCancelled: cancelledOf(headOf(node)),
     labels: nodesOf(node.labels).flatMap(labelOf),
     updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
     summaryUrl: summary?.[1] ?? null,

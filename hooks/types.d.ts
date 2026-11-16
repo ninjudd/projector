@@ -11,7 +11,7 @@ export type SeenLoop = { kind: LoopKind; tracked: string }
 /** What the session does with a pull request, as its drawer names it. */
 export type Role = 'fixing' | 'reviewing'
 
-export type Checks = 'passing' | 'failing' | 'pending'
+export type Checks = 'passing' | 'failing' | 'pending' | 'cancelled'
 
 /** A label on a pull request, as GitHub spells and colors it. */
 export type Label = {
@@ -52,6 +52,8 @@ export type PullRequest = {
   changedFiles: number
   /** The head commit's combined check state; null when it has no checks. */
   checks: Checks | null
+  /** Whether a workflow's newest run on the head was cancelled, so nothing has run its checks since. */
+  isCancelled: boolean
   /** The pull request's labels, among them the `reviewing` and `clean` a review sets. */
   labels: Label[]
   /** When the pull request last changed, in milliseconds; null when GitHub did not say. */

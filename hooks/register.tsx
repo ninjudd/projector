@@ -113,10 +113,11 @@ const ROLE_OF: Record<SubscriptionRole | LoopKind, Role> = {
   reviewing: 'reviewing',
 }
 
-const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
+const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning' | 'subtle'> = {
   passing: 'success',
   failing: 'error',
   pending: 'warning',
+  cancelled: 'subtle',
 }
 
 /**
@@ -1272,7 +1273,7 @@ function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
   return pr => (isOneRepo ? `#${pr.number}` : `${pr.repo}#${pr.number}`)
 }
 
-type Note = { text: string; color: 'error' | 'warning' | 'success' | 'claude' }
+type Note = { text: string; color?: 'error' | 'warning' | 'success' | 'claude' | 'subtle'; isItalic?: true }
 
 const threadCount = (count: number) => `${count} thread${count === 1 ? '' : 's'}`
 
@@ -1328,9 +1329,12 @@ const reviewLabel = (pr: PullRequest) => REVIEW_LABELS.find(label => hasLabel(pr
 
 /**
  * What a row says after the title: every other status that applies, in the
- * order the word takes them, then its approval. While the row's drawer
+ * order the word takes them, then its approval, then `passing` while the
+ * head's checks pass, and last `cancelled` while a workflow's newest run on
+ * the head was cancelled. While the row's drawer
  * `isOpen`, the holds show in full, and the one that is the row's word shows
- * as well.
+ * as well. A draft's italic number is easy to miss, so a draft says so too
+ * when another status takes the word.
  */
 function notesOf(pr: PullRequest, isOpen: boolean): Note[] {
   const shown = rowState(pr).text
@@ -1340,7 +1344,10 @@ function notesOf(pr: PullRequest, isOpen: boolean): Note[] {
       : [],
   )
   notes.push(...REVIEW_LABELS.filter(label => label.text !== shown && hasLabel(pr, label.text)))
+  if (pr.isDraft && shown !== 'draft') notes.push({ text: 'draft', isItalic: true })
   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
+  if (pr.checks === 'passing') notes.push({ text: isOpen ? 'checks passing' : 'passing', color: 'success' })
+  if (pr.isCancelled) notes.push({ text: 'cancelled', color: 'subtle' })
   return notes
 }
 
@@ -2563,7 +2570,7 @@ export const register: Register = on => {
                 <Text>
                   {notes.flatMap((note, at) => [
                     ...(at > 0 ? [' · '] : []),
-                    <Text key={note.text} color={note.color}>
+                    <Text key={note.text} color={note.color} italic={note.isItalic}>
                       {note.text}
                     </Text>,
                   ])}

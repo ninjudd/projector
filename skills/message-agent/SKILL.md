@@ -73,6 +73,23 @@ Keep the summary current. When the work changes direction, run
 `project agent register --summary "<new summary>"`. A later registration
 changes only the fields it names.
 
+A session that subscribes to a pull request with `project watch add`, as
+`fix-pr`, `review-pr`, and `review-repo` do, is registered already: Projector
+registers it with no name and a summary made from its subscriptions, such as
+`Fixing acme/app#12`, and keeps that summary current while the
+subscriptions change. Once you know what the session is working on, give it
+a name, and a better summary when the generated one says too little:
+
+```sh
+project agent register --name parser-refactor --summary "Fixing the parser's error handling in acme/app#12" --model claude-opus-5-5
+```
+
+Give the model here too, because a registration made from a `fix`
+subscription records none.
+
+A summary you give replaces the generated one for good, so keep it current
+yourself from then on.
+
 Registration refuses when nothing delivers the session's events, because a
 message could not reach it. In Claude Code, Projector's mod delivers them;
 in Codex, trusted Projector hooks do. Tell the user what the error says to
