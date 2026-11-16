@@ -412,6 +412,7 @@ The command's last line says how the session's events arrive:
 | `events: codex` | Trusted Codex hooks register the session; the daemon queues events as prompts. | Nothing more. Do not start a stream. |
 | `events: codex — but Codex is not running Projector's hooks …` | Codex stopped running the hooks, so nothing registers or acknowledges. | Tell the user what the line says to do, such as trusting the hooks in `/hooks`. Do not start a stream. |
 | `events: stream` | A `project watch stream` that the session runs prints them. | Nothing more. |
+| ``events: none — Codex is not running Projector's hooks …; until then, start `project watch stream --session <id>` …`` | A Codex session whose hooks have not run, or that has none, so the daemon cannot queue its events. | Tell the user what the line says to do, such as trusting the hooks in `/hooks`, and start the stream it names, as the next row describes. |
 | ``events: none — start `project watch stream --session <id>` …`` | Nothing delivers them yet. | Start the command the line names under the host's persistent process or monitor facility, where it runs until stopped. |
 
 Start the stream only from the conversation the user talks to, because a
