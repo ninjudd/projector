@@ -46,7 +46,7 @@ rollout after the merge is tracked outside Projector, so a criterion that
 waits on one does not hold the project open: say in the plan where it is
 tracked. The same holds for a check only the person can run after the merge,
 such as a test on their own device. Once a deferred check runs, record its
-result in the plan's outcome. That is the one edit a completed plan takes.
+result in the plan's outcome, even though the plan is completed.
 
 ## Validate the handoff
 

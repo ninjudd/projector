@@ -26,9 +26,9 @@ merges. Never open a separate pull request just to mark a shipped project
 completed, and do not wait for a release: Projector does not track releases,
 and a project held open for one tends to stay open. A `completed` plan records
 what was decided and built, so leave it as it is, and when later work changes
-behavior it describes, update the living documentation instead. The one edit
-a completed plan takes is a result: when its outcome deferred a check until
-after the merge, record the check's result in the outcome once it runs.
+behavior it describes, update the living documentation instead. A completed
+plan still records a result: when its outcome deferred a check until after the
+merge, record the check's result in the outcome once it runs.
 
 Write GitHub issues and review comments in the same style. Write a pull request
 body as prose that explains why the change exists, because a squash merge makes

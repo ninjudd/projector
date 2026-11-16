@@ -22,9 +22,9 @@ comment cites them. Run `project done` in the pull request that carries the
 last of a project's code, so it is completed when that pull request merges,
 not in a later pull request or after a release. A completed plan records what
 was decided and built: when later work changes behavior it describes, update
-the living documentation and leave the plan as it is. The one edit it takes is
-the result of a check its outcome deferred until after the merge, recorded in
-the outcome once the check runs.
+the living documentation and leave the plan as it is. It still takes the
+result of a check its outcome deferred until after the merge, recorded in the
+outcome once the check runs.
 
 Run `project list` to browse projects, `project search` to search them, and
 `project check` to validate the tree. Every `project` command comes from the
