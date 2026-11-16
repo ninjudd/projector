@@ -108,6 +108,10 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
     }),
     p19: pr(19, 'Draft no review has read', { isDraft: true }),
     p20: pr(20, 'Change by a deleted account', { author: null }),
+    p21: pr(21, 'Signed-off change failing its checks', {
+      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+      labels: { nodes: [{ name: 'clean' }] },
+    }),
   },
   'x/y': {
     p7: pr(7, 'Conflicting change', {
@@ -728,27 +732,55 @@ test('a panel.background the panel does not take leaves the color to the theme, 
   await ui.unmount()
 })
 
-test('a pull request’s notes take their own colors, and each ` · ` between them the default color', async ($, on) => {
+test('a row’s notes name every other status that applies, and an open drawer spells its row’s holds out', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#10\no/r#11\n' })
+  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\n' })
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
-
   const ui = await $.ui.mount(PANEL)
-  // The conflict is the row's status, so the notes leave it out and name the change request after it.
-  expect(partsOf(await ui.find({ type: 'Text', text: 'changes requested · 1*' }))).toEqual([
-    ['changes requested', 'warning'],
+
+  // A row's notes are the Text after its title, when it has any; the age comes after them.
+  const notesOf = async (title: string) => {
+    const texts = await ui.findAll({ type: 'Text' })
+    const next = texts[texts.findIndex(found => found.text === title) + 1]
+    return next === undefined || next.text === '' || /^\d+[smhd]$/.test(next.text) ? [] : partsOf(next)
+  }
+  const TITLES = [
+    'Change held back',
+    'Approved change',
+    'Change failing its checks',
+    'Change a review is reading',
+    'Signed-off change failing its checks',
+  ]
+  const allNotes = async () => Object.fromEntries(await Promise.all(TITLES.map(async title => [title, await notesOf(title)])))
+
+  expect(await allNotes()).toEqual({
+    // A conflict always takes the word, so no note names it; the change request it beat follows, in short.
+    'Change held back': [['changes', 'warning'], ' · ', ['1*', 'warning']],
+    'Approved change': [['approved', 'success'], ' · ', ['3*', 'warning']],
+    // The word says what the one hold is, so the closed row does not repeat it.
+    'Change failing its checks': [],
+    // A label the word beat shows too, in its own color: the clean an earlier head left under a running review,
+    // and the clean of a signed-off head whose checks fail.
+    'Change a review is reading': [['clean', 'success']],
+    'Signed-off change failing its checks': [['clean', 'success']],
+  })
+
+  // An open drawer spells its row's holds out, the one its word names as well, and leaves the other rows short.
+  await ui.press({ key: 'pr:o/r#21' })
+  await clock.settle()
+  expect(await notesOf('Signed-off change failing its checks')).toEqual([
+    ['checks failing', 'error'],
     ' · ',
-    ['1*', 'warning'],
+    ['clean', 'success'],
   ])
-  expect(partsOf(await ui.find({ type: 'Text', text: 'approved · 3*' }))).toEqual([
-    ['approved', 'success'],
-    ' · ',
-    ['3*', 'warning'],
-  ])
-  expect(await ui.find({ type: 'Text', text: /⋮/ })).toBeUndefined()
+  expect(await notesOf('Change held back')).toEqual([['changes', 'warning'], ' · ', ['1*', 'warning']])
+  await ui.press({ key: 'pr:o/r#10' })
+  await clock.settle()
+  expect(await notesOf('Change held back')).toEqual([['changes requested', 'warning'], ' · ', ['1*', 'warning']])
+  expect(await notesOf('Signed-off change failing its checks')).toEqual([['clean', 'success']])
   await ui.unmount()
 })
 
@@ -852,10 +884,13 @@ test('a drawer ends its facts with every label as GitHub draws it, a clean the r
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
 
-  // The conflict is the row's word, over the clean label, and the failing checks, which hold it back too, a note.
+  // The conflict is the row's word, and the failing checks and the clean label it beat are its notes.
   expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
-  expect(await ui.find({ type: 'Text', text: 'clean' })).toBeUndefined()
-  expect(partsOf(await ui.find({ type: 'Text', text: 'checks failing' }))).toEqual([['checks failing', 'error']])
+  expect(partsOf(await ui.find({ type: 'Text', text: /^failing · clean$/ }))).toEqual([
+    ['failing', 'error'],
+    ' · ',
+    ['clean', 'success'],
+  ])
 
   await ui.press({ key: 'pr:o/r#17' })
   await clock.settle()

@@ -280,7 +280,7 @@ not subscribed to before.
 ```text
   /projector                            1 pull request · 1 review request  12s   [-]
    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
-   #258 threads grace Name the reviewed head in a review's summary line  2* 5m
+   #258 threads grace Name the reviewed head in its summary… reviewing · 2* 5m
         reviewer · sig-head · +84 −1 in 5 files · checks passing ·  reviewing
         7: Discuss  8: Dismiss
         open in github  open in projector
@@ -318,17 +318,19 @@ review wants something:
   one whose `clean` label a push removed.
 
 So a held draft, which keeps its `clean` label while a change is built,
-reads as an italic number beside an italic green `clean`. A label the state
-gives way to, such as the `clean` of a pull request that now conflicts,
-still shows in its drawer. The panel reads the draft state and the labels
-with the rest of the line, from the watch daemon's query of the pull
-request.
+reads as an italic number beside an italic green `clean`. The panel reads the
+draft state and the labels with the rest of the line, from the watch
+daemon's query of the pull request.
 
-Notes follow the title when the pull request has them: whatever else of
-`conflict` and `checks failing` in red and `changes requested` in yellow
-holds it back that the state does not already say, then `approved` in
-green, and last the number of unresolved review threads before a `*` in
-yellow, such as `2*`. The ` · ` between two notes keeps the default text
+Notes follow the title and name every other state that applies, in the
+order above and each in its color: `failing`, `changes`, `reviewing`, and
+`clean`, then `approved` in green, and last the number of unresolved review
+threads before a `*` in yellow, such as `2*`, which stands for `threads`. So
+a signed-off pull request whose checks fail reads `failing` with a green
+`clean` after its title. No note names `conflict`, which always takes the
+state. While a pull request's drawer is open, its row spells the holds out
+as `checks failing` and `changes requested`, and names the one its state
+already says as well. The ` · ` between two notes keeps the default text
 color. The line ends with how long ago the pull request last changed, in the
 column where the inbox's items end with their ages. Only the title shortens
 on a narrow terminal. A pull request that the watch daemon has not queried
