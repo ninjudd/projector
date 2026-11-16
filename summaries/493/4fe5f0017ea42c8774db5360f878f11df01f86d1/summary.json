@@ -1,0 +1,85 @@
+{
+ "version": 1,
+ "name": "Panel pull request order",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 493,
+  "title": "List the panel's pull requests by repository, newest first",
+  "head": "4fe5f0017ea42c8774db5360f878f11df01f86d1",
+  "headRef": "panel-sort-newest",
+  "base": "f95ab14bef1e9a8c095899cd7e2225fb02d3ac31",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector panel in Claude Code lists the pull requests a session watches, in two sections: your own pull requests first, then everyone else's, which the panel calls review requests. Before this change, each section kept the order in which the session happened to subscribe to its pull requests, so a pull request's place in the list told you nothing and moved between sessions.",
+   "This change gives both sections a fixed order. Rows sort by repository name, and within one repository by pull request number from highest to lowest, so the newest-created pull request comes first. Review requests still group by author, with authors in login order, and use the same repository-then-number order inside each author. The lines a collapsed section shows, such as <code>+ #12 #10 #2 #1</code>, follow because they read the rows' order.",
+   "The sort key is the repository and the number, which never change for a pull request. So a poll does not move rows under an open drawer; only a newly tracked pull request takes a place among them."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review at <code>4fe5f00</code>: clean, with no finding threads.</li><li>One suggestion: the example collapsed line in <code>docs/plugins.md</code> still lists numbers in ascending order.</li><li>The gate passed: plugin validations, <code>claude plugin test .</code> with 234 pass and 0 fail, the hooks type check, and <code>git diff --check</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "sort",
+   "title": "The panel sorts each section",
+   "kicker": "One comparator orders both sections by repository, then newest first.",
+   "intro": [
+    "<code>bySection</code> splits the panel's rows into your pull requests and the review requests. It now sorts the first with <code>newestFirst</code> and falls back to <code>newestFirst</code> after the author comparison in the second.",
+    "Each row is keyed by <code>repo#number</code>, and every parser that reads a repository name lowercases it, so no two rows tie and one repository never splits into two groups by letter case."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds <code>newestFirst</code> and applies it in both sections of <code>bySection</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1367,
+       "text": "A loading row has <code>repo</code> and <code>number</code> too, because <code>loadingOf</code> builds it from the tracked reference, so it sorts like any other row and the comparator cannot throw. Traced through <code>loadingOf</code> and <code>toPullRequest</code> in <code>hooks/github.ts</code>."
+      },
+      {
+       "kind": "context",
+       "line": 1377,
+       "text": "<code>.sort</code> sorts in place, but here it sorts the new array <code>filter</code> returns, so the snapshot's <code>rows</code> keep their order for the other readers, which look rows up by key."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Tests and documentation",
+   "kicker": "Expectations move to the new order; the panel guide describes it.",
+   "intro": [
+    "The tests that pin the order track pull requests in an order that differs from the sorted one, so each fails if the repository comparison is reversed, the numbers sort ascending or as strings, or the review requests lose the number tie-break. Two label lookups change to anchored regular expressions, because a plain text match for <code>#1</code> now meets <code>#10</code> or <code>#12</code> first."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Updates row-order expectations across eight tests and anchors two label lookups.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1254,
+       "text": "Grace's two review requests arrive as <code>#4</code> then <code>#6</code> and must list as <code>#6</code> then <code>#4</code>, so dropping the number tie-break from the review section turns this red. Checked by reading the input order against the expectation."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Says each section goes by repository and each repository's pull requests newest first.",
+     "checks": []
+    }
+   ]
+  }
+ ]
+}
