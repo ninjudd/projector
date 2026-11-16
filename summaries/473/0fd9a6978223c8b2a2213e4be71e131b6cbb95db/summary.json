@@ -1,0 +1,104 @@
+{
+ "version": 1,
+ "name": "Codex rules version check",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 473,
+  "title": "Leave the host_executable line out for a Codex too old to parse it",
+  "head": "0fd9a6978223c8b2a2213e4be71e131b6cbb95db",
+  "headRef": "codex-version-check",
+  "base": "3ccfd48203d11a4d2e9ff437d2ba49c21d161ae4",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project init</code> writes a rules file for Codex, <code>~/.codex/rules/projector.rules</code>, that lets Codex run Projector's commands without asking. Codex loads every <code>.rules</code> file in that directory, and the person's own saved approvals live in <code>default.rules</code> beside it. The file ends with <code>host_executable(name = \"project\", paths = [])</code>. That line stops a Codex that resolves program paths, 0.108 and newer, from treating <code>/tmp/x/project</code> as the allowed <code>project</code>.",
+   "A Codex older than 0.107 cannot parse that line. When it meets a rules file it cannot parse, it logs a warning and loads no rules at all, the person's own included. Before this change the docs named 0.107 as the minimum, but nothing checked it.",
+   "Now <code>init</code> runs <code>codex --version</code> on the <code>codex</code> it finds on <code>PATH</code>. For a version older than 0.107 it writes the same rules without that line and its comment, and says on stderr to update Codex. A <code>codex</code> that is missing, fails, hangs, or prints no version gets the whole file, as before. <code>project review rules</code>, the read-only check an agent runs, reports the whole file under a too-old Codex as a broken policy."
+  ],
+  "cards": [
+   {
+    "id": "decisions",
+    "title": "Which file each Codex gets",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th><code>codex --version</code> on <code>PATH</code></th><th>File <code>init</code> writes</th></tr></thead><tbody><tr><td>0.106.9 or older</td><td class=\"r\">Rules without <code>host_executable</code>, plus a stderr note</td></tr><tr><td>0.107.0 or newer, pre-releases included</td><td class=\"r\">The whole file</td></tr><tr><td>No <code>codex</code>, a non-zero exit, a timeout after 5 seconds, or no <code>X.Y.Z</code> on stdout</td><td class=\"r\">The whole file</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first Projector review of <code>0fd9a69</code> requested changes, with one finding open. When an old <code>codex</code> is on <code>PATH</code> but a newer Codex, such as the desktop app, reads the same <code>~/.codex</code>, the shorter file lets that newer Codex run a path to a <code>project</code> program outside its sandbox.</li><li>The full suite, <code>project check</code>, and <code>git diff --check</code> passed at this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "rules",
+   "title": "Choose the rules file by the Codex version",
+   "kicker": "How permissions.py reads the version and picks the file",
+   "intro": [
+    "Two new functions do the work. <code>codex_version</code> runs <code>codex --version</code> without a shell, and returns the first <code>X.Y.Z</code> on stdout as a tuple, or <code>None</code>. <code>codex_rules</code> returns the whole <code>CODEX_RULES</code> for <code>None</code> or for 0.107 and newer, and <code>CODEX_RULES_WITHOUT_HOST_EXECUTABLE</code> otherwise. The shorter file is <code>CODEX_RULES</code> cut at the comment that introduces the line, so the two cannot drift apart.",
+    "<code>allow_in_codex</code> writes and checks the file for both <code>init</code> and <code>review rules</code>. It now compares the file on disk with the version's file instead of always with <code>CODEX_RULES</code>. Because it rewrites the file whole, an upgraded Codex gets the line on the next <code>init</code>, and a downgraded one loses it."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The version comes from whichever <code>codex</code> is first on <code>PATH</code>. Every Codex that uses <code>~/.codex</code>, such as the desktop app or an IDE extension carrying its own binary, loads the same file, whatever version it is."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds <code>codex_version</code>, <code>codex_rules</code>, and the shorter rules constant, and makes <code>allow_in_codex</code> write and check the file for the version it finds.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "I ran <code>codex_version</code> against fake <code>codex</code> scripts. <code>0.106.9</code> reads as too old. <code>0.107.0-alpha.3</code>, <code>0.110.0</code>, and <code>1.0.0</code> read as current. A version printed only on stderr, a <code>v</code>-prefixed version, and a script that sleeps past the 5-second timeout all read as <code>None</code>.",
+       "line": 210
+      },
+      {
+       "kind": "flag",
+       "text": "Open review finding: an old <code>codex</code> on <code>PATH</code> makes <code>init</code> write the shorter file. A newer Codex reading the same <code>~/.codex</code>, such as the desktop app, then matches <code>/tmp/x/project summary</code> against the <code>project</code> rules and runs it outside its sandbox. <code>codex execpolicy check --resolve-host-executables</code> on Codex 0.169 allows that command against the shorter file. The finding asks the stderr note and <code>docs/cli.md</code> to say so.",
+       "line": 362
+      },
+      {
+       "kind": "context",
+       "text": "Under a too-old Codex, a file that still holds the line is reported as <code>kept</code>, a broken policy, and <code>review rules</code> exits 1. <code>publish_allowed</code>, which feeds <code>review rules --json</code>'s <code>summary_publish</code>, still reads only the rules text, so it reports <code>true</code> for that file.",
+       "line": 383
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Tests and the documented behavior",
+   "kicker": "Fake codex scripts, init and review rules cases, and docs/cli.md",
+   "intro": [
+    "The new unit tests put fake <code>codex</code> scripts on a temporary <code>PATH</code>, so they exercise the real subprocess call. The <code>init</code> test writes the shorter file for 0.106.0 and then the whole file for 0.107.0, 0.169.0, and an unknown version. The <code>review rules</code> test tells a broken policy apart from a missing rule. The shared test setup now patches <code>codex_version</code> to return <code>None</code>, so no test depends on the Codex installed on the machine.",
+    "<code>docs/cli.md</code> replaces its \"update Codex first\" warning with what <code>init</code> now does for each case."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_permissions.py",
+     "note": "<code>CodexVersionTests</code>: version parsing from fake scripts, and the 0.107 threshold."
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "The shared <code>codex_version</code> patch, the <code>init</code> upgrade test, and the <code>review rules</code> broken-policy test."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Says which file <code>init</code> writes for an old, current, or unknown Codex.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "This paragraph warns only about an old Codex that is not on <code>PATH</code>. It does not mention the opposite case, an old <code>codex</code> on <code>PATH</code> beside a newer Codex, which the open finding covers.",
+       "line": 262
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

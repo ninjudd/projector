@@ -1,0 +1,257 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 1b8eb130..2e4d760a 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -253,9 +253,17 @@ what it did to each:
+   approval instead of running outside the sandbox, while the bare
+   `project summary publish` an agent runs stays allowed. Claude Code matches
+   the command text, so `Bash(project *)` never matches a path to a program.
+-  The rules need Codex 0.107 or newer. An older Codex cannot parse
+-  `host_executable`, and a rules file it cannot parse leaves it with no
+-  rules at all, your own included, so update Codex before you run `init`.
++  Codex 0.107 is the first to parse `host_executable`, and an older Codex
++  that meets a rules file it cannot parse loads no rules at all, your own
++  included. So `init` runs `codex --version` first. When the `codex` on
++  your `PATH` reports a version older than 0.107, `init` writes the rules
++  without the `host_executable` line and its comment, and says on stderr
++  to update Codex and run `init` again. Such a Codex resolves no program
++  path, so the line closes no hole there. When `init` finds no `codex`, or
++  one that reports no version, it writes the whole file, so update a Codex
++  that is not on your `PATH`, such as one only the desktop app runs, to
++  0.107 or newer. `project review rules` reads the version the same way,
++  and reports a file that holds the line for a Codex too old to parse it.
+ 
+   No rule matches `project init`, `project upgrade`, `project config set` or
+   `unset`, `project create` or `project edit`, whose editor an agent could
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 0c8b95c7..ace0a7aa 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -100,6 +100,8 @@
+ import json
+ import os
+ import re
++import shutil
++import subprocess
+ from collections.abc import Mapping, Sequence
+ from pathlib import Path
+ from typing import Optional
+@@ -162,8 +164,11 @@
+ # match the `project` rules and run outside the sandbox. An empty list keeps
+ # every absolute path for `project` to Codex's usual approval, and leaves the
+ # bare name, which the skills run, allowed. Codex before 0.107 cannot parse it
+-# and drops the whole policy, so 0.107 is Projector's minimum Codex version.
++# and drops the whole policy, so `init` leaves it out for a Codex it finds to
++# be older, which resolves no path in any case.
+ CODEX_HOST_EXECUTABLE = 'host_executable(name = "project", paths = [])'
++# The first Codex that parses `CODEX_HOST_EXECUTABLE`.
++HOST_EXECUTABLE_SINCE = (0, 107)
+ # Codex loads every `.rules` file in its rules directory, and writes the
+ # approvals a person saves to `default.rules`, so Projector keeps its rules in
+ # a file of its own and rewrites that file whole.
+@@ -181,6 +186,39 @@
+     + "# These rules allow only the bare name `project`, never a path to a program of that name.\n"
+     + CODEX_HOST_EXECUTABLE + "\n"
+ )
++# The rules for a Codex older than `HOST_EXECUTABLE_SINCE`: the same, without
++# the line it cannot parse and the comment that introduces it.
++CODEX_RULES_WITHOUT_HOST_EXECUTABLE = CODEX_RULES.split("# These rules allow only the bare name")[0]
++
++
++def codex_version(environ: Mapping[str, str] = os.environ) -> Optional[tuple[int, ...]]:
++    """The version `codex --version` reports, from the `codex` on `environ`'s `PATH`, or None when there is none.
++
++    A Codex that is missing, does not run, or prints no version reads as None,
++    which `codex_rules` treats as current, since a desktop app with no command
++    on `PATH` updates itself.
++    """
++
++    executable = shutil.which("codex", path=environ.get("PATH"))
++    if executable is None:
++        return None
++    try:
++        result = subprocess.run([executable, "--version"], capture_output=True, text=True, encoding="utf-8",
++                                errors="replace", timeout=5, check=False)
++    except (OSError, subprocess.SubprocessError):
++        return None
++    found = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", result.stdout) if result.returncode == 0 else None
++    return tuple(int(part) for part in found.groups()) if found else None
++
++
++def codex_rules(version: Optional[tuple[int, ...]]) -> str:
++    """The rules file for a Codex at `version`, which leaves out `CODEX_HOST_EXECUTABLE` for one too old to parse it."""
++
++    return CODEX_RULES if version is None or version >= HOST_EXECUTABLE_SINCE else CODEX_RULES_WITHOUT_HOST_EXECUTABLE
++
++
++def shown_version(version: tuple[int, ...]) -> str:
++    return ".".join(map(str, version))
+ 
+ 
+ def settings_path(environ: Mapping[str, str] = os.environ) -> Path:
+@@ -320,19 +358,33 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
+     if path is None:
+         return None
+     name = shown(path, environ)
++    version = codex_version(environ)
++    expected = codex_rules(version)
++    too_old = version is not None and expected != CODEX_RULES
++    codex = f"Codex {shown_version(version)}" if version is not None else "Codex"
++    # Why the file leaves out `CODEX_HOST_EXECUTABLE`, and how to add it.
++    older = (f"{codex} is older than {shown_version(HOST_EXECUTABLE_SINCE)}, the first to parse "
++             f"`{CODEX_HOST_EXECUTABLE}`, so {name} leaves it out; update Codex and run `project init` again to "
++             "add it" if too_old else None)
+ 
+     def kept(reason: str) -> FileAction:
++        lines = CODEX_PREFIX_RULES if too_old else (*CODEX_PREFIX_RULES, CODEX_HOST_EXECUTABLE)
+         return FileAction(name, "kept", f"{name} {reason}, so the Codex rules allowing {COMMANDS} were not added; "
+-                                        f"add {' and '.join((*CODEX_PREFIX_RULES, CODEX_HOST_EXECUTABLE))} to a .rules file in "
++                                        f"add {' and '.join(lines)} to a .rules file in "
+                                         f"{shown(path.parent, environ)} yourself")
+ 
+     existed = path.exists()
+     text, unreadable = read_user_file(path, environ)
+     if unreadable:
+         return kept(unreadable)
+-    if text == CODEX_RULES:
+-        return FileAction(name, "unchanged")
++    if text == expected:
++        return FileAction(name, "unchanged", older)
+     if not apply:
++        if too_old and text == CODEX_RULES:
++            return FileAction(name, "kept", f"{name} holds `{CODEX_HOST_EXECUTABLE}`, which {codex} cannot parse, so "
++                                            "Codex loads no rules at all, your own included; update Codex"
++                                            + (", or run `project init` yourself in a terminal, or pass "
++                                               "--publish-rule, to write the rules it can parse" if hint else ""))
+         example = ("; it still allows `project summary publish`" if codex_allows(text, PUBLISH)
+                    else ", such as `project summary publish`")
+         return FileAction(name, "kept", f"{name} lacks Projector's current rules, without which Codex can ask "
+@@ -341,10 +393,10 @@ def kept(reason: str) -> FileAction:
+                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
+                                            "add them" if hint else ""))
+     try:
+-        write_through(path, CODEX_RULES)
++        write_through(path, expected)
+     except OSError as error:
+         return kept(f"could not be written ({error.strerror})")
+-    return FileAction(name, "updated" if existed else "created")
++    return FileAction(name, "updated" if existed else "created", older)
+ 
+ 
+ def codex_allows(text: str, command: Sequence[str]) -> bool:
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index ae186d02..c16ed58e 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -316,3 +316,33 @@ def test_the_skill_publishes_alone_with_no_visibility_check_joined_to_it(self) -
+ 
+         self.assertNotRegex(skill, r"(&&|;|\|)\s*project summary publish")
+         self.assertNotRegex(skill, r"project summary publish[^`]*(&&|;|\|)")
++
++
++@unittest.skipIf(os.name == "nt", "the fake codex is a shell script")
++class CodexVersionTests(unittest.TestCase):
++    """`init` reads the version of the `codex` on `PATH` to decide whether the rules can hold `host_executable`."""
++
++    def version_with(self, script: str | None) -> tuple[int, ...] | None:
++        folder = tempfile.TemporaryDirectory()
++        self.addCleanup(folder.cleanup)
++        if script is not None:
++            codex = Path(folder.name) / "codex"
++            codex.write_text(f"#!/bin/sh\n{script}\n")
++            codex.chmod(0o755)
++        return permissions.codex_version({"PATH": folder.name})
++
++    def test_the_version_comes_from_codex_version(self) -> None:
++        self.assertEqual((0, 106, 0), self.version_with('echo "codex-cli 0.106.0"'))
++        self.assertEqual((0, 169, 2), self.version_with('echo "codex-cli 0.169.2-alpha.1"'))
++
++    def test_a_codex_that_says_no_version_reads_as_unknown(self) -> None:
++        for name, script in {"missing": None, "failing": 'echo "codex-cli 0.1.0"; exit 1',
++                             "silent": "true", "no version": 'echo "codex-cli dev"'}.items():
++            with self.subTest(name):
++                self.assertIsNone(self.version_with(script))
++
++    def test_an_old_codex_gets_the_rules_without_the_line_it_cannot_parse(self) -> None:
++        self.assertEqual(permissions.CODEX_RULES_WITHOUT_HOST_EXECUTABLE, permissions.codex_rules((0, 106, 9)))
++        for version in ((0, 107, 0), (0, 169, 0), (1, 0, 0), None):
++            with self.subTest(version=version):
++                self.assertEqual(permissions.CODEX_RULES, permissions.codex_rules(version))
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 9e40bc8f..b4f408b6 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -82,6 +82,9 @@ def setUp(self) -> None:
+         # Commands run as an agent would, without a terminal, whatever runs the
+         # tests; a test that stands for a person at a terminal says so.
+         self.enterContext(mock.patch("sys.stdin.isatty", return_value=False))
++        # The Codex rules `init` writes depend on the installed Codex's version,
++        # so no test reads the version of whatever Codex runs the tests.
++        self.codex = self.enterContext(mock.patch.object(permissions, "codex_version", return_value=None))
+ 
+     def at_a_terminal(self) -> None:
+         self.enterContext(mock.patch("sys.stdin.isatty", return_value=True))
+@@ -1308,6 +1311,35 @@ def test_init_writes_the_codex_rules_where_codex_is_installed(self) -> None:
+         self.assertIn("updated ~/.codex/rules/projector.rules\n", self.invoke("init")[1])
+         self.assertEqual(permissions.CODEX_RULES, self.codex_rules().read_text())
+ 
++    def test_init_leaves_host_executable_out_for_a_codex_too_old_to_parse_it(self) -> None:
++        # A Codex before 0.107 that meets `host_executable` drops its whole policy, the person's own rules
++        # included, and before 0.108 it resolves no program path, so the line closes no hole there.
++        self.at_a_terminal()
++        (self.home / ".codex").mkdir()
++        self.codex.return_value = (0, 106, 0)
++
++        code, stdout, stderr = self.invoke("init")
++
++        self.assertEqual(0, code, stderr)
++        self.assertIn("created ~/.codex/rules/projector.rules\n", stdout)
++        written = self.codex_rules().read_text()
++        self.assertEqual(permissions.CODEX_RULES_WITHOUT_HOST_EXECUTABLE, written)
++        self.assertNotIn("host_executable", written)
++        self.assertTrue(permissions.CODEX_RULES.startswith(written), "only the line and its comment are left out")
++        self.assertTrue(permissions.codex_allows(written, permissions.PUBLISH))
++        self.assertIn("Codex 0.106.0 is older than 0.107", stderr)
++        self.assertIn("update Codex and run `project init` again", stderr)
++        self.assertIn("unchanged ~/.codex/rules/projector.rules\n", self.invoke("init")[1])
++
++        for version in ((0, 107, 0), (0, 169, 0), None):
++            with self.subTest(version=version):
++                self.codex.return_value = version
++                code, stdout, stderr = self.invoke("init")
++                self.assertEqual(0, code, stderr)
++                self.assertEqual(permissions.CODEX_RULES, self.codex_rules().read_text(),
++                                 "a current Codex, or one whose version is unknown, gets the line")
++                self.assertNotIn("older than", stderr)
++
+     def test_init_leaves_codex_alone_where_codex_is_not_installed(self) -> None:
+         self.at_a_terminal()
+ 
+@@ -2006,6 +2038,27 @@ def test_a_codex_directory_without_projectors_rules_exits_1(self) -> None:
+         self.assertEqual(0, code, stderr)
+         self.assertEqual("allows ~/.claude/settings.json\nallows ~/.codex/rules/projector.rules\n", stdout)
+ 
++    def test_a_codex_too_old_for_the_rules_file_is_told_apart_from_a_missing_rule(self) -> None:
++        rules = self.home / ".codex" / "rules" / "projector.rules"
++        rules.parent.mkdir(parents=True)
++        rules.write_text(permissions.CODEX_RULES)
++        self.codex.return_value = (0, 100, 0)
++        before = self.home_tree()
++
++        code, stdout, stderr = self.invoke("review", "rules")
++
++        self.assertEqual(1, code, stderr)
++        self.assertEqual("allows ~/.claude/settings.json\nlacks ~/.codex/rules/projector.rules\n", stdout)
++        self.assertIn("which Codex 0.100.0 cannot parse, so Codex loads no rules at all", stderr)
++        self.assertNotIn("or pass --publish-rule", stderr, "the check names no command an agent could run")
++        self.assertEqual(before, self.home_tree())
++
++        rules.write_text(permissions.CODEX_RULES_WITHOUT_HOST_EXECUTABLE)
++        code, stdout, stderr = self.invoke("review", "rules")
++        self.assertEqual(0, code, stderr)
++        self.assertEqual("allows ~/.claude/settings.json\nallows ~/.codex/rules/projector.rules\n", stdout)
++        self.assertIn("Codex 0.100.0 is older than 0.107", stderr)
++
+     def test_unreadable_settings_exit_1_and_stay_untouched(self) -> None:
+         for content, reason in (
+             (b"{not json", "is not valid JSON"),
