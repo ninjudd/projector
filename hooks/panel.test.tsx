@@ -90,7 +90,24 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
     p14: pr(14, 'Change a review is reading', { labels: { nodes: [{ name: 'Reviewing' }, { name: 'clean' }] } }),
     p15: pr(15, 'Signed-off change held for a suggestion', { isDraft: true, labels: { nodes: [{ name: 'clean' }] } }),
     p16: pr(16, 'Draft that conflicts', { isDraft: true, mergeable: 'CONFLICTING' }),
-    p17: pr(17, 'Change by a deleted account', { author: null }),
+    p17: pr(17, 'Signed-off change that now conflicts', {
+      mergeable: 'CONFLICTING',
+      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+      labels: {
+        nodes: [
+          { name: 'clean', color: '0E8A16' },
+          { name: 'good first issue', color: '7057ff' },
+          { name: 'Docs', color: 'fbca04' },
+          { name: 'legacy' },
+        ],
+      },
+    }),
+    p18: pr(18, 'Change a review sent back', {
+      reviewDecision: 'CHANGES_REQUESTED',
+      reviewThreads: { nodes: [{ isResolved: false }] },
+    }),
+    p19: pr(19, 'Draft no review has read', { isDraft: true }),
+    p20: pr(20, 'Change by a deleted account', { author: null }),
   },
   'x/y': {
     p7: pr(7, 'Conflicting change', {
@@ -294,10 +311,10 @@ test('draws one line per open pull request of the session’s own loops', async 
   await ui.unmount()
 })
 
-test('a row draws a draft number and its word in italic and says reviewing, clean, draft, or ready after it', async ($, on) => {
+test('a row says what holds it back first, then reviewing, clean, draft, or ready, with a draft’s number and word in italic', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#13\no/r#14\no/r#15\n' })
+  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#10\no/r#11\no/r#12\no/r#13\no/r#14\no/r#15\no/r#16\no/r#18\no/r#19\n' })
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
@@ -308,16 +325,24 @@ test('a row draws a draft number and its word in italic and says reviewing, clea
   for (const [number, title] of [
     [1, 'Signed-off change'],
     [2, 'Change under review'],
+    [10, 'Change held back'],
+    [11, 'Approved change'],
+    [12, 'Change failing its checks'],
     [13, 'Change waiting for review'],
     [14, 'Change a review is reading'],
     [15, 'Signed-off change held for a suggestion'],
+    [16, 'Draft that conflicts'],
+    [18, 'Change a review sent back'],
+    [19, 'Draft no review has read'],
   ] as const) {
     // The word sits right before the title, or before the author column of someone else's.
     const texts = await ui.findAll({ type: 'Text' })
     const at = texts.findIndex(found => found.text === title)
     const word = texts
       .slice(Math.max(0, at - 2), at)
-      .find(found => ['reviewing', 'clean', 'draft', 'ready'].includes(found.text))
+      .find(found =>
+        ['conflict', 'failing', 'changes', 'threads', 'reviewing', 'clean', 'draft', 'ready'].includes(found.text),
+      )
     // `dimColor` does not dim in every terminal, so the number's own style carries the draft state.
     const button = await ui.find({ type: 'Button', key: `pr:o/r#${number}` })
     expect(button?.props.dimColor).toBeUndefined()
@@ -330,8 +355,17 @@ test('a row draws a draft number and its word in italic and says reviewing, clea
   }
   expect(Object.fromEntries(rows)).toEqual({
     'Signed-off change': { word: 'clean', style: ['success', false], number: [undefined, false] },
+    // A conflict comes before a change request and open threads, and a broken branch is red.
+    'Change held back': { word: 'conflict', style: ['error', false], number: [undefined, false] },
+    'Change failing its checks': { word: 'failing', style: ['error', false], number: [undefined, false] },
+    // What a review wants is yellow: a change request first, then open threads, which come before an approval.
+    'Change a review sent back': { word: 'changes', style: ['warning', false], number: [undefined, false] },
+    'Approved change': { word: 'threads', style: ['warning', false], number: [undefined, false] },
+    // What holds a draft back shows on it too, in italic.
+    'Change under review': { word: 'threads', style: ['warning', true], number: [undefined, true] },
+    'Draft that conflicts': { word: 'conflict', style: ['error', true], number: [undefined, true] },
     // A draft keeps the default color, which stays readable, and is drawn in italic.
-    'Change under review': { word: 'draft', style: [undefined, true], number: [undefined, true] },
+    'Draft no review has read': { word: 'draft', style: [undefined, true], number: [undefined, true] },
     // A pull request no review has labeled says whether it is ready, in light blue.
     'Change waiting for review': { word: 'ready', style: ['suggestion', false], number: [undefined, false] },
     // A review in progress shows over a clean label an earlier head left.
@@ -703,10 +737,9 @@ test('a pull request’s notes take their own colors, and each ` · ` between th
   await clock.settle()
 
   const ui = await $.ui.mount(PANEL)
-  expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · changes requested · 1*' }))).toEqual([
-    ['conflict', 'error'],
-    ' · ',
-    ['changes requested', 'error'],
+  // The conflict is the row's status, so the notes leave it out and name the change request after it.
+  expect(partsOf(await ui.find({ type: 'Text', text: 'changes requested · 1*' }))).toEqual([
+    ['changes requested', 'warning'],
     ' · ',
     ['1*', 'warning'],
   ])
@@ -733,13 +766,9 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   // The number is a plain button, so no terminal draws a URL beside it.
   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
-  expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
-  // The threads' count comes after the other notes, beside the age, and the ` · ` between them keeps the default color.
-  expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · 2*' }))).toEqual([
-    ['conflict', 'error'],
-    ' · ',
-    ['2*', 'warning'],
-  ])
+  // The conflict is the row's status, so its notes hold only the threads' count.
+  expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
+  expect(partsOf(await ui.find({ type: 'Text', text: '2*' }))).toEqual([['2*', 'warning']])
 
   await ui.press({ key: 'pr:x/y#7' })
   await clock.settle()
@@ -811,6 +840,44 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   await ui.press({ key: 'pr:o/r#1' })
   await clock.settle()
   expect(await linksOf('o/r#1')).toEqual(['github:o/r#1'])
+  await ui.unmount()
+})
+
+test('a drawer ends its facts with every label as GitHub draws it, a clean the row’s word gave way to among them', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#17\n' })
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(PANEL)
+
+  // The conflict is the row's word, over the clean label, and the failing checks, which hold it back too, a note.
+  expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
+  expect(await ui.find({ type: 'Text', text: 'clean' })).toBeUndefined()
+  expect(partsOf(await ui.find({ type: 'Text', text: 'checks failing' }))).toEqual([['checks failing', 'error']])
+
+  await ui.press({ key: 'pr:o/r#17' })
+  await clock.settle()
+  const facts = await ui.find({ type: 'Text', text: /^reviewer · .* · checks failing · / })
+  const pieces = (facts?.children ?? []) as (string | { props: Record<string, unknown>; children: string[] })[]
+  const labels = pieces.slice(pieces.findIndex(piece => piece === ' ·') + 1)
+  // Each label is spaced off the one before it and drawn on its own color, as GitHub spells it: in white on a dark
+  // color, in black on a light one, and on GitHub's gray where the color is unknown.
+  expect(
+    labels.map(piece =>
+      typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.backgroundColor, piece.props.color],
+    ),
+  ).toEqual([
+    ' ',
+    [' clean ', '#0e8a16', '#ffffff'],
+    ' ',
+    [' good first issue ', '#7057ff', '#ffffff'],
+    ' ',
+    [' Docs ', '#fbca04', '#000000'],
+    ' ',
+    [' legacy ', '#ededed', '#000000'],
+  ])
   await ui.unmount()
 })
 
@@ -1158,7 +1225,7 @@ test('lists your pull requests first, then everyone else’s by author, naming t
 test('your pull requests and the review requests collapse apart, yours always first', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#17\no/r#6\n', [WATCH]: 'x/y#7\n' })
+  world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#20\no/r#6\n', [WATCH]: 'x/y#7\n' })
   await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
   await clock.advance(1)
   await clock.settle()
@@ -1180,12 +1247,12 @@ test('your pull requests and the review requests collapse apart, yours always fi
 
   // The review requests collapse to one line under your pull requests, listing them in their rows' order.
   await ui.press({ key: 'count:review' })
-  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', '+ r#17 r#5 r#4 r#6'])
+  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', '+ r#20 r#5 r#4 r#6'])
   expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 4 review requests  \d+s$/)
 
   // Yours collapse apart from them, and their line still comes first.
   await ui.press({ key: 'count:pr' })
-  expect(await lines()).toEqual(['+ y#7 r#9', '+ r#17 r#5 r#4 r#6'])
+  expect(await lines()).toEqual(['+ y#7 r#9', '+ r#20 r#5 r#4 r#6'])
 
   // A label opens its drawer under its own section's line.
   await ui.press({ key: 'open:o/r#4' })
@@ -1197,10 +1264,10 @@ test('your pull requests and the review requests collapse apart, yours always fi
 
   // Expanding the review requests leaves yours collapsed, and the drawer moves back to its row.
   await ui.press({ key: 'expand:review' })
-  expect(await lines()).toEqual(['+ y#7 r#9', 'pr:o/r#17', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+  expect(await lines()).toEqual(['+ y#7 r#9', 'pr:o/r#20', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
   expect(await ui.find({ key: 'drawer:o/r#4' })).toBeDefined()
   await ui.press({ key: 'count:pr' })
-  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#17', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#20', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
   await ui.unmount()
 })
 
@@ -1474,6 +1541,25 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\n' })
   const earlier = { watching: [], reviewing: [], fetchedAt: null, error: null }
+  on('state.get', { plugin: 'projector', key: 'panelSnapshot' }, () => ({
+    value: { value: earlier as never, version: 1 },
+  }))
+
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('draws over a snapshot whose labels an earlier version kept as names alone', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\n' })
+  const row = { pr: { repo: 'o/r', number: 1, title: 'Signed-off change', labels: ['clean'] }, roles: ['reviewing'] }
+  const earlier = { rows: [row], viewer: null, fetchedAt: null, error: null }
   on('state.get', { plugin: 'projector', key: 'panelSnapshot' }, () => ({
     value: { value: earlier as never, version: 1 },
   }))
@@ -3630,33 +3716,44 @@ test('the pull requests’ count in the header collapses them to one line in the
   await ui.unmount()
 })
 
-test('a collapsed number is red when held back, yellow with findings, orange reviewing, green clean, plain otherwise, and italic for a draft', async ($, on) => {
+test('a collapsed number takes the color of its row’s word, and is italic for a draft', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#12\no/r#13\no/r#14\no/r#15\no/r#16\n' })
+  const numbers = ['#1', '#2', '#10', '#11', '#12', '#13', '#14', '#15', '#16', '#17', '#18', '#19']
+  world(on, { [REVIEW]: `${numbers.map(number => `o/r${number}`).join('\n')}\n` })
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
 
+  // Each row's word is the Text right after its number.
+  const texts = await ui.findAll({ type: 'Text' })
+  const words = numbers.map(number => {
+    const word = texts[texts.findIndex(found => found.text === number) + 1]
+    return [word?.text, word?.props.color]
+  })
+
   await ui.press({ key: 'count:pr' })
-  const drawn: Record<string, [unknown, boolean]> = {}
-  for (const text of ['#1', '#2', '#12', '#13', '#14', '#15', '#16']) {
-    const props = (await ui.find({ type: 'Text', text }))?.props
-    drawn[text] = [props?.color, props?.italic === true]
-  }
-  expect(drawn).toEqual({
-    '#1': ['success', false],
-    // An open review thread colors a draft as it would a ready pull request, and the draft is italic.
-    '#2': ['warning', true],
-    '#12': ['error', false],
-    // A ready pull request no review has labeled takes the default color.
-    '#13': [undefined, false],
-    '#14': ['claude', false],
-    // A held draft keeps its clean label's green, in italic, as its row draws an italic number beside `clean`.
-    '#15': ['success', true],
-    // What holds a pull request back shows on a draft too.
-    '#16': ['error', true],
+  const drawn = await Promise.all(
+    numbers.map(async text => {
+      const props = (await ui.find({ type: 'Text', text }))?.props
+      return [props?.color, props?.italic === true]
+    }),
+  )
+  expect(Object.fromEntries(numbers.map((number, at) => [number, [...(words[at] ?? []), ...(drawn[at] ?? [])]]))).toEqual({
+    '#1': ['clean', 'success', 'success', false],
+    '#2': ['threads', 'warning', 'warning', true],
+    '#10': ['conflict', 'error', 'error', false],
+    '#11': ['threads', 'warning', 'warning', false],
+    '#12': ['failing', 'error', 'error', false],
+    '#13': ['ready', 'suggestion', 'suggestion', false],
+    '#14': ['reviewing', 'claude', 'claude', false],
+    '#15': ['clean', 'success', 'success', true],
+    '#16': ['conflict', 'error', 'error', true],
+    // A `clean` label gives way to the hold, collapsed as on its row.
+    '#17': ['conflict', 'error', 'error', false],
+    '#18': ['changes', 'warning', 'warning', false],
+    '#19': ['draft', undefined, undefined, true],
   })
   await ui.unmount()
 })
@@ -5238,6 +5335,9 @@ test('lists the session’s subscriptions from the daemon’s cache, with their 
   expect(await ui.find({ type: 'Text', text: 'Change by bob' })).toBeUndefined()
   // A pull request the daemon has no result for yet says so in its title's place, with no state, author, or age.
   expect((await ui.find({ type: 'Text', text: 'loading…' }))?.props.color).toBe('subtle')
+  // Its number is muted as its collapsed number is, while a loaded row's keeps the default color.
+  expect((await ui.find({ type: 'Text', text: 'r#13' }))?.props.color).toBe('subtle')
+  expect((await ui.find({ type: 'Text', text: 'y#7' }))?.props.color).toBeUndefined()
   expect(await ui.find({ key: 'author:o/r#13' })).toBeUndefined()
   expect((await ui.find({ key: 'age:o/r#13' }))?.text).toBe('')
   expect((await ui.find({ key: 'age:x/y#7' }))?.text).toBe('5m')

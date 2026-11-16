@@ -97,10 +97,11 @@ LABEL_CHANGES = {
 # The query § 2.6 of the watch-daemon plan gives, which Projector's panel reads from the cache too, with
 # the fields the events name: `mergedAt` and `mergeCommit` for MERGED, each comment's id and times for a
 # live start comment, and `nameWithOwner` for the review state's path. The panel reads `labels` for the
-# `reviewing` and `clean` labels a review sets, and the daemon for their LABEL events. `rateLimit` reports what it
-# cost. The panel reads the head's `statusCheckRollup` `state`, and the daemon reads the rollup's contexts for
-# CHECKS. GitHub's counts by state cover every context, so they say when a failed one lies past the first page.
-# The `projector/review` status is among them, so the query reads it too, to take it out of the counts.
+# `reviewing` and `clean` labels a review sets, drawing each label in its `color`, and the daemon for their
+# LABEL events. `rateLimit` reports what it cost. The panel reads the head's `statusCheckRollup` `state`, and
+# the daemon reads the rollup's contexts for CHECKS. GitHub's counts by state cover every context, so they say
+# when a failed one lies past the first page. The `projector/review` status is among them, so the query reads
+# it too, to take it out of the counts.
 CONTEXT_NODES = "nodes{ __typename ... on CheckRun{ name conclusion } ... on StatusContext{ context state } }"
 QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
   repository(owner:$o,name:$r){ visibility nameWithOwner
@@ -108,7 +109,7 @@ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
       number title url body state isDraft reviewDecision mergeable updatedAt mergedAt mergeCommit { oid }
       headRefOid headRefName baseRefName author { login }
       additions deletions changedFiles
-      labels(first:20){ nodes{ name } }
+      labels(first:20){ nodes{ name color } }
       commits(last:1){ nodes{ commit{ status{ context(name:%s){ state } }
         statusCheckRollup{ state contexts(first:20){ checkRunCountsByState{ state count }
           statusContextCountsByState{ state count } pageInfo{ hasNextPage endCursor } %s } } } } }

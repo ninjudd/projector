@@ -122,7 +122,7 @@ describe('GitHub', () => {
             deletions: 7,
             changedFiles: 4,
             updatedAt: '2026-10-12T12:00:00Z',
-            labels: { nodes: [{ name: 'Reviewing' }, { name: 'bug' }] },
+            labels: { nodes: [{ name: 'Reviewing', color: 'FBCA04' }, { name: 'bug', color: 'not a color' }] },
             commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
             body:
               'Why the change exists.\n\n<!-- projector-summary v=1 sha=' +
@@ -156,14 +156,77 @@ describe('GitHub', () => {
       deletions: 7,
       changedFiles: 4,
       checks: 'failing',
-      // Lowercased, as GitHub matches label names, so a row finds `reviewing` however the repository spells it.
-      labels: ['reviewing', 'bug'],
+      // Spelled as GitHub spells them, with GitHub's color as `#rrggbb`, and none for a color the panel cannot draw.
+      labels: [
+        { name: 'Reviewing', color: '#fbca04' },
+        { name: 'bug', color: null },
+      ],
       updatedAt: Date.UTC(2026, 9, 12, 12, 0),
       summaryUrl: 'https://example.com/site/reviews/1',
     })
     expect(fetched.prs.get('x/y#3')?.state).toBe('MERGED')
     expect(fetched.prs.get('x/y#3')).toMatchObject({ author: null, checks: null, updatedAt: null, summaryUrl: null })
     expect(fetched.prs.get('x/y#3')?.url).toBe('https://github.com/x/y/pull/3')
+  })
+
+  test('reads a head’s checks without the projector/review status a review posts', () => {
+    // The panel's own query asks for that status and the rollup's counts, as the daemon's does.
+    expect(query.text).toContain('status { context(name: "projector/review") { state } }')
+    expect(query.text).toContain('checkRunCountsByState { state count } statusContextCountsByState { state count }')
+
+    type Counts = { checkRuns?: Record<string, number>; statuses?: Record<string, number> }
+    const checksOf = (rollup: string, review: string | null, { checkRuns = {}, statuses = {} }: Counts) => {
+      const rows = (counts: Record<string, number>) => Object.entries(counts).map(([state, count]) => ({ state, count }))
+      const commit = {
+        status: review === null ? null : { context: { state: review } },
+        statusCheckRollup: {
+          state: rollup,
+          contexts: { checkRunCountsByState: rows(checkRuns), statusContextCountsByState: rows(statuses) },
+        },
+      }
+      const node = { number: 1, commits: { nodes: [{ commit }] } }
+      return parseCache({ repo: 'o/r', number: 1 }, JSON.stringify({ repository: { pullRequest: node } }))?.checks
+    }
+
+    expect({
+      // A review that requests changes fails its status, which fails the rollup when nothing else does.
+      'only the review failed': checksOf('FAILURE', 'FAILURE', { statuses: { FAILURE: 1 } }),
+      'the review failed, the rest passed': checksOf('FAILURE', 'FAILURE', {
+        checkRuns: { SUCCESS: 3, SKIPPED: 1 },
+        statuses: { FAILURE: 1 },
+      }),
+      'the review failed, and so did a check run': checksOf('FAILURE', 'FAILURE', {
+        checkRuns: { FAILURE: 1, SUCCESS: 2 },
+        statuses: { FAILURE: 1 },
+      }),
+      'the review failed, and another status errored': checksOf('FAILURE', 'FAILURE', {
+        checkRuns: { SUCCESS: 1 },
+        statuses: { FAILURE: 1, ERROR: 1 },
+      }),
+      'the review is running, the rest still run': checksOf('PENDING', 'PENDING', {
+        checkRuns: { IN_PROGRESS: 1, SUCCESS: 2 },
+        statuses: { PENDING: 1 },
+      }),
+      'the review is running, the rest passed': checksOf('PENDING', 'PENDING', {
+        checkRuns: { SUCCESS: 2 },
+        statuses: { PENDING: 1 },
+      }),
+      'the review passed, a check run failed': checksOf('FAILURE', 'SUCCESS', {
+        checkRuns: { FAILURE: 1 },
+        statuses: { SUCCESS: 1 },
+      }),
+      // A head with no review status keeps the rollup's own state.
+      'no review status': checksOf('FAILURE', null, { checkRuns: { SUCCESS: 1 } }),
+    }).toEqual({
+      'only the review failed': null,
+      'the review failed, the rest passed': 'passing',
+      'the review failed, and so did a check run': 'failing',
+      'the review failed, and another status errored': 'failing',
+      'the review is running, the rest still run': 'pending',
+      'the review is running, the rest passed': 'passing',
+      'the review passed, a check run failed': 'failing',
+      'no review status': 'failing',
+    })
   })
 
   test('reports why gh failed', () => {
@@ -454,7 +517,7 @@ describe('the daemon’s files', () => {
       deletions: 4,
       changedFiles: 3,
       checks: 'pending',
-      labels: ['clean'],
+      labels: [{ name: 'clean', color: null }],
       updatedAt: Date.UTC(2026, 9, 30, 11),
       summaryUrl: null,
     })

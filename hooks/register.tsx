@@ -119,6 +119,21 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
   pending: 'warning',
 }
 
+/** The fill of a label whose color the panel has yet to read: GitHub's gray. */
+const UNKNOWN_LABEL_COLOR = '#ededed'
+
+/**
+ * How a drawer draws a label, as GitHub's light theme does: on its own color,
+ * in black when the color's perceived lightness passes GitHub's threshold of
+ * 0.453, and in white otherwise.
+ */
+function labelStyle(color: string | null): { backgroundColor: string; color: string } {
+  const fill = color ?? UNKNOWN_LABEL_COLOR
+  const [red, green, blue] = [1, 3, 5].map(at => Number.parseInt(fill.slice(at, at + 2), 16) / 255)
+  const lightness = 0.2126 * (red ?? 0) + 0.7152 * (green ?? 0) + 0.0722 * (blue ?? 0)
+  return { backgroundColor: fill, color: lightness > 0.453 ? '#000000' : '#ffffff' }
+}
+
 /**
  * The theme color of an open question's line: the one Claude Code gives its
  * own permission prompts, since an agent's question usually asks leave to do
@@ -319,7 +334,8 @@ const oldSending = atom({ plugin: 'projector', key: 'bandSending' } as const, {}
 // so a value an earlier version wrote can have another shape.
 const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
 const current = (value: Snapshot): Snapshot =>
-  Array.isArray(value.rows) && value.rows.every(row => Array.isArray(row.roles))
+  Array.isArray(value.rows) &&
+  value.rows.every(row => Array.isArray(row.roles) && row.pr.labels.every(label => typeof label === 'object'))
     ? { ...value, viewer: value.viewer ?? null }
     : EMPTY
 
@@ -1213,16 +1229,44 @@ function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
 
 type Note = { text: string; color: 'error' | 'warning' | 'success' }
 
-/** What a row says after the title: what holds the pull request back, or its approval. */
+type Hold = {
+  status: string
+  /** What the row's notes say when another hold is its status; none for open threads, whose count is always a note. */
+  note?: string
+  color: 'error' | 'warning'
+  holds: (pr: PullRequest) => boolean
+}
+
+/**
+ * What holds a pull request back, most urgent first: red while the branch
+ * itself cannot merge, yellow while a review wants something. The first that
+ * holds is the row's status, and its notes name the rest.
+ */
+const HOLDS: Hold[] = [
+  { status: 'conflict', note: 'conflict', color: 'error', holds: pr => pr.isConflicting },
+  { status: 'failing', note: 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
+  {
+    status: 'changes',
+    note: 'changes requested',
+    color: 'warning',
+    holds: pr => pr.reviewDecision === 'CHANGES_REQUESTED',
+  },
+  { status: 'threads', color: 'warning', holds: pr => pr.openThreads > 0 },
+]
+
+/** What a row says after the title: each hold its status does not name, its approval, and its open threads' count. */
 function notesOf(pr: PullRequest): Note[] {
-  const notes: Note[] = []
-  if (pr.isConflicting) notes.push({ text: 'conflict', color: 'error' })
-  if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
+  const status = rowState(pr).text
+  const notes = HOLDS.flatMap(({ status: word, note, color, holds }): Note[] =>
+    note !== undefined && word !== status && holds(pr) ? [{ text: note, color }] : [],
+  )
   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
   // The open threads' count comes last, beside the age.
   if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, color: 'warning' })
   return notes
 }
+
+const hasLabel = (pr: PullRequest, name: string) => pr.labels.some(label => label.name.toLowerCase() === name)
 
 /**
  * What a row says of a pull request's review, from the labels a review sets
@@ -1231,36 +1275,30 @@ function notesOf(pr: PullRequest): Note[] {
  */
 function reviewLabel(pr: PullRequest): { text: string; color: 'claude' | 'success' } | undefined {
   // Orange, as the drawer draws a reviewer, since yellow marks findings.
-  if (pr.labels.includes('reviewing')) return { text: 'reviewing', color: 'claude' }
-  if (pr.labels.includes('clean')) return { text: 'clean', color: 'success' }
+  if (hasLabel(pr, 'reviewing')) return { text: 'reviewing', color: 'claude' }
+  if (hasLabel(pr, 'clean')) return { text: 'clean', color: 'success' }
   return undefined
 }
 
 /**
- * The word after a row's number: its review label while it carries one, and
- * otherwise `draft` in the default color or `ready` in the theme's light blue.
- * `ready` means only that no label is set, which is also true after a push
- * removes `clean` or a review requests changes. A draft's row draws the word
- * in italic, as it draws the number, so a held draft shows an italic `clean`.
+ * The word after a row's number: the first of `HOLDS` that holds, then its
+ * review label, and otherwise `draft` in the default color or `ready` in the
+ * theme's light blue. A draft's row draws the word in italic, as it draws the
+ * number, so a held draft shows an italic `clean`. A label the word gives way
+ * to still shows in the drawer, which lists every label.
  */
 function rowState(pr: PullRequest): { text: string; color?: string } {
+  const hold = HOLDS.find(one => one.holds(pr))
+  if (hold !== undefined) return { text: hold.status, color: hold.color }
   return reviewLabel(pr) ?? (pr.isDraft ? { text: 'draft' } : { text: 'ready', color: 'suggestion' })
 }
 
 /**
  * A pull request's number on the line its collapsed rows give way to, which
- * has no state beside it, so its color says what the row says: red when a
- * note or its checks hold it back, yellow while review threads are open, as
- * the row's count of them is, then the review label's orange or green, and
- * the default color for a pull request that carries neither label. It is
- * muted while it loads. A draft's number is italic as well, as its row's is.
+ * has no word beside it, so it takes the color of its row's word. It is muted
+ * while it loads, as the row's number is.
  */
-function statusColor(pr: PullRequest): string | undefined {
-  if (pr.isLoading === true) return 'subtle'
-  if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
-  if (pr.openThreads > 0) return 'warning'
-  return reviewLabel(pr)?.color
-}
+const statusColor = (pr: PullRequest): string | undefined => (pr.isLoading === true ? 'subtle' : rowState(pr).color)
 
 /** How far a thread's line sits inside the line that names its file. */
 const THREAD_INDENT = 2
@@ -2328,6 +2366,13 @@ export const register: Register = on => {
             {isLoaded && ` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
             {pr.checks !== null && ' · '}
             {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
+            {pr.labels.length > 0 && ' ·'}
+            {pr.labels.flatMap(label => [
+              ' ',
+              <Text key={`label:${label.name}`} {...labelStyle(label.color)}>
+                {` ${label.name} `}
+              </Text>,
+            ])}
           </Text>
           {drawActions(
             key,
@@ -2422,7 +2467,9 @@ export const register: Register = on => {
                 onPress={() => toggle(key, `pr:${key}`, opened === key ? undefined : `discuss:${key}`)}
               >
                 {/* A draft's number is italic, in the default color, which stays readable where `subtle` fades it. */}
-                <Text italic={pr.isDraft}>{label(pr)}</Text>
+                <Text color={isLoaded ? undefined : 'subtle'} italic={pr.isDraft}>
+                  {label(pr)}
+                </Text>
               </Button>
             </Box>
             {isLoaded && (
