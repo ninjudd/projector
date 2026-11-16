@@ -3301,10 +3301,11 @@ minutes, and deletes the archive it reads.
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
 `priority`, `done`, `check`, any `config`, `inbox`, or `loop` command, or
-`watch add`, `remove`, `drop`, `restore`, `list`, `take`, or `status`, and to `ios devices`.
-Responses use stdout only for JSON and include `"schema_version": 2`. An `inbox` command that
-prints one item prints it under `item`, and `inbox list` prints `items`.
-`inbox watch --json` prints one JSON object a line, as a watcher reads it.
+`watch add`, `remove`, `drop`, `restore`, `list`, `take`, or `status`, and to
+`ios devices`. Responses use stdout only for JSON and include
+`"schema_version": 2`. An `inbox` command that prints one item prints it under
+`item`, and `inbox list` prints `items`. `inbox watch --json` prints one JSON
+object a line, as a watcher reads it.
 
 `init --json` keeps the `action` and `path` of the projects README at the top
 level, as it always has, and adds `files` with every file it manages:

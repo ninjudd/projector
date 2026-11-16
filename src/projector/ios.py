@@ -510,8 +510,14 @@ def install_on(device: Device, kept: Kept) -> None:
         time.sleep(LAUNCH_RETRY)
 
 
+def app_script(statement: str, bundle_id: str) -> list[str]:
+    """An `osascript` command that runs `statement` on the app whose bundle ID is `item 1 of argv`. The ID
+    comes from the project's build settings, so it is passed as an argument and never becomes script source."""
+    return ["osascript", "-e", "on run argv", "-e", statement, "-e", "end run", bundle_id]
+
+
 def running(bundle_id: str) -> bool:
-    result = subprocess.run(["osascript", "-e", f'application id "{bundle_id}" is running'],
+    result = subprocess.run(app_script("return application id (item 1 of argv) is running", bundle_id),
                             capture_output=True, text=True, stdin=subprocess.DEVNULL)
     return result.stdout.strip() == "true"
 
@@ -522,7 +528,7 @@ def open_on_mac(state: State, kept: Kept) -> None:
     a folder named like an app that holds it in `Wrapper/` beside a `WrappedBundle` link to it."""
     bundle_id = kept.record["bundle_id"]
     if running(bundle_id):
-        tool(["osascript", "-e", f'tell application id "{bundle_id}" to quit'])
+        tool(app_script("tell application id (item 1 of argv) to quit", bundle_id))
         deadline = time.monotonic() + QUIT_WAIT
         while running(bundle_id):
             if time.monotonic() >= deadline:
