@@ -1,0 +1,20 @@
+{
+  "name": "projector-hooks",
+  "version": "1.0.0",
+  "description": "Command hooks that deliver Projector's watch events to Codex sessions",
+  "author": {
+    "name": "Justin Balthrop",
+    "url": "https://github.com/ninjudd"
+  },
+  "homepage": "https://github.com/ninjudd/projector",
+  "repository": "https://github.com/ninjudd/projector",
+  "license": "MIT",
+  "hooks": "./hooks.json",
+  "interface": {
+    "displayName": "Projector hooks",
+    "shortDescription": "Wake Codex sessions when review or fix work arrives",
+    "developerName": "Justin Balthrop",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/ninjudd/projector"
+  }
+}

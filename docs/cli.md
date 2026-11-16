@@ -2637,10 +2637,18 @@ host's monitor facility`` when nothing has renewed it in the last 5
 minutes. With `--json`, `add` prints the lines it `added` and the
 `delivery`, which is `mod`, `stream`, `codex`, or `none`.
 
+For a Codex session, `add` also asks `codex app-server` whether Codex runs
+Projector's five hooks. When Codex does not run them, because they are
+untrusted, modified, disabled, or missing, `add` names the problem and
+what to do after the `events:` line, and in `codex_hooks` with `--json`.
+`codex_hooks` is `null` when there is nothing to report.
+
 ### Deliver events to Codex
 
-With the Projector plugin installed in local Codex, review and trust its
-command hooks through `/hooks` or the desktop app's hook settings. Use
+With the `projector-hooks` plugin installed in local Codex, review and trust
+its command hooks through `/hooks` or the desktop app's hook settings. The
+hooks ship apart from the main plugin, so a Projector upgrade leaves that
+trust in place. Use
 Codex CLI 0.166.0 or newer with a running local daemon. Projector checks
 that the native executable supports `queue --thread`, `--message`, and
 `--resume`. Remote app-server selection and Windows batch-file shims are
@@ -2684,11 +2692,15 @@ project watch status --json
 
 The `deliveries` object reports the state, expiry, batch ID, and diagnostic
 for each Codex registration, and `unloaded_at` while Codex has the thread
-unloaded. `queued` means Codex accepted the message;
+unloaded. `codex_hooks` names what keeps Codex from running Projector's
+hooks, or is `null`. `queued` means Codex accepted the message;
 it does not prove the thread resumed. Resume that thread when its warning
 says it needs attention. `uncertain` means a timeout or interrupted
-submission left acceptance unknown. After checking the thread, use an
-explicit retry only when resending is intended:
+submission left acceptance unknown. Projector resends an uncertain batch
+30 minutes after submitting it, unless the conversation's transcript shows
+that it arrived first. A copy that arrives after the batch is consumed is
+blocked before it starts a turn. To resend sooner, check the thread, then
+retry:
 
 ```sh
 project watch codex-retry --session <id>
@@ -2705,7 +2717,7 @@ project watch stream --session <id>
 
 Disconnect keeps subscriptions and pending events. The stream takes
 unsent events, while accepted and uncertain batches stay separate until
-acknowledged or explicitly retried. Remove a PR's subscription to stop its
+acknowledged or resent. Remove a PR's subscription to stop its
 work, rather than merely changing its transport. A message Codex already
 accepted cannot be recalled; the skills recheck subscriptions before acting.
 When hooks are unavailable, `events: none` reports the stream fallback.

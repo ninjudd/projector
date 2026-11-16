@@ -211,7 +211,9 @@ the pull request, and how its events arrive, from the `events:` line that
   prompt.
 - **`events: codex`** means trusted Codex hooks register the parent session
   and the daemon queues events as prompts. Start no stream. Use the recovery
-  rules in `../fix-pr/SKILL.md` if delivery needs attention.
+  rules in `../fix-pr/SKILL.md` if delivery needs attention. When the line
+  adds that Codex is not running Projector's hooks, tell the user what it
+  says to do, such as trusting them in `/hooks`.
 - **`events: stream`** means a `project watch stream` that the session
   runs prints them.
 - **`events: none`** means nothing delivers them yet. Start the
@@ -220,7 +222,10 @@ the pull request, and how its events arrive, from the `events:` line that
   subagent, start nothing, and say in your result that the stream needs
   starting, so the conversation the user talks to starts it. Where the host
   cannot keep a process running after this turn, say that the events wait
-  until a session starts the stream.
+  until a session starts the stream. When the line says that Codex is not
+  running Projector's hooks, also tell the user what it says to do, such as
+  trusting them in `/hooks`, because the stream carries the events only
+  until they do.
 
 When the setting kept you from subscribing, say so, and that review
 findings wait until the user runs `fix-pr`.

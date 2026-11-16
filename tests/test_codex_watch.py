@@ -199,7 +199,7 @@ else:
                                                     codex.message("session-A", batch), self.now))
         self.assertEqual("consumed", codex.report(self.folder, self.now)["state"])
 
-    def test_definite_failure_backs_off_and_timeout_requires_explicit_retry(self):
+    def test_definite_failure_backs_off_and_timeout_is_resent_after_the_resend_delay(self):
         (self.root / "fail").touch()
         self.enqueue()
         self.send()
@@ -207,13 +207,45 @@ else:
         self.now += 30
         batch = self.prepare()
         self.assertIsNotNone(batch)
-        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", 15))
+        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", codex.TIMEOUT))
         self.dispatcher.send(self.folder, batch["batch_id"])
-        self.now += 10000
-        self.assertIsNone(self.prepare())
         self.assertEqual("uncertain", codex.report(self.folder, self.now)["state"])
+        self.now += codex.RESEND - 1
+        self.assertIsNone(self.prepare())
         codex.retry(self.folder, self.now)
         self.assertEqual(batch["batch_id"], self.prepare()["batch_id"])
+
+    def test_timed_out_submission_is_resent_once_unless_the_transcript_shows_it_arrived(self):
+        transcript = self.transcript()
+        self.hook("SessionStart", transcript, source="startup")
+        self.enqueue()
+        batch = self.prepare()
+        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", codex.TIMEOUT))
+        self.dispatcher.send(self.folder, batch["batch_id"])
+        self.dispatcher.run = subprocess.run
+        self.now += codex.RESEND - 1
+        self.tick()
+        self.assertEqual([], self.calls())
+        self.now += 1
+        self.tick()
+        self.assertEqual(1, len(self.calls()))
+        self.assertEqual(batch["batch_id"], codex.pending(self.folder)[0][0].stem)
+        self.assertEqual("queued", codex.pending(self.folder)[0][1]["state"])
+
+    def test_timed_out_submission_that_arrived_is_consumed_instead_of_resent(self):
+        transcript = self.transcript()
+        self.hook("SessionStart", transcript, source="startup")
+        self.enqueue()
+        batch = self.prepare()
+        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", codex.TIMEOUT))
+        self.dispatcher.send(self.folder, batch["batch_id"])
+        self.dispatcher.run = subprocess.run
+        with transcript.open("a") as stream:
+            stream.write(json.dumps({"text": codex.message("session-A", batch)}) + "\n")
+        self.now += codex.RESEND
+        self.tick()
+        self.assertEqual([], self.calls())
+        self.assertTrue((self.folder / "codex-receipts" / f"{batch['batch_id']}.json").exists())
 
     def test_repeated_queue_failures_wait_until_each_retry_deadline(self):
         (self.root / "fail").touch()
@@ -415,6 +447,36 @@ else:
         finally:
             release.set()
 
+    def test_close_leaves_a_running_submission_to_finish_and_record_its_result(self):
+        # A stopping daemon unlocks daemon.mutex only once close returns, and a replacement waits 10 seconds
+        # for that, while one `codex queue` call can run for TIMEOUT.
+        entered, release = threading.Event(), threading.Event()
+        def run(args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("test did not release the slow call")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        self.dispatcher.run = run
+        self.enqueue()
+        self.dispatcher.tick([self.folder])
+        job = self.dispatcher.jobs[self.folder]
+        self.assertTrue(entered.wait(5))
+        closer = threading.Thread(target=self.dispatcher.close)
+        try:
+            closer.start()
+            closer.join(2)
+            self.assertFalse(closer.is_alive(), "close waited for a running `codex queue` call")
+            with locked(self.folder):
+                codex.recover(self.folder)
+            [(_, batch)] = codex.pending(self.folder)
+            self.assertEqual("submitting", batch["state"], "the next daemon took the running call for lost")
+        finally:
+            release.set()
+            closer.join(5)
+        job.result(5)
+        [(_, batch)] = codex.pending(self.folder)
+        self.assertEqual("queued", batch["state"])
+
     def test_bounded_batches_keep_later_complete_lines_without_losing_them(self):
         first = self.event("FINDING Acme/App#14 " + "x" * 5000, "a")
         second = self.event("FINDING Acme/App#14 " + "y" * 5000, "b")
@@ -492,3 +554,42 @@ class RoutingTests(WatchCase):
         self.assertNotIn("codex-review", restarted.live)
         self.daemon.scan(self.clock.mono())
         self.assertNotIn("codex-review", self.daemon.live)
+
+
+class HookTrustTests(unittest.TestCase):
+    """`hook_problem` reads Codex's own `hooks/list` over `codex app-server`'s stdio."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def fake(self, hooks, *, answers=True):
+        executable = self.root / "codex"
+        executable.write_text(f"#!{sys.executable}\nimport json, sys\nhooks = {hooks!r}\nanswers = {answers!r}\n" + '''
+for line in sys.stdin:
+    message = json.loads(line)
+    if not answers:
+        continue
+    if message.get("id") == 1:
+        print(json.dumps({"id": 1, "result": {}}), flush=True)
+    elif message.get("id") == 2:
+        print(json.dumps({"id": 2, "result": {"data": [{"hooks": hooks}]}}), flush=True)
+''')
+        executable.chmod(0o755)
+        return str(executable)
+
+    def hooks(self, status, command=codex.HOOK_COMMAND):
+        return [{"eventName": name, "command": command, "enabled": True, "trustStatus": status}
+                for name in sorted(codex.HOOK_EVENTS)]
+
+    def test_five_trusted_hooks_are_no_problem(self):
+        self.assertIsNone(codex.hook_problem(self.fake(self.hooks("trusted")), str(self.root)))
+
+    def test_missing_hooks_name_the_plugin_to_install(self):
+        problem = codex.hook_problem(self.fake(self.hooks("trusted", "trip on")), str(self.root))
+        self.assertIn("codex plugin add projector-hooks@projector", problem)
+
+    def test_a_silent_server_is_given_up_on_without_a_verdict(self):
+        executable = self.fake(self.hooks("modified"), answers=False)
+        self.assertIsNone(codex.hook_problem(executable, str(self.root), timeout=0.5))

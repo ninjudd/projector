@@ -6,10 +6,12 @@ import contextlib
 import hashlib
 import json
 import os
+import queue
 import re
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -21,7 +23,12 @@ from .inbox import locked, read_json, try_lock, unlock, write_json
 
 LEASE = 24 * 3600
 LIMIT = 8 * 1024
-TIMEOUT = 15
+TIMEOUT = 60
+RESEND = 1800
+# An uncertain batch is resent after RESEND unless its transcript shows it arrived first. A copy that
+# arrives after the batch is consumed finds its receipt and is blocked before it starts a turn.
+SENDABLE = ("prepared", "failed", "uncertain")
+UNCERTAIN = "submission outcome unknown; Projector resends it in 30 minutes unless it arrives first"
 CONFIRM_EVERY = 30
 MARKER = re.compile(r"^PROJECTOR WATCH ([0-9a-f-]{36})\n")
 TERMINAL = {"MERGED", "CLOSED", "MISSING", "MOVED"}
@@ -107,7 +114,8 @@ def recover(folder: Path) -> None:
         if receipt.exists():
             path.unlink()
         elif batch["state"] == "submitting" and not sending(folder):
-            batch.update(state="uncertain", last_error="submission outcome unknown; use codex-retry")
+            batch.update(state="uncertain", next_attempt_at=batch.get("submitted_at", 0) + RESEND,
+                         last_error=UNCERTAIN)
             write_json(path, batch)
     items = queued(folder)
     remaining = [item for item in items if item["key"] not in keys]
@@ -161,7 +169,7 @@ def prepare(folder: Path, now: float) -> Optional[dict]:
     batches = pending(folder)
     if batches:
         batch = batches[0][1]
-        if batch["state"] not in ("prepared", "failed") or batch.get("next_attempt_at", 0) > now:
+        if batch["state"] not in SENDABLE or batch.get("next_attempt_at", 0) > now:
             return None
         return batch
     items = [item for item in queued(folder) if eligible(folder, item)]
@@ -346,6 +354,78 @@ def register(folder: Path, session: str, cwd: str, now: float, *, transcript: Op
         return record
 
 
+HOOK_COMMAND = "project watch codex-hook"
+HOOK_EVENTS = {"sessionStart", "sessionEnd", "userPromptSubmit", "postToolUse", "stop"}
+
+
+def hook_problem(executable: str, cwd: str, *, popen: Callable = subprocess.Popen,
+                 timeout: float = 10.0) -> Optional[str]:
+    """What keeps Codex from running Projector's hooks, by Codex's own `hooks/list`, or None when it runs
+    all five or cannot say. Codex re-gates a plugin's hooks whenever any file in the plugin changes."""
+    hooks = listed_hooks(executable, cwd, popen=popen, timeout=timeout)
+    if hooks is None:
+        return None
+    ours = [hook for hook in hooks if hook.get("command") == HOOK_COMMAND]
+    running = {hook.get("eventName") for hook in ours
+               if hook.get("enabled") and hook.get("trustStatus") in ("trusted", "managed")}
+    if running >= HOOK_EVENTS:
+        return None
+    if not ours:
+        return ("Codex has no Projector hooks; run `codex plugin add projector-hooks@projector`, "
+                "then trust its hooks in /hooks")
+    states = sorted({str(hook.get("trustStatus")) if hook.get("enabled") else "disabled"
+                     for hook in ours if hook.get("eventName") not in running})
+    return f"Codex is not running Projector's hooks ({', '.join(states)}); trust them in /hooks"
+
+
+def listed_hooks(executable: str, cwd: str, *, popen: Callable, timeout: float) -> Optional[list[dict]]:
+    """Every hook `codex app-server` lists for `cwd`, over its stdio JSON-RPC. The server exits at the end
+    of its input before it answers, so stdin stays open until the answer arrives."""
+    try:
+        process = popen([executable, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", cwd=cwd)
+    except OSError:
+        return None
+    lines: queue.Queue = queue.Queue()
+
+    def read() -> None:
+        with process.stdout:
+            for line in process.stdout:
+                lines.put(line)
+        lines.put(None)
+
+    threading.Thread(target=read, daemon=True).start()
+    deadline = time.monotonic() + timeout
+
+    def send(message: dict) -> None:
+        process.stdin.write(json.dumps({"jsonrpc": "2.0", **message}) + "\n")
+        process.stdin.flush()
+
+    def call(number: int, method: str, params: dict) -> object:
+        send({"id": number, "method": method, "params": params})
+        while True:
+            line = lines.get(timeout=max(0.0, deadline - time.monotonic()))
+            if line is None:
+                raise EOFError
+            answer = json.loads(line)
+            if isinstance(answer, dict) and answer.get("id") == number:
+                return answer["result"]
+
+    try:
+        call(1, "initialize", {"clientInfo": {"name": "projector", "version": "1"},
+                               "capabilities": {"experimentalApi": True}})
+        send({"method": "initialized"})
+        result = call(2, "hooks/list", {"cwds": [cwd]})
+        return [hook for entry in result["data"] for hook in entry["hooks"] if isinstance(hook, dict)]
+    except (OSError, ValueError, EOFError, queue.Empty, KeyError, TypeError):
+        return None
+    finally:
+        process.kill()
+        process.wait()
+        with contextlib.suppress(OSError):
+            process.stdin.close()
+
+
 def tool_output(event: dict) -> Optional[str]:
     tool_input = event.get("tool_input")
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
@@ -483,7 +563,9 @@ class Dispatcher:
                     prune_receipts(folder, self.wall())
                     self.cleaned[folder] = self.wall()
                 batches = pending(folder)
-                if batches and batches[0][1]["state"] in ("queued", "uncertain") and not self.confirm(folder, *batches[0]):
+                waiting = batches[0][1] if batches else {}
+                if (waiting.get("state") in ("queued", "uncertain") and not self.confirm(folder, *batches[0])
+                        and not (waiting["state"] == "uncertain" and waiting.get("next_attempt_at", 0) <= self.wall())):
                     continue
                 batch = prepare(folder, self.wall())
             if batch is not None:
@@ -509,7 +591,7 @@ class Dispatcher:
         with locked(folder):
             record = registration(folder)
             batch = read_json(path)
-            if not active(folder, self.wall()) or not batch or batch["state"] not in ("prepared", "failed"):
+            if not active(folder, self.wall()) or not batch or batch["state"] not in SENDABLE:
                 return
             batch["items"] = [item for item in batch["items"] if eligible(folder, item)]
             if not batch["items"]:
@@ -522,7 +604,8 @@ class Dispatcher:
                 write_json(path, batch)
                 return
             batch.update(state="submitting", attempts=batch["attempts"] + 1,
-                         transcript_offset=Path(transcript).stat().st_size if transcript else 0)
+                         transcript_offset=Path(transcript).stat().st_size if transcript else 0,
+                         submitted_at=self.wall())
             write_json(path, batch)
         try:
             result = self.run([record["executable"], "queue", "--thread", record["thread_id"],
@@ -533,15 +616,19 @@ class Dispatcher:
             error = ("queued with a Codex warning; inspect the thread or resume it manually" if result.stderr else "") \
                 if state == "queued" else "Codex queue failed; retry scheduled"
         except subprocess.TimeoutExpired:
-            state, error = "uncertain", "submission timed out; use codex-retry only if resending is intended"
+            state, error = "uncertain", UNCERTAIN
         except OSError:
             state, error = "failed", "Codex could not start; retry scheduled"
         with locked(folder):
             if (folder / "codex-receipts" / path.name).exists() or not path.exists():
                 return
             batch.update(state=state, last_error=error,
-                         next_attempt_at=self.wall() + (30, 60, 120, 300)[min(batch["attempts"] - 1, 3)])
+                         next_attempt_at=batch["submitted_at"] + RESEND if state == "uncertain" else
+                         self.wall() + (30, 60, 120, 300)[min(batch["attempts"] - 1, 3)])
             write_json(path, batch)
 
     def close(self) -> None:
-        self.pool.shutdown(wait=True, cancel_futures=True)
+        # Waiting here would keep a stopping daemon's lock for up to TIMEOUT, past the 10 seconds a replacement
+        # waits. A running call keeps the submission lock, so the next daemon leaves its batch alone, and the
+        # interpreter joins the call's thread before this process exits, so its result is still written.
+        self.pool.shutdown(wait=False, cancel_futures=True)

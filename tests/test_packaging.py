@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
+import shutil
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
+spec = importlib.util.spec_from_file_location("release", ROOT / ".github" / "scripts" / "release.py")
+release = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(release)
 PUBLISHED_SKILLS = {
     "spec",
     "implement",
@@ -114,7 +120,9 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual("./hooks/types.d.ts", self.manifest("claude")["types"])
         self.assertTrue((ROOT / "hooks" / "types.d.ts").is_file())
         self.assertNotIn("types", self.manifest("codex"))
-        codex_hooks = json.loads((ROOT / self.manifest("codex")["hooks"]).read_text())
+        self.assertNotIn("hooks", self.manifest("codex"))
+        hooks_plugin = json.loads((ROOT / "codex-hooks" / ".codex-plugin" / "plugin.json").read_text())
+        codex_hooks = json.loads((ROOT / "codex-hooks" / hooks_plugin["hooks"]).read_text())
         self.assertNotIn("modules", codex_hooks)
         commands = [handler["command"] for groups in codex_hooks["hooks"].values()
                     for group in groups for handler in group["hooks"]]
@@ -123,6 +131,32 @@ class PackagingTests(unittest.TestCase):
         for command in commands:
             args = cli.parser().parse_args(command.split()[1:])
             self.assertEqual("codex-hook", args.watch_command)
+
+    def test_codex_hooks_ship_in_a_plugin_that_a_release_leaves_unchanged(self) -> None:
+        # Codex trusts a plugin's hooks by a hash of every file in the plugin, so
+        # any file a release touches here would make every user trust the hooks
+        # again. The release bumps only the root manifests.
+        root = ROOT / "codex-hooks"
+        files = sorted(str(path.relative_to(root)) for path in root.rglob("*") if path.is_file())
+        self.assertEqual([".codex-plugin/plugin.json", "hooks.json"], files)
+        plugin = json.loads((root / ".codex-plugin" / "plugin.json").read_text())
+        self.assertEqual("projector-hooks", plugin["name"])
+        self.assertEqual("./hooks.json", plugin["hooks"])
+        with tempfile.TemporaryDirectory() as temporary:
+            copy = Path(temporary)
+            for name in release.VERSION_FILES:
+                (copy / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(ROOT / name, copy / name)
+            shutil.copytree(root, copy / "codex-hooks")
+            # A release that wrote the plugin's own version over it would change
+            # no byte, so release a version other than the plugin's.
+            while release.bump(copy, "patch") == plugin["version"]:
+                pass
+            for name in files:
+                self.assertEqual((root / name).read_bytes(), (copy / "codex-hooks" / name).read_bytes(), name)
+        [entry] = [entry for entry in json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text())["plugins"]
+                   if entry["name"] == "projector-hooks"]
+        self.assertEqual({"source": "local", "path": "./codex-hooks"}, entry["source"])
 
     def test_only_claude_code_declares_gh_stack_as_a_dependency(self) -> None:
         # Codex has no plugin dependencies; install.sh adds gh-stack there.

@@ -952,8 +952,13 @@ Add the same repository as a Codex marketplace and install the plugin:
 ```sh
 codex plugin marketplace add ninjudd/projector
 codex plugin add projector@projector
+codex plugin add projector-hooks@projector
 codex plugin add gh-stack@projector
 ```
+
+Then review and trust the five `projector-hooks` command hooks in `/hooks`
+or the desktop app's hook settings. Each one runs
+`project watch codex-hook`.
 
 Invoke a skill directly, for example:
 
@@ -961,15 +966,24 @@ Invoke a skill directly, for example:
 $spec a safer deploy workflow
 ```
 
-The Codex manifest exposes the same `skills/` path as Claude Code. It adds
-install-surface metadata and command hooks for local event delivery; it does
-not wrap or rewrite skill instructions.
+The Codex manifest exposes the same `skills/` path as Claude Code and adds
+install-surface metadata. It does not wrap or rewrite skill instructions.
+
+The command hooks for local event delivery ship as `projector-hooks@projector`,
+a plugin of their own in `codex-hooks/`. Codex trusts a plugin's hooks by a
+hash of every file in the plugin, so hooks in the main plugin would need
+trusting again after every release. `codex-hooks/` holds only the hooks
+plugin's manifest and `hooks.json`, and its version changes only when they
+do. You therefore trust the hooks once, and they keep running across
+Projector upgrades. When you change `codex-hooks/hooks.json`, bump the
+version in `codex-hooks/.codex-plugin/plugin.json` in the same change. Codex
+then asks you to trust the new hooks.
 
 Codex has no plugin dependencies, so `gh-stack@projector` is a plugin of its
-own there, and the last command above installs it. Projector's skills work
-without it. To update both, run `codex plugin marketplace upgrade projector`
-and then both `codex plugin add` commands again, since `add` installs a
-plugin again from the marketplace when it is already there.
+own there too. Projector's skills work without it. To update all three, run
+`codex plugin marketplace upgrade projector`, then each `codex plugin add`
+command again, since `add` installs a plugin again from the marketplace when
+it is already there.
 
 ## Reach every session through the repository
 
@@ -1215,6 +1229,7 @@ claude plugin update projector@projector
 claude plugin update gh-stack@projector
 codex plugin marketplace upgrade
 codex plugin add projector@projector
+codex plugin add projector-hooks@projector
 codex plugin add gh-stack@projector
 ```
 

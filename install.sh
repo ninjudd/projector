@@ -392,6 +392,9 @@ install_codex() {
     case "$marketplace" in git*) run_codex_with_retry plugin marketplace upgrade projector ;; esac
   fi
   run_codex plugin add projector@projector
+  # Codex trusts a plugin's hooks by a hash of every file in the plugin, so
+  # the hooks ship in a plugin of their own that a release leaves unchanged.
+  run_codex plugin add projector-hooks@projector
   # Codex has no plugin dependencies, so GitHub's gh-stack skill is a plugin
   # of its own here. Projector works without it, so a marketplace that does
   # not serve it yet is reported rather than fatal.
