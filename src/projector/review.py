@@ -578,7 +578,8 @@ def await_checks(repo: str, sha: str, base: str, worktree: Path, names: tuple[st
     since `base`, or the head vouched for itself and CI gives no evidence.
     While a check has no run, the head's workflow runs say whether one is
     coming: none still queued or running, or none at all after `CI_START`,
-    means none is, and the wait ends there."""
+    means none is, and the wait ends there. A call to GitHub or Git that
+    fails gives no evidence too, with its error as the reason."""
     started = time.monotonic()
     changed: Optional[set[str]] = None
     vetted: set[str] = set()
@@ -591,8 +592,8 @@ def await_checks(repo: str, sha: str, base: str, worktree: Path, names: tuple[st
         return found
 
     while True:
-        runs = ci_checks(repo, sha, names)
         try:
+            runs = ci_checks(repo, sha, names)
             for name in names:
                 if runs[name] and name not in vetted:
                     if changed is None:
@@ -618,6 +619,9 @@ def await_checks(repo: str, sha: str, base: str, worktree: Path, names: tuple[st
                 raise NoEvidence(f"{', '.join(pending)} had no completed run within {CI_WAIT // 60} minutes")
         except NoEvidence as exc:
             return result(NO_EVIDENCE, str(exc))
+        except ReviewError as exc:
+            # A failed call to GitHub or Git says nothing about the head's code, so it is not a failing check.
+            return result(NO_EVIDENCE, f"reading CI failed: {exc}")
         touching()
         time.sleep(CI_POLL)
 

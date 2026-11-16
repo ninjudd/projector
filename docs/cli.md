@@ -2142,10 +2142,11 @@ CI gives no evidence when a named check is still running after 30 minutes or
 concludes `cancelled`, `skipped`, `neutral`, or the like. It also gives none
 when no run of the check can come: the head's workflow runs have all finished
 without it, one waits for a maintainer to approve it, or none started in the
-first two minutes. Last, CI gives none when the head changed a file that
-decides what the check runs. Those are the workflow file GitHub records for
-the check's run, and every reusable workflow and local action that file
-reaches through a `uses: ./` line. A bare `uses: ./` runs the action at the
+first two minutes. A call to GitHub that fails while `gate` reads CI gives
+none either, with the error as the record's `reason`. Last, CI gives none
+when the head changed a file that decides what the check runs. Those are the
+workflow file GitHub records for the check's run, and every reusable workflow
+and local action that file reaches through a `uses: ./` line. A bare `uses: ./` runs the action at the
 repository's root, so every file in the repository decides that check. A
 head that changes only another workflow, such as a release workflow, keeps
 CI's evidence. When `gate` cannot tell which files decided the run, it gives

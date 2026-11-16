@@ -872,6 +872,23 @@ class CiGateTests(ReviewCase):
         self.assertIn("check: no completed run", printed)
         self.assertIn("CI gave no evidence: check had no completed run within", printed)
 
+    def test_a_github_call_that_fails_during_the_wait_gives_no_evidence(self) -> None:
+        # Catches a gate that ends with exit 1, which a review reads as a failing check, when GitHub fails to answer.
+        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
+        self.configure()
+        cases = (("the check runs", "check-runs", [check_run("success")]),
+                 ("the head's workflow runs", "head_sha=", []),
+                 ("the check's workflow run", "check_suite_id=", [check_run("success")]))
+        for case, call, polls in cases:
+            with self.subTest(case):
+                self.github.fail = call
+                self.github.check_polls = [polls]
+
+                code, record, err = self.gate()
+
+                self.assertEqual(75, code, err)
+                self.assertIn("HTTP 502", record["reason"])
+
     def test_only_a_github_actions_run_vouches_for_the_head(self) -> None:
         # Catches a gate that trusts any check run named `check`, which any app installed on the repository can post.
         self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})

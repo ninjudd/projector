@@ -383,6 +383,9 @@ during implementation:
   that reads the command's status sees no change. § 2.1 step 5 says so.
 - **The gate record has a `reason`.** On exit 75 it holds why CI gave no
   evidence, which `gate` prints and the review's disclosures repeat.
+- **A failed call gives no evidence.** A call to GitHub or Git that fails
+  during the wait ends `gate` with exit 75 and the error as its `reason`,
+  so a transient GitHub error does not read as a failing check.
 - **The wait's constants live in `review.py`.** `CI_WAIT` is 30 minutes,
   `CI_POLL` 20 seconds, and `CI_START`, how long a head may go with no
   workflow run, 2 minutes. The tests shrink them rather than wait.
