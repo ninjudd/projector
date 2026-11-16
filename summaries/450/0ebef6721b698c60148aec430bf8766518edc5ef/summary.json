@@ -1,0 +1,68 @@
+{
+ "version": 1,
+ "name": "iOS device builds plan",
+ "project": "ios",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 450,
+  "title": "Plan putting a branch's iOS app on a device with project ios",
+  "head": "0ebef6721b698c60148aec430bf8766518edc5ef",
+  "headRef": "ios-spec",
+  "base": "855e61eda507fe2bc345ab477a736a719145c056",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox lets an agent ask the person to test a change on their phone. The agent posts a <i>request</i> whose <i>start action</i> is the one thing the agent does when the person presses start, such as installing a build. Projector supplies the request but nothing to build or install with, so each iOS repository writes its own script.",
+   "This pull request adds a plan, <code>docs/projects/ios/readme.md</code>, at <code>status: ready</code> and <code>priority: now</code>. It proposes a <code>project ios</code> command group that ports one repository's 500-line device-test shell script to a standard-library Python module. Nothing is implemented yet. The plan is the whole change, and a later two-layer stack will carry the code and the skill text.",
+   "<ul class=\"tight\"><li><b><code>build &lt;branch-or-number&gt;</code></b> fetches a branch or a pull request's head into one worktree that Projector keeps per repository. It builds the head with <code>xcodebuild</code> into one shared DerivedData folder, keeps a copy of the built app for that target, and installs and opens it on the one connected device. It refuses an untrusted pull request head unless the person passes <code>--allow-untrusted</code>.</li><li><b><code>install</code></b> puts a kept build on a device again, so a start action installs the target it names rather than whatever was built last.</li><li><b><code>devices</code>, <code>crashes</code>, <code>logs</code>, and <code>cleanup</code></b> list paired devices, copy and summarize crash reports, write the app's recent log lines to a file, and remove the worktree and the builds.</li></ul>",
+   "The app is found by convention: the scheme is <code>&lt;App&gt; Development</code>, or else <code>&lt;App&gt;</code>, where <code>&lt;App&gt;</code> defaults to the Xcode project's name. Three new settings, <code>ios.app</code>, <code>ios.project</code>, and <code>ios.output</code>, cover repositories that do not follow it."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Where the review stands",
+    "html": "<p>The review of <code>0ebef67</code> is clean. That head rebases the branch onto <code>main</code> at <code>855e61e</code> and leaves the plan unchanged from <code>7bb1304</code>, which was also reviewed clean. The first review, of <code>1857f02</code>, raised three findings, and the author fixed each one:</p><ul class=\"tight\"><li><b>Untrusted heads.</b> <code>build</code> now judges a pull request's head with <code>review.trusted_head</code> and refuses an untrusted one unless the person passes <code>--allow-untrusted</code>. That flag has its own ask rule.</li><li><b>Log filter.</b> § 2.4's subsystem rule now leaves out a two-part vendor prefix such as <code>com.example</code>, as § 4 requires.</li><li><b>Linux CI.</b> § 4 now gives stand-ins for <code>log</code>, <code>sudo</code>, <code>open</code>, and <code>cp</code>, and step 8 uses <code>shutil.copytree</code> off macOS.</li></ul><p class=\"note\">The author took five of the six suggestions. <code>build</code> still installs by default.</p>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Start action</b>: what the agent does when the person presses start on a request. The press is the person's consent.</li><li><b>Kept build</b>: a copy of the built app under <code>builds/&lt;App&gt;/&lt;key&gt;/</code>, with a <code>build.json</code> that records its commit and bundle ID. The key is <code>pr-&lt;number&gt;</code> or <code>branch-</code> plus the percent-encoded branch name.</li><li><b>Trusted head</b>: a head in this repository whose pull request author and commit authors all have write access, by the rule <code>project review setup</code> uses.</li><li><b>DerivedData</b>: Xcode's build folder. Because one is shared, a branch switch rebuilds only what changed.</li><li><b><code>devicectl</code></b>: Apple's command-line tool, run through <code>xcrun</code>, that lists paired devices, installs apps on them, and launches those apps.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The project ios plan",
+   "kicker": "A ready plan for building, installing, and debugging an iOS app from any branch",
+   "intro": [
+    "The plan's <code>ready</code> status claims that every question that blocks implementation is answered. Read it with that claim in mind. § 1 is the problem, § 2.1 the commands and options, § 2.2 the build flow, § 2.3 how the app is found, and § 2.4 crashes and logs. § 2.5 covers the state on disk, § 2.6 the skill changes, and § 2.7 the files the change touches. The plan gives its reasons in § 3 and its acceptance tests in § 4.",
+    "The plan's claims about the code it builds on still hold after the rebase onto <code>main</code>. <code>review.fetch</code> writes no <code>FETCH_HEAD</code>. <code>review.fetch_head</code> already chooses between a pull request's branch and <code>refs/pull/&lt;n&gt;/head</code>, and <code>review.trusted_head</code> already holds the trust rule. <code>config.SETTINGS</code> holds only flat, typed keys. The <code>implement</code> skill already keeps a pull request a draft during a device test."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "At <code>0ebef67</code>, <code>project check</code> passes and <code>git diff --check</code> against the merge base is clean. The unit suite passed at <code>1857f02</code>, and every change since then touches only the plan."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/ios/readme.md",
+     "collapsed": false,
+     "note": "The new plan for <code>project ios</code>: commands, build flow, app convention, state, skill changes, permissions, and acceptance tests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The trust rule § 2.2 step 4 describes matches <code>review.trusted_head</code>, and exit 65 is <code>ProjectorError</code>'s status. <code>ASK</code>, <code>ASKED</code>, <code>CODEX_ALLOW</code>, and <code>CODEX_RULES</code> are the names <code>permissions.py</code> uses."
+      },
+      {
+       "kind": "context",
+       "text": "<code>build</code> still installs by default. An agent that runs <code>project ios build &lt;n&gt;</code> without <code>--no-install</code> replaces the build on the person's device. § 2.6 tells agents to pass <code>--no-install</code> and install only on <code>STARTED</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
