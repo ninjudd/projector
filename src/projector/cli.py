@@ -23,7 +23,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import agents, codex_watch, inbox, instructions, loop, permissions, relay, review, site, summary, watch
+from . import agents, codex_watch, inbox, instructions, ios, loop, permissions, relay, review, site, summary, watch
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
@@ -565,6 +565,11 @@ def parser() -> argparse.ArgumentParser:
     summary_init.add_argument(
         "--head", help="with --from-published, copy the summary of the head whose SHA starts with this"
     )
+    summary_init.add_argument(
+        "--checkout", type=Path,
+        help="with --from-published, the checkout to read the summaries ref in, in place of a `cd` (default: the "
+             "repository containing this directory)",
+    )
     summary_refresh = summary_commands.add_parser(
         "refresh", help="bring a summary up to its pull request's current head and base, and say what changed"
     )
@@ -575,6 +580,10 @@ def parser() -> argparse.ArgumentParser:
     )
     summary_publish.add_argument("--summary", required=True)
     summary_publish.add_argument("--remote", default="origin")
+    summary_publish.add_argument(
+        "--checkout", type=Path,
+        help="the checkout to publish from, in place of a `cd` (default: the repository containing this directory)",
+    )
     summary_publish.add_argument("--diff", help="publish the diff from this file instead of fetching it from GitHub")
     summary_publish.add_argument(
         "--no-dispatch", action="store_true", help="push the summary without starting the workflow"
@@ -715,6 +724,7 @@ def parser() -> argparse.ArgumentParser:
                                      "full review, when `project review interdiff` allows one")
 
     add_inbox_parser(subcommands)
+    add_ios_parser(subcommands)
     add_loop_parser(subcommands)
     add_watch_parser(subcommands)
     add_agent_parser(subcommands)
@@ -964,6 +974,79 @@ def add_loop_parser(subcommands) -> None:
         command.add_argument("reference", help="the pull request, as owner/repo#number")
         command.add_argument("--tracked", required=True, type=Path, help="the loop's tracked file")
         add_output(command)
+
+
+def add_ios_parser(subcommands) -> None:
+    parser = subcommands.add_parser("ios", help="build a branch's iOS app in a worktree of its own, put it on a "
+                                                 "device, and read the device's crash reports and log")
+    commands = parser.add_subparsers(dest="ios_command", required=True)
+
+    # No command takes an abbreviated option, so the ask rule for --allow-untrusted sees every spelling of it.
+    def command(name: str, help_text: str, chooses: bool = True) -> argparse.ArgumentParser:
+        parsed = commands.add_parser(name, help=help_text, allow_abbrev=False)
+        if chooses:
+            parsed.add_argument("--app", help="the app, whose scheme is `<app> Development` or `<app>`; "
+                                              "the default is ios.app, or the Xcode project's name")
+            where = parsed.add_mutually_exclusive_group()
+            where.add_argument("--device", metavar="NAME_OR_UDID", help="the paired device to use")
+            where.add_argument("--iphone", action="store_const", const="iPhone", dest="kind",
+                               help="the one connected iPhone")
+            where.add_argument("--ipad", action="store_const", const="iPad", dest="kind",
+                               help="the one connected iPad")
+            where.add_argument("--mac", action="store_true",
+                               help="this Mac, which runs the app as Designed for iPad")
+        return parsed
+
+    build = command("build", "fetch a branch or a pull request's head, build its app, keep the build, and "
+                             "install and open it")
+    build.add_argument("target", help="a branch, or a pull request's number")
+    build.add_argument("--no-install", action="store_false", dest="install", help="stop after the build")
+    build.add_argument("--verbose", action="store_true", help="print every line xcodebuild writes")
+    build.add_argument("--allow-untrusted", action="store_true",
+                       help="build a pull request whose head is not trusted, after you read its build phases "
+                            "and scripts")
+    install = command("install", "install and open a kept build")
+    install.add_argument("target", nargs="?", help="the branch or pull request number it was built from; the "
+                                                   "default is the newest kept build")
+    add_output(command("devices", "list paired iOS devices and whether each can take an install", chooses=False))
+    command("crashes", "copy the app's newest crash reports to ios.output and summarize them")
+    logs = command("logs", "write the app's recent log lines to a new file in ios.output")
+    logs.add_argument("--last", default="5m", metavar="SPAN", help="how far back to read, such as 20m (default 5m)")
+    logs.add_argument("--predicate", help="a log predicate to use instead of the app's subsystem and faults")
+    command("cleanup", "remove the worktree, DerivedData, and every kept build", chooses=False)
+
+
+def run_ios(arguments: argparse.Namespace) -> int:
+    command = arguments.ios_command
+    if command == "devices":
+        found = ios.devices()
+        if arguments.json_output:
+            print(json_text({"devices": [device.as_json() for device in found]}))
+            return 0
+        if not found:
+            print("No paired iOS devices.")
+        for device in found:
+            reach = "" if device.installable else ", can't take an install"
+            print(f"{device.name}  {device.kind}  {device.udid}  {device.tunnel}{reach}")
+        return 0
+    checkout = discover_git_root(Path.cwd())
+    if command == "cleanup":
+        ios.clean(checkout)
+        return 0
+    config = load_config(checkout)
+    app = arguments.app or config.setting("ios.app")
+    where = {"app": app, "wanted": arguments.device, "kind": arguments.kind, "mac": arguments.mac}
+    output = Path(config.setting("ios.output") or "~/Desktop").expanduser()
+    if command == "build":
+        ios.build(checkout, arguments.target, project_setting=config.setting("ios.project"), install=arguments.install,
+                  verbose=arguments.verbose, allow_untrusted=arguments.allow_untrusted, **where)
+    elif command == "install":
+        ios.install(checkout, arguments.target, **where)
+    elif command == "crashes":
+        ios.crash_reports(checkout, output=output, **where)
+    else:
+        ios.device_log(checkout, output=output, span=arguments.last, predicate=arguments.predicate, **where)
+    return 0
 
 
 def run_loop(arguments: argparse.Namespace) -> int:
@@ -1297,7 +1380,8 @@ def run_watch(arguments: argparse.Namespace) -> int:
             for session, found in report["deliveries"].items():
                 expires = found["expires_at"]
                 when = watch.stamp(expires) if isinstance(expires, (int, float)) else "unknown"
-                print(f"delivery {session}: {found['state']}, expires {when}, "
+                unloaded = ", unloaded by Codex until the next batch" if found["unloaded_at"] else ""
+                print(f"delivery {session}: {found['state']}{unloaded}, expires {when}, "
                       f"batch {found['batch_id'] or 'none'} {found['last_error']}")
         return 0
     session = watch.session_id(arguments.session, required=command != "list")
@@ -1648,6 +1732,10 @@ def review_rules(json_output: bool) -> int:
     """`review rules`: whether the user's settings allow every command Projector's permission rules name,
     exiting 1 when one may not.
 
+    `--json` also says whether each file allows `project summary publish`,
+    which a file lacking newer rules can still do, so a session whose publish
+    was refused can tell a missing rule from a matching one.
+
     It asks `allow_commands` only to report, so it writes nothing, and a review
     loop can run it before its first publish rather than learn of a refusal on
     one pull request mid-loop. The rules belong in the person's own settings,
@@ -1660,8 +1748,10 @@ def review_rules(json_output: bool) -> int:
     files = allow_commands(apply=False, hint=False)
     allowed = all(entry.action == "unchanged" for entry in files)
     if json_output:
+        publish = permissions.publish_allowed()
         print(json.dumps({"allowed": allowed,
-                          "files": [{"path": entry.path, "allowed": entry.action == "unchanged"}
+                          "files": [{"path": entry.path, "allowed": entry.action == "unchanged",
+                                     "summary_publish": publish.get(entry.path, False)}
                                     for entry in files]}, indent=2))
     else:
         for entry in files:
@@ -2054,10 +2144,12 @@ def init_from_published(arguments: argparse.Namespace) -> None:
     if arguments.diff:
         raise UsageError("--from-published copies a summary and reads no diff; pass --diff to `summary refresh`")
     remote = arguments.remote or "origin"
-    root = summary.checkout_root()
+    if arguments.checkout is not None and not arguments.checkout.is_dir():
+        raise UsageError(f"--checkout {arguments.checkout} is not a directory")
+    root = summary.checkout_root(arguments.checkout)
     if root is None:
         raise summary.SummaryError(f"--from-published reads the summaries ref, so run it in a checkout of "
-                                   f"{arguments.repo}")
+                                   f"{arguments.repo}, or name one with --checkout")
     slug = summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", remote))
     if slug and slug.lower() != arguments.repo.lower():
         raise summary.SummaryError(f"{remote} is {slug}, but --repo is {arguments.repo}")
@@ -2089,24 +2181,32 @@ def run_summary(arguments: argparse.Namespace) -> int:
     if arguments.summary_command == "init":
         if arguments.from_published:
             init_from_published(arguments)
-        elif arguments.remote or arguments.head:
-            raise UsageError("--remote and --head choose a published summary; pass them with --from-published")
+        elif arguments.remote or arguments.head or arguments.checkout:
+            raise UsageError("--remote, --head, and --checkout choose a published summary; pass them with "
+                             "--from-published")
         else:
             summary.init(arguments.repo, arguments.pr, arguments.summary, arguments.diff)
     elif arguments.summary_command == "refresh":
         summary.refresh(arguments.summary, arguments.diff)
     else:
-        pr = summary.summary_pr(json.loads(Path(arguments.summary).read_text(encoding="utf-8")))
+        # Paths are read from where the command runs, and git runs in the checkout.
+        summary_path = Path(arguments.summary).resolve()
+        diff_path = Path(arguments.diff).resolve() if arguments.diff else None
+        checkout = arguments.checkout or Path.cwd()
+        if not checkout.is_dir():
+            raise UsageError(f"--checkout {checkout} is not a directory")
+        pr = summary.summary_pr(json.loads(summary_path.read_text(encoding="utf-8")))
         site, reason = (None, "--local asked for a local preview") if arguments.local \
             else summary.push_decision(pr["repo"])
-        summary.publish(
-            Path(arguments.summary),
-            arguments.remote,
-            send_dispatch=not arguments.no_dispatch,
-            diff_path=Path(arguments.diff) if arguments.diff else None,
-            push=site is not None,
-            reason=reason,
-        )
+        with contextlib.chdir(checkout):
+            summary.publish(
+                summary_path,
+                arguments.remote,
+                send_dispatch=not arguments.no_dispatch,
+                diff_path=diff_path,
+                push=site is not None,
+                reason=reason,
+            )
         # A summary kept in this checkout has no page on GitHub to link.
         if site is not None:
             print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))
@@ -2681,6 +2781,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_inbox(arguments)
     if arguments.command == "loop":
         return run_loop(arguments)
+    if arguments.command == "ios":
+        return run_ios(arguments)
     if arguments.command == "watch":
         return run_watch(arguments)
     if arguments.command == "agent":

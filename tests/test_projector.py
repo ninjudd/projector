@@ -1881,7 +1881,8 @@ class ReviewRulesTests(RepositoryTestCase):
 
         code, stdout, stderr = self.invoke("review", "rules", "--json")
         self.assertEqual(0, code, stderr)
-        self.assertEqual({"allowed": True, "files": [{"path": "~/.claude/settings.json", "allowed": True}]},
+        self.assertEqual({"allowed": True, "files": [{"path": "~/.claude/settings.json", "allowed": True,
+                                                      "summary_publish": True}]},
                          json.loads(stdout))
 
         self.settings().write_text(json.dumps(granted("Bash(project review hold *)")))
@@ -1927,9 +1928,64 @@ class ReviewRulesTests(RepositoryTestCase):
 
         code, stdout, _ = self.invoke("review", "rules", "--json")
         self.assertEqual(1, code)
-        self.assertEqual({"allowed": False, "files": [{"path": "~/.claude/settings.json", "allowed": False}]},
+        self.assertEqual({"allowed": False, "files": [{"path": "~/.claude/settings.json", "allowed": False,
+                                                       "summary_publish": False}]},
                          json.loads(stdout))
         self.assertFalse(self.settings().exists())
+
+    def test_json_says_whether_a_file_lacking_newer_rules_still_allows_the_summary_publish(self) -> None:
+        # A session whose publish was refused reads this to tell a missing rule, which `init` adds, from a
+        # matching one, which running `init` again would not change.
+        def publish(settings: object) -> bool:
+            self.settings().write_text(json.dumps(settings))
+            code, stdout, stderr = self.invoke("review", "rules", "--json")
+            self.assertIn(code, (0, 1), stderr)
+            return json.loads(stdout)["files"][0]["summary_publish"]
+
+        self.assertTrue(publish({"permissions": {"allow": list(permissions.ALLOW)}}), "only ask rules missing")
+        self.assertTrue(publish({"permissions": {"allow": ["Bash(project summary publish *)"]}}),
+                        "the narrower rule Projector wrote before")
+        self.assertFalse(publish({"permissions": {"allow": ["Bash(project review publish *)"]}}))
+        self.assertFalse(publish({"permissions": {"allow": "Bash(project *)"}}), "an allow that is not a list")
+        self.assertFalse(publish([]))
+        self.settings().write_text("{not json")
+        self.assertFalse(json.loads(self.invoke("review", "rules", "--json")[1])["files"][0]["summary_publish"])
+
+    def test_a_codex_file_lacking_newer_rules_says_it_still_allows_the_summary_publish(self) -> None:
+        rules = self.home / ".codex" / "rules" / "projector.rules"
+        rules.parent.mkdir(parents=True)
+        # The file an earlier release wrote, before `project review ready` and `workflow` were allowed.
+        stale = permissions.CODEX_RULES.replace('"publish", "ready", ', '"publish", ').replace(', "workflow"]', ']')
+        self.assertNotEqual(permissions.CODEX_RULES, stale)
+        cases = {
+            "stale": (stale, True),
+            "one-line layout": ("\n".join(permissions.CODEX_PREFIX_RULES), True),
+            "no summary rule": (stale.replace('"status", "summary",', '"status",'), False),
+            "summary only prompts": (stale.replace('"status", "summary",', '"status",')
+                                     + 'prefix_rule(pattern = ["project", "summary"], decision = "prompt")\n', False),
+            "not Projector's layout": ('prefix_rule(pattern = ["project", "summary"]  ,decision="allow")\n', False),
+            "empty": ("", False),
+        }
+        for name, (text, allowed) in cases.items():
+            with self.subTest(name):
+                rules.write_text(text)
+                before = self.home_tree()
+
+                code, stdout, stderr = self.invoke("review", "rules")
+                json_code, json_stdout, _ = self.invoke("review", "rules", "--json")
+
+                self.assertEqual((1, 1), (code, json_code), stderr)
+                self.assertEqual("allows ~/.claude/settings.json\nlacks ~/.codex/rules/projector.rules\n", stdout)
+                self.assertEqual(allowed, "it still allows `project summary publish`" in stderr, stderr)
+                self.assertEqual(not allowed, "such as `project summary publish`" in stderr, stderr)
+                self.assertEqual([True, allowed],
+                                 [entry["summary_publish"] for entry in json.loads(json_stdout)["files"]])
+                self.assertEqual(before, self.home_tree())
+
+        rules.unlink()
+        self.assertEqual([True, False], [entry["summary_publish"] for entry in
+                                         json.loads(self.invoke("review", "rules", "--json")[1])["files"]],
+                         "a missing file allows nothing")
 
     def test_a_codex_directory_without_projectors_rules_exits_1(self) -> None:
         (self.home / ".codex").mkdir()

@@ -213,7 +213,7 @@ browser.
 Publish the summary to the repository's hidden summaries ref, where the
 repository's Projector site reads it, whether that site is its GitHub Pages
 site or `project site serve` on the user's machine. From a checkout whose
-`origin` is the repository, run:
+`origin` is the repository, or with `--checkout` naming one, run:
 
 ```sh
 project summary publish --summary WORKDIR/summary.json
@@ -276,14 +276,61 @@ wrapper only hides what is being written from the user and from the host's
 permission checks. You do not need to build the page first; `page` is a
 local preview.
 
+Run `project summary publish --summary WORKDIR/summary.json` alone, as a tool
+call of its own: not after `cd`, and not joined to another command with `&&`,
+`;`, or `|`. When your shell is not in the checkout, as a subagent's shell
+that returns to its start directory is not, name the checkout with
+`--checkout CHECKOUT` instead of a `cd`:
+
+```sh
+project summary publish --summary WORKDIR/summary.json --checkout CHECKOUT
+```
+
+Do not check the repository's or the site's visibility first.
+`publish` checks hosting itself: it pushes only where the site workflow is on
+the default branch and a Pages site exists, and it keeps the summary in the
+checkout when a private repository's site is public. When the repository's
+own instructions require a visibility check before other writes, run that
+check as a tool call of its own, and never join it to the publish. Both
+Claude Code and Codex check each command of a chain against the user's
+rules and take the strictest result, so one command the rules do not name,
+such as `gh repo view`, sends the whole call, publish included, to the
+host's automatic approval.
+
 A host's automatic approval can refuse `publish` as sending repository content
 to another host, unless the user's own settings allow it. `project init`, run
 by a person at a terminal, adds that allow rule to their Claude Code settings
-and to their Codex rules, inside a repository or outside one. If the host
-refuses `publish`, do not retry it in another form. Ask the user to run
-`project init` in a terminal, or to run the `publish` command themselves.
-`init` adds the rules only for a person at a terminal, so do not run it to
-add them yourself.
+and to their Codex rules, inside a repository or outside one. When the host
+refuses `publish`, never retry it in another form or send the summary by
+another path. Work out why it was refused:
+
+1. **The call ran more than the publish.** Run the publish again, alone, as
+   the paragraph above says. That is the form the rule matches, not another
+   form.
+2. **The publish ran alone.** Run `project review rules --json`, which
+   writes nothing, and read `summary_publish` for the host's file,
+   `~/.claude/settings.json` for Claude Code or
+   `~/.codex/rules/projector.rules` for Codex.
+   - **`false`, or the file is not listed.** The rule is missing. Ask the
+     user to run `project init` themselves in a terminal, then
+     `project review rules` to check it. Codex reads its rules only when a
+     session starts, so a Codex user starts a new session after `init`.
+     `init` adds the rules only for a person at a terminal, so do not run
+     it to add them yourself.
+   - **`true`.** A matching rule is installed, and running `init` again
+     changes nothing for this publish, even when `allowed` is `false`
+     because the file lacks newer rules. Do not send the user to
+     `project init` for it. A Codex session that started before the rule
+     was written has not loaded it, so say that a new session would. Then
+     ask the user to authorize the publish to the repository's site, or to
+     run the publish command themselves.
+
+Keep the summary in `WORKDIR` and report the publish as unfinished: what
+refused it, and the action that would let it through. One refusal stops
+only that publish. Summarize and publish the next head as usual, and when the
+user authorizes the publish, check that the pull request is still open at the
+head you summarized, refresh the summary if the head moved, and run the same
+publish command again, alone.
 
 `publish` fetches the diff once, builds the summary against it, and refuses one
 that does not build. It then commits the summary and that diff to
@@ -367,6 +414,9 @@ request already, at an earlier head or at this one. From a checkout whose
 project summary init --from-published \
   --repo OWNER/NAME --pr NUMBER --summary WORKDIR/summary.json
 ```
+
+When your shell is not in the checkout, add `--checkout CHECKOUT` instead
+of a `cd`, as for `publish`.
 
 `--from-published` fetches the summaries ref and copies the summary the
 site shows as the pull request's newest. A summary an earlier `publish`

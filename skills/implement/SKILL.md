@@ -154,7 +154,9 @@ A draft says its author is still working, so a session that reviews the
 repository waits for the pull request to be ready before it reviews it, and
 marking it ready is what asks for that review. Mark it ready at the
 hand-over, unless the hand-over asks the person to test the change, as a
-request to check it on their device does. Then keep it a draft until they
+request to check it on their device does, prepared for an iOS app as
+[Prepare a device test for an iOS app](#prepare-a-device-test-for-an-ios-app)
+describes. Then keep it a draft until they
 answer: mark it ready when they answer `Looks good` or decline the request,
 and keep it a draft while you build what `Some feedback` asks for, marking it
 ready once that work is done. Ready is not signed off: a clean review of the
@@ -222,6 +224,39 @@ the pull request, and how its events arrive, from the `events:` line that
 
 When the setting kept you from subscribing, say so, and that review
 findings wait until the user runs `fix-pr`.
+
+### Prepare a device test for an iOS app
+
+In a repository with an iOS app, a change to check on the person's
+iPhone or iPad goes through `project ios`, which builds a branch or a pull
+request in a worktree of its own and installs it. Prepare the test this
+way, and post the request only once the build has succeeded:
+
+1. Push the branch, so the person's own run of `project ios build` fetches
+   the commit you built.
+2. Run `project ios build <number> --no-install`, in the background when
+   the host allows it. When it refuses the pull request as untrusted, never
+   pass `--allow-untrusted` yourself: tell the person why it refused, and
+   build it only once they have read the head's build scripts and said to.
+3. Run `project ios devices --json`. When a device in it is `installable`,
+   give the request the start action `Install #<number>'s build of <app> on
+   your <device> and open it`, naming that device. On `STARTED`, run
+   `project ios install <number> --device <udid>` with its UDID, so the
+   install reaches the device the start action names even when another one
+   is connected by then. Then mark the request `ready`, or `block` it with
+   the reason the error gives, such as a locked phone.
+4. In the request's steps, always give the command
+   `project ios build <number>`, to run in any checkout of the repository on
+   the Mac the device is plugged into. When no device is `installable`, you
+   cannot reach one from here, for example because you run on another
+   machine or the device is unplugged, so that command is the only way to
+   install, and the request has no start action.
+
+When the person reports a crash or odd behavior, run
+`project ios crashes --device <udid>` with the UDID of the device they
+tested on, when you can reach it. Otherwise, and for any device log, which
+needs their password for `sudo`, ask them in a request to run
+`project ios crashes` or `project ios logs` and share the file it names.
 
 ## Stack dependent work
 

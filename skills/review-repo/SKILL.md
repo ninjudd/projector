@@ -55,7 +55,8 @@ open.
    adds the rules. Do not run `init` to add them yourself, because `init`
    adds them only for a person. Then continue: the repository's own settings
    can still allow the commands, so a missing rule means a publish can be
-   refused, not that it will be.
+   refused, not that it will be. A file can lack newer rules and still allow
+   `project summary publish`, which `--json` reports as `summary_publish`.
 3. Subscribe the session to review the repository with this model:
 
    ```sh

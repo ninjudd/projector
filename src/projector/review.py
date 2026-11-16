@@ -214,12 +214,17 @@ def trusted_head(repo: str, pr: dict, operator: str) -> tuple[bool, str]:
 
 # State
 
+def state_home(environ: Optional[dict] = None) -> Path:
+    """Projector's own folder under `$XDG_STATE_HOME`, or under `~/.local/state` without it."""
+    environ = os.environ if environ is None else environ
+    base = environ.get("XDG_STATE_HOME")
+    return (Path(base) if base else Path.home() / ".local" / "state") / "projector"
+
+
 def state_dir(explicit: Optional[Path] = None, environ: Optional[dict] = None) -> Path:
     if explicit is not None:
         return explicit
-    environ = os.environ if environ is None else environ
-    base = environ.get("XDG_STATE_HOME")
-    return (Path(base) if base else Path.home() / ".local" / "state") / "projector" / "reviews"
+    return state_home(environ) / "reviews"
 
 
 @dataclass
@@ -571,13 +576,18 @@ def fetch(checkout: Path, ref: str) -> str:
             git("-C", str(checkout), "update-ref", "-d", local)
 
 
+def head_ref(repo: str, pr: dict) -> str:
+    """The ref origin holds the pull request's head under: its branch when the head is in `repo`, and
+    `refs/pull/<n>/head` when it is in a fork, whose branch origin does not have."""
+    same = ((pr["head"].get("repo") or {}).get("full_name")) == repo
+    return f"refs/heads/{pr['head']['ref']}" if same else f"refs/pull/{pr['number']}/head"
+
+
 def fetch_head(checkout: Path, repo: str, pr: dict) -> str:
     """Fetch the head — its branch in this repository, or `pull/<n>/head` from a fork — and
     the base into the checkout, verify the head, and return the merge base."""
     sha = pr["head"]["sha"]
-    same = ((pr["head"].get("repo") or {}).get("full_name")) == repo
-    ref = f"refs/heads/{pr['head']['ref']}" if same else f"refs/pull/{pr['number']}/head"
-    fetched = fetch(checkout, ref)
+    fetched = fetch(checkout, head_ref(repo, pr))
     if fetched != sha:
         raise ReviewError(f"the head moved to {fetched[:7]} while it was fetched; run the command again")
     fetch(checkout, f"refs/heads/{pr['base']['ref']}")
