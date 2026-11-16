@@ -1,0 +1,162 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 134a3c57..1523199a 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3301,10 +3301,11 @@ minutes, and deletes the archive it reads.
+ 
+ Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
+ `priority`, `done`, `check`, any `config`, `inbox`, or `loop` command, or
+-`watch add`, `remove`, `drop`, `restore`, `list`, `take`, or `status`, and to `ios devices`.
+-Responses use stdout only for JSON and include `"schema_version": 2`. An `inbox` command that
+-prints one item prints it under `item`, and `inbox list` prints `items`.
+-`inbox watch --json` prints one JSON object a line, as a watcher reads it.
++`watch add`, `remove`, `drop`, `restore`, `list`, `take`, or `status`, and to
++`ios devices`. Responses use stdout only for JSON and include
++`"schema_version": 2`. An `inbox` command that prints one item prints it under
++`item`, and `inbox list` prints `items`. `inbox watch --json` prints one JSON
++object a line, as a watcher reads it.
+ 
+ `init --json` keeps the `action` and `path` of the projects README at the top
+ level, as it always has, and adds `files` with every file it manages:
+diff --git a/docs/projects/ios/readme.md b/docs/projects/ios/readme.md
+index 480cae45..cb3206ba 100644
+--- a/docs/projects/ios/readme.md
++++ b/docs/projects/ios/readme.md
+@@ -42,8 +42,8 @@ The steps are easy to get wrong by hand:
+   Neither is something a person does by hand in the middle of a test.
+ 
+ One repository solved this with a 500-line shell script that has run every
+-device test there for the past week. Each of its commands is general except for the
+-names of the app's Xcode project, schemes, and log subsystem, so other
++device test there for the past week. Each of its commands is general except
++for the names of the app's Xcode project, schemes, and log subsystem, so other
+ repositories that use Projector for iOS work would gain from having it in the
+ `project` command.
+ 
+@@ -383,10 +383,11 @@ at that paragraph.
+   `sudo`, so both fall through to Codex's usual approval, which asks for
+   them, and the `CODEX_RULES` header names them with the other commands it
+   leaves out.
+-- **Standard library only.** The script's embedded Python already did the
+-  JSON work. `-showBuildSettings` gives the bundle ID that the script read
+-  with `PlistBuddy`, and `fcntl.flock` replaces `lockf(1)`. The command checks for `xcrun` rather than for macOS, so the
+-  tests run on Linux with stand-ins for Apple's tools.
++- **Standard library only.** The script's embedded Python already did the JSON
++  work. `-showBuildSettings` gives the bundle ID that the script read with
++  `PlistBuddy`, and `fcntl.flock` replaces `lockf(1)`. The command checks for
++  `xcrun` rather than for macOS, so the tests run on Linux with stand-ins for
++  Apple's tools.
+ 
+ ## 4. Acceptance criteria
+ 
+@@ -477,9 +478,11 @@ sections above leave open:
+ ## 8. Outcome
+ 
+ The project shipped with the stack that carries the plan, the command, and
+-the skills, and every acceptance criterion in § 4 but the last one is
+-proven by the tests above. That last criterion, a build installed and opened
+-on a real iPhone, needs the person and their device. The session that built
+-the command could not reach CoreDevice, and the person chose to run that
+-check once the stack merged, with the installed `project ios`. A problem it
+-finds is new work on the shipped command, not an open part of this plan.
++the skills, and the tests above prove every acceptance criterion in § 4 but
++the last one. That last criterion, a build installed and opened on a real
++iPhone, needed the person and their device. The session that built the
++command could not reach CoreDevice, so the person ran the check once the
++stack merged, with the installed `project ios`, tracked as a request in their
++Projector inbox. It passed: `devices`, `build` and `install` for two apps,
++`crashes`, `logs`, and `cleanup` each worked on an iOS repository and a
++paired iPhone.
+diff --git a/src/projector/ios.py b/src/projector/ios.py
+index 535951b0..c96b7729 100644
+--- a/src/projector/ios.py
++++ b/src/projector/ios.py
+@@ -510,8 +510,14 @@ def install_on(device: Device, kept: Kept) -> None:
+         time.sleep(LAUNCH_RETRY)
+ 
+ 
++def app_script(statement: str, bundle_id: str) -> list[str]:
++    """An `osascript` command that runs `statement` on the app whose bundle ID is `item 1 of argv`. The ID
++    comes from the project's build settings, so it is passed as an argument and never becomes script source."""
++    return ["osascript", "-e", "on run argv", "-e", statement, "-e", "end run", bundle_id]
++
++
+ def running(bundle_id: str) -> bool:
+-    result = subprocess.run(["osascript", "-e", f'application id "{bundle_id}" is running'],
++    result = subprocess.run(app_script("return application id (item 1 of argv) is running", bundle_id),
+                             capture_output=True, text=True, stdin=subprocess.DEVNULL)
+     return result.stdout.strip() == "true"
+ 
+@@ -522,7 +528,7 @@ def open_on_mac(state: State, kept: Kept) -> None:
+     a folder named like an app that holds it in `Wrapper/` beside a `WrappedBundle` link to it."""
+     bundle_id = kept.record["bundle_id"]
+     if running(bundle_id):
+-        tool(["osascript", "-e", f'tell application id "{bundle_id}" to quit'])
++        tool(app_script("tell application id (item 1 of argv) to quit", bundle_id))
+         deadline = time.monotonic() + QUIT_WAIT
+         while running(bundle_id):
+             if time.monotonic() >= deadline:
+diff --git a/tests/test_ios.py b/tests/test_ios.py
+index 9829da35..0eb0b99a 100644
+--- a/tests/test_ios.py
++++ b/tests/test_ios.py
+@@ -100,7 +100,7 @@ def pop(key, default):
+             (app / "commit.txt").write_text(commit)
+         sys.exit(scenario.get("build_status", 0))
+ if name == "osascript":
+-    if args[-1].endswith("is running"):
++    if any(arg.endswith("is running") for arg in args):
+         print("true" if pop("running", False) else "false")
+     sys.exit(0)
+ if name == "log":
+@@ -483,13 +483,26 @@ def test_mac_quits_the_running_copy_and_opens_a_wrapper(self) -> None:
+ 
+         build = self.builds()[0]
+         self.assertEqual(ios.MAC_DESTINATION, build[build.index("-destination") + 1])
+-        self.assertTrue(any(call[-1].endswith("to quit") for call in self.calls("osascript")))
++        self.assertTrue(any("tell application id (item 1 of argv) to quit" in call
++                            for call in self.calls("osascript")))
+         wrapper = self.state / "mac" / "MyApp.app"
+         self.assertEqual([["open", str(wrapper)]], self.calls("open"))
+         self.assertEqual("Wrapper/MyApp.app", os.readlink(wrapper / "WrappedBundle"))
+         self.assertTrue((wrapper / "Wrapper" / "MyApp.app" / "commit.txt").exists())
+         self.assertEqual([], self.installed())
+ 
++    def test_the_bundle_id_reaches_applescript_as_an_argument_never_as_source(self) -> None:
++        self.scenario({"running": [True, False], "bundle_id": 'com.example.my"app'})
++
++        self.succeeds("build", "feature", "--mac")
++
++        scripts = self.calls("osascript")
++        self.assertEqual(3, len(scripts))
++        for call in scripts:
++            with self.subTest(call):
++                self.assertEqual('com.example.my"app', call[-1])
++                self.assertNotIn("com.example", " ".join(call[1:-1]))
++
+ 
+ class BuildOutputTests(IosCase):
+     def test_a_build_outside_a_terminal_prints_two_lines_and_logs_them_all(self) -> None:
+@@ -662,6 +675,22 @@ def test_a_failed_collect_leaves_no_file_and_no_archive(self) -> None:
+         self.assertFalse(self.desktop.exists() and any(self.desktop.iterdir()))
+         self.assertEqual([], list(self.state.glob("log-*")))
+ 
++    def test_ctrl_c_during_the_collect_leaves_no_file_and_no_archive(self) -> None:
++        self.build()
++        run = subprocess.run
++
++        def interrupted(args, *rest, **options):
++            if "collect" in args:
++                raise KeyboardInterrupt
++            return run(args, *rest, **options)
++
++        with mock.patch.object(ios.subprocess, "run", side_effect=interrupted), \
++                self.assertRaises(KeyboardInterrupt):
++            self.project("logs")
++
++        self.assertEqual([], list(self.desktop.iterdir()))
++        self.assertEqual([], list(self.state.glob("log-*")))
++
+     def test_a_span_that_is_not_one_is_refused(self) -> None:
+         self.build()
+ 

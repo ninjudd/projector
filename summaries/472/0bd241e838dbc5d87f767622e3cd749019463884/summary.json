@@ -1,0 +1,94 @@
+{
+ "version": 1,
+ "name": "Project ios follow-ups",
+ "project": "ios",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 472,
+  "title": "Pass project ios's bundle ID to AppleScript as an argument, and test Ctrl-C in logs",
+  "head": "0bd241e838dbc5d87f767622e3cd749019463884",
+  "headRef": "ios-followups",
+  "base": "0869d7600162311918136385e23b0c1105b4ddc5",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project ios</code> builds a branch of a repository's iOS app and puts it on a device or, with <code>--mac</code>, opens it on this Mac. This pull request takes four small follow-ups that the reviews of the original <code>project ios</code> stack left open, now that the stack is merged.",
+   "<ul><li><b>The bundle ID never becomes AppleScript source.</b> On a Mac, the command asks <code>osascript</code> whether the app is running and tells it to quit before opening a new build. The app's bundle ID, which comes from the project's build settings, used to be pasted into the script text, so a quote in it could change the script. Both calls now go through one helper that passes the ID as an argument.</li><li><b>Ctrl-C during <code>logs</code> is tested.</b> <code>logs</code> already removed its half-written file and the device's log archive on any exception, Ctrl-C included. A new test proves it, so narrowing that handler would now fail the suite.</li><li><b>Three long Markdown lines are rewrapped</b>, one in <code>docs/cli.md</code> and two in the <code>ios</code> plan, with no words changed.</li><li><b>The <code>ios</code> plan's outcome records the iPhone check.</b> The last acceptance criterion, a real install on an iPhone, ran after the merge and passed.</li></ul>",
+   "The review found the code and tests right. It flagged one thing: the <code>ios</code> plan is already <code>completed</code>, and the repository says to leave a completed plan as it is."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "applescript",
+   "title": "The bundle ID reaches AppleScript as an argument",
+   "kicker": "One helper builds both osascript calls, and a test proves the ID never enters the script.",
+   "intro": [
+    "Every build of an app shares one bundle ID, the reverse-DNS name such as <code>com.example.myapp</code> that macOS uses to find the app. Before <code>project ios --mac</code> opens a new build, it checks whether a copy with that ID is running, and quits it, through <code>osascript</code>, the command that runs AppleScript.",
+    "The new helper <code>app_script</code> wraps a statement in <code>on run argv … end run</code> and puts the bundle ID after the script as its argument. The statement reads it as <code>item 1 of argv</code>, so the ID is data to AppleScript whatever characters it holds."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/ios.py",
+     "note": "Adds <code>app_script</code> and routes the running check and the quit through it.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 520,
+       "text": "Ran the real <code>osascript</code> with this script form: it returns <code>true</code> for <code>com.apple.finder</code>. A bundle ID holding a quote, a backslash, and a <code>do shell script</code> clause comes back as an unknown-application error, so nothing it holds runs. Nothing was quit or launched."
+      },
+      {
+       "kind": "verify",
+       "line": 531,
+       "text": "The quit script compiles with <code>osacompile</code>, and <code>open_on_mac</code> is the only caller of <code>running</code> and <code>app_script</code>."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_ios.py",
+     "note": "The stand-in <code>osascript</code> finds the running check in any argument now, and two tests are new: a bundle ID with a quote, and Ctrl-C during the log collect.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 494,
+       "text": "Splicing the bundle ID back into the <code>running</code> script on a copy of the head turns this test red."
+      },
+      {
+       "kind": "verify",
+       "line": 678,
+       "text": "Narrowing <code>logs</code>'s <code>except BaseException</code> to <code>except Exception</code> turns this test red, and so does moving the archive removal out of its <code>finally</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Rewrapped lines and the plan's outcome",
+   "kicker": "Formatting in the CLI reference and the plan, and a new ending for the plan's outcome.",
+   "intro": [
+    "The rewrapped lines change no words, which the review checked word by word. The plan's § 8 Outcome also changes: it said the person would run the iPhone check after the merge, and it now says they ran it, that the check was tracked in their Projector inbox, and that it passed."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Rewraps the paragraph on which commands take <code>--json</code>."
+    },
+    {
+     "path": "docs/projects/ios/readme.md",
+     "note": "Rewraps two lines and rewrites § 8 Outcome to record the iPhone check's result.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 481,
+       "text": "The <code>ios</code> plan was already <code>completed</code> on <code>main</code>. The repository's projects README, under “Leave a completed plan as it is”, allows a completed plan to change only through the <code>project</code> commands and rename updates. The review asks to revert this file and record the check's result in the pull request body instead."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
