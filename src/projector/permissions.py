@@ -79,13 +79,19 @@ program: `create` and `edit`, whose editor an agent could drive,
 `review gate`, and `site build` and `serve`. They leave out `inbox answer`,
 `dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear` too. A new
 command reaches Codex once it is added here and `init` rewrites the file.
+
+Both hosts check each command of a chain such as `a && b` on its own and
+take the strictest result, so a rule covers a `project` command only when
+the call runs it alone, and the skills run each publish that way. No rule
+allows `gh` or the shell to make a chain pass.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Optional
 
@@ -132,6 +138,13 @@ CODEX_ALLOW = (
 )
 CODEX_PREFIX_RULES = tuple(f'prefix_rule(pattern = {json.dumps(pattern)}, decision = "allow")'
                            for pattern, _ in CODEX_ALLOW)
+# The command a summary publishes with. `review rules` says whether each file
+# still allows it, so a session whose publish was refused can tell a missing
+# rule from a refusal that a matching rule did not prevent.
+PUBLISH = ("project", "summary", "publish")
+# The Claude Code allow rules that match `PUBLISH`: the broad one, and the
+# narrower one Projector wrote before it.
+CLAUDE_PUBLISH_RULES = ("Bash(project *)", "Bash(project summary publish *)")
 # Codex loads every `.rules` file in its rules directory, and writes the
 # approvals a person saves to `default.rules`, so Projector keeps its rules in
 # a file of its own and rewrites that file whole.
@@ -164,6 +177,13 @@ def codex_home(environ: Mapping[str, str] = os.environ) -> Path:
     if configured:
         return Path(configured).expanduser()
     return Path(environ.get("HOME") or Path.home()) / ".codex"
+
+
+def codex_rules_path(environ: Mapping[str, str] = os.environ) -> Optional[Path]:
+    """Projector's own Codex rules file, or None where Codex is not installed, which its directory's absence says."""
+
+    home = codex_home(environ)
+    return home / "rules" / "projector.rules" if home.is_dir() else None
 
 
 def shown(path: Path, environ: Mapping[str, str] = os.environ) -> str:
@@ -274,10 +294,9 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
     elsewhere is written through its link.
     """
 
-    home = codex_home(environ)
-    if not home.is_dir():
+    path = codex_rules_path(environ)
+    if path is None:
         return None
-    path = home / "rules" / "projector.rules"
     name = shown(path, environ)
 
     def kept(reason: str) -> FileAction:
@@ -292,13 +311,59 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
     if text == CODEX_RULES:
         return FileAction(name, "unchanged")
     if not apply:
+        example = ("; it still allows `project summary publish`" if codex_allows(text, PUBLISH)
+                   else ", such as `project summary publish`")
         return FileAction(name, "kept", f"{name} lacks Projector's current rules, without which Codex can ask "
-                                        "before, or its approval reviewer refuse, a Projector command an agent runs, "
-                                        "such as `project summary publish`"
+                                        "before, or its approval reviewer refuse, a Projector command an agent runs"
+                                        + example
                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
-                                           "add it" if hint else ""))
+                                           "add them" if hint else ""))
     try:
         write_through(path, CODEX_RULES)
     except OSError as error:
         return kept(f"could not be written ({error.strerror})")
     return FileAction(name, "updated" if existed else "created")
+
+
+def codex_allows(text: str, command: Sequence[str]) -> bool:
+    """Whether an `allow` rule in a rules file Projector wrote matches a prefix of `command`'s words.
+
+    Projector writes each pattern as JSON on one line, where a word that is a
+    list matches any one of its words, so this reads the files `init` wrote,
+    in this release's layout or the one-line layout of `CODEX_PREFIX_RULES`,
+    and no other Starlark.
+    """
+
+    for match in re.finditer(r'prefix_rule\(\s*pattern = (\[.*\]),\s*decision = "allow"', text):
+        try:
+            pattern = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(pattern, list) and 0 < len(pattern) <= len(command) and all(
+                word in (part if isinstance(part, list) else [part]) for word, part in zip(command, pattern)):
+            return True
+    return False
+
+
+def publish_allowed(environ: Mapping[str, str] = os.environ) -> dict[str, bool]:
+    """Whether each file `allow_commands` reports, by its shown path, allows `project summary publish`.
+
+    A file can lack Projector's current rules and still allow the publish,
+    which is what tells a refusal despite a matching rule from a missing one.
+    A file that cannot be read allows nothing.
+    """
+
+    path = settings_path(environ)
+    text, unreadable = read_user_file(path, environ)
+    try:
+        settings = json.loads(text) if text.strip() and not unreadable else {}
+    except json.JSONDecodeError:
+        settings = {}
+    permissions = settings.get("permissions") if isinstance(settings, dict) else None
+    allow = permissions.get("allow") if isinstance(permissions, dict) else None
+    allowed = {shown(path, environ): isinstance(allow, list) and any(rule in allow for rule in CLAUDE_PUBLISH_RULES)}
+    codex = codex_rules_path(environ)
+    if codex is not None:
+        text, unreadable = read_user_file(codex, environ)
+        allowed[shown(codex, environ)] = not unreadable and codex_allows(text, PUBLISH)
+    return allowed
