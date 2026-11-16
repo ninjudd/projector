@@ -1,0 +1,56 @@
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index f272d6f9..c791134d 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -27,6 +27,7 @@ jobs:
+       actions: write
+       contents: write
+       pull-requests: write
++      statuses: write
+     steps:
+       - uses: actions/checkout@v4
+       - name: Open the release pull request
+@@ -41,11 +42,27 @@ jobs:
+           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+           git switch -c "$branch"
+           git commit --quiet -am "Release $version"
++          # The status below says this commit changes only the version.
++          changed=$(git diff --name-only HEAD^ HEAD | LC_ALL=C sort | xargs)
++          expected=$(cd .github/scripts && python3 -B -c 'from release import VERSION_FILES; print(*sorted(VERSION_FILES))')
++          if [ "$changed" != "$expected" ]; then
++            echo "the release commit changes $changed, not only $expected" >&2
++            exit 1
++          fi
+           # The branch belongs to this workflow; a rerun after a run that pushed it
+           # but could not open the pull request replaces it.
+           git push --quiet --force origin "$branch"
++          # main requires the projector/review status, and no review session picks
++          # up a pull request this job's token opened. A commit that only raises the
++          # version needs no review, so the job signs off the commit it wrote. The
++          # status names this commit alone, so a push to the branch makes a head
++          # that waits for a review.
++          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$(git rev-parse HEAD)" \
++            -f state=success -f context=projector/review \
++            -f description="Version-only release; needs no review" \
++            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /dev/null
+           cat > "$RUNNER_TEMP/body.md" <<EOF
+-          Raises Projector's version to $version in \`pyproject.toml\` and both plugin manifests. Merging this pull request publishes the release: the Release workflow then tags \`v$version\` on the merge commit, moves the major tag to it, and creates the GitHub release with generated notes.
++          Raises Projector's version to $version in \`pyproject.toml\` and both plugin manifests. Merging this pull request publishes the release: the Release workflow then tags \`v$version\` on the merge commit, moves the major tag to it, and creates the GitHub release with generated notes. The workflow posted the \`projector/review\` status on this commit because it changes only the version; a push to this branch needs a review.
+ 
+           ## Testing
+ 
+diff --git a/docs/develop.md b/docs/develop.md
+index 3f103285..8f83f297 100644
+--- a/docs/develop.md
++++ b/docs/develop.md
+@@ -133,6 +133,10 @@ the Release workflow from the Actions page, or with
+ `gh workflow run release.yml -f bump=patch`, and merge the pull request it
+ opens. The workflow dispatches the Check workflow on that pull request, because
+ GitHub runs no workflow for a pull request that a workflow's own token opened.
++It also posts the `projector/review` status that `main` requires on the
++release commit, because that commit changes only the version and needs no
++review. The status covers that commit alone, so a commit you push to the
++release branch waits for a Projector review like any other head.
+ Merging tags the release and moves `v0`, which is what the installer,
+ `project upgrade`, and every repository's site workflow use. When the publish
+ job fails partway, re-run it from the Actions page. It finishes the steps the
