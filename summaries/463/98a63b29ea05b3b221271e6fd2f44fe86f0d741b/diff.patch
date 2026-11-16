@@ -1,0 +1,216 @@
+diff --git a/skills/cleanup/SKILL.md b/skills/cleanup/SKILL.md
+index 64ffbb8c..06cbab22 100644
+--- a/skills/cleanup/SKILL.md
++++ b/skills/cleanup/SKILL.md
+@@ -179,7 +179,10 @@ When a gap is a pull request the session held and the user chose an issue or
+ to leave it, mark it ready with
+ `project review ready <number> --repo <owner>/<repo>` once nothing more will
+ be pushed for it. A held pull request that no session marks ready stays a
+-draft, which GitHub refuses to merge however clean its review.
++draft, which GitHub refuses to merge however clean its review. Run the
++command as a tool call of its own, not after `cd` and joined to no other
++command, and never as a bare `gh pr ready`, as `../fix-pr/SKILL.md`
++describes under "Hold the pull request while changes are built".
+ 
+ ## Release what the session holds
+ 
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index a342c812..a19d223c 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -222,19 +222,43 @@ the `origin` of the checkout you run them in, and refuse outside one.
+    owner drops every change you were about to build, mark it ready without a
+    push, because the head the review signed off is still the head.
+ 
+-Each command prints the pull request's draft state and whether it moved;
+-`--json` prints the same as one object.
++Each command prints the pull request's draft state, whether it moved, and
++the head it acted on; `--json` prints the same as one object. So you need
++no `gh pr view` after either one.
+ 
+-Run `project review hold` and `project review ready` as commands of their
+-own, so the rule that allows them matches, rather than running `gh pr ready`
+-yourself. A host's automatic approval, such as Claude Code's auto mode, can
+-refuse a bare `gh pr ready` as self-approval. `project init` adds
++Run `project review hold` and `project review ready` each as a tool call of
++its own: not after `cd`, not joined to another command with `;`, `&&`,
++`||`, or `|`, and never as `gh pr ready` yourself. `project init` adds
+ `Bash(project *)` to the user's Claude Code settings, which allows every
+-Projector command, and the same allowance to their Codex rules, so the
+-commands run where the bare call is refused. If the host refuses a command
+-anyway, do not retry it as `gh pr ready`. Leave the pull request as it is,
+-and ask the user to run `project init` in a terminal, which adds the rules,
+-or to run the command themselves.
++Projector command, and the same allowance to their Codex rules. Both Claude
++Code and Codex check each command of a chain against the user's rules and
++take the strictest result, so one command the rules do not name, such as
++`gh pr view` beside `project review ready`, sends the whole call to the
++host's automatic approval. Claude Code's auto mode can refuse such a call,
++judging that marking a held pull request ready undoes the hold, and can
++refuse a bare `gh pr ready` as self-approval.
++
++When the host refuses one of these commands, never retry it as
++`gh pr ready`. Work out why it was refused:
++
++1. **The call ran more than the command.** Run the command again, alone.
++   That is the form the rule matches, not a way around the refusal.
++2. **The command ran alone.** Run `project review rules --json`, which
++   writes nothing, and read `allowed` for the host's file,
++   `~/.claude/settings.json` for Claude Code or
++   `~/.codex/rules/projector.rules` for Codex.
++   - **`false`, or the file is not listed.** The file lacks Projector's
++     current rules. Ask the user to run `project init` themselves in a
++     terminal, then `project review rules` to check it. Codex reads its
++     rules only when a session starts, so a Codex user starts a new session
++     after `init`. Do not run `init` yourself.
++   - **`true`.** The rule is installed, and `init` changes nothing. Ask the
++     user to run the command themselves, and on Codex say that a session
++     started before the rule was written has not loaded it.
++
++Either way, leave the pull request as it is, and say in your result that
++it is still a draft, what refused the command, and the action that would
++let it through.
+ 
+ Hold only when a change is coming: when you defer every suggestion and the
+ owner asks for nothing, leave the draft state as it is. Your report lists the
+diff --git a/skills/implement/SKILL.md b/skills/implement/SKILL.md
+index 3a2b5155..fe57c646 100644
+--- a/skills/implement/SKILL.md
++++ b/skills/implement/SKILL.md
+@@ -159,9 +159,9 @@ answer: mark it ready when they answer `Looks good` or decline the request,
+ and keep it a draft while you build what `Some feedback` asks for, marking it
+ ready once that work is done. Ready is not signed off: a clean review of the
+ head labels the pull request `clean`, and only that is the sign-off. Run the
+-command as a command of its own, never as a bare `gh pr ready`, as
+-`../fix-pr/SKILL.md` describes under "Hold the pull request while changes
+-are built".
++command as a tool call of its own, not after `cd` and joined to no other
++command, and never as a bare `gh pr ready`, as `../fix-pr/SKILL.md`
++describes under "Hold the pull request while changes are built".
+ 
+ Follow the writing guide in `../writing.md`, § 10 in particular, when you
+ write each commit message, the title, and the body. Its first rule starts
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index cb84700f..03b9ff60 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -952,12 +952,15 @@ Claude Code's auto mode refuses a clean self-review's publish as
+ self-approval unless the user's Claude Code settings, or the repository's,
+ allow it, as `Bash(project *)` does, a rule `project init` adds to the user's
+ `~/.claude/settings.json`. For Codex, `init` adds the same allowance to the
+-user's Codex rules. Run `publish` as a command of its own so the rule
+-matches it. If the host refuses it anyway, do not retry it in another form:
+-keep the lock and the body, and ask the user to run `project init` in a
+-terminal, which adds the rules to their own settings, or to run the publish
+-command themselves. `init` adds the rules only for a person at a terminal, so
+-do not run it to add them yourself.
++user's Codex rules. Run `publish` as a tool call of its own, not after `cd`
++and joined to no other command, so the rule matches it. When the host
++refuses it, never retry it in another form. Keep the lock and the body, and
++work out why it was refused as `fix-pr` describes under "Hold the pull
++request while changes are built": run it again alone when the call ran more
++than the publish, and otherwise read `allowed` in
++`project review rules --json` before you ask the user to run `project init`
++in a terminal. `init` adds the rules only for a person at a terminal, so do
++not run it to add them yourself.
+ 
+ After submitting, `publish` re-reads the review it posted, decides the
+ sign-off from the newest verdict on the head and its open finding threads,
+@@ -1211,14 +1214,17 @@ that history instead of rediscovering it.
+   replacement under the same name. It rebuilds its context from GitHub: the
+   pull request's Projector reviews, their finding threads, and the replies
+   on them.
+-- A subagent whose publish the host refused reports the refusal and stops
+-  that publish; it never retries a refused publish in another form, as this
+-  skill and `../summarize-pr/SKILL.md` say. The subagent's report names
+-  why the host refused it and the action that would let it through. Tell
+-  the user once for the session, not once per pull request, that the
++- A subagent whose publish the host refused while it was joined to other
++  commands runs it again alone, the form the rule matches, as this skill
++  and `../summarize-pr/SKILL.md` say. A subagent whose publish the host
++  refused when it ran alone reports the refusal and stops that publish; it
++  never retries a refused publish in another form. The subagent's report
++  names why the host refused it and the action that would let it through.
++  Tell the user once for the session, not once per pull request, that the
+   host's automatic approval refused a publish, and relay that action. Send
+   the user to `project init` in a terminal only when the subagent reports
+-  the rule missing, as `summary_publish` `false` or no file listed. When it
++  the rule missing: `allowed` `false` for a review's publish,
++  `summary_publish` `false` for a summary's, or no file listed. When it
+   reports a matching rule, ask the user to authorize the publish or to run
+   it themselves, and on Codex say that a new session would load a rule
+   written after this one started. Then keep reviewing.
+diff --git a/skills/spec/SKILL.md b/skills/spec/SKILL.md
+index ab22d648..16990510 100644
+--- a/skills/spec/SKILL.md
++++ b/skills/spec/SKILL.md
+@@ -254,9 +254,10 @@ When Projector's `ask` and `request` tools are available:
+    plan's `status`. The status is your readiness claim, and step 1 made it
+    honest.
+ 
+-Run `project review ready` as a command of its own, never as a bare
+-`gh pr ready`, as `../fix-pr/SKILL.md` describes under "Hold the pull
+-request while changes are built".
++Run `project review ready` as a tool call of its own, not after `cd` and
++joined to no other command, and never as a bare `gh pr ready`, as
++`../fix-pr/SKILL.md` describes under "Hold the pull request while changes
++are built".
+ 
+ Where the inbox tools are not available, raise each blocking question in
+ the conversation instead, and mark the pull request ready at the hand-over,
+diff --git a/skills/work/SKILL.md b/skills/work/SKILL.md
+index 97a9f704..001dd6b8 100644
+--- a/skills/work/SKILL.md
++++ b/skills/work/SKILL.md
+@@ -101,6 +101,10 @@ repository reviews it:
+ project review ready <number> --repo <owner>/<repo>
+ ```
+ 
++Run it as a tool call of its own, not after `cd` and joined to no other
++command, and never as a bare `gh pr ready`, as `../fix-pr/SKILL.md`
++describes under "Hold the pull request while changes are built".
++
+ Do not hold a finished pull request in draft until the rest of the work is
+ done. Keep one a draft only while you still have changes to push to it, or
+ while a request asks the user to test it or to review its plan and they
+diff --git a/tests/test_review.py b/tests/test_review.py
+index a0320cb5..cf3df1eb 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -3174,13 +3174,34 @@ def test_the_skills_move_draft_state_through_the_commands_alone(self) -> None:
+         # A host's automatic approval can refuse a bare `gh pr ready` as self-approval, where the rule that
+         # allows Projector's commands allows these.
+         skills = Path(cli.__file__).resolve().parents[2] / "skills"
+-        for name in ("fix-pr", "implement", "spec"):
++        for name in ("fix-pr", "implement", "spec", "work", "cleanup"):
+             text = (skills / name / "SKILL.md").read_text()
+             with self.subTest(skill=name):
+                 self.assertIn("project review ready <number> --repo <owner>/<repo>", text)
+                 commands = "\n".join(re.findall(r"^\s*```(?:sh|bash)\n(.*?)^\s*```", text, re.M | re.S))
+                 self.assertNotIn("gh pr ready", commands, "a skill runs no bare gh pr ready")
+-        self.assertIn("project review hold <number> --repo <owner>/<repo>", (skills / "fix-pr" / "SKILL.md").read_text())
++                prose = " ".join(text.split())
++                self.assertIn("as a tool call of its own", prose)
++        fix_pr = " ".join((skills / "fix-pr" / "SKILL.md").read_text().split())
++        self.assertIn("project review hold <number> --repo <owner>/<repo>", fix_pr)
++        # Claude Code and Codex check each command of a chain and take the strictest result, so a `gh` command
++        # beside `project review ready` sends the whole call to auto mode, which refused it as undoing the hold.
++        self.assertIn("Run `project review hold` and `project review ready` each as a tool call of its own", fix_pr)
++        self.assertIn("**The call ran more than the command.** Run the command again, alone.", fix_pr)
++        # A lone refusal sends the user to `init` only when `review rules` says the file lacks the rules.
++        self.assertIn("Run `project review rules --json`, which writes nothing, and read `allowed`", fix_pr)
++
++    def test_no_skill_example_joins_a_review_command_to_another(self) -> None:
++        # A joined line falls to the host's automatic approval even where `Bash(project *)` allows the command.
++        for path in sorted((Path(cli.__file__).resolve().parents[2] / "skills").glob("*/SKILL.md")):
++            text = path.read_text()
++            for block in re.findall(r"^\s*```(?:sh|bash)\n(.*?)^\s*```", text, re.M | re.S):
++                for line in block.splitlines():
++                    if re.search(r"project (review (ready|hold|publish)|summary publish)\b", line):
++                        with self.subTest(skill=path.parent.name, line=line.strip()):
++                            # A placeholder such as `<clean|changes-requested>` names choices, not a pipe.
++                            bare = re.sub(r"<[^>]*>", "", line)
++                            self.assertIsNone(re.search(r";|&&|\|", bare), "the command runs on a line by itself")
+ 
+     def test_an_account_the_repository_does_not_let_in_counts_only_as_the_reviewer(self) -> None:
+         self.add_verdict("claude-opus-5-5", login="review-bot", association="NONE", verdict="changes-requested")
