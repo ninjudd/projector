@@ -642,7 +642,7 @@ Click a count in the header to collapse what it counts to one line, so a
 long list of pull requests or a burst of notices does not push the questions
 out of view. A collapsed line starts with `+`, where an item's starts with
 `-`, to say it expands. Collapsed pull requests become a line such as
-`+ #12 #14 #15` in their place, listing each in the rows' order. Your pull
+`+ #15 #14 #12` in their place, listing each in the rows' order. Your pull
 requests and the review requests collapse apart, each to a line of its own,
 and yours always come first. With no state beside it, each number takes the
 color of its row's state: red for `conflict` or `failing`, yellow for
