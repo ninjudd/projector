@@ -26,6 +26,7 @@ from typing import Optional
 
 PLACEHOLDER = "{projects_dir}"
 IMPORT_LINE = "@AGENTS.md"
+IOS_SECTION = re.compile(r"^\{ios\}\n(.*?)^\{/ios\}\n(\n?)", re.MULTILINE | re.DOTALL)
 
 # A marker owns its line. The lookahead leaves a CRLF file's `\r` outside the
 # block, so the block text ends at the marker whatever the line endings are.
@@ -74,14 +75,17 @@ def template_version() -> int:
     return int(match.group(1))
 
 
-def render(projects_dir: str) -> str:
+def render(projects_dir: str, ios: bool = False) -> str:
     """The block for a repository, without a trailing newline.
 
     `projects_dir` is the projects directory as written in the block, relative
-    to the repository root when it lies inside it.
+    to the repository root when it lies inside it. `ios` keeps the paragraphs
+    between `{ios}` and `{/ios}` lines, for a repository with an iOS app;
+    without it they are dropped with the blank line that follows them.
     """
 
-    return template().replace(PLACEHOLDER, projects_dir).rstrip("\n")
+    text = IOS_SECTION.sub(r"\1\2" if ios else "", template())
+    return text.replace(PLACEHOLDER, projects_dir).rstrip("\n")
 
 
 def find_block(text: str) -> Optional[Block]:

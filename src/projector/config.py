@@ -54,6 +54,7 @@ CONFIG_NAME = ".projector.toml"
 SETTINGS: dict[str, type] = {
     "projects.dir": str,
     "instructions.enabled": bool,
+    "instructions.ios": bool,
     "site.enabled": bool,
     "site.prepare": str,
     "review.username": str,

@@ -341,6 +341,21 @@ this repository, run:
 project config set review.publish_rule false
 ```
 
+The Projector section carries rules for building an iOS app with
+[`project ios`](#put-an-ios-app-on-a-device) only in a repository that has
+one. `init` and `check` look for an Xcode project or workspace that Git
+tracks, or that is untracked and not ignored, so a new app counts before its
+first commit and a dependency's project under an ignored folder does not. A
+repository whose `ios.project` names its project gets the rules wherever that
+project lives. To choose for yourself, set `instructions.ios`:
+
+```sh
+project config set instructions.ios false
+```
+
+When an app arrives or leaves and the section no longer matches, `check`
+warns with `instructions-ios`, and `init` adds or removes the rules.
+
 Every command that reads or writes a project requires that directory. `init`
 creates it, `check` reports its absence, and `config` and `upgrade` do not
 look for it. When it is missing, Projector names the path it looked for and
@@ -656,6 +671,7 @@ import reads the section through `AGENTS.md` and needs nothing of its own.
 | `instructions-missing` | the file is absent or has no Projector section | `project init` |
 | `instructions-outdated` | the section is older than this command's template | `project init` |
 | `instructions-ahead` | the section is newer than this command's template | `project upgrade`, or reinstall the CLI |
+| `instructions-ios` | the section carries the iOS rules in a repository that does not need them, or leaves them out of one that does | `project init`, or set `instructions.ios` |
 | `instructions-edited` | the section was edited by hand | `project init` to restore it, or change the template in Projector |
 | `instructions-malformed` | a begin marker without an end marker, or a second pair | repair the markers by hand |
 | `instructions-external` | the file is a symlink to a file outside the repository | replace the link with a file in the repository, or set `instructions.enabled = false` |
@@ -766,6 +782,7 @@ reads, which are these:
 | --- | --- | --- | --- |
 | `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given |
 | `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and `CLAUDE.md` |
+| `instructions.ios` | boolean | whether the repository has an Xcode project, or sets `ios.project` | `init` and `check`, to put the rules for `project ios` in the Projector section |
 | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-pr` and `review-repo`, as the GitHub login that posts reviews, and `project watch add --role review`, as the login a review subscription names |

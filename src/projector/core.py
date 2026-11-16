@@ -303,8 +303,13 @@ class ProjectStore:
         cwd: Path,
         root: Optional[Path] = None,
         projects_dir: Optional[Path] = None,
+        ios: Optional[bool] = None,
     ) -> None:
+        """`ios` says whether the Projector section carries the iOS rules; None
+        means it does when the repository has an Xcode project."""
+
         self.root = (root or discover_git_root(cwd)).resolve()
+        self._ios = ios
         if projects_dir is None:
             self.projects_dir = self.root / "docs" / "projects"
         elif projects_dir.is_absolute():
@@ -479,8 +484,26 @@ class ProjectStore:
     # import. Both hosts read the repository root, whatever the projects
     # directory is, so these paths hang off `self.root`.
 
-    def _rendered_block(self) -> str:
-        return instructions.render(self._relative(self.projects_dir))
+    def _rendered_block(self, ios: Optional[bool] = None) -> str:
+        return instructions.render(self._relative(self.projects_dir), self._carries_ios_rules() if ios is None else ios)
+
+    def _carries_ios_rules(self) -> bool:
+        """Whether the Projector section carries the iOS rules: as the store was
+        told, or else whether Git sees an Xcode project or workspace that is
+        tracked, or untracked and not ignored."""
+
+        if self._ios is None:
+            try:
+                listed = run_bounded(
+                    ["git", "-C", str(self.root), "ls-files", "--cached", "--others", "--exclude-standard",
+                     "-z", "--", "*.xcodeproj/*", "*.xcworkspace/*"],
+                    timeout=30,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                self._ios = False
+            else:
+                self._ios = listed.returncode == 0 and bool(listed.stdout)
+        return self._ios
 
     def _outside(self, path: Path) -> bool:
         """Whether `path` exists as a link that leads out of the repository."""
@@ -735,13 +758,23 @@ class ProjectStore:
                 f"Projector section is version {block.version}; this command ships version"
                 f" {shipped} (run 'project upgrade', or reinstall the CLI)",
             )
-        if not instructions.block_matches(block, self._rendered_block()):
+        if instructions.block_matches(block, self._rendered_block()):
+            return []
+        if instructions.block_matches(block, self._rendered_block(not self._carries_ios_rules())):
+            if self._carries_ios_rules():
+                change = "leaves out the iOS rules this repository needs"
+            else:
+                change = "carries iOS rules this repository does not need"
             return warn(
-                "instructions-edited",
-                f"Projector section differs from the version {shipped} template (run 'project"
-                " init' to restore it, or change the template in Projector)",
+                "instructions-ios",
+                f"Projector section {change} (run 'project init' to refresh it, or set"
+                " instructions.ios to choose)",
             )
-        return []
+        return warn(
+            "instructions-edited",
+            f"Projector section differs from the version {shipped} template (run 'project"
+            " init' to restore it, or change the template in Projector)",
+        )
 
     def set_status(self, name: str, status: str) -> tuple[Project, bool]:
         if status not in STATUSES:
