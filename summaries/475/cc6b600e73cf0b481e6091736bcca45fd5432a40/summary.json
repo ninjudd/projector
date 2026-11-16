@@ -1,0 +1,234 @@
+{
+ "version": 1,
+ "name": "Gate in CI",
+ "project": "gate-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 475,
+  "title": "Run the full gate once per head, in CI",
+  "head": "cc6b600e73cf0b481e6091736bcca45fd5432a40",
+  "headRef": "gate-in-ci-impl",
+  "base": "3ccfd48203d11a4d2e9ff437d2ba49c21d161ae4",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's skills ask three parties to run a repository's full test suite on the same head. The author or fixer runs it before each push, CI runs it on the push, and the reviewer runs it again through <code>project review gate</code>. This pull request builds the <code>gate-in-ci</code> plan, so the suite runs once per head, in CI.",
+   "A new setting, <code>review.gate_checks</code>, names the GitHub Actions checks that run the suite, such as <code>check</code>. With it set, the parties split the work this way:",
+   "<ul><li><b>The reviewer.</b> <code>project review gate</code> waits up to 30 minutes for those checks on the exact head. It writes their result into the gate record that a local run already writes, so the incremental-review rule reads it unchanged.</li><li><b>The author and the fixer.</b> <code>implement</code> and <code>fix-pr</code> run only the tests that cover their change and the <code>review.gate</code> command before a push.</li><li><b>The watch daemon.</b> A new <code>CHECKS</code> event tells the fixer when a check fails on the head.</li></ul>",
+   "The gate exits 0 when every named check passed and 1 when one failed. It exits 75 when CI gives no evidence about the code: a check never ran, was cancelled or skipped, or timed out, or the head changed a file that decides what the check runs. On exit 75 the reviewer falls back to the full local gate on a trusted head, and to reading on an untrusted one. Reading CI runs nothing on the reviewer's machine, so an untrusted head gets CI's result too."
+  ],
+  "cards": [
+   {
+    "id": "exits",
+    "title": "What each gate exit means",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Exit</th><th>When</th><th>The reviewer</th></tr></thead><tbody><tr><td class=\"r\">0</td><td>Every named check concluded <code>success</code>, and the <code>review.gate</code> command passed or did not run.</td><td>Treats the gate as passed.</td></tr><tr><td class=\"r\">1</td><td>A named check concluded <code>failure</code> or <code>timed_out</code>.</td><td>Treats it as a failing gate.</td></tr><tr><td class=\"r\">command's status</td><td>The <code>review.gate</code> command failed, so CI is not read.</td><td>Treats it as a failing gate.</td></tr><tr><td class=\"r\">75</td><td>No evidence: a missing check, a timeout, a <code>cancelled</code>, <code>skipped</code>, <code>neutral</code>, <code>stale</code>, or <code>action_required</code> conclusion, a changed workflow file, or files that cannot be told.</td><td>Runs the full gate locally on a trusted head, or reads an untrusted one.</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Where the review stands",
+    "html": "<ul class=\"tight\"><li>The first review requested changes, with two findings open.</li><li>The Check workflow's <code>check</code> job failed on this head, because one new test reuses an earlier subtest's head and hits that head's review lock. The full suite passes locally.</li><li>A workflow step <code>uses: ./</code> makes <code>gate</code> crash with exit 1 instead of exiting 75.</li><li>The plan is marked <code>completed</code> in this pull request.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "setting",
+   "title": "The setting and Projector's own opt-in",
+   "kicker": "A new review.gate_checks key, read by the gate command, and set for Projector itself",
+   "intro": [
+    "<code>review.gate_checks</code> is a string of check names, separated by commas, in <code>.projector.toml</code>. With the key unset, nothing changes. <code>review.gate</code> keeps its meaning: a shell command the reviewer runs locally. With <code>gate_checks</code> set, that command covers only the part of the gate that CI cannot run.",
+    "Projector opts itself in. Its <code>check</code> job runs the Python suite, the site's lint and type check, and <code>project check</code>. Its new <code>review.gate</code> runs the plugin validations, the hooks tests, <code>hooks/typecheck.sh</code>, and <code>git diff --check</code>, which CI cannot run."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers <code>review.gate_checks</code> as a string setting."
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>review gate</code> reads both keys from the checkout's configuration, passes the parsed names to <code>gate</code>, and prints each check's conclusion and the reason for exit 75.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The configuration comes from the operator's checkout, not from the head, so a head under review cannot change which checks vouch for it or which command runs.",
+       "line": 1948
+      }
+     ]
+    },
+    {
+     "path": ".projector.toml",
+     "note": "Sets <code>gate_checks = \"check\"</code> and a <code>review.gate</code> for the steps CI cannot run.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>git diff --check \"$2\" HEAD</code> compares the head with the merge base, because a plain <code>git diff --check</code> sees nothing in a clean scratch worktree.",
+       "line": 6
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "gate",
+   "title": "The gate waits for CI",
+   "kicker": "How project review gate reads the named checks, and when it refuses to trust them",
+   "intro": [
+    "With names set, <code>gate</code> first runs the <code>review.gate</code> command, and only on a head that <code>setup</code> recorded as trusted. A failing command decides the gate with its own status. Otherwise <code>await_checks</code> polls every 20 seconds. Each poll reads each named check's latest run on the head with <code>check_name=</code>, one name at a time, and keeps only runs from the <code>github-actions</code> app.",
+    "A check gives no evidence, and the gate exits 75, in these cases:",
+    "<ul><li><b>The head changed what the check runs.</b> <code>check_files</code> asks GitHub which workflow file the run's check suite came from. It follows each local <code>uses: ./</code> line to reusable workflows and local actions. A changed file in that set refuses CI, and so does a set that cannot be told.</li><li><b>No run is coming.</b> While a named check has no run, <code>coming</code> lists the head's workflow runs. A run that is <code>queued</code>, <code>in_progress</code>, <code>requested</code>, <code>waiting</code>, or <code>pending</code> keeps the wait going. A run waiting for approval, every run finished, or no run after two minutes ends it.</li><li><b>No useful conclusion.</b> The check concluded something other than <code>success</code>, <code>failure</code>, or <code>timed_out</code>, or it was still running after 30 minutes.</li></ul>"
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Read-only calls against this pull request confirmed the response shapes the gate reads: <code>check-runs?check_name=check</code> returns this head's <code>github-actions</code> run, and <code>actions/runs?check_suite_id=</code> returns <code>.github/workflows/check.yml</code> as its <code>path</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "<code>gate</code> moves the trust check onto the command, and adds <code>await_checks</code>, <code>ci_checks</code>, <code>coming</code>, <code>summarize_check</code>, and <code>check_files</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Without names, an untrusted head is still refused before anything runs, as before. With names, an untrusted head skips the command and still reads CI.",
+       "line": 521
+      },
+      {
+       "kind": "verify",
+       "text": "<code>incremental_rules</code> refuses an untrusted head before it reads <code>gate_passed</code>, so a CI pass recorded on an untrusted head cannot carry an incremental review. Traced in <code>incremental_rules</code>.",
+       "line": 540
+      },
+      {
+       "kind": "flag",
+       "text": "For <code>uses: ./</code>, the form an action's own repository uses to test itself, <code>target</code> is empty and <code>git ls-tree -- \"\"</code> fails. <code>gate</code> then exits 1 with no record, which reads as a failing check, instead of exiting 75. A reproduction confirmed it. The review's thread asks to treat an empty target as the repository root.",
+       "line": 702
+      },
+      {
+       "kind": "context",
+       "text": "A failed <code>gh</code> call during the 30-minute wait also ends <code>gate</code> with exit 1. The review lists exit 75 for that case as a suggestion.",
+       "line": 624
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "A fake for the check-runs, workflow-runs, and check-suite endpoints, and <code>CiGateTests</code>, which covers each acceptance row of the plan's gate.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "The first and third subtests commit the same base and head. Within one second they get the same SHA, so <code>setup</code> finds the first subtest's lock and exits 1. That failure is what turned this head's <code>check</code> job red. Pinning the commit dates reproduces it every time. The review's thread asks for a distinct head per subtest.",
+       "line": 925
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "watch",
+   "title": "A CHECKS event for the fixer",
+   "kicker": "The watch daemon reports a failed check on the head to the fix role",
+   "intro": [
+    "The watch daemon already reads each subscribed pull request's CI rollup, the combined state of its check runs and commit statuses, for the panel. Its query now also reads the first 20 contexts in the rollup, with GitHub's counts of check runs and statuses by state, which cover every context.",
+    "A failed context is a check run that concluded <code>FAILURE</code>, <code>TIMED_OUT</code>, or <code>STARTUP_FAILURE</code>, or a status in <code>FAILURE</code> or <code>ERROR</code>. <code>projector/review</code>, the status a changes-requested verdict posts, never counts. When the counts show more failures than the first page names, <code>read_contexts</code> reads later pages of 100 until it finds them or the pages end. The fix role then hears one <code>CHECKS</code> line per head, repeated after <code>watch.renotify</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The new query ran read-only against this pull request. It returned the counts and <code>pageInfo</code>, and <code>failed_contexts</code> named <code>check</code>, the job that failed on this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Adds the rollup contexts and the <code>projector/review</code> status to <code>QUERY</code>, adds <code>CONTEXTS_QUERY</code> for later pages, and emits <code>CHECKS</code> from <code>route_fix</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>failure_count</code> subtracts a failed <code>projector/review</code> status before the comparison, which was the plan review's last suggestion. <code>test_a_failed_projector_review_status_reads_no_later_page_of_contexts</code> covers it.",
+       "line": 659
+      },
+      {
+       "kind": "context",
+       "text": "The event key is <code>checks:&lt;number&gt;:&lt;head&gt;</code>, so a new head starts silent until one of its own contexts fails.",
+       "line": 1491
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "The fake GitHub now pages rollup contexts and computes the counts by state. The tests cover once-per-head announcing, each failing and non-failing state, a failure on the second page, and the <code>projector/review</code> exclusion."
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "The skills run less of the suite",
+   "kicker": "implement, fix-pr, finish, and review-pr follow the new setting",
+   "intro": [
+    "Where <code>review.gate_checks</code> is set, <code>implement</code> and <code>fix-pr</code> run the tests for what changed and the <code>review.gate</code> command before a push, and each stack layer a rebase rewrites follows the same rule. <code>fix-pr</code> handles a <code>CHECKS</code> line. It reads the failing job's log, reproduces the failure, and fixes it, or reports a failure it cannot reproduce. <code>finish</code> accepts the named checks passing as the suite's evidence. <code>review-pr</code> runs <code>gate</code> on every head and says what to do on each exit."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Adds a paragraph on running <code>gate</code> with <code>gate_checks</code> and what exits 0, 1, and 75 mean.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The exit 1 bullet says the <code>review.gate</code> command failing exits 1, but a failing command exits with its own status, as <code>docs/cli.md</code> says. The review lists the fix as a suggestion.",
+       "line": 435
+      }
+     ]
+    },
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "\"Verify the current slice\" and the stack rebase rule get the smaller gate."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Adds <code>CHECKS</code> as outstanding work and as an event, and gives step 2, the merge gate, and the stack layers the smaller gate."
+    },
+    {
+     "path": "skills/finish/SKILL.md",
+     "note": "Step 4 accepts the named checks passing on the head."
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "Says which part of the gate the <code>check</code> job runs, and that a push needs only the focused tests and the other steps."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Reference documentation and the plan",
+   "kicker": "docs/cli.md and docs/plugins.md describe the new behavior, and the plan records the outcome",
+   "intro": [
+    "<code>docs/cli.md</code> gains the setting, the CI wait under <code>review gate</code> with its exit table, and the <code>CHECKS</code> event. The plan moves to <code>completed</code>, and its new § 7 records what settled during implementation."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The settings table, the <code>review gate</code> section, and the watch events table."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Adds CI failures to the events the daemon sends."
+    },
+    {
+     "path": "docs/projects/gate-in-ci/readme.md",
+     "note": "The status becomes <code>completed</code>. § 2.1 step 5 gives a failing command its own exit status, and § 7 lists the deviations from the plan.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "§ 7 Outcome says the plan shipped in one pull request and names the constants <code>CI_WAIT</code>, <code>CI_POLL</code>, and <code>CI_START</code>.",
+       "line": 373
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
