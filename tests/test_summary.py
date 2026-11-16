@@ -882,6 +882,41 @@ class PublishTests(unittest.TestCase):
         self.assertEqual([], self.dispatches)
         self.assertEqual(before, run(self.repo, "git", "rev-parse", "HEAD"))
 
+    def test_checkout_publishes_from_that_checkout_without_a_cd(self) -> None:
+        # The caller runs in another repository, whose origin publish would refuse.
+        elsewhere = self.remote.with_name("elsewhere")
+        run(self.remote.parent, "git", "init", "--quiet", str(elsewhere))
+        run(elsewhere, "git", "remote", "add", "origin", "git@github.com:someone/else.git")
+        data = make_summary(GOOD_GROUPS)
+        data["pr"]["head"] = "a" * 40
+        (elsewhere / "summary.json").write_text(json.dumps(data))
+        (elsewhere / "pr.diff").write_text(DIFF)
+        cwd = os.getcwd()
+        os.chdir(elsewhere)
+        out = io.StringIO()
+        try:
+            with redirect_stdout(out):
+                code = cli.main(["summary", "publish", "--summary", "summary.json", "--diff", "pr.diff", "--local",
+                                 "--checkout", str(self.repo)])
+            self.assertEqual(elsewhere.resolve(), Path.cwd().resolve(), "the caller's directory is kept")
+        finally:
+            os.chdir(cwd)
+
+        self.assertEqual(0, code)
+        local = run(self.repo, "git", "ls-tree", "-r", "--name-only", "refs/projector/summaries").splitlines()
+        self.assertIn(f"summaries/7/{'a' * 40}/summary.json", local, "relative paths read from the caller's directory")
+        self.assertEqual("", run(elsewhere, "git", "for-each-ref", "refs/projector"), "nothing lands where it ran")
+
+    def test_a_checkout_that_is_not_a_directory_is_refused(self) -> None:
+        self.summary_path.write_text(json.dumps(make_summary(GOOD_GROUPS)))
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = cli.main(["summary", "publish", "--summary", str(self.summary_path), "--local",
+                             "--checkout", str(self.repo / "missing")])
+
+        self.assertNotEqual(0, code)
+        self.assertIn("is not a directory", err.getvalue())
+
     def test_no_dispatch_pushes_without_starting_the_workflow(self) -> None:
         self.publish("a" * 40, send_dispatch=False)
         self.assertEqual([], self.dispatches)
@@ -1862,9 +1897,10 @@ class FromPublishedTests(unittest.TestCase):
         store(git_dir or self.remote, ref, f"{root}/7/{head}/{name}", json.dumps(data), when)
         return data
 
-    def init(self, *args: str) -> tuple[int, str, str]:
+    def init(self, *args: str, where: Path | None = None) -> tuple[int, str, str]:
+        """Run `summary init` for pull request 7 from `where`, this test's clone by default."""
         cwd = os.getcwd()
-        os.chdir(self.repo)
+        os.chdir(where or self.repo)
         out, err = io.StringIO(), io.StringIO()
         try:
             with redirect_stdout(out), redirect_stderr(err):
@@ -1971,8 +2007,29 @@ class FromPublishedTests(unittest.TestCase):
         self.assertEqual(65, code)
         self.assertIn("other is someone/else, but --repo is owner/repo", err)
 
+    def test_checkout_reads_that_checkouts_summaries_without_a_cd(self) -> None:
+        newest = self.stored("c" * 40, 1_700_000_500)
+        outside = Path(tempfile.mkdtemp())
+
+        code, out, err = self.init("--from-published", where=outside)
+        self.assertEqual(65, code, "outside a checkout there is no summaries ref to read")
+        self.assertIn("or name one with --checkout", err)
+
+        code, out, err = self.init("--from-published", "--checkout", str(self.repo), where=outside)
+        self.assertEqual(0, code, err)
+        self.assertEqual(newest, json.loads(self.path.read_text()))
+        self.assertIn("from refs/projector/remotes/origin/summaries", out)
+
+    def test_a_checkout_that_is_not_a_directory_is_refused(self) -> None:
+        code, _, err = self.init("--from-published", "--checkout", str(self.repo / "missing"))
+
+        self.assertEqual(2, code)
+        self.assertIn("is not a directory", err)
+        self.assertFalse(self.path.exists())
+
     def test_the_published_summary_options_need_each_other(self) -> None:
-        for args in (("--head", "c" * 7), ("--remote", "origin"), ("--from-published", "--diff", "pr.diff")):
+        for args in (("--head", "c" * 7), ("--remote", "origin"), ("--checkout", "."),
+                     ("--from-published", "--diff", "pr.diff")):
             with self.subTest(args=args):
                 self.assertEqual(2, self.init(*args)[0])
 

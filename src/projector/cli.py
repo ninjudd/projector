@@ -565,6 +565,11 @@ def parser() -> argparse.ArgumentParser:
     summary_init.add_argument(
         "--head", help="with --from-published, copy the summary of the head whose SHA starts with this"
     )
+    summary_init.add_argument(
+        "--checkout", type=Path,
+        help="with --from-published, the checkout to read the summaries ref in, in place of a `cd` (default: the "
+             "repository containing this directory)",
+    )
     summary_refresh = summary_commands.add_parser(
         "refresh", help="bring a summary up to its pull request's current head and base, and say what changed"
     )
@@ -575,6 +580,10 @@ def parser() -> argparse.ArgumentParser:
     )
     summary_publish.add_argument("--summary", required=True)
     summary_publish.add_argument("--remote", default="origin")
+    summary_publish.add_argument(
+        "--checkout", type=Path,
+        help="the checkout to publish from, in place of a `cd` (default: the repository containing this directory)",
+    )
     summary_publish.add_argument("--diff", help="publish the diff from this file instead of fetching it from GitHub")
     summary_publish.add_argument(
         "--no-dispatch", action="store_true", help="push the summary without starting the workflow"
@@ -1648,6 +1657,10 @@ def review_rules(json_output: bool) -> int:
     """`review rules`: whether the user's settings allow every command Projector's permission rules name,
     exiting 1 when one may not.
 
+    `--json` also says whether each file allows `project summary publish`,
+    which a file lacking newer rules can still do, so a session whose publish
+    was refused can tell a missing rule from a matching one.
+
     It asks `allow_commands` only to report, so it writes nothing, and a review
     loop can run it before its first publish rather than learn of a refusal on
     one pull request mid-loop. The rules belong in the person's own settings,
@@ -1660,8 +1673,10 @@ def review_rules(json_output: bool) -> int:
     files = allow_commands(apply=False, hint=False)
     allowed = all(entry.action == "unchanged" for entry in files)
     if json_output:
+        publish = permissions.publish_allowed()
         print(json.dumps({"allowed": allowed,
-                          "files": [{"path": entry.path, "allowed": entry.action == "unchanged"}
+                          "files": [{"path": entry.path, "allowed": entry.action == "unchanged",
+                                     "summary_publish": publish.get(entry.path, False)}
                                     for entry in files]}, indent=2))
     else:
         for entry in files:
@@ -2054,10 +2069,12 @@ def init_from_published(arguments: argparse.Namespace) -> None:
     if arguments.diff:
         raise UsageError("--from-published copies a summary and reads no diff; pass --diff to `summary refresh`")
     remote = arguments.remote or "origin"
-    root = summary.checkout_root()
+    if arguments.checkout is not None and not arguments.checkout.is_dir():
+        raise UsageError(f"--checkout {arguments.checkout} is not a directory")
+    root = summary.checkout_root(arguments.checkout)
     if root is None:
         raise summary.SummaryError(f"--from-published reads the summaries ref, so run it in a checkout of "
-                                   f"{arguments.repo}")
+                                   f"{arguments.repo}, or name one with --checkout")
     slug = summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", remote))
     if slug and slug.lower() != arguments.repo.lower():
         raise summary.SummaryError(f"{remote} is {slug}, but --repo is {arguments.repo}")
@@ -2089,24 +2106,32 @@ def run_summary(arguments: argparse.Namespace) -> int:
     if arguments.summary_command == "init":
         if arguments.from_published:
             init_from_published(arguments)
-        elif arguments.remote or arguments.head:
-            raise UsageError("--remote and --head choose a published summary; pass them with --from-published")
+        elif arguments.remote or arguments.head or arguments.checkout:
+            raise UsageError("--remote, --head, and --checkout choose a published summary; pass them with "
+                             "--from-published")
         else:
             summary.init(arguments.repo, arguments.pr, arguments.summary, arguments.diff)
     elif arguments.summary_command == "refresh":
         summary.refresh(arguments.summary, arguments.diff)
     else:
-        pr = summary.summary_pr(json.loads(Path(arguments.summary).read_text(encoding="utf-8")))
+        # Paths are read from where the command runs, and git runs in the checkout.
+        summary_path = Path(arguments.summary).resolve()
+        diff_path = Path(arguments.diff).resolve() if arguments.diff else None
+        checkout = arguments.checkout or Path.cwd()
+        if not checkout.is_dir():
+            raise UsageError(f"--checkout {checkout} is not a directory")
+        pr = summary.summary_pr(json.loads(summary_path.read_text(encoding="utf-8")))
         site, reason = (None, "--local asked for a local preview") if arguments.local \
             else summary.push_decision(pr["repo"])
-        summary.publish(
-            Path(arguments.summary),
-            arguments.remote,
-            send_dispatch=not arguments.no_dispatch,
-            diff_path=Path(arguments.diff) if arguments.diff else None,
-            push=site is not None,
-            reason=reason,
-        )
+        with contextlib.chdir(checkout):
+            summary.publish(
+                summary_path,
+                arguments.remote,
+                send_dispatch=not arguments.no_dispatch,
+                diff_path=diff_path,
+                push=site is not None,
+                reason=reason,
+            )
         # A summary kept in this checkout has no page on GitHub to link.
         if site is not None:
             print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))

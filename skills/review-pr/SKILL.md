@@ -1024,7 +1024,8 @@ Then follow `summarize-pr` for this head, with two differences from a
 summary a person asks for:
 
 - **Update rather than start over.** Run `project summary init` with
-  `--from-published` first. When it finds a summary of this pull request,
+  `--from-published` first, passing the same `--checkout` as `setup` where
+  you gave it one. When it finds a summary of this pull request,
   update that one as the skill's "Update the page when the pull request
   moves" section describes, so a fix-cycle head costs a revision, not a
   rewrite. The newest version can come from another session or account,
@@ -1035,11 +1036,13 @@ summary a person asks for:
   the reviewer flagged under the code it concerns. Drop a `flag` check whose
   finding thread has since been resolved.
 
-Publish it with `project summary publish`, after the review. It then
-links the summary from the pull request, so a reader on GitHub finds it:
-one comment per pull request, which a later head's summary reposts at the
-end, deleting the old one, and one line at the very bottom of the
-description. Do not post the link yourself.
+Publish it with `project summary publish`, after the review. Where you
+set the review up with `--checkout`, pass the publish the same
+`--checkout`, never a `cd`. It then links the summary from the pull
+request, so a reader on GitHub finds it: one comment per pull request,
+which a later head's summary reposts at the end, deleting the old one, and
+one line at the very bottom of the description. Do not post the link
+yourself.
 
 The description edit is intended, on every pull request. `publish` appends
 its link block after everything else in the description, below a trailer
@@ -1056,7 +1059,12 @@ and the comment alone links it.
 
 A summary that fails to build or publish never changes the review's
 verdict: say in your report that the summary failed and why, and leave the
-review as it was.
+review as it was. When the host refuses the publish, work out why as
+`summarize-pr` describes, and report the summary as unfinished, with what
+refused it and the action that would let it through. A refusal holds back
+only that head's summary. Summarize and publish every later head as above,
+and report each one either published, with its URL, or still blocked, with
+the reason. Never stop summarizing because an earlier publish was refused.
 
 ## Gate readiness claims in plans
 
@@ -1208,10 +1216,15 @@ that history instead of rediscovering it.
   on them.
 - A subagent whose publish the host refused reports the refusal and stops
   that publish; it never retries a refused publish in another form, as this
-  skill and `../summarize-pr/SKILL.md` say. Tell the user once for the
-  session, not once per pull request, that the host's automatic approval
-  refused a publish and that running `project init` in a terminal adds the
-  rules. Then keep reviewing.
+  skill and `../summarize-pr/SKILL.md` say. The subagent's report names
+  why the host refused it and the action that would let it through. Tell
+  the user once for the session, not once per pull request, that the
+  host's automatic approval refused a publish, and relay that action. Send
+  the user to `project init` in a terminal only when the subagent reports
+  the rule missing, as `summary_publish` `false` or no file listed. When it
+  reports a matching rule, ask the user to authorize the publish or to run
+  it themselves, and on Codex say that a new session would load a rule
+  written after this one started. Then keep reviewing.
 
 The session does not inspect code, so its own context stays small however
 many pull requests it reviews. Where the host has no subagents, the session
