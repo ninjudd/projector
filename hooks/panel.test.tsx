@@ -108,6 +108,14 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
     }),
     p19: pr(19, 'Draft no review has read', { isDraft: true }),
     p20: pr(20, 'Change by a deleted account', { author: null }),
+    p21: pr(21, 'Signed-off change failing its checks', {
+      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+      labels: { nodes: [{ name: 'clean' }] },
+    }),
+    p22: pr(22, 'Failing change a review is reading', {
+      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+      labels: { nodes: [{ name: 'reviewing' }] },
+    }),
   },
   'x/y': {
     p7: pr(7, 'Conflicting change', {
@@ -283,9 +291,9 @@ test('draws one line per open pull request of the session’s own loops', async 
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
-  // Open threads show as their count before a `*`, in yellow.
-  expect((await ui.findAll({ type: 'Text', text: '1*' })).map(found => found.props.color)).toContain('warning')
-  expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
+  // Open threads are the row's word, in yellow, and a closed row does not count them.
+  expect((await ui.find({ type: 'Text', text: /^threads$/ }))?.props.color).toBe('warning')
+  expect(await ui.find({ type: 'Text', text: /\d+ threads?|open thread/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   // The panel's header starts with `/projector`, the command that shows and hides the panel, at its left. At its
   // right, it counts the two open pull requests the panel lists, not the merged one, and then says how long ago the
@@ -728,27 +736,63 @@ test('a panel.background the panel does not take leaves the color to the theme, 
   await ui.unmount()
 })
 
-test('a pull request’s notes take their own colors, and each ` · ` between them the default color', async ($, on) => {
+test('a row’s notes name every other status that applies, and an open drawer spells its row’s holds out', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#10\no/r#11\n' })
+  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\no/r#22\n' })
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
-
   const ui = await $.ui.mount(PANEL)
-  // The conflict is the row's status, so the notes leave it out and name the change request after it.
-  expect(partsOf(await ui.find({ type: 'Text', text: 'changes requested · 1*' }))).toEqual([
-    ['changes requested', 'warning'],
+
+  // A row's notes are the Text after its title, when it has any; the age comes after them.
+  const notesOf = async (title: string) => {
+    const texts = await ui.findAll({ type: 'Text' })
+    const next = texts[texts.findIndex(found => found.text === title) + 1]
+    return next === undefined || next.text === '' || /^\d+[smhd]$/.test(next.text) ? [] : partsOf(next)
+  }
+  const TITLES = [
+    'Change held back',
+    'Approved change',
+    'Change failing its checks',
+    'Change a review is reading',
+    'Signed-off change failing its checks',
+    'Failing change a review is reading',
+  ]
+  const allNotes = async () => Object.fromEntries(await Promise.all(TITLES.map(async title => [title, await notesOf(title)])))
+
+  expect(await allNotes()).toEqual({
+    // A conflict always takes the word, so no note names it; the change request it beat follows, in short.
+    'Change held back': [['changes', 'warning'], ' · ', ['threads', 'warning']],
+    // Open threads are this row's word, so its closed row names only the approval.
+    'Approved change': [['approved', 'success']],
+    // The word says what the one hold is, so the closed row does not repeat it.
+    'Change failing its checks': [],
+    // A label the word beat shows too, in its own color: the clean an earlier head left under a running review,
+    // and the clean of a signed-off head whose checks fail.
+    'Change a review is reading': [['clean', 'success']],
+    'Signed-off change failing its checks': [['clean', 'success']],
+    // A running review the failing checks beat shows as well, in the orange the drawer draws a reviewer in.
+    'Failing change a review is reading': [['reviewing', 'claude']],
+  })
+
+  // An open drawer spells its row's holds out, the one its word names as well, and leaves the other rows short.
+  await ui.press({ key: 'pr:o/r#21' })
+  await clock.settle()
+  expect(await notesOf('Signed-off change failing its checks')).toEqual([
+    ['checks failing', 'error'],
     ' · ',
-    ['1*', 'warning'],
+    ['clean', 'success'],
   ])
-  expect(partsOf(await ui.find({ type: 'Text', text: 'approved · 3*' }))).toEqual([
-    ['approved', 'success'],
-    ' · ',
-    ['3*', 'warning'],
-  ])
-  expect(await ui.find({ type: 'Text', text: /⋮/ })).toBeUndefined()
+  expect(await notesOf('Change held back')).toEqual([['changes', 'warning'], ' · ', ['threads', 'warning']])
+  await ui.press({ key: 'pr:o/r#10' })
+  await clock.settle()
+  // Spelled out, the open threads give their count.
+  expect(await notesOf('Change held back')).toEqual([['changes requested', 'warning'], ' · ', ['1 thread', 'warning']])
+  expect(await notesOf('Signed-off change failing its checks')).toEqual([['clean', 'success']])
+  await ui.press({ key: 'pr:o/r#11' })
+  await clock.settle()
+  expect(await notesOf('Approved change')).toEqual([['3 threads', 'warning'], ' · ', ['approved', 'success']])
   await ui.unmount()
 })
 
@@ -766,9 +810,9 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   // The number is a plain button, so no terminal draws a URL beside it.
   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
-  // The conflict is the row's status, so its notes hold only the threads' count.
+  // The conflict is the row's status, so its notes name only the open threads it beat.
   expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
-  expect(partsOf(await ui.find({ type: 'Text', text: '2*' }))).toEqual([['2*', 'warning']])
+  expect(partsOf(await ui.find({ type: 'Text', text: /^threads$/ }))).toEqual([['threads', 'warning']])
 
   await ui.press({ key: 'pr:x/y#7' })
   await clock.settle()
@@ -852,10 +896,13 @@ test('a drawer ends its facts with every label as GitHub draws it, a clean the r
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
 
-  // The conflict is the row's word, over the clean label, and the failing checks, which hold it back too, a note.
+  // The conflict is the row's word, and the failing checks and the clean label it beat are its notes.
   expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
-  expect(await ui.find({ type: 'Text', text: 'clean' })).toBeUndefined()
-  expect(partsOf(await ui.find({ type: 'Text', text: 'checks failing' }))).toEqual([['checks failing', 'error']])
+  expect(partsOf(await ui.find({ type: 'Text', text: /^failing · clean$/ }))).toEqual([
+    ['failing', 'error'],
+    ' · ',
+    ['clean', 'success'],
+  ])
 
   await ui.press({ key: 'pr:o/r#17' })
   await clock.settle()
@@ -996,7 +1043,7 @@ test('collapses each file in a drawer to its name and count, until a press opens
   const links = async () => (await ui.findAll({ type: 'Link' })).map(link => link.props.href)
 
   // The count of 2 and of 1 add up to the row's own count of threads, and no thread draws until its file opens.
-  expect(await files()).toEqual(['+ src/a.ts 2*', '+ src/b.ts 1*'])
+  expect(await files()).toEqual(['+ src/a.ts 2 threads', '+ src/b.ts 1 thread'])
   expect(await links()).toEqual([])
   const toggle = await ui.find({ type: 'Button', key: 'toggle-file:x/y#7:src/a.ts' })
   const parts = (toggle?.children ?? []) as (string | { props?: { color?: string } })[]
@@ -1004,12 +1051,12 @@ test('collapses each file in a drawer to its name and count, until a press opens
 
   // A press opens that file alone, and another closes it.
   await ui.press({ key: 'toggle-file:x/y#7:src/a.ts' })
-  expect(await files()).toEqual(['- src/a.ts 2*', '+ src/b.ts 1*'])
+  expect(await files()).toEqual(['- src/a.ts 2 threads', '+ src/b.ts 1 thread'])
   expect(await links()).toEqual([`${SEVEN}#discussion_r1`, `${SEVEN}#discussion_r3`])
   await ui.press({ key: 'toggle-file:x/y#7:src/b.ts' })
   expect(await links()).toEqual([`${SEVEN}#discussion_r1`, `${SEVEN}#discussion_r3`, `${SEVEN}#discussion_r2`])
   await ui.press({ key: 'toggle-file:x/y#7:src/a.ts' })
-  expect(await files()).toEqual(['+ src/a.ts 2*', '- src/b.ts 1*'])
+  expect(await files()).toEqual(['+ src/a.ts 2 threads', '- src/b.ts 1 thread'])
   expect(await links()).toEqual([`${SEVEN}#discussion_r2`])
   await ui.unmount()
 })
@@ -1048,7 +1095,7 @@ test('keeps a drawer’s open file open through a poll, and starts another pull 
 
   await ui.press({ key: 'pr:o/r#2' })
   await clock.settle()
-  expect((await ui.find({ type: 'Button', key: 'toggle-file:o/r#2:src/a.ts' }))?.text).toBe('+ src/a.ts 1*')
+  expect((await ui.find({ type: 'Button', key: 'toggle-file:o/r#2:src/a.ts' }))?.text).toBe('+ src/a.ts 1 thread')
   expect(await ui.findAll({ type: 'Link' })).toHaveLength(0)
   await ui.unmount()
 })
@@ -1062,7 +1109,7 @@ test('starts a drawer’s files collapsed each time it opens, and keeps them whi
   const fileOfSeven = async () => (await ui.find({ type: 'Button', key: 'toggle-file:x/y#7:src/a.ts' }))?.text
   const openFile = async () => {
     await press('toggle-file:x/y#7:src/a.ts')
-    expect(await fileOfSeven()).toBe('- src/a.ts 1*')
+    expect(await fileOfSeven()).toBe('- src/a.ts 1 thread')
   }
 
   // Closing the drawer and pressing its line again opens it collapsed.
@@ -1070,24 +1117,24 @@ test('starts a drawer’s files collapsed each time it opens, and keeps them whi
   await openFile()
   await press('pr:x/y#7')
   await press('pr:x/y#7')
-  expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
+  expect(await fileOfSeven()).toBe('+ src/a.ts 1 thread')
   expect(await ui.findAll({ type: 'Link' })).toHaveLength(0)
 
   // So does coming back from another drawer in which no file was opened.
   await openFile()
   await press('pr:o/r#2')
   await press('pr:x/y#7')
-  expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
+  expect(await fileOfSeven()).toBe('+ src/a.ts 1 thread')
 
   // Collapsing the pull requests keeps the open drawer, below their line, so its file stays open.
   await openFile()
   await press('count:pr')
-  expect(await fileOfSeven()).toBe('- src/a.ts 1*')
+  expect(await fileOfSeven()).toBe('- src/a.ts 1 thread')
 
   // A label that opens the drawer anew starts it collapsed, as its line does.
   await press('open:o/r#2')
   await press('open:x/y#7')
-  expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
+  expect(await fileOfSeven()).toBe('+ src/a.ts 1 thread')
   await ui.unmount()
 })
 

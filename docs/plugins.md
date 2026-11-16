@@ -280,7 +280,7 @@ not subscribed to before.
 ```text
   /projector                            1 pull request · 1 review request  12s   [-]
    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
-   #258 threads grace Name the reviewed head in a review's summary line  2* 5m
+   #258 threads grace Name the reviewed head in a re… 2 threads · reviewing 5m
         reviewer · sig-head · +84 −1 in 5 files · checks passing ·  reviewing
         7: Discuss  8: Dismiss
         open in github  open in projector
@@ -318,22 +318,24 @@ review wants something:
   one whose `clean` label a push removed.
 
 So a held draft, which keeps its `clean` label while a change is built,
-reads as an italic number beside an italic green `clean`. A label the state
-gives way to, such as the `clean` of a pull request that now conflicts,
-still shows in its drawer. The panel reads the draft state and the labels
-with the rest of the line, from the watch daemon's query of the pull
-request.
+reads as an italic number beside an italic green `clean`. The panel reads the
+draft state and the labels with the rest of the line, from the watch
+daemon's query of the pull request.
 
-Notes follow the title when the pull request has them: whatever else of
-`conflict` and `checks failing` in red and `changes requested` in yellow
-holds it back that the state does not already say, then `approved` in
-green, and last the number of unresolved review threads before a `*` in
-yellow, such as `2*`. The ` · ` between two notes keeps the default text
-color. The line ends with how long ago the pull request last changed, in the
-column where the inbox's items end with their ages. Only the title shortens
-on a narrow terminal. A pull request that the watch daemon has not queried
-yet has a muted number and reads `loading…` in place of its title, with no
-state, author, or age, until the daemon's first result for it arrives.
+Notes follow the title and name every other state that applies, in the
+order above and each in its color: `failing`, `changes`, `threads`,
+`reviewing`, and `clean`, then `approved` in green. So a signed-off pull
+request whose checks fail reads `failing` with a green `clean` after its
+title. No note names `conflict`, which always takes the state. While a pull
+request's drawer is open, its row spells the holds out as `checks failing`,
+`changes requested`, and the threads' count, such as `2 threads`, and names
+the one its state already says as well. The ` · ` between two notes keeps
+the default text color. The line ends with how long ago the pull request
+last changed, in the column where the inbox's items end with their ages.
+Only the title shortens on a narrow terminal. A pull request that the watch
+daemon has not queried yet has a muted number and reads `loading…` in place
+of its title, with no state, author, or age, until the daemon's first result
+for it arrives.
 
 Your own pull requests come first, then everyone else's, which the panel
 calls review requests, each author's together and the authors in order of
@@ -432,19 +434,18 @@ line, and then the unresolved review threads, gathered under their files:
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
 - **Each file with an unresolved review thread** is a line that names the
-  file and counts its threads, in the same yellow as the `*` on the pull
-  request's line. Every file starts collapsed, marked `+`, so the drawer
-  opens as a short list. Click a file, or press Enter with the focus ring
-  on it, to show its threads and mark it `-`, and again to hide them. A file
-  stays open while its drawer does, through each poll, and starts collapsed
-  again the next time the drawer opens. One open file and one collapsed file
-  look like this:
+  file and counts its threads in yellow, such as `2 threads`. Every file
+  starts collapsed, marked `+`, so the drawer opens as a short list. Click a
+  file, or press Enter with the focus ring on it, to show its threads and
+  mark it `-`, and again to hide them. A file stays open while its drawer
+  does, through each poll, and starts collapsed again the next time the
+  drawer opens. One open file and one collapsed file look like this:
 
   ```text
-  - src/audio/player.ts 2*
+  - src/audio/player.ts 2 threads
     :120 · grace · P2 · A failed retry blocks other downloads from recovering
     :188 · grace · outdated · P2 · A background refresh can overwrite a newer cached file
-  + docs/notes.md 1*
+  + docs/notes.md 1 thread
   ```
 
   The threads run oldest first within a file, and the files come in the
@@ -455,7 +456,7 @@ line, and then the unresolved review threads, gathered under their files:
   it, then `outdated` when a later push changed the lines it is on, and
   then the first line of its first comment, cut to end at the panel's edge.
   A terminal without hyperlinks draws the thread's URL after the text. These
-  are the threads the yellow `*` counts. GitHub folds an outdated
+  are the threads the files count. GitHub folds an outdated
   thread away, and hides an older one on a long timeline behind **Load
   more**, so the link reaches a thread the pull request's page does not
   show. The threads appear once GitHub answers the drawer's own query, a
