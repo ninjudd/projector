@@ -99,6 +99,21 @@ class FileAction:
     note: Optional[str] = None
 
 
+def visible_files(root: Path, *patterns: str) -> list[Path]:
+    """The files under `root` that match a pathspec in `patterns` and that Git tracks, or that are untracked and not
+    ignored, so a new file counts before its first commit and one in an ignored folder does not. Empty when Git
+    cannot say."""
+
+    try:
+        listed = run_bounded(["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z",
+                              "--", *patterns], timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if listed.returncode:
+        return []
+    return [root / os.fsdecode(path) for path in dict.fromkeys(listed.stdout.split(b"\0")) if path]
+
+
 def run_bounded(args: list[str], *, timeout: float, cwd: Optional[Path] = None, input: Optional[bytes] = None,
                 env: Optional[dict] = None) -> subprocess.CompletedProcess:
     """Run `args` with standard input closed, or fed `input`, and capture its output as bytes. Once `timeout`
@@ -502,17 +517,8 @@ class ProjectStore:
         projects it holds."""
 
         if self._ios is None:
-            try:
-                listed = run_bounded(
-                    ["git", "-C", str(self.root), "ls-files", "--cached", "--others", "--exclude-standard",
-                     "-z", "--", "*.xcodeproj/project.pbxproj"],
-                    timeout=30,
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                self._ios = False
-            else:
-                paths = listed.stdout.split(b"\0") if listed.returncode == 0 else []
-                self._ios = any(self._builds_for_ios(self.root / os.fsdecode(path)) for path in paths if path)
+            projects = visible_files(self.root, "*.xcodeproj/project.pbxproj")
+            self._ios = any(self._builds_for_ios(path) for path in projects)
         return self._ios
 
     @staticmethod

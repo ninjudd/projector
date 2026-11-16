@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from concurrent import futures
 from pathlib import Path
 from unittest import mock
 
@@ -446,6 +447,10 @@ else:
             self.assertLessEqual(len(self.dispatcher.jobs), 4)
         finally:
             release.set()
+            # `close` leaves running submissions to finish, so the temporary directory's cleanup would race
+            # the workers still writing under `sessions/`.
+            _, running = futures.wait(self.dispatcher.jobs.values(), timeout=5)
+            self.assertFalse(running, "a submission was still running after its call was released")
 
     def test_close_leaves_a_running_submission_to_finish_and_record_its_result(self):
         # A stopping daemon unlocks daemon.mutex only once close returns, and a replacement waits 10 seconds

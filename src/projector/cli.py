@@ -2682,6 +2682,20 @@ def site_workflow_issues(root: Path) -> list[Issue]:
                   "(run 'project init' or 'project site workflow --write' to refresh it)", "warning")]
 
 
+def ios_app_issues(root: Path) -> list[Issue]:
+    """A warning while shared `<app> Development` schemes build several apps and `ios.app` names none, since
+    `project ios crashes` and `logs` refuse to choose once two of those apps have kept builds."""
+    if load_config(root).setting("ios.app") is not None:
+        return []
+    apps = ios.development_apps(root)
+    if len(apps) < 2:
+        return []
+    return [Issue("ios-app-unset", CONFIG_NAME,
+                  f"Development schemes build {', '.join(apps)}, and ios.app names none of them, so `project ios "
+                  "crashes` and `logs` refuse to choose once two have kept builds (run 'project config set ios.app "
+                  "<app>' with the app to build by default)", "warning")]
+
+
 class NotOnGitHub(ProjectorError):
     """The checkout's origin is not a GitHub repository, so it has no Pages site to set up."""
 
@@ -3076,7 +3090,7 @@ def run(arguments: argparse.Namespace) -> int:
         if command == "done":
             print("Record whether the project shipped, was abandoned, or was superseded.", file=sys.stderr)
     elif command == "check":
-        issues = store.check(instructions_enabled(root)) + site_workflow_issues(root)
+        issues = store.check(instructions_enabled(root)) + site_workflow_issues(root) + ios_app_issues(root)
         # Warnings print but never fail the gate; `valid` and the exit code
         # follow errors alone.
         errors = [issue for issue in issues if issue.severity == "error"]

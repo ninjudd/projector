@@ -701,6 +701,24 @@ Project plans are valid.
 | --- | --- | --- |
 | `site-workflow-outdated` | the site workflow is an earlier shape Projector wrote | `project init`, or `project site workflow --write` |
 
+`check` also warns while the repository's shared `<app> Development`
+schemes build more than one app and `ios.app` names none of them. Once two of
+those apps have kept builds, `project ios crashes` and `logs` cannot tell
+which app you mean and refuse to choose, as
+[Find the app by convention](#find-the-app-by-convention) describes. The
+schemes are read from the files Git tracks, or that are untracked and not
+ignored, so `check` needs no Xcode.
+
+```console
+$ project check
+warning: .projector.toml: Development schemes build Alpha, Beta, and ios.app names none of them, so `project ios crashes` and `logs` refuse to choose once two have kept builds (run 'project config set ios.app <app>' with the app to build by default) [ios-app-unset]
+Project plans are valid.
+```
+
+| Code | Condition | Fix |
+| --- | --- | --- |
+| `ios-app-unset` | shared `<app> Development` schemes build several apps, and `ios.app` is unset | `project config set ios.app <app>` |
+
 ## Read configuration
 
 Projector reads settings from `.projector.toml` files. Put a value in the file
@@ -3406,10 +3424,14 @@ Each of `build`, `install`, `crashes`, and `logs` takes these options:
 Without a device option, the commands use the one device that is connected,
 and refuse none or several with the list of paired devices. `build` checks
 the device before it builds, and waits up to five minutes for you to unlock
-a locked device before it opens the app. Outside a terminal, `build` prints
-only the line that starts the build and the line that ends it, and a failed
-build prints its `error:` lines. `--verbose` prints every line, and
-`build.log` keeps them all.
+a locked device before it opens the app. When `devicectl` times out waiting
+for CoreDevice, which can happen right after you log in, update Xcode, or
+connect a device for the first time, the error says to run the command again
+in a minute, and to run `killall CoreDeviceService` if it keeps timing out.
+launchd starts the service again the next time `devicectl` needs it.
+Outside a terminal, `build` prints only the line that starts the build and
+the line that ends it, and a failed build prints its `error:` lines.
+`--verbose` prints every line, and `build.log` keeps them all.
 
 ### Find the app by convention
 
@@ -3418,7 +3440,9 @@ A repository that follows the convention needs no configuration:
 - **The Xcode project** is the one `.xcworkspace`, or with none the one
   `.xcodeproj`, in the repository. Set `ios.project` to the path of another.
 - **The app** is the Xcode project's name, so `MyApp.xcodeproj` gives
-  `MyApp`. Pass `--app`, or set `ios.app`, for another.
+  `MyApp`. Pass `--app`, or set `ios.app`, for another. Set `ios.app` in a
+  project whose Development schemes build several apps, which `project check`
+  warns about.
 - **The scheme** is `<app> Development` when the project has it, and
   otherwise `<app>`. A scheme named `MyApp Beta` is the app `MyApp Beta`.
 - **The output folder** for crash reports and log files is `~/Desktop`. Set
