@@ -157,12 +157,12 @@ PUBLISH = ("project", "summary", "publish")
 # The Claude Code allow rules that match `PUBLISH`: the broad one, and the
 # narrower one Projector wrote before it.
 CLAUDE_PUBLISH_RULES = ("Bash(project *)", "Bash(project summary publish *)")
-# Codex 0.110 and newer resolve an absolute program path to its basename
+# Codex 0.108 and newer resolve an absolute program path to its basename
 # before matching a rule, so without this line `/tmp/x/project summary` would
 # match the `project` rules and run outside the sandbox. An empty list keeps
 # every absolute path for `project` to Codex's usual approval, and leaves the
-# bare name, which the skills run, allowed. Codex before 0.110 cannot parse it
-# and drops the whole policy, so 0.110 is Projector's minimum Codex version.
+# bare name, which the skills run, allowed. Codex before 0.107 cannot parse it
+# and drops the whole policy, so 0.107 is Projector's minimum Codex version.
 CODEX_HOST_EXECUTABLE = 'host_executable(name = "project", paths = [])'
 # Codex loads every `.rules` file in its rules directory, and writes the
 # approvals a person saves to `default.rules`, so Projector keeps its rules in

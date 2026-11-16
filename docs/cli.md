@@ -253,7 +253,7 @@ what it did to each:
   approval instead of running outside the sandbox, while the bare
   `project summary publish` an agent runs stays allowed. Claude Code matches
   the command text, so `Bash(project *)` never matches a path to a program.
-  The rules need Codex 0.110 or newer. An older Codex cannot parse
+  The rules need Codex 0.107 or newer. An older Codex cannot parse
   `host_executable`, and a rules file it cannot parse leaves it with no
   rules at all, your own included, so update Codex before you run `init`.
 
