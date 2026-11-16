@@ -1279,12 +1279,6 @@ const findingCount = (count: number) => `${count} finding${count === 1 ? '' : 's
 
 type Hold = {
   status: string
-  /**
-   * The hold in full, which the row's notes give while its drawer is open,
-   * the one that is the row's word included. A hold without one gives its
-   * status word in both, and only when another hold took the word.
-   */
-  phrase?: string
   color: 'error' | 'warning'
   holds: (pr: PullRequest) => boolean
 }
@@ -1297,13 +1291,8 @@ type Hold = {
 const HOLDS: Hold[] = [
   // First, so a conflict is always the row's word and never one of its notes.
   { status: 'conflict', color: 'error', holds: pr => pr.isConflicting },
-  { status: 'failing', phrase: 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
-  {
-    status: 'changes',
-    phrase: 'changes requested',
-    color: 'warning',
-    holds: pr => pr.reviewDecision === 'CHANGES_REQUESTED',
-  },
+  { status: 'failing', color: 'error', holds: pr => pr.checks === 'failing' },
+  { status: 'changes', color: 'warning', holds: pr => pr.reviewDecision === 'CHANGES_REQUESTED' },
   // Each unresolved review thread is a finding. The row counts none; the drawer counts each file's.
   { status: 'findings', color: 'warning', holds: pr => pr.openThreads > 0 },
 ]
@@ -1328,23 +1317,19 @@ const reviewLabel = (pr: PullRequest) => REVIEW_LABELS.find(label => hasLabel(pr
  * What a row says after the title: every other status that applies, in the
  * order the word takes them, then its approval, then `passing` while the
  * head's checks pass, and last `cancelled` while a workflow's newest run on
- * the head was cancelled. While the row's drawer
- * `isOpen`, the holds show in full, and the one that is the row's word shows
- * as well. A draft's italic number is easy to miss, so a draft says so too
- * when another status takes the word.
+ * the head was cancelled. A draft's italic number is easy to miss, so a draft
+ * says so too when another status takes the word. Opening the row's drawer
+ * changes none of it, so the row reads the same as the drawer opens.
  */
-function notesOf(pr: PullRequest, isOpen: boolean): Note[] {
+function notesOf(pr: PullRequest): Note[] {
   const shown = rowState(pr).text
-  const notes = HOLDS.flatMap(({ status, phrase, color, holds }): Note[] => {
-    const isSpelled = isOpen && phrase !== undefined
-    return holds(pr) && (isSpelled || status !== shown)
-      ? [{ text: isSpelled ? phrase : status, color }]
-      : []
-  })
+  const notes = HOLDS.flatMap(({ status, color, holds }): Note[] =>
+    holds(pr) && status !== shown ? [{ text: status, color }] : [],
+  )
   notes.push(...REVIEW_LABELS.filter(label => label.text !== shown && hasLabel(pr, label.text)))
   if (pr.isDraft && shown !== 'draft') notes.push({ text: 'draft', isItalic: true })
   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
-  if (pr.checks === 'passing') notes.push({ text: isOpen ? 'checks passing' : 'passing', color: 'success' })
+  if (pr.checks === 'passing') notes.push({ text: 'passing', color: 'success' })
   if (pr.isCancelled) notes.push({ text: 'cancelled', color: 'subtle' })
   return notes
 }
@@ -2520,7 +2505,7 @@ export const register: Register = on => {
     const drawRow = (row: Row) => {
       const { pr } = row
       const key = keyOf(pr)
-      const notes = notesOf(pr, opened === key)
+      const notes = notesOf(pr)
       const state = rowState(pr)
       // A pull request the daemon has no result for yet holds only its
       // reference, so its line says it is loading in its title's place.
