@@ -3719,7 +3719,7 @@ test('the pull requests’ count in the header collapses them to one line in the
 test('a collapsed number takes the color of its row’s word, and is italic for a draft', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const numbers = ['#1', '#2', '#10', '#11', '#12', '#13', '#14', '#15', '#16', '#18', '#19']
+  const numbers = ['#1', '#2', '#10', '#11', '#12', '#13', '#14', '#15', '#16', '#17', '#18', '#19']
   world(on, { [REVIEW]: `${numbers.map(number => `o/r${number}`).join('\n')}\n` })
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
@@ -3750,6 +3750,8 @@ test('a collapsed number takes the color of its row’s word, and is italic for 
     '#14': ['reviewing', 'claude', 'claude', false],
     '#15': ['clean', 'success', 'success', true],
     '#16': ['conflict', 'error', 'error', true],
+    // A `clean` label gives way to the hold, collapsed as on its row.
+    '#17': ['conflict', 'error', 'error', false],
     '#18': ['changes', 'warning', 'warning', false],
     '#19': ['draft', undefined, undefined, true],
   })
