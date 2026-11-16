@@ -451,6 +451,43 @@ class CheckTests(RelayCase):
         self.assertEqual([], [ref for ref in self.refs() if ref in planted])
         self.assertEqual(4, self.two.status()["repositories"]["acme/app"]["rejected"])
 
+    def test_deeply_nested_json_in_a_planted_or_sealed_record_is_rejected_and_the_relay_goes_on(self) -> None:
+        self.pair()
+        b = self.b_relay_id()
+        nested = b"[" * 30000
+        self.assertLessEqual(len(nested), relay.MAX_SEALED)
+        sealed = json.dumps(crypto.seal(self.private, self.key.public, b'{"a":' + b"[" * 15000)).encode()
+        self.assertLessEqual(len(sealed), relay.MAX_SEALED)
+        planted = {self.inbox("m-" + "0" * 32): nested, self.inbox("m-" + "0" * 31 + "1"): sealed}
+        for ref, data in planted.items():
+            self.plant(ref, {"sealed.json": data})
+        valid = self.message("m-" + "9" * 32, to=b, text="After the planted refs")
+        self.plant(self.inbox(valid["id"]), {"sealed.json": self.sealed(valid)})
+
+        self.two.run_pass()
+        first = self.two.status()["repositories"]["acme/app"]
+        later = self.message("m-" + "a" * 32, to=b, text="On a later pass")
+        self.plant(self.inbox(later["id"]), {"sealed.json": self.sealed(later)})
+        self.two.run_pass()
+
+        self.assertEqual(("ok", "", 2), (first["state"], first["error"], first.get("rejected")))
+        self.assertEqual(2, len(self.two.events(B)))
+        self.assertEqual("ok", self.two.status()["repositories"]["acme/app"]["state"])
+        self.assertEqual([], [ref for ref in self.refs() if ref.startswith(relay.INBOX)])
+
+    def test_untrusted_json_is_parsed_only_up_to_eight_levels_deep_counting_no_bracket_in_a_string(self) -> None:
+        deepest = b"[" * relay.MAX_DEPTH + b"]" * relay.MAX_DEPTH
+        quoted = json.dumps({"text": "[" * 100 + '\\"{' * 100}).encode()
+
+        for data in (b"[" + deepest + b"]", b"{" * 5000):
+            with self.subTest(data=data[:12]), self.assertRaises(ValueError):
+                relay.parse(data)
+        with mock.patch.object(relay, "shallow", return_value=True), self.assertRaises(ValueError):
+            relay.parse(b"[" * 100000)
+
+        self.assertEqual(json.loads(deepest), relay.parse(deepest))
+        self.assertEqual(json.loads(quoted), relay.parse(quoted))
+
     def test_a_replayed_stale_or_colliding_message_is_not_delivered_and_a_collision_is_counted(self) -> None:
         self.pair()
         b = self.b_relay_id()

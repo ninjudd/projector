@@ -918,3 +918,12 @@ Shipped in two layers: the local messages, then the relay. Every
 acceptance criterion in § 4 has a test. The two-session check by hand
 after merge, on one machine and then on two, remains for the user, as § 4
 says.
+
+Review of the relay settled these details:
+
+- **Untrusted JSON nests at most 8 deep.** A job counts the brackets
+  outside strings in a `sealed.json` blob, and in the plaintext it opens,
+  before it parses either, and treats deeper nesting, or a
+  `RecursionError`, as a record that does not open. So a planted blob of
+  nested brackets under the 32 KiB cap is rejected and its ref deleted
+  like any other, rather than stopping every later job in the repository.

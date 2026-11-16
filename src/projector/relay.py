@@ -51,6 +51,10 @@ TREE = re.compile(r"^100644 blob ([0-9a-f]{40,64}) +([0-9]+)\tsealed\.json$")
 LEASE = 3600.0
 RENEW = 1800.0
 MAX_SEALED = 32 * 1024
+# A sealed record and the record inside it are flat objects, so JSON nested deeper was planted and is not parsed.
+MAX_DEPTH = 8
+STRING = re.compile(rb'"(?:[^"\\]|\\.)*"')
+BRACKET = re.compile(rb"[\[\]{}]")
 OPEN_LIMIT = 64
 EXAMINE_LIMIT = 4 * OPEN_LIMIT
 FETCH_TIMEOUT = 120.0
@@ -372,6 +376,27 @@ def git(cwd: Path, *args: str, input: Optional[bytes] = None, env: Optional[dict
         raise RelayError(f"git could not start: {error}") from None
 
 
+def shallow(data: bytes) -> bool:
+    """Whether the JSON in `data` nests arrays and objects at most `MAX_DEPTH` deep, counting the brackets
+    outside its strings, so `json.loads` never recurses deeply into a blob that anyone who can push planted."""
+    depth = 0
+    for found in BRACKET.finditer(STRING.sub(b'""', data)):
+        depth += 1 if found[0] in (b"[", b"{") else -1
+        if depth > MAX_DEPTH:
+            return False
+    return True
+
+
+def parse(data: bytes) -> object:
+    """The JSON an untrusted blob holds, raising `ValueError` for any that does not parse or nests too deeply."""
+    if not shallow(data):
+        raise ValueError(f"the JSON nests more than {MAX_DEPTH} deep")
+    try:
+        return json.loads(data)
+    except RecursionError:
+        raise ValueError("the JSON nests too deeply to parse") from None
+
+
 def text(data: bytes) -> str:
     return data.decode("utf-8", "replace").strip()
 
@@ -583,8 +608,8 @@ class Job:
         if done.returncode != 0 or len(done.stdout) > MAX_SEALED:
             return None
         try:
-            sender, plaintext = crypto.unseal(self.key.private, json.loads(done.stdout))
-            record = json.loads(plaintext)
+            sender, plaintext = crypto.unseal(self.key.private, parse(done.stdout))
+            record = parse(plaintext)
         except (crypto.CryptoError, ValueError):
             return None
         return record if sender == self.key.public and isinstance(record, dict) else None

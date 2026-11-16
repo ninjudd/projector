@@ -3042,7 +3042,8 @@ holds up another session's events. On each pass, a job:
    checkout of the repository.
 2. Opens at most 64 new records. It ignores a ref whose name does not match
    its namespace, and rejects a commit whose tree is not exactly one
-   `sealed.json` of at most 32 KiB before it reads the blob. It checks the
+   `sealed.json` of at most 32 KiB before it reads the blob, and a record
+   whose JSON nests more than 8 deep before it parses it. It checks the
    tag before it decrypts anything, and rejects a record sealed by any other
    key, a presence whose relay ID is not its ref's, a message whose
    recipient is not its ref's or that is 7 days old, and a record whose
