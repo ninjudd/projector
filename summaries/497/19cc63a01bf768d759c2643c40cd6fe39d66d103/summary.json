@@ -1,0 +1,121 @@
+{
+ "version": 1,
+ "name": "Worktree lookup command",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 497,
+  "title": "Add project worktree, which prints the worktree that has a branch or a pull request's branch checked out",
+  "head": "19cc63a01bf768d759c2643c40cd6fe39d66d103",
+  "headRef": "project-worktree",
+  "base": "715e1e59902235ab73d85084524c92a3f2d3a696",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A Git <b>worktree</b> is a second working folder attached to the same repository, with its own branch checked out. Agents and review tools create many of them, and their folders are often named for an agent's id rather than for the branch, so the branch name alone does not tell you where a pull request's code lives on disk. Finding it meant reading <code>git worktree list</code> by eye.",
+   "This pull request adds <code>project worktree &lt;branch-or-number&gt;</code>. Given a branch, it prints the folder of the worktree that has that branch checked out. Given a number, it reads that pull request from the repository <code>origin</code> names and looks up its head branch the same way. It exits 66 and names the branch when no worktree has it.",
+   "The command only reads: it runs <code>git worktree list</code> and, for a number, one <code>gh api</code> request. It changes no branch, folder, or file. Because it is read-only, it joins the Codex allow rules that <code>project init</code> writes."
+  ],
+  "cards": [
+   {
+    "id": "behavior",
+    "title": "What the command matches",
+    "html": "<ul class=\"tight\"><li><b>Whole names only.</b> <code>fix</code> does not match <code>fix/login</code>.</li><li><b>Every worktree.</b> The main checkout and every linked worktree, from inside any of them.</li><li><b>Not a detached worktree.</b> A review's scratch worktree has no branch, so it never matches.</li><li><b>Not a worktree whose folder is gone.</b> The command checks that the folder exists, so a deleted worktree never matches, locked or not.</li><li><b>All digits means a pull request.</b> An argument of only digits is read as a pull request number, as <code>project ios</code> reads it.</li><li><b>Git 2.36 or later.</b> The command reads <code>git worktree list -z</code>, which Git 2.36 added.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first head's CI failed because the new tests committed without a Git identity. The second head gives them one.</li><li>The review of the second head found that a locked worktree whose folder was deleted still printed its missing path. Claude Code locks the agent worktrees it creates. The third head checks the folder itself, and a new test covers the case.</li><li>The docs now describe the fork case and the Git 2.36 requirement, the two suggestions from that review. The review of this head is clean.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "lookup",
+   "title": "Finding the worktree",
+   "kicker": "The command, and the helper that reads Git's worktree list",
+   "intro": [
+    "<code>run_worktree</code> in <code>cli.py</code> turns the argument into a branch name, then asks <code>worktree_on_branch</code> in <code>review.py</code> for the folder. A number goes through <code>review.read_pull_request</code>, the call <code>project review</code> uses, and the pull request's <code>head.ref</code> becomes the branch.",
+    "<code>worktree_on_branch</code> reads <code>git worktree list --porcelain -z</code>. That output lists one record per worktree, with NUL bytes between fields and an extra NUL between records, so a folder name with a space or a newline comes through whole. The helper returns the first record with an exact <code>branch refs/heads/&lt;name&gt;</code> field whose folder exists on disk. It checks the folder itself because Git marks a deleted worktree <code>prunable</code> only when the worktree is unlocked."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A pull request from a fork whose head branch has the same name as one of your branches, such as <code>main</code>, finds your branch's worktree. <code>docs/cli.md</code> says so."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>worktree_on_branch</code>, which parses the porcelain worktree list.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 813,
+       "text": "Checked in a temporary repository: a locked worktree whose folder was deleted gives exit 66 and names the branch, and a live worktree in a folder whose name has a space still prints its path."
+      },
+      {
+       "kind": "context",
+       "line": 807,
+       "text": "<code>git worktree list -z</code> needs Git 2.36 or later, which <code>docs/cli.md</code> states. An older Git fails with an unknown-switch error."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>worktree</code> subcommand, <code>run_worktree</code>, and <code>NoWorktree</code>, which exits 66 as the other not-found errors do.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Run by hand in a temporary repository: a branch with a slash printed its worktree, a number with no <code>origin</code> refused and named the missing origin, and a run outside a repository exited 69."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_worktree.py",
+     "note": "Builds a temporary repository with a nested branch name, a folder with a space, a detached worktree, a deleted one, and a locked, deleted one, and fakes only the GitHub call.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>PYTHONPATH=src python3 -m tests tests.test_worktree tests.test_permissions</code> passed, 22 tests, and CI's <code>check</code> passed on this head."
+      },
+      {
+       "kind": "verify",
+       "text": "<code>test_refuses_a_branch_checked_out_only_in_a_locked_folder_that_is_gone</code> fails when the helper's earlier <code>prunable</code> check is put back."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rules",
+   "title": "Allowing the command in Codex",
+   "kicker": "The Codex rules and the documentation",
+   "intro": [
+    "<code>project init</code> writes a Codex rules file that lets Codex run read-only <code>project</code> commands without asking. This pull request adds <code>worktree</code> to that list, because the command changes nothing. <code>docs/cli.md</code> shows the same rules and gets a new section, \"Find a branch's worktree\"."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds <code>worktree</code> to <code>CODEX_ALLOW</code> and to the reason Codex shows for the rule."
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Adds <code>project worktree</code> with a number and with a branch to the table of commands each host allows."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Lists <code>worktree</code> in the documented Codex rules and adds the section that describes the command, including the fork case and the Git 2.36 requirement.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>test_the_documented_codex_rules_are_the_ones_init_writes</code> compares the documented rules with <code>CODEX_ALLOW</code>, and it passed."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

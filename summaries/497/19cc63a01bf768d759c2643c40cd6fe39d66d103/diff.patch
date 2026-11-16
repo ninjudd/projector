@@ -1,0 +1,276 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index f615eed2..301276f3 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -216,7 +216,7 @@ what it did to each:
+ 
+   ```text
+   prefix_rule(
+-      pattern = ["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary", "version", "watch"]],
++      pattern = ["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary", "version", "watch", "worktree"]],
+       decision = "allow",
+   )
+   prefix_rule(
+@@ -3585,6 +3585,32 @@ minutes, and deletes the archive it reads.
+ `devices --json` prints `devices`, each with its `name`, `udid`, `kind`,
+ `tunnel`, and whether it is `installable`.
+ 
++## Find a branch's worktree
++
++`project worktree` prints the folder of the worktree that has a branch
++checked out. A worktree's folder is often named for something other than
++its branch, such as an agent's id, so the command saves you from reading
++`git worktree list` to find it. Give it a branch, or the number of a pull
++request of the repository `origin` names, which it looks up on GitHub for
++the pull request's head branch:
++
++```sh
++project worktree fix/login           # the worktree that has fix/login checked out
++project worktree 12                  # the worktree that has pull request 12's head branch checked out
++cd "$(project worktree 12)"
++```
++
++The command searches every worktree of the checkout you run it in, the main
++checkout included, from any one of them. It matches the whole branch name,
++and passes over a worktree whose folder is gone, locked or not. When no
++worktree has the branch checked out, it says which branch it looked for and
++exits 66. A detached worktree, such as a review's scratch worktree, has no
++branch, so the command never finds one. A pull request from a fork has a head
++branch in the fork, and the command looks for a local branch of the same
++name, so for a fork's `main` it finds the worktree that has your own `main`
++checked out. The command needs Git 2.36 or later, which added
++`git worktree list -z`.
++
+ ## Consume JSON
+ 
+ Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index e87a62d8..99a9822a 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -871,6 +871,10 @@ def parser() -> argparse.ArgumentParser:
+     add_loop_parser(subcommands)
+     add_watch_parser(subcommands)
+     add_agent_parser(subcommands)
++    worktree = subcommands.add_parser("worktree", help="print the folder of the worktree that has a branch, or a "
++                                                       "pull request's branch, checked out")
++    worktree.add_argument("target", metavar="branch-or-number",
++                          help="a branch, or the number of a pull request of origin's repository")
+ 
+     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
+     site_commands = site.add_subparsers(dest="site_command", required=True)
+@@ -1192,6 +1196,26 @@ def run_ios(arguments: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++class NoWorktree(ProjectorError):
++    exit_code = 66
++
++
++def run_worktree(arguments: argparse.Namespace) -> int:
++    """Print the folder of the worktree that has the branch checked out, or the pull request's branch."""
++    checkout = discover_git_root(Path.cwd())
++    if ios.NUMBER.fullmatch(arguments.target):
++        branch = review.read_pull_request(review.origin_repo(checkout), int(arguments.target))["head"]["ref"]
++        named = f"pull request {arguments.target}'s branch {branch}"
++    else:
++        branch = arguments.target
++        named = f"branch {branch}"
++    found = review.worktree_on_branch(checkout, branch)
++    if found is None:
++        raise NoWorktree(f"no worktree has {named} checked out")
++    print(found)
++    return 0
++
++
+ def run_loop(arguments: argparse.Namespace) -> int:
+     reference = arguments.reference
+     tracked = arguments.tracked
+@@ -2988,6 +3012,8 @@ def run(arguments: argparse.Namespace) -> int:
+         return run_watch(arguments)
+     if arguments.command == "agent":
+         return run_agent(arguments)
++    if arguments.command == "worktree":
++        return run_worktree(arguments)
+ 
+     # Resolved once and passed down, so configuration and the store agree on
+     # the repository without asking git for it twice.
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 3a6ecc27..505e7500 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -131,9 +131,9 @@
+ # justification Codex shows for it.
+ CODEX_ALLOW = (
+     (["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary",
+-                  "version", "watch"]],
+-     "Runs a Projector command that works on plans, loops, watches, or pull request summaries, or prints its "
+-     "version or help."),
++                  "version", "watch", "worktree"]],
++     "Runs a Projector command that works on plans, loops, watches, or pull request summaries, finds a branch's "
++     "worktree, or prints its version or help."),
+     (["project", "agent", ["list", "read", "register", "reply", "send"]],
+      "Registers the session, lists your registered sessions, or sends, reads, or answers a message between them."),
+     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 31721d85..6d6bad24 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -801,6 +801,20 @@ def add_worktree(checkout: Path, path: Path, sha: str) -> None:
+                           "which replaces the worktree")
+ 
+ 
++def worktree_on_branch(checkout: Path, branch: str) -> Optional[Path]:
++    """The worktree of the checkout's repository that has `branch` checked out, or None when none has. A
++    worktree whose folder is gone has nothing checked out. Git marks such a worktree prunable only when it
++    is unlocked, so the folder itself is checked."""
++    listed = git("-C", str(checkout), "worktree", "list", "--porcelain", "-z")
++    for record in listed.split("\0\0"):
++        fields = record.strip("\0").split("\0")
++        if f"branch refs/heads/{branch}" in fields:
++            path = Path(fields[0].removeprefix("worktree "))
++            if path.is_dir():
++                return path
++    return None
++
++
+ # Start comments
+ 
+ def live_effort() -> str:
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index c16ed58e..d810ee73 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -30,6 +30,8 @@
+     ("project review suggestions 12 --json", "allow", "allow"),
+     ("project review workflow", "allow", "allow"),
+     ("project review gate 12", "allow", "none"),
++    ("project worktree 12", "allow", "allow"),
++    ("project worktree fix/login", "allow", "allow"),
+     ("project summary publish --summary summary.json", "allow", "allow"),
+     ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
+     ("project inbox tell notice --session s1", "allow", "allow"),
+diff --git a/tests/test_worktree.py b/tests/test_worktree.py
+new file mode 100644
+index 00000000..e725df4c
+--- /dev/null
++++ b/tests/test_worktree.py
+@@ -0,0 +1,118 @@
++"""`project worktree`: print the folder of the worktree that has a branch, or a pull request's branch, checked out."""
++
++from __future__ import annotations
++
++import io
++import json
++import os
++import shutil
++import subprocess
++import tempfile
++import unittest
++from contextlib import redirect_stderr, redirect_stdout
++from pathlib import Path
++from unittest import mock
++
++from projector import cli, review
++
++REPO = "acme/app"
++# The setup commits, and a CI runner has no Git identity configured.
++GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t",
++           "GIT_COMMITTER_EMAIL": "t@example.com"}
++
++
++def git(cwd: Path, *args: str) -> str:
++    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
++                          env={**os.environ, **GIT_ENV}).stdout.strip()
++
++
++class WorktreeCommandTests(unittest.TestCase):
++    def setUp(self) -> None:
++        # Resolved, because macOS reaches the temporary folder through a symlink that Git prints resolved.
++        self.tmp = Path(tempfile.mkdtemp()).resolve()
++        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
++        self.checkout = self.tmp / "checkout"
++        git(self.tmp, "init", "--quiet", "-b", "trunk", str(self.checkout))
++        git(self.checkout, "commit", "--quiet", "--allow-empty", "-m", "trunk")
++        git(self.checkout, "remote", "add", "origin", f"git@github.com:{REPO}.git")
++        self.feature = self.add("feature", "feature")
++        self.nested = self.add("fix/login", "nested folder")
++        self.add_detached("review")
++        self.gone = self.add("gone", "gone")
++        shutil.rmtree(self.gone)
++        # Git never marks a locked worktree prunable, even once its folder is gone.
++        locked = self.add("locked", "locked")
++        git(self.checkout, "worktree", "lock", "--reason", "agent", str(locked))
++        shutil.rmtree(locked)
++        self.prs: dict[int, dict] = {}
++        github = mock.patch.object(review, "run_gh", self.github)
++        github.start()
++        self.addCleanup(github.stop)
++
++    def add(self, branch: str, folder: str) -> Path:
++        path = self.tmp / folder
++        git(self.checkout, "worktree", "add", "--quiet", "-b", branch, str(path))
++        return path
++
++    def add_detached(self, folder: str) -> Path:
++        path = self.tmp / folder
++        git(self.checkout, "worktree", "add", "--quiet", "--detach", str(path))
++        return path
++
++    def github(self, args: list[str], token: str | None = None) -> str:
++        for number, pr in self.prs.items():
++            if args == ["api", f"repos/{REPO}/pulls/{number}"]:
++                return json.dumps(pr)
++        raise review.NotFound("HTTP 404")
++
++    def project(self, *args: str, cwd: Path | None = None) -> tuple[int, str, str]:
++        out, err = io.StringIO(), io.StringIO()
++        with mock.patch.object(cli.Path, "cwd", return_value=cwd or self.checkout), \
++                redirect_stdout(out), redirect_stderr(err):
++            code = cli.main(["worktree", *args])
++        return code, out.getvalue(), err.getvalue()
++
++    def test_prints_the_worktree_that_has_the_branch_checked_out(self) -> None:
++        self.assertEqual((0, f"{self.feature}\n", ""), self.project("feature"))
++        # A branch name with a slash, in a folder whose name has a space, comes back whole.
++        self.assertEqual((0, f"{self.nested}\n", ""), self.project("fix/login"))
++        # The main checkout is a worktree too.
++        self.assertEqual((0, f"{self.checkout}\n", ""), self.project("trunk"))
++
++    def test_finds_another_worktree_from_inside_a_linked_one(self) -> None:
++        self.assertEqual((0, f"{self.checkout}\n", ""), self.project("trunk", cwd=self.feature))
++
++    def test_matches_the_whole_branch_name(self) -> None:
++        code, out, err = self.project("feat")
++        self.assertEqual((66, ""), (code, out))
++        self.assertEqual("project: no worktree has branch feat checked out\n", err)
++
++    def test_refuses_a_branch_checked_out_only_in_a_folder_that_is_gone(self) -> None:
++        code, out, err = self.project("gone")
++        self.assertEqual((66, ""), (code, out))
++        self.assertIn("no worktree has branch gone checked out", err)
++
++    def test_refuses_a_branch_checked_out_only_in_a_locked_folder_that_is_gone(self) -> None:
++        code, out, err = self.project("locked")
++        self.assertEqual((66, ""), (code, out))
++        self.assertEqual("project: no worktree has branch locked checked out\n", err)
++
++    def test_prints_the_worktree_of_a_pull_requests_head_branch(self) -> None:
++        self.prs[12] = {"number": 12, "head": {"ref": "fix/login", "sha": "0" * 40}}
++        self.assertEqual((0, f"{self.nested}\n", ""), self.project("12"))
++
++    def test_names_the_pull_requests_branch_when_no_worktree_has_it(self) -> None:
++        self.prs[13] = {"number": 13, "head": {"ref": "elsewhere", "sha": "0" * 40}}
++        code, out, err = self.project("13")
++        self.assertEqual((66, ""), (code, out))
++        self.assertEqual("project: no worktree has pull request 13's branch elsewhere checked out\n", err)
++
++    def test_says_when_the_pull_request_cannot_be_read(self) -> None:
++        code, out, err = self.project("14")
++        self.assertNotEqual(0, code)
++        self.assertEqual("", out)
++        self.assertIn(f"{REPO}#14 does not exist", err)
++
++
++if __name__ == "__main__":
++    unittest.main()
