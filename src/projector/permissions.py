@@ -426,7 +426,9 @@ def publish_allowed(environ: Mapping[str, str] = os.environ) -> dict[str, bool]:
 
     A file can lack Projector's current rules and still allow the publish,
     which is what tells a refusal despite a matching rule from a missing one.
-    A file that cannot be read allows nothing.
+    A file that cannot be read allows nothing, and neither does a Codex rules
+    file holding `CODEX_HOST_EXECUTABLE` for a Codex too old to parse it,
+    since that Codex then loads no rules at all.
     """
 
     path = settings_path(environ)
@@ -441,5 +443,6 @@ def publish_allowed(environ: Mapping[str, str] = os.environ) -> dict[str, bool]:
     codex = codex_rules_path(environ)
     if codex is not None:
         text, unreadable = read_user_file(codex, environ)
-        allowed[shown(codex, environ)] = not unreadable and codex_allows(text, PUBLISH)
+        unparsable = CODEX_HOST_EXECUTABLE in text and codex_rules(codex_version(environ)) != CODEX_RULES
+        allowed[shown(codex, environ)] = not unreadable and not unparsable and codex_allows(text, PUBLISH)
     return allowed

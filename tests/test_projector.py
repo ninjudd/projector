@@ -2054,6 +2054,9 @@ class ReviewRulesTests(RepositoryTestCase):
         self.assertEqual("allows ~/.claude/settings.json\nlacks ~/.codex/rules/projector.rules\n", stdout)
         self.assertIn("which Codex 0.100.0 cannot parse, so Codex loads no rules at all", stderr)
         self.assertNotIn("or pass --publish-rule", stderr, "the check names no command an agent could run")
+        # Codex loads no rules, so none allows the publish, and `summarize-pr` must not say `init` changes nothing.
+        self.assertEqual([True, False], [entry["summary_publish"] for entry in
+                                         json.loads(self.invoke("review", "rules", "--json")[1])["files"]])
         self.assertEqual(before, self.home_tree())
 
         rules.write_text(permissions.CODEX_RULES_WITHOUT_HOST_EXECUTABLE)
@@ -2061,6 +2064,8 @@ class ReviewRulesTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertEqual("allows ~/.claude/settings.json\nallows ~/.codex/rules/projector.rules\n", stdout)
         self.assertIn("Codex 0.100.0 is older than 0.107", stderr)
+        self.assertEqual([True, True], [entry["summary_publish"] for entry in
+                                        json.loads(self.invoke("review", "rules", "--json")[1])["files"]])
 
     def test_unreadable_settings_exit_1_and_stay_untouched(self) -> None:
         for content, reason in (
