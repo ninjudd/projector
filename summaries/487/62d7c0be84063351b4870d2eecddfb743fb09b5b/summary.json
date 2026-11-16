@@ -1,0 +1,132 @@
+{
+ "version": 1,
+ "name": "Panel status colors",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 487,
+  "title": "Color a collapsed pull request by its row's state, and list its labels in its drawer",
+  "head": "62d7c0be84063351b4870d2eecddfb743fb09b5b",
+  "headRef": "panel-status-colors",
+  "base": "c7e0d7d3f0d4844fa64c59048d5c14301e26684d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is a list in Claude Code, above the prompt, of the pull requests a session fixes or reviews. Each row shows a pull request's number, a <b>state word</b> such as <code>clean</code> or <code>ready</code>, its title, and short <b>notes</b> such as <code>conflict</code> or <code>2*</code> for two open review threads. When you collapse the list, each pull request shrinks to its number alone, colored to stand in for the word it lost.",
+   "Before this change, the collapsed number and the row's word followed two separate rules. The number turned red for a conflict, a change request, or failing checks, and yellow for open threads. The word knew only the review labels and the draft state. So a signed-off pull request that then conflicted showed a red number when collapsed and a green <code>clean</code> when expanded. Nothing on the row said that the checks were failing.",
+   "This change makes the state word the single source of color. The word is now the first of these that applies:",
+   "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Word</th><th>Color</th><th>When</th></tr></thead><tbody><tr><td><code>conflict</code></td><td>red</td><td>The branch conflicts with its base</td></tr><tr><td><code>failing</code></td><td>red</td><td>The head's checks fail</td></tr><tr><td><code>changes</code></td><td>yellow</td><td>A review requests changes</td></tr><tr><td><code>threads</code></td><td>yellow</td><td>Review threads are unresolved</td></tr><tr><td><code>reviewing</code></td><td>orange</td><td>The <code>reviewing</code> label is on</td></tr><tr><td><code>clean</code></td><td>green</td><td>The <code>clean</code> label is on</td></tr><tr><td><code>draft</code></td><td>default</td><td>A draft with neither label</td></tr><tr><td><code>ready</code></td><td>light blue</td><td>Ready for review, with neither label</td></tr></tbody></table></div>",
+   "A collapsed number takes its word's color, so the two cannot disagree. Because a hold can now hide a <code>clean</code> or <code>reviewing</code> label, the drawer that opens under a row lists every label the pull request carries, drawn in GitHub's own label colors."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review, at <code>62d7c0b</code>, requested changes with one open finding: the collapsed-number test never draws a pull request that has both a hold and a review label.</li><li>All checks passed on this head: the plugin tests, both validates, the type check, the Python suite, <code>project check</code>, and <code>git diff --check</code>.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Hold</b>: something that keeps a pull request from merging or that a review asks for. A conflict, failing checks, a change request, or open threads.</li><li><b>Review label</b>: the <code>reviewing</code> or <code>clean</code> label that Projector's review commands set.</li><li><b>Watch daemon</b>: the per-machine process that polls GitHub and writes a cache the panel reads.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "state",
+   "title": "The row's word decides every color",
+   "kicker": "One ordered list of holds now drives the state word, the notes, and the collapsed number",
+   "intro": [
+    "The new <code>HOLDS</code> list in <code>hooks/register.tsx</code> names the four holds in order of urgency, each with its word, its color, and the note it shows when another hold is the word. <code>rowState</code> takes the first hold that applies, and falls back to the review label, then <code>draft</code> or <code>ready</code>. <code>notesOf</code> leaves out the hold the word already names. <code>statusColor</code>, which colors a collapsed number, is now just the word's color, or muted while the row loads.",
+    "Labels are now objects with a <code>name</code> and a <code>color</code>, not lowercased names, so <code>hasLabel</code> compares names without regard to case. A panel snapshot that an earlier release saved with plain-string labels is dropped rather than drawn."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "No hold can hide behind a green or orange word: <code>rowState</code> checks every hold before it reads a review label, and <code>statusColor</code> reads only <code>rowState</code>. Checked by reading both functions and by the row test, which expects <code>conflict</code> on a conflicting row that carries <code>clean</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds <code>HOLDS</code>, reorders <code>rowState</code>, rebuilds <code>notesOf</code> and <code>statusColor</code> on it, mutes a loading row's number, and draws labels at the end of the drawer's facts line.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>changes requested</code> is now a yellow note rather than red, which matches its yellow <code>changes</code> word.",
+       "line": 1250
+      },
+      {
+       "kind": "context",
+       "text": "<code>labelStyle</code> picks black or white text by GitHub's perceived-lightness formula and its 0.453 threshold, on the raw sRGB channels, as GitHub's stylesheet does.",
+       "line": 130
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds the <code>Label</code> type and makes <code>PullRequest.labels</code> a list of it."
+    }
+   ]
+  },
+  {
+   "id": "labels",
+   "title": "Both queries read each label's color",
+   "kicker": "The panel's query and the watch daemon's query ask GitHub for label colors",
+   "intro": [
+    "The panel gets pull requests either from its own GraphQL query or from the watch daemon's cache, so both queries now ask for each label's <code>color</code>. A scalar field adds no GraphQL cost. <code>labelOf</code> keeps a color only when it is six hex digits, and stores it as <code>#rrggbb</code>. A cache written before this change has no colors, so its labels draw on GitHub's light gray until the daemon's next poll. The daemon itself still reads only label names."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/github.ts",
+     "note": "Asks for <code>color</code> and turns each label node into a <code>Label</code> with <code>labelOf</code>."
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Adds <code>color</code> to the daemon's query and its comment."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests of the words, the colors, and the labels",
+   "kicker": "Panel tests for each word and color, the drawer's labels, and the old snapshot shape",
+   "intro": [
+    "The row test now draws a pull request for every word and checks its color and italic. The collapsed-number test reads each row's word and color, then collapses the list and checks that each number has the same color. A new drawer test checks label fill and text colors, and a snapshot test checks that string labels from an earlier release are dropped."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "Open review finding: none of the numbers this test draws has both a hold and a review label. A <code>statusColor</code> that let the label win would give a conflicting <code>clean</code> pull request a green collapsed number, and every test would still pass. Adding <code>'#17'</code>, the existing \"Signed-off change that now conflicts\" fixture, closes the gap.",
+       "line": 3722
+      }
+     ]
+    },
+    {
+     "path": "hooks/parse.test.ts",
+     "note": "Expects labels in GitHub's spelling with a normalized color, and a null color for one GitHub could not have sent."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The panel guide describes the new words, notes, collapsed colors, and labels",
+   "intro": [
+    "<code>docs/plugins.md</code> lists the four new words before the review labels, rewrites the notes paragraph, says a loading row's number is muted, describes the drawer's labels, and replaces the collapsed colors list with a single rule: each number takes its row's word's color."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
