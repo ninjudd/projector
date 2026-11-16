@@ -36,6 +36,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # The checkout is the ref the run was dispatched from, and the release
+          # branch carries every commit it has. The guard below checks only the
+          # release commit, so a run from another ref would sign off that ref's
+          # unreviewed commits.
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "run the release from main, not $GITHUB_REF" >&2
+            exit 1
+          fi
           version=$(python3 .github/scripts/release.py bump "$BUMP")
           branch="release/v$version"
           git config user.name "github-actions[bot]"
