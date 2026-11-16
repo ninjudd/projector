@@ -33,6 +33,8 @@ from .inbox import SESSION, is_one_line, locked, read_json, write_json
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 MESSAGE = re.compile(r"^m-[0-9a-f]{32}$")
+# The UUID `this_machine` writes. `read_text` prints its first 8 characters before the notice.
+MACHINE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 # A model ID has no space or parenthesis, so the model `event_line` prints before its notice cannot read as prose.
 MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}$")
 MAX_SUMMARY = 120
@@ -407,7 +409,8 @@ def well_formed(message: dict) -> bool:
             and shaped(message.get("from_name"), NAME, optional=True)
             and message.get("from_host") in HOSTS and shaped(message.get("from_model"), MODEL_ID, optional=True)
             and shaped(message.get("reply_to"), MESSAGE, optional=True) and shaped(message.get("thread"), MESSAGE)
-            and all(isinstance(message.get(field), str) for field in ("from_machine", "login", "to", "sent_at"))
+            and shaped(message.get("from_machine"), MACHINE)
+            and all(isinstance(message.get(field), str) for field in ("login", "to", "sent_at"))
             and isinstance(text, str) and bool(text.strip()) and len(text.encode("utf-8")) <= MAX_TEXT)
 
 

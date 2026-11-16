@@ -936,3 +936,6 @@ Review of the relay settled these details:
   error still waits for the next poll. Taking the outbox's file signature
   after the push, even inside the job, missed the first case, because the
   job's own write recording the push's outcome came after the new change.
+- **A relayed `from_machine` is the UUID `this_machine` writes.** `read`
+  prints its first 8 characters before the notice when the sender's
+  presence has expired, so § 10's sender shapes include it.
