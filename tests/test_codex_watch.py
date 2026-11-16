@@ -447,6 +447,36 @@ else:
         finally:
             release.set()
 
+    def test_close_leaves_a_running_submission_to_finish_and_record_its_result(self):
+        # A stopping daemon unlocks daemon.mutex only once close returns, and a replacement waits 10 seconds
+        # for that, while one `codex queue` call can run for TIMEOUT.
+        entered, release = threading.Event(), threading.Event()
+        def run(args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("test did not release the slow call")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        self.dispatcher.run = run
+        self.enqueue()
+        self.dispatcher.tick([self.folder])
+        job = self.dispatcher.jobs[self.folder]
+        self.assertTrue(entered.wait(5))
+        closer = threading.Thread(target=self.dispatcher.close)
+        try:
+            closer.start()
+            closer.join(2)
+            self.assertFalse(closer.is_alive(), "close waited for a running `codex queue` call")
+            with locked(self.folder):
+                codex.recover(self.folder)
+            [(_, batch)] = codex.pending(self.folder)
+            self.assertEqual("submitting", batch["state"], "the next daemon took the running call for lost")
+        finally:
+            release.set()
+            closer.join(5)
+        job.result(5)
+        [(_, batch)] = codex.pending(self.folder)
+        self.assertEqual("queued", batch["state"])
+
     def test_bounded_batches_keep_later_complete_lines_without_losing_them(self):
         first = self.event("FINDING Acme/App#14 " + "x" * 5000, "a")
         second = self.event("FINDING Acme/App#14 " + "y" * 5000, "b")

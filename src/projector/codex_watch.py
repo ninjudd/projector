@@ -625,4 +625,7 @@ class Dispatcher:
             write_json(path, batch)
 
     def close(self) -> None:
-        self.pool.shutdown(wait=True, cancel_futures=True)
+        # Waiting here would keep a stopping daemon's lock for up to TIMEOUT, past the 10 seconds a replacement
+        # waits. A running call keeps the submission lock, so the next daemon leaves its batch alone, and the
+        # interpreter joins the call's thread before this process exits, so its result is still written.
+        self.pool.shutdown(wait=False, cancel_futures=True)
