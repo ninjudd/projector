@@ -1,0 +1,281 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index b69ccb9d..d23a1ead 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -281,7 +281,7 @@ not subscribed to before.
+   /projector                            1 pull request · 1 review request  12s   [-]
+    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
+    #258 threads grace Name the revi… 2 threads · reviewing · checks passing 5m
+-        reviewer · sig-head · +84 −1 in 5 files · checks passing ·  reviewing
++        reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
+         7: Discuss  8: Dismiss
+         open in github  open in projector
+         src/review.py:412 · ada · P2 · The signature names the base, not the head
+@@ -428,14 +428,19 @@ head whose only failure is a review's verdict reads `checks passing`, one
+ whose only check is that status shows no checks at all, and one with
+ nothing failing or running whose every workflow's newest run was cancelled
+ reads `checks cancelled`, muted. The rest, ` in 5 files` and each `·`
+-included, keeps the default text color. Each label is drawn as GitHub's
+-light theme draws it: its name, as GitHub spells it, on the label's own
+-color, in black on a light color and white on a dark one. A label whose
+-color the panel has not read yet, which a daemon cache from before the
+-panel read colors leaves until its next poll, is drawn on GitHub's light
+-gray. The labels come last on the line, so a narrow terminal cuts them
+-first. Below that come two actions, side by side on one line, on the digits
+-`7` and `8`, as [Use the panel from the
++included, keeps the default text color. Each label is its name, as GitHub
++spells it, in the label's own color, set off from the one before it by a
++`·`. When that color is too close to the panel's background to read, below
++a 3:1 contrast ratio, the panel mixes it toward white on a dark background
++and toward black on a light one until it reaches 3:1, so a dark red stays
++red but lighter, and a pale yellow turns to a darker gold. When the panel
++cannot know how dark its background is, as with an ANSI theme or an
++`ansi256(n)` setting, it only lightens a label too dark to read on black. A
++label whose color the panel has not read yet, which a daemon cache from
++before the panel read colors leaves until its next poll, is drawn in the
++default text color. The labels come last on the line, so a narrow terminal
++cuts them first. Below that come two actions, side by side on one line, on
++the digits `7` and `8`, as [Use the panel from the
+ keyboard](#use-the-panel-from-the-keyboard) describes. The links to the
+ pull request follow, side by side on the next line, and then the unresolved
+ review threads, gathered under their files:
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 27e97e03..180a093e 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -98,6 +98,7 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+           { name: 'clean', color: '0E8A16' },
+           { name: 'good first issue', color: '7057ff' },
+           { name: 'Docs', color: 'fbca04' },
++          { name: 'breaking', color: 'b60205' },
+           { name: 'legacy' },
+         ],
+       },
+@@ -1003,46 +1004,79 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   await ui.unmount()
+ })
+ 
+-test('a drawer ends its facts with every label as GitHub draws it, a clean the row’s word gave way to among them', async ($, on) => {
+-  const clock = mock.clock(on, { now: NOW })
+-  mock.env(on, { HOME })
+-  world(on, { [REVIEW]: 'o/r#17\n' })
+-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+-  await clock.advance(1)
+-  await clock.settle()
+-  const ui = await $.ui.mount(PANEL)
++// Each label is its name as GitHub spells it, set off by a `·` like the rest of the facts, in its own color but where
++// that color stands too close to the panel's background: GitHub's dark red, lightened toward white on the dark theme's
++// near-black, and its yellow, darkened toward black on the light theme's near-white. An ANSI theme's background has no
++// shade the panel can know, so it counts as black there: the red only just misses 3:1 on it and is lightened a step,
++// while the yellow is left alone. A label whose color is unknown keeps the default color.
++for (const [theme, labels] of [
++  [
++    'dark',
++    [
++      ['clean', '#0e8a16'],
++      ' · ',
++      ['good first issue', '#7057ff'],
++      ' · ',
++      ['Docs', '#fbca04'],
++      ' · ',
++      ['breaking', '#c1282b'],
++      ' · ',
++      'legacy',
++    ],
++  ],
++  [
++    'light',
++    [
++      ['clean', '#0e8a16'],
++      ' · ',
++      ['good first issue', '#7057ff'],
++      ' · ',
++      ['Docs', '#a38303'],
++      ' · ',
++      ['breaking', '#b60205'],
++      ' · ',
++      'legacy',
++    ],
++  ],
++  [
++    'light-ansi',
++    [
++      ['clean', '#0e8a16'],
++      ' · ',
++      ['good first issue', '#7057ff'],
++      ' · ',
++      ['Docs', '#fbca04'],
++      ' · ',
++      ['breaking', '#ba0f12'],
++      ' · ',
++      'legacy',
++    ],
++  ],
++] as const) {
++  test(`a drawer ends its facts with every label in its color, made readable on the ${theme} theme, a clean the row’s word gave way to among them`, async ($, on) => {
++    const { clock } = panelWorld(on, { theme, files: { [REVIEW]: 'o/r#17\n' } })
++    await startSession($, clock)
++    const ui = await $.ui.mount(PANEL)
+ 
+-  // The conflict is the row's word, and the failing checks and the clean label it beat are its notes.
+-  expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
+-  expect(partsOf(await ui.find({ type: 'Text', text: /^failing · clean$/ }))).toEqual([
+-    ['failing', 'error'],
+-    ' · ',
+-    ['clean', 'success'],
+-  ])
++    // The conflict is the row's word, and the failing checks and the clean label it beat are its notes.
++    expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
++    expect(partsOf(await ui.find({ type: 'Text', text: /^failing · clean$/ }))).toEqual([
++      ['failing', 'error'],
++      ' · ',
++      ['clean', 'success'],
++    ])
+ 
+-  await ui.press({ key: 'pr:o/r#17' })
+-  await clock.settle()
+-  const facts = await ui.find({ type: 'Text', text: /^reviewer · .* · checks failing · / })
+-  const pieces = (facts?.children ?? []) as (string | { props: Record<string, unknown>; children: string[] })[]
+-  const labels = pieces.slice(pieces.findIndex(piece => piece === ' ·') + 1)
+-  // Each label is spaced off the one before it and drawn on its own color, as GitHub spells it: in white on a dark
+-  // color, in black on a light one, and on GitHub's gray where the color is unknown.
+-  expect(
+-    labels.map(piece =>
+-      typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.backgroundColor, piece.props.color],
+-    ),
+-  ).toEqual([
+-    ' ',
+-    [' clean ', '#0e8a16', '#ffffff'],
+-    ' ',
+-    [' good first issue ', '#7057ff', '#ffffff'],
+-    ' ',
+-    [' Docs ', '#fbca04', '#000000'],
+-    ' ',
+-    [' legacy ', '#ededed', '#000000'],
+-  ])
+-  await ui.unmount()
+-})
++    await ui.press({ key: 'pr:o/r#17' })
++    await clock.settle()
++    const facts = partsOf(await ui.find({ type: 'Text', text: /^reviewer · .* · checks failing · / }))
++    expect(facts.slice(facts.findIndex(piece => piece[0] === 'checks failing'))).toEqual([
++      ['checks failing', 'error'],
++      ' · ',
++      ...labels,
++    ])
++    await ui.unmount()
++  })
++}
+ 
+ test('names pull requests by number alone when their one repository is spelled in two cases', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 6c5cec56..5e16e761 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -120,19 +120,63 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning' | 'subtle'> =
+   cancelled: 'subtle',
+ }
+ 
+-/** The fill of a label whose color the panel has yet to read: GitHub's gray. */
+-const UNKNOWN_LABEL_COLOR = '#ededed'
+-
+ /**
+- * How a drawer draws a label, as GitHub's light theme does: on its own color,
+- * in black when the color's perceived lightness passes GitHub's threshold of
+- * 0.453, and in white otherwise.
++ * The contrast a drawer keeps between a label's name and the panel's
++ * background: WCAG's 3:1, its minimum for large text. WCAG asks 4.5:1 of
++ * text this size, but that would move GitHub's mid-tone colors, its green and
++ * purple among them, off the colors people know their labels by. A label
++ * below 3:1 is mixed toward white or black, whichever stands further from the
++ * background, one `LABEL_MIX_STEPS`th at a time, and stops at the first mix
++ * that reaches 3:1, so it keeps as much of its own color as it can.
++ * A background whose shade the panel cannot know, such as `inverseText` or
++ * `ansi256(n)`, is taken as black, so only a dark label changes, and only
++ * to a mid tone that white sets off as well.
+  */
+-function labelStyle(color: string | null): { backgroundColor: string; color: string } {
+-  const fill = color ?? UNKNOWN_LABEL_COLOR
+-  const [red, green, blue] = [1, 3, 5].map(at => Number.parseInt(fill.slice(at, at + 2), 16) / 255)
+-  const lightness = 0.2126 * (red ?? 0) + 0.7152 * (green ?? 0) + 0.0722 * (blue ?? 0)
+-  return { backgroundColor: fill, color: lightness > 0.453 ? '#000000' : '#ffffff' }
++const LABEL_CONTRAST = 3
++const LABEL_MIX_STEPS = 20
++
++type Rgb = readonly [number, number, number]
++
++const BLACK: Rgb = [0, 0, 0]
++const WHITE: Rgb = [255, 255, 255]
++
++/** The channels of a literal `#rgb`, `#rrggbb`, or `rgb(r,g,b)` color, or undefined for any other color. */
++function rgbOf(value: string): Rgb | undefined {
++  const digits = HEX_COLOR.exec(value)?.[1]
++  const pairs = digits?.length === 3 ? [...digits].map(digit => digit + digit) : digits?.match(/../g)
++  const channels = pairs?.map(pair => Number.parseInt(pair, 16)) ?? RGB_COLOR.exec(value)?.slice(1).map(Number)
++  const [red, green, blue] = channels ?? []
++  return red === undefined || green === undefined || blue === undefined ? undefined : [red, green, blue]
++}
++
++/** A color's relative luminance as WCAG defines it, from 0 for black to 1 for white. */
++function luminanceOf(rgb: Rgb): number {
++  const [red, green, blue] = rgb.map(channel => {
++    const value = channel / 255
++    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
++  })
++  return 0.2126 * (red ?? 0) + 0.7152 * (green ?? 0) + 0.0722 * (blue ?? 0)
++}
++
++/** The WCAG contrast ratio between two luminances, from 1 to 21. */
++function contrastOf(one: number, other: number): number {
++  return (Math.max(one, other) + 0.05) / (Math.min(one, other) + 0.05)
++}
++
++/** The color a drawer draws a label's name in on `background`, as `LABEL_CONTRAST` describes. */
++function labelColor(color: string, background: string): string {
++  const fill = rgbOf(color)
++  const behind = luminanceOf(rgbOf(background) ?? BLACK)
++  if (fill === undefined || contrastOf(luminanceOf(fill), behind) >= LABEL_CONTRAST) return color
++  const toward = contrastOf(1, behind) >= contrastOf(0, behind) ? WHITE : BLACK
++  for (let step = 1; step <= LABEL_MIX_STEPS; step++) {
++    const mix = (at: 0 | 1 | 2) => Math.round(fill[at] + ((toward[at] - fill[at]) * step) / LABEL_MIX_STEPS)
++    const mixed: Rgb = [mix(0), mix(1), mix(2)]
++    if (contrastOf(luminanceOf(mixed), behind) >= LABEL_CONTRAST) {
++      return `#${mixed.map(channel => channel.toString(16).padStart(2, '0')).join('')}`
++    }
++  }
++  return color
+ }
+ 
+ /**
+@@ -287,7 +331,8 @@ const BACKGROUND_ALIASES = new Map([
+  * allowed after `(`, each comma, and before `)`. Each number is at most 255.
+  */
+ const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
+-const NUMBERED_COLORS = [/^rgb\( ?(\d{1,3}), ?(\d{1,3}), ?(\d{1,3}) ?\)$/, /^ansi256\( ?(\d{1,3}) ?\)$/]
++const RGB_COLOR = /^rgb\( ?(\d{1,3}), ?(\d{1,3}), ?(\d{1,3}) ?\)$/
++const NUMBERED_COLORS = [RGB_COLOR, /^ansi256\( ?(\d{1,3}) ?\)$/]
+ 
+ /** What the panel draws for a `panel.background` value other than `auto`, or undefined when it takes none. */
+ function backgroundFor(value: string): string | undefined {
+@@ -2396,12 +2441,15 @@ export const register: Register = on => {
+             {isLoaded && ` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
+             {pr.checks !== null && ' · '}
+             {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
+-            {pr.labels.length > 0 && ' ·'}
+             {pr.labels.flatMap(label => [
+-              ' ',
+-              <Text key={`label:${label.name}`} {...labelStyle(label.color)}>
+-                {` ${label.name} `}
+-              </Text>,
++              ' · ',
++              label.color === null ? (
++                label.name
++              ) : (
++                <Text key={`label:${label.name}`} color={labelColor(label.color, color)}>
++                  {label.name}
++                </Text>
++              ),
+             ])}
+           </Text>
+           {drawActions(
