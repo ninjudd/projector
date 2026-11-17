@@ -1664,8 +1664,11 @@ def run_watch(arguments: argparse.Namespace) -> int:
                   f"relay: off ({key['error'] or 'no agent.key'})")
             for repo, found in report["relay"]["repositories"].items():
                 problems = "; ".join(part for part in (found.get("error"), *found.get("errors", [])) if part)
+                latest = (found.get("rejections") or [None])[-1]
+                why = (f" (latest: {relay.REASONS.get(latest['reason'], latest['reason'])}, {latest['at'][11:16]})"
+                       if latest else "")
                 print(f"relay {repo}: {found.get('state')}, {found.get('queued', 0)} queued, "
-                      f"{found.get('rejected', 0)} rejected" + (f"; {problems}" if problems else ""))
+                      f"{found.get('rejected', 0)} rejected{why}" + (f"; {problems}" if problems else ""))
             if report["codex_hooks"]:
                 print(f"codex hooks: {report['codex_hooks']}")
             for session, found in report["deliveries"].items():

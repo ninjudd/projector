@@ -168,6 +168,8 @@ class Machine:
         self.work = base / "work"
         self.env = {"HOME": str(self.home), "XDG_STATE_HOME": str(self.state)}
         self.daemon: Optional[watch.Daemon] = None
+        # What the relay wrote to daemon.log, which `serve` makes the daemon's output.
+        self.logged: list[str] = []
 
     def clone(self, path: Path) -> Path:
         return clone(path, self.case.origin)
@@ -218,6 +220,7 @@ class Machine:
             self.daemon = watch.Daemon(self.root, version="1.0", gh=self.case.github, wall=lambda: self.case.now,
                                        mono=lambda: self.case.now, settings=watch.Settings(),
                                        review_root=self.case.scratch / self.name / "reviews")
+        self.daemon.relay.log = self.logged.append
         self.daemon.start()
         self.case.addCleanup(self.daemon.relay.close)
         self.case.addCleanup(self.daemon.codex.close)
@@ -622,7 +625,102 @@ class CheckTests(RelayCase):
         self.assertEqual((2, 3), (first, len(self.two.events(B))))
         self.assertFalse([args for args in calls if args[:2] == ("cat-file", "blob") and args[2] in bad_blobs])
         self.assertIn(f"refs/projector/inbox/{self.key.id}/{b}/not-a-message", self.refs())
-        self.assertEqual(2, self.two.status()["repositories"]["acme/app"]["rejected"])
+        self.assertEqual(3, self.two.status()["repositories"]["acme/app"]["rejected"],
+                         "the bad tree, the large blob, and the ref name outside the namespace")
+
+    def rejections(self) -> list[dict]:
+        return self.two.status()["repositories"]["acme/app"]["rejections"]
+
+    def test_each_rejection_records_the_reason_the_relay_rejected_it_for(self) -> None:
+        self.pair()
+        b = self.b_relay_id()
+        a = agents.record(self.one.root, A)["relay_id"]
+        message = lambda number, **fields: self.message(f"m-{number:032x}", to=b, **fields)
+        flipped = json.loads(self.sealed(message(7)))
+        flipped["tag"] = crypto.encode(bytes(32))
+        presence = relay.presence(B, agents.record(self.two.root, B), self.now)
+        planted = {
+            f"refs/projector/inbox/{self.key.id}/{b}/not-a-message": ({"sealed.json": self.sealed(message(1))},
+                                                                       "ref-name"),
+            self.inbox(f"m-{2:032x}"): ({"sealed.json": self.sealed(message(2)), "extra.txt": b"x"}, "tree-shape"),
+            self.inbox(f"m-{3:032x}"): ({"sealed.json": self.sealed(message(3)) + b" " * (33 * 1024)}, "too-large"),
+            self.inbox(f"m-{4:032x}"): ({"sealed.json": b"[" * 100}, "too-deep"),
+            self.inbox(f"m-{5:032x}"): ({"sealed.json": b"not JSON"}, "not-json"),
+            self.inbox(f"m-{6:032x}"): ({"sealed.json": json.dumps(message(6)).encode()}, "not-sealed"),
+            self.inbox(f"m-{7:032x}"): ({"sealed.json": json.dumps(flipped).encode()}, "tag-mismatch"),
+            self.inbox(f"m-{8:032x}"): ({"sealed.json": self.sealed(message(8), bytes(range(2, 34)))}, "other-key"),
+            self.inbox(f"m-{9:032x}", a): ({"sealed.json": self.sealed(message(9))}, "recipient-mismatch"),
+            self.inbox(f"m-{11:032x}"): ({"sealed.json": self.sealed(message(10))}, "message-id-mismatch"),
+            self.inbox(f"m-{12:032x}"): ({"sealed.json": self.sealed(message(12, from_host="the user"))},
+                                         "field-shape"),
+            self.inbox(f"m-{13:032x}"): ({"sealed.json": self.sealed(message(13, sent_at=self.now - 8 * 86400))},
+                                         "expired"),
+            relay.presence_ref(self.key.id, "0" * 16): ({"sealed.json": self.sealed(presence)}, "relay-id-mismatch"),
+        }
+        for ref, (files, _) in planted.items():
+            self.plant(ref, files)
+        delivered = message(14)
+        self.plant(self.inbox(delivered["id"]), {"sealed.json": self.sealed(delivered)})
+        self.two.run_pass()
+        collided = self.inbox(delivered["id"])
+        self.plant(collided, {"sealed.json": self.sealed(message(14, text="Something else"))})
+        self.two.run_pass()
+
+        expected = {**{ref: reason for ref, (_, reason) in planted.items()}, collided: "collision"}
+        self.assertEqual(expected, {found["ref"]: found["reason"] for found in self.rejections()})
+        self.assertEqual(len(expected), self.two.status()["repositories"]["acme/app"]["rejected"])
+
+    def test_no_report_of_a_rejection_shows_the_records_ciphertext_or_plaintext(self) -> None:
+        self.pair()
+        secret = "PLANTED-SECRET-7f3a"
+        other = agents.record(self.one.root, A)["relay_id"]
+        sealed = self.sealed(self.message("m-" + "1" * 32, to=self.b_relay_id(), text=secret))
+        ref = self.inbox("m-" + "1" * 32, other)
+        self.plant(ref, {"sealed.json": sealed})
+
+        self.two.run_pass()
+        code, out, err = self.two.project("watch", "status", "--json")
+        text = self.two.project("watch", "status")[1]
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([f"relay acme/app: rejected {ref}: recipient-mismatch, at {watch.stamp(self.now)}"],
+                         self.two.logged)
+        self.assertEqual([{"ref": ref, "reason": "recipient-mismatch", "at": watch.stamp(self.now)}],
+                         json.loads(out)["relay"]["repositories"]["acme/app"]["rejections"])
+        ciphertext = json.loads(sealed)["ciphertext"]
+        for report in (out, text, *self.two.logged):
+            for content in (secret, ciphertext, ciphertext[:24], json.loads(sealed)["tag"]):
+                self.assertNotIn(content, report)
+
+    def test_the_status_keeps_only_the_last_20_rejections_and_counts_them_all(self) -> None:
+        self.pair()
+        work = self.scratch / "planter"
+        self.one.clone(work)
+        blob = git("hash-object", "-w", "--stdin", cwd=work, input=b"not JSON")
+        tree = git("mktree", cwd=work, input=f"100644 blob {blob}\tsealed.json\n".encode())
+        commit = git("-c", "commit.gpgSign=false", "commit-tree", "-m", "planted", tree, cwd=work)
+        refs = [self.inbox(f"m-{index:032x}") for index in range(25)]
+        git("push", "-q", "origin", *[f"{commit}:{ref}" for ref in refs], cwd=work)
+
+        self.two.run_pass()
+
+        self.assertEqual(refs[5:], [found["ref"] for found in self.rejections()])
+        self.assertEqual(25, self.two.status()["repositories"]["acme/app"]["rejected"])
+
+    def test_the_status_line_shows_the_count_and_the_latest_reason_and_its_time(self) -> None:
+        self.now = 1794803820.0
+        self.pair()
+        quiet = self.two.project("watch", "status")[1]
+        flipped = json.loads(self.sealed(self.message("m-" + "2" * 32, to=self.b_relay_id())))
+        flipped["tag"] = crypto.encode(bytes(32))
+        self.plant(self.inbox("m-" + "2" * 32), {"sealed.json": json.dumps(flipped).encode()})
+
+        self.two.run_pass()
+        code, out, err = self.two.project("watch", "status")
+
+        self.assertEqual(0, code, err)
+        self.assertIn("relay acme/app: ok, 0 queued, 0 rejected\n", quiet)
+        self.assertIn("relay acme/app: ok, 0 queued, 1 rejected (latest: tag mismatch, 04:37)\n", out)
 
 
 class FakeAdvapi32:

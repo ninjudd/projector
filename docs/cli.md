@@ -3406,7 +3406,7 @@ files, and the daemon's cleanup of a session lapsed for 7 days removes them:
 | `agents/` | The lock that keeps two registrations from taking one name |
 | `key.json` | Where `agent.key`'s private key is stored, and why when it is inline. It holds no key |
 | `outbox/<owner>/<repo>.json` | The relay's ref changes waiting for the daemon's next push, and the checkouts that queued them |
-| `relay/<owner>/<repo>.json` | What the relay last found in the repository: its visibility, the rejected count, the key's refs, and your other machines' agents |
+| `relay/<owner>/<repo>.json` | What the relay last found in the repository: its visibility, the rejected count and the last 20 rejections, the key's refs, and your other machines' agents |
 
 ## Message agents on other machines
 
@@ -3533,10 +3533,11 @@ holds up another session's events. On each pass, a job:
 1. Fetches the key's refs, `refs/projector/agents/<key-id>/*` and
    `refs/projector/inbox/<key-id>/*`, with one `git fetch --prune` in a
    checkout of the repository.
-2. Opens at most 64 new records. It ignores a ref whose name does not match
-   its namespace, and rejects a commit whose tree is not exactly one
-   `sealed.json` of at most 32 KiB before it reads the blob, and a record
-   whose JSON nests more than 8 deep before it parses it. It checks the
+2. Opens at most 64 new records. It counts a ref whose name does not match
+   its namespace as rejected but leaves it unopened on `origin`, and rejects
+   a commit whose tree is not exactly one `sealed.json` of at most 32 KiB
+   before it reads the blob, and a record whose JSON nests more than 8 deep
+   before it parses it. It checks the
    tag before it decrypts anything, and rejects a record sealed by any other
    key, a presence whose relay ID is not its ref's, a message whose
    recipient is not its ref's or that is 7 days old, and a record whose
@@ -3573,15 +3574,47 @@ internals`.
 
 ```text
 relay: on, key 3f2a9c1d7e4b6a05 (keychain)
-relay acme/app: ok, 0 queued, 4 rejected
+relay acme/app: ok, 0 queued, 4 rejected (latest: tag mismatch, 04:37)
 ```
 
 The first line says `relay: off` and why while the key cannot be read, such
 as from a locked keychain. The daemon reads the key once when it starts, on
 a worker thread, again when `agent.key` changes, and after a failed read on
 each full pass. Each repository's line gives the last job's state, the
-changes still queued, the records rejected so far, and any error, such as a
-push that timed out or `no recorded checkout of the repository remains`.
+changes still queued, the records rejected so far with the reason and UTC
+time of the latest, and any error, such as a push that timed out or
+`no recorded checkout of the repository remains`.
+
+A rejection can mean a forged or altered record, a record from a machine
+with another key, or a bug in the relay's own checks, so the relay records
+why. `project watch status --json` lists the last 20 rejections in each
+repository under `relay.repositories.<owner/repo>.rejections`, oldest first,
+beside the `rejected` count. Each entry holds only the `ref`, the `reason`,
+and the time `at`, and never the record, its ciphertext, its plaintext, or
+key material. The daemon also writes one line to `daemon.log` for each
+rejection:
+
+```text
+2026-11-16T04:37:02+00:00 relay acme/app: rejected refs/projector/inbox/3f2a9c1d7e4b6a05/9bf078d49df0e5ff/m-2b…: tag-mismatch, at 2026-11-16T04:37:02+00:00
+```
+
+| `reason` | Status line | The relay rejected |
+| --- | --- | --- |
+| `ref-name` | ref name | A ref under the key's namespace whose name is not a presence or message ref. The relay counts it but leaves it on `origin`, since a later version of Projector could have written it |
+| `tree-shape` | tree shape | A commit whose tree is not exactly one `sealed.json` |
+| `too-large` | too large | A `sealed.json`, or the record inside it, larger than 32 KiB |
+| `unreadable` | unreadable blob | A `sealed.json` that Git could not read |
+| `too-deep` | JSON too deep | JSON nested more than 8 deep |
+| `not-json` | not JSON | A `sealed.json`, or the record inside it, that is not JSON |
+| `not-sealed` | not a sealed record | JSON that is not a sealed record of version 1 |
+| `tag-mismatch` | tag mismatch | A record whose tag does not match: altered, or sealed to another key |
+| `other-key` | sealed by another key | A record that opens with this key but was sealed by another |
+| `relay-id-mismatch` | relay ID mismatch | A presence whose relay ID is not its ref's |
+| `recipient-mismatch` | recipient mismatch | A message whose recipient is not its ref's |
+| `message-id-mismatch` | message ID mismatch | A message whose ID is not its ref's |
+| `field-shape` | field shape | A record with a missing field or a field that is not the shape `register` or `send` gives it |
+| `expired` | expired | A message 7 days old |
+| `collision` | ID collision | A message under the ID of a different message already delivered |
 
 ## Change a loop's tracked file
 
