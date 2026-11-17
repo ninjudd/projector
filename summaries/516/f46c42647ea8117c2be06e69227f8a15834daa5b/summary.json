@@ -1,0 +1,74 @@
+{
+ "version": 1,
+ "name": "Console and inbox threads",
+ "project": "console",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 516,
+  "title": "Plan project console, a terminal list of every live session that answers and discusses Claude Code and Codex items alike",
+  "head": "f46c42647ea8117c2be06e69227f8a15834daa5b",
+  "headRef": "spec/console",
+  "base": "74e8e5ea011e6ef4dda9a5d597c2534c1fe33672",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s inbox holds questions, requests, and notices that an agent posts for you. The existing Claude Code panel delivers your answers, but an idle Codex session needs another delivery path. This plan adds that path and a terminal console that opens each live session’s own panel.",
+   "The console records your choices while the session’s existing deliverer sends them. Item threads carry your discussion messages to the agent and show its replies in the console or Claude Code panel. This pull request contains the ready plan; the proposed commands and adapters remain to be implemented."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used in the plan",
+    "html": "<ul><li><b>Inbox item:</b> a question, request, notice, or proposed discussion stored for one session.</li><li><b>Deliverer:</b> the Claude Code panel or Codex adapter that sends an item’s line to its session.</li><li><b>Claim:</b> the expiring token that lets one deliverer send a line at a time.</li><li><b>Thread:</b> the ordered messages attached to an inbox item.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review result",
+    "html": "One readiness gap remains: a session with no items or pull requests is promised a new discussion, but the plan defines no action or command that can create it. The configured gate, exact-head CI, and project metadata checks passed."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "A console for each live session",
+   "kicker": "Delivery, discussions, terminal controls, and staged implementation",
+   "intro": [
+    "The console first lists live sessions, then opens one session’s pull requests and inbox. Its recording calls always name that session, so answering an item or dismissing a pull request cannot affect another session’s copy.",
+    "For Codex, the watch adapter claims inbox lines, renews queued claims, and marks delivery after its batch is acknowledged. Discussion threads add ordered person messages and agent replies without making the console a second deliverer.",
+    "The plan also ports pull-request row rules to Python with shared fixtures for the existing TypeScript panel. Four dependent implementation changes separate delivery, threads, row parity, and the final console."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/console/readme.md",
+     "collapsed": false,
+     "note": "Defines the ready console plan, including inbox delivery, discussion storage, terminal interaction, acceptance criteria, and rollout.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 105,
+       "text": "Section 2.2 keeps claims alive until Codex acknowledges the batch. Failed queue submissions retain the person’s answer, and disconnects let the claim expire for a later deliverer."
+      },
+      {
+       "kind": "flag",
+       "line": 149,
+       "text": "The ready plan promises that an empty session can start a discussion, but every defined Discuss control needs an item or pull-request drawer and both CLI forms require an item number or pull request. Define a session-only path and acceptance case, or explicitly defer it."
+      },
+      {
+       "kind": "verify",
+       "line": 365,
+       "text": "The review traced the delivery design against inbox claim/settle and Codex prepare/consume APIs. The configured gate and exact-head CI passed, including 237 hook tests; project metadata checks confirm status ready and priority now."
+      },
+      {
+       "kind": "context",
+       "line": 421,
+       "text": "Section 7 explicitly defers a combined item view, inactive-session items, Windows support, and future Codex UI surfaces. Those deferrals do not resolve the empty-session discussion flow above."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
