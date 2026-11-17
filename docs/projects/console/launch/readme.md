@@ -1,0 +1,259 @@
+---
+status: draft
+priority: next
+---
+
+# Launch sessions from the console
+
+`project console` starts a new Claude Code or Codex session in the
+background, in a checkout you pick, with a prompt you type. It also opens any
+background session's chat in a split when you want it.
+
+## 1. Problem
+
+The console (the parent project, `console`) lists every live session and
+lets you answer and discuss each one's items without the session's chat. It
+cannot start a session, though. To start one you open a terminal, change to
+the checkout, run `claude` or `codex`, and type the first prompt. Each
+session then holds a terminal window open, even though, once the console
+exists, you can steer it without ever looking at that window.
+
+Both hosts can already run a session with no window. `claude --bg` starts a
+Claude Code session in the background, and Projector's plugin loads in it.
+A `codex exec` run registers with Projector, and `codex queue --resume`
+wakes it again after its first turn, as § 6 records.
+
+## 2. Solution
+
+The console's home list gets a **New session** form. You pick the host and
+the checkout, optionally give the session a name, and type the prompt. The
+console starts the session in the background with the host's own CLI,
+records the launch, and shows the session on the home list as `starting`
+until the session registers and becomes live. After that, the session is
+like any other row: you answer and discuss its items in its panel. A
+**Chat** key opens a background session's chat, in a tmux split when the
+console runs in tmux, or in the console's own terminal until you leave the
+chat.
+
+### 2.1 Launching
+
+1. On the home list, you press `n`. The form asks for these fields:
+
+   | Field | Default | Choices |
+   | --- | --- | --- |
+   | Host | The host of the session under the cursor, or Claude Code | Claude Code or Codex |
+   | Checkout | The console's working directory | The checkouts of the live sessions and of earlier launches, or a path you type |
+   | Name | None | Any name `project agent register` accepts |
+   | Prompt | None | One or more lines, sent when you press Enter twice |
+
+2. The console starts the session with an argument list, never through a
+   shell, so the prompt reaches the host exactly as you typed it:
+
+   | Host | Command, run in the checkout |
+   | --- | --- |
+   | Claude Code | `claude --bg --session-id <uuid> [--name <name>] -- <prompt>`, with a UUID the console generates |
+   | Codex | `codex exec -C <checkout> --json -- <prompt>`, in a new process group, with standard input closed and standard output written to the launch's log |
+
+   The `--` ends each CLI's options, so a prompt that starts with `-`, such
+   as `-v hi` or `--help`, reaches the host as the prompt rather than as an
+   option. Codex reads more input from standard input when it is open, so
+   the console closes it. For Codex, the console reads the session's ID from
+   the log's first event, `{"type":"thread.started","thread_id":"…"}`.
+3. The console writes the launch record (§ 2.3), and the home list shows a
+   `starting` row with the name, or the short ID, and the checkout.
+4. The session registers itself through the host's own hooks: the panel's
+   mod in Claude Code, and the `SessionStart` hook in Codex. When
+   `watch.delivery(root, session, now)` reports the session live, the row
+   becomes a normal session row.
+5. A Codex session's first turn ends when `codex exec` exits. Later turns
+   arrive the way they arrive for any Codex session: the daemon's Codex
+   adapter sends each answer and `DISCUSS` line with
+   `codex queue --thread <id> --resume`.
+6. When the host's command exits with an error before the session goes
+   live, or the session does not go live within 60 seconds, the row shows
+   `failed` with the last line of the launch's log. `x` on that row
+   removes the record.
+
+### 2.2 Opening a session's chat
+
+In a session's panel, `c` opens the session's chat:
+
+| Host | Command |
+| --- | --- |
+| Claude Code, in the background | `claude attach <session>` |
+| Codex | `codex resume <thread_id>` |
+
+When `TMUX` is set, the console runs the command in a new pane with
+`tmux split-window -h`, and keeps running. Otherwise it suspends curses
+with `curses.endwin`, runs the command in its own terminal, and redraws when
+the command exits. A Claude Code session that runs in its own window has no
+background ID, so `c` says that its chat is already open elsewhere.
+
+### 2.3 The launch record
+
+The console keeps one file per launch at
+`$XDG_STATE_HOME/projector/console/launches/<session>.json`, or under
+`~/.local/state/projector/console/launches/` when `XDG_STATE_HOME` is
+unset.
+
+| Field | Value |
+| --- | --- |
+| `host` | `claude` or `codex` |
+| `session` | The session's ID: the UUID the console passed to Claude Code, or Codex's `thread_id` |
+| `cwd` | The checkout |
+| `name` | The name you gave, or absent |
+| `prompt` | The first 200 characters of the prompt, for the `starting` row |
+| `started_at` | When the console ran the command, in seconds |
+| `pid` | The host command's process ID |
+| `log` | The path of the file that holds the command's output |
+| `state` | `starting`, `live`, or `failed` |
+| `error` | The last line of the log, when `state` is `failed` |
+
+The console labels a launched session with the record's `name` until the
+session registers a name of its own with `project agent register`. It
+deletes a `live` record once the session is no longer live, and keeps a
+`failed` one until you remove it.
+
+### 2.4 Changes by file
+
+| File | Change |
+| --- | --- |
+| `src/projector/launch.py` | New. Builds each host's argument list, starts the process, reads Codex's `thread_id`, and reads and writes launch records |
+| `src/projector/console.py` | Adds the New session form, the `starting` and `failed` rows, `x`, and `c` |
+| `tests/test_launch.py` | New, with fake `claude`, `codex`, and `tmux` executables that record their arguments, working directory, and standard input |
+| `docs/cli.md` | "Use the console" describes launching and opening a chat |
+
+## 3. Why this design
+
+- **The console launches; no `project` subcommand does.** An agent cannot
+  drive the console: it refuses to start without a terminal, and the
+  permission rules ask before an agent runs it. With no subcommand, an
+  agent cannot start a session that uses your credentials and runs your
+  prompt.
+- **The host's own CLI does the launching.** `claude --bg` and
+  `codex exec` already start a session that loads Projector's hooks. The
+  console calls them rather than talking to either host's app server, so it
+  depends on no protocol that either host could change.
+- **Claude Code gets the ID up front.** `--session-id` lets the console
+  know the session's ID before the session starts, so the `starting` row
+  and the live session are the same row from the start.
+- **No shell, and `--` before the prompt.** A prompt can hold quotes, `$`,
+  and newlines, and it can start with `-`. An argument list passes it
+  through exactly, and `--` keeps either CLI from reading it as an option:
+  without it, `codex exec` prints its help for the prompt `--help` and
+  exits 0, and `claude` reads `-v` as `--version`. Both CLIs honor `--`, as
+  § 7.3 records. `codex exec -` could read the prompt from standard input
+  instead, but `claude --bg` documents no such form, and one rule for both
+  hosts keeps the launch code and its tests simple.
+- **The chat opens beside the console when it can.** In tmux, a split
+  keeps the home list in view. Without tmux, the console has no portable
+  way to open a new window, so it hands its own terminal to the chat until
+  you leave it.
+
+## 4. Acceptance criteria
+
+| Do | Expect | Catches |
+| --- | --- | --- |
+| Launch a Claude Code session named `parser` with the prompt `say "hi" $HOME` | The fake `claude` gets `--bg --session-id <uuid> --name parser -- 'say "hi" $HOME'` as separate arguments, in the checkout | A prompt split or expanded by a shell, or a launch in the wrong directory |
+| Launch a Codex session | The fake `codex` gets `exec -C <checkout> --json -- <prompt>`, with standard input closed, in its own process group. The record's `session` is the `thread_id` from the log's first event | A Codex run that waits on the console's input, dies with the console, or records no ID |
+| Launch a session of each host with the prompt `-v hi` | The fake `claude` and the fake `codex` each get `--` and then `-v hi` as their last two arguments | A prompt that the host reads as an option, which prints a version or help and starts no session |
+| Make the session register within 60 seconds | The `starting` row becomes the session's normal row, labelled with the launch's name | A launch that never joins the home list |
+| Make the fake command exit 1 with `error: not logged in` | The row shows `failed` and `error: not logged in` | A failed launch that looks as if it were still starting |
+| Let 60 seconds pass with no registration and the process still running | The row shows `failed` | A launch that waits forever |
+| Press `c` on a Codex session with `TMUX` set | `tmux split-window -h codex resume <thread_id>`, and the console keeps drawing | A chat that takes over the console inside tmux |
+| Press `c` without `TMUX` | The console suspends, runs `codex resume <thread_id>`, and redraws after it exits | A chat that leaves the terminal unusable |
+| Launch a Codex session for real, then answer one of its items from the console | The answer arrives as a new turn in its transcript after `codex exec` has exited | A launched Codex session that cannot take later turns |
+
+## 5. Cost
+
+Launches are rare, and each one writes one small record. While a launch is
+`starting`, the console checks its liveness and its process once a second,
+which is a few file reads. Opening a chat costs nothing beyond running the
+host's command.
+
+## 6. Open questions
+
+- **Approvals in a launched session.** A background session cannot show
+  you a permission prompt. Find out what each host does when a launched
+  session needs approval: `claude --bg` before you attach, and a
+  `codex exec` turn and a later turn that `codex queue` resumes. The plan
+  becomes `ready` once that is known, and may need the console to show a
+  session that waits on approval. Owner: whoever takes this project.
+- **Finding a Claude Code session's background ID.** `claude attach` takes
+  the ID that `claude --bg` prints. A session the console launched gets
+  that ID from the command's output. For other background sessions, the
+  console reads `claude agents --json`; check which field holds the
+  session ID it matches on. Owner: whoever takes this project.
+- **Opening a Codex chat while the daemon holds the thread.**
+  `codex resume <thread_id>` opens the thread in a TUI. Check that it
+  attaches to the thread the daemon resumed rather than starting a second
+  copy, or use `codex resume --remote` against the daemon. Owner: whoever
+  takes this project.
+- **A Claude Code prompt that names a subcommand.** After `--`, Claude
+  Code's argument parser still runs a subcommand when the first operand is
+  exactly that subcommand's name, so the one-word prompt `doctor` or
+  `help` would run that subcommand and never start a session (§ 7.3).
+  Codex has no such case. Decide whether the console warns before it
+  launches such a prompt or leaves the launch to show `failed`. Owner:
+  whoever takes this project.
+- **Windows.** Deferred with the console itself, which exits there.
+
+## 7. Background
+
+### 7.1 The Codex launch test
+
+On 2026-11-16, with `codex-cli 0.169.0` and Projector 0.9.7's Codex plugins
+installed and enabled:
+
+1. `codex exec --skip-git-repo-check --json "Reply with exactly the word ok and nothing else."`,
+   run from an empty directory, printed
+   `{"type":"thread.started","thread_id":"01a1e7d6-472f-7151-bab3-1a25757f7e9d"}`,
+   answered `ok`, and exited 0. It also printed "Reading additional input
+   from stdin…", which is why § 2.1 closes standard input.
+2. Projector's `SessionStart` hook ran. The watch state held
+   `sessions/01a1e7d6-…/codex.json` with `supported: true`,
+   `enabled: true`, the session's `cwd` and `transcript_path`, and an
+   `unloaded_at` set when the run ended.
+3. `codex queue --thread 01a1e7d6-… --message "Reply with exactly the word queued and nothing else." --resume`
+   exited 0. The thread's transcript then held the queued prompt and the
+   reply `queued`, so the daemon resumed a thread that `codex exec` had
+   started and finished.
+
+The run also reported that Codex failed to parse the `projector` plugin's
+`hooks/hooks.json`, which holds Claude Code's hooks module. That error is
+fixed separately and does not affect launching.
+
+### 7.2 Claude Code's background sessions
+
+`claude --bg` starts a session in the background and prints the ID that
+`claude attach`, `logs`, `stop`, and `rm` take. `--session-id <uuid>` sets
+the conversation's ID, and `--name` sets its display name.
+`claude agents --json` lists active sessions, interactive and background,
+without a terminal. Projector's plugin runs in a background session: a
+background session's `project watch add` prints `events: mod`, so the
+panel's hooks deliver its events.
+
+### 7.3 Ending options before the prompt
+
+On 2026-11-16, with `codex-cli 0.169.0` and Claude Code 2.1.326, these
+checks parsed arguments without starting a session, and the last reads the
+parser itself:
+
+1. `codex exec -C <dir> --json --help` printed `codex exec`'s help, and
+   `codex exec -C <dir> --json -v hi` failed with
+   `error: unexpected argument '-v' found` and the tip
+   `to pass '-v' as a value, use '-- -v'`.
+2. `codex exec -C <dir> --json -- --help extra` failed with
+   `unexpected argument 'extra' found`, so `--help` filled the prompt. The
+   same held for `-- -v hi extra`, which rejected `hi`, and for
+   `-- help extra`, so a prompt after `--` never selects the `help`
+   subcommand.
+3. `claude agents --json --help` printed the subcommand's help, while
+   `claude agents --json -- --help` failed with
+   `too many arguments for 'agents'`, so Claude Code's parser took
+   `--help` as an operand.
+4. The JavaScript bundled in the `claude` executable shows that its `--bg`
+   handling removes `--bg` only before `--`, keeps `--` and the prompt for
+   the background session, and stops looking for `--name` at `--`. Its
+   parser then dispatches a subcommand whenever the first operand is that
+   subcommand's name, which § 6 leaves open.
