@@ -1,0 +1,321 @@
+diff --git a/web/app/opengraph-image.tsx b/web/app/opengraph-image.tsx
+index bd602bed..ea7a0ed0 100644
+--- a/web/app/opengraph-image.tsx
++++ b/web/app/opengraph-image.tsx
+@@ -1,10 +1,24 @@
++import { readFile } from "node:fs/promises";
++import { join } from "node:path";
+ import { ImageResponse } from "next/og";
+ 
+ export const alt = "Projector — agents plan, build, and review. You make the calls.";
+ export const size = { width: 1200, height: 630 };
+ export const contentType = "image/png";
+ 
+-export default function Image() {
++// The site sets its headline in Instrument Serif and everything else in Geist
++// (see app/layout.tsx). ImageResponse cannot use next/font, so it reads the
++// same faces from TTF files committed under assets/fonts.
++const font = (file: string) => readFile(join(process.cwd(), "assets/fonts", file));
++
++export default async function Image() {
++  const [serif, serifItalic, sans, sansSemiBold] = await Promise.all([
++    font("InstrumentSerif-Regular.ttf"),
++    font("InstrumentSerif-Italic.ttf"),
++    font("Geist-Regular.ttf"),
++    font("Geist-SemiBold.ttf"),
++  ]);
++
+   return new ImageResponse(
+     (
+       <div
+@@ -17,11 +31,11 @@ export default function Image() {
+           padding: 72,
+           background: "#100f0c",
+           color: "#ece8dd",
+-          fontFamily: "sans-serif",
++          fontFamily: "Geist",
+         }}
+       >
+-        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+-          <svg width="56" height="56" viewBox="0 0 32 32">
++        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
++          <svg width="52" height="52" viewBox="0 0 32 32">
+             <path d="M7 16 L29 5.5 V26.5 Z" fill="#f27c2e" />
+             <circle cx="7" cy="16" r="4.5" fill="#ece8dd" />
+           </svg>
+@@ -29,21 +43,36 @@ export default function Image() {
+             Projector
+           </div>
+         </div>
+-        <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
++        <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+           <div
+             style={{
+-              fontSize: 88,
+-              lineHeight: 1,
+-              letterSpacing: -3,
+-              fontWeight: 600,
+-              maxWidth: 1000,
++              display: "flex",
++              flexDirection: "column",
++              fontFamily: "Instrument Serif",
++              fontSize: 100,
++              lineHeight: 0.98,
++              letterSpacing: -2,
+             }}
+           >
+-            Agents plan, build, and review. You make the calls.
++            <div>Agents plan, build, and review.</div>
++            <div style={{ fontStyle: "italic", color: "#f27c2e" }}>
++              You make the calls.
++            </div>
+           </div>
+-          <div style={{ fontSize: 30, color: "#a5a094", maxWidth: 960 }}>
+-            Plans live in the repository. Agents build them, review each
+-            other&rsquo;s pull requests, and fix what the reviews find.
++          <div
++            style={{
++              display: "flex",
++              flexDirection: "column",
++              fontSize: 30,
++              lineHeight: 1.4,
++              color: "#a5a094",
++            }}
++          >
++            <div>A framework for building in Claude Code or Codex.</div>
++            <div>
++              You review the plan, answer what only you can, and decide what
++              merges.
++            </div>
+           </div>
+         </div>
+         <div
+@@ -59,6 +88,14 @@ export default function Image() {
+         </div>
+       </div>
+     ),
+-    { ...size },
++    {
++      ...size,
++      fonts: [
++        { name: "Instrument Serif", data: serif, weight: 400, style: "normal" },
++        { name: "Instrument Serif", data: serifItalic, weight: 400, style: "italic" },
++        { name: "Geist", data: sans, weight: 400, style: "normal" },
++        { name: "Geist", data: sansSemiBold, weight: 600, style: "normal" },
++      ],
++    },
+   );
+ }
+diff --git a/web/assets/fonts/Geist-OFL.txt b/web/assets/fonts/Geist-OFL.txt
+new file mode 100644
+index 00000000..8d003fec
+--- /dev/null
++++ b/web/assets/fonts/Geist-OFL.txt
+@@ -0,0 +1,92 @@
++Copyright (c) 2023 Vercel, in collaboration with basement.studio
++
++This Font Software is licensed under the SIL Open Font License, Version 1.1.
++This license is copied below, and is also available with a FAQ at:
++http://scripts.sil.org/OFL
++
++-----------------------------------------------------------
++SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
++-----------------------------------------------------------
++
++PREAMBLE
++The goals of the Open Font License (OFL) are to stimulate worldwide
++development of collaborative font projects, to support the font creation
++efforts of academic and linguistic communities, and to provide a free and
++open framework in which fonts may be shared and improved in partnership
++with others.
++
++The OFL allows the licensed fonts to be used, studied, modified and
++redistributed freely as long as they are not sold by themselves. The
++fonts, including any derivative works, can be bundled, embedded,
++redistributed and/or sold with any software provided that any reserved
++names are not used by derivative works. The fonts and derivatives,
++however, cannot be released under any other type of license. The
++requirement for fonts to remain under this license does not apply
++to any document created using the fonts or their derivatives.
++
++DEFINITIONS
++"Font Software" refers to the set of files released by the Copyright
++Holder(s) under this license and clearly marked as such. This may
++include source files, build scripts and documentation.
++
++"Reserved Font Name" refers to any names specified as such after the
++copyright statement(s).
++
++"Original Version" refers to the collection of Font Software components as
++distributed by the Copyright Holder(s).
++
++"Modified Version" refers to any derivative made by adding to, deleting,
++or substituting -- in part or in whole -- any of the components of the
++Original Version, by changing formats or by porting the Font Software to a
++new environment.
++
++"Author" refers to any designer, engineer, programmer, technical
++writer or other person who contributed to the Font Software.
++
++PERMISSION AND CONDITIONS
++Permission is hereby granted, free of charge, to any person obtaining
++a copy of the Font Software, to use, study, copy, merge, embed, modify,
++redistribute, and sell modified and unmodified copies of the Font
++Software, subject to the following conditions:
++
++1) Neither the Font Software nor any of its individual components,
++in Original or Modified Versions, may be sold by itself.
++
++2) Original or Modified Versions of the Font Software may be bundled,
++redistributed and/or sold with any software, provided that each copy
++contains the above copyright notice and this license. These can be
++included either as stand-alone text files, human-readable headers or
++in the appropriate machine-readable metadata fields within text or
++binary files as long as those fields can be easily viewed by the user.
++
++3) No Modified Version of the Font Software may use the Reserved Font
++Name(s) unless explicit written permission is granted by the corresponding
++Copyright Holder. This restriction only applies to the primary font name as
++presented to the users.
++
++4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
++Software shall not be used to promote, endorse or advertise any
++Modified Version, except to acknowledge the contribution(s) of the
++Copyright Holder(s) and the Author(s) or with their explicit written
++permission.
++
++5) The Font Software, modified or unmodified, in part or in whole,
++must be distributed entirely under this license, and must not be
++distributed under any other license. The requirement for fonts to
++remain under this license does not apply to any document created
++using the Font Software.
++
++TERMINATION
++This license becomes null and void if any of the above conditions are
++not met.
++
++DISCLAIMER
++THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
++MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
++OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
++COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
++INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
++DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
++OTHER DEALINGS IN THE FONT SOFTWARE.
+diff --git a/web/assets/fonts/Geist-Regular.ttf b/web/assets/fonts/Geist-Regular.ttf
+new file mode 100644
+index 00000000..7690cb69
+Binary files /dev/null and b/web/assets/fonts/Geist-Regular.ttf differ
+diff --git a/web/assets/fonts/Geist-SemiBold.ttf b/web/assets/fonts/Geist-SemiBold.ttf
+new file mode 100644
+index 00000000..aad21cbd
+Binary files /dev/null and b/web/assets/fonts/Geist-SemiBold.ttf differ
+diff --git a/web/assets/fonts/InstrumentSerif-Italic.ttf b/web/assets/fonts/InstrumentSerif-Italic.ttf
+new file mode 100644
+index 00000000..192c3eda
+Binary files /dev/null and b/web/assets/fonts/InstrumentSerif-Italic.ttf differ
+diff --git a/web/assets/fonts/InstrumentSerif-OFL.txt b/web/assets/fonts/InstrumentSerif-OFL.txt
+new file mode 100644
+index 00000000..669ce791
+--- /dev/null
++++ b/web/assets/fonts/InstrumentSerif-OFL.txt
+@@ -0,0 +1,93 @@
++Copyright 2022 The Instrument Serif Project Authors (https://github.com/Instrument/instrument-serif)
++
++This Font Software is licensed under the SIL Open Font License, Version 1.1.
++This license is copied below, and is also available with a FAQ at:
++https://scripts.sil.org/OFL
++
++
++-----------------------------------------------------------
++SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
++-----------------------------------------------------------
++
++PREAMBLE
++The goals of the Open Font License (OFL) are to stimulate worldwide
++development of collaborative font projects, to support the font creation
++efforts of academic and linguistic communities, and to provide a free and
++open framework in which fonts may be shared and improved in partnership
++with others.
++
++The OFL allows the licensed fonts to be used, studied, modified and
++redistributed freely as long as they are not sold by themselves. The
++fonts, including any derivative works, can be bundled, embedded, 
++redistributed and/or sold with any software provided that any reserved
++names are not used by derivative works. The fonts and derivatives,
++however, cannot be released under any other type of license. The
++requirement for fonts to remain under this license does not apply
++to any document created using the fonts or their derivatives.
++
++DEFINITIONS
++"Font Software" refers to the set of files released by the Copyright
++Holder(s) under this license and clearly marked as such. This may
++include source files, build scripts and documentation.
++
++"Reserved Font Name" refers to any names specified as such after the
++copyright statement(s).
++
++"Original Version" refers to the collection of Font Software components as
++distributed by the Copyright Holder(s).
++
++"Modified Version" refers to any derivative made by adding to, deleting,
++or substituting -- in part or in whole -- any of the components of the
++Original Version, by changing formats or by porting the Font Software to a
++new environment.
++
++"Author" refers to any designer, engineer, programmer, technical
++writer or other person who contributed to the Font Software.
++
++PERMISSION & CONDITIONS
++Permission is hereby granted, free of charge, to any person obtaining
++a copy of the Font Software, to use, study, copy, merge, embed, modify,
++redistribute, and sell modified and unmodified copies of the Font
++Software, subject to the following conditions:
++
++1) Neither the Font Software nor any of its individual components,
++in Original or Modified Versions, may be sold by itself.
++
++2) Original or Modified Versions of the Font Software may be bundled,
++redistributed and/or sold with any software, provided that each copy
++contains the above copyright notice and this license. These can be
++included either as stand-alone text files, human-readable headers or
++in the appropriate machine-readable metadata fields within text or
++binary files as long as those fields can be easily viewed by the user.
++
++3) No Modified Version of the Font Software may use the Reserved Font
++Name(s) unless explicit written permission is granted by the corresponding
++Copyright Holder. This restriction only applies to the primary font name as
++presented to the users.
++
++4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
++Software shall not be used to promote, endorse or advertise any
++Modified Version, except to acknowledge the contribution(s) of the
++Copyright Holder(s) and the Author(s) or with their explicit written
++permission.
++
++5) The Font Software, modified or unmodified, in part or in whole,
++must be distributed entirely under this license, and must not be
++distributed under any other license. The requirement for fonts to
++remain under this license does not apply to any document created
++using the Font Software.
++
++TERMINATION
++This license becomes null and void if any of the above conditions are
++not met.
++
++DISCLAIMER
++THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
++MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
++OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
++COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
++INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
++DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
++OTHER DEALINGS IN THE FONT SOFTWARE.
+diff --git a/web/assets/fonts/InstrumentSerif-Regular.ttf b/web/assets/fonts/InstrumentSerif-Regular.ttf
+new file mode 100644
+index 00000000..36fac00e
+Binary files /dev/null and b/web/assets/fonts/InstrumentSerif-Regular.ttf differ
