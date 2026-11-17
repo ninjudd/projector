@@ -59,8 +59,7 @@ answers back as signed records. Three changes make that safe:
   extension opens the sealed text on the device, so the service never sees
   what the item says.
 
-The app, in `ios/`, and the push service, as two routes of the
-`projector.bot` site in `web/`, live in this
+The app, in `ios/`, and the push service, in `services/push/`, live in this
 repository beside the protocol they share, so one pull request changes the
 daemon, the app, and their test vectors together. Being open source, they
 let anyone read the code that holds their GitHub token and their keys, and
@@ -141,13 +140,11 @@ An answer record also carries, inside the seal:
 
 ### 2.3 The push service
 
-The push service is two route handlers of the `projector.bot` site, under
-`web/app/api/push/v1/`, with no storage. They run on Node, whose standard
-library has the HTTP/2 client that Apple's push service requires and the
-ES256 signing its tokens use, so they add no dependency to the site. Every
-page of the site still renders at build time. Apple's push key and the
-service's secret key are set for production deployments only, so a preview
-build of a site branch can never send a notification.
+The push service is a small HTTPS service in `services/push/`, with two
+calls and no storage. It is TypeScript on Node, whose standard library has
+the HTTP/2 client that Apple's push service requires and the ES256 signing
+its tokens use, so it has no runtime dependencies at all. It deploys on its
+own, apart from the `projector.bot` site in `web/`.
 
 | Call | Sent by | Body | What the service does |
 | --- | --- | --- | --- |
@@ -178,10 +175,9 @@ anyone can run their own.
 | `tests/fixtures/relay/` | New. Sealed and signed records with their plaintexts, which the Python tests and the app's tests both check |
 | `docs/cli.md` | Describes the phone records, the commands, and what a leaked key exposes |
 | `ios/` | New. The SwiftUI app: GitHub sign-in, key join, the phone's keys, push registration, the notification service extension, ref reading and writing through GitHub's API, the seal, the row model, the home list, the panels, and background refresh. Its tests read `tests/fixtures/rows/` and `tests/fixtures/relay/` in place |
-| `web/app/api/push/v1/` | New. The `register` and `push` route handlers, which read Apple's push key and the service's secret key from production environment variables, and their tests, which run in the site's own checks |
-| `web/README.md` | Says how to deploy the site, or only its push routes, to run your own push service |
-| `.github/workflows/` | A workflow for `ios/` on a macOS runner, run only when `ios/` or `tests/fixtures/` changes. The `check` job keeps its current scope |
-| `tests/test_packaging.py` | Pins that neither the wheel nor either plugin ships `ios/` |
+| `services/push/` | New. The two calls, Apple's push key and the service's secret key from its environment, its tests, and a deploy recipe for one small host or serverless function |
+| `.github/workflows/` | A workflow for `ios/` on a macOS runner and one for `services/push/`, each run only when its directory or `tests/fixtures/` changes. The `check` job keeps its current scope |
+| `tests/test_packaging.py` | Pins that neither the wheel nor either plugin ships `ios/` or `services/` |
 
 ## 3. Why this design
 
@@ -219,18 +215,23 @@ anyone can run their own.
   each protocol change a pair of pull requests that have to land in step,
   and would copy the fixtures between them. In one repository, a change and
   every side of it get one review, and the app's tests read the fixtures in
-  place. Swift needs macOS runners, so the app gets its own workflow, run
-  only when `ios/` or the fixtures change, and the packaging tests keep it
-  out of everything Projector ships.
+  place. Swift needs macOS runners, so the app and the service get their own
+  workflows, each run only when its directory or the fixtures change, and
+  the packaging tests keep both out of everything Projector ships.
 - **The push service stores nothing.** A push ID that is the encrypted
   device token lets the service run with no database: it can be redeployed,
   moved, or lost without losing anyone's registration, and it holds nothing
   worth stealing beyond its two keys.
-- **The push service is part of the site.** `projector.bot` already
-  deploys from `web/`, so two route handlers there add no host, no domain,
-  and no deploy of their own. Keeping the keys in production-only
-  variables, and the routes' tests in the site's checks, keeps a change to
-  a page from reaching notifications.
+- **The push service deploys apart from the site.** Serving it as routes
+  of `projector.bot` would save one deploy, but the code holding Apple's
+  push key and the service's secret would then run inside the Next.js
+  process, beside every package the site depends on. No one could audit
+  that, and a compromised dependency anywhere in the site could read both
+  keys. On its own, the service is a few hundred lines with no
+  dependencies, which anyone can read whole, and it is redeployed only when
+  it changes, not with each change to the site's pages or dependencies.
+  Because it stores nothing, the separate deploy costs one small host or
+  function and two environment variables.
 - **The row model is shared again.** The app computes rows from GitHub's
   answers, as the console computes them from the daemon's cache. The
   fixtures in `tests/fixtures/rows/` run through the app's model too, so a
