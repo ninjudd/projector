@@ -1,0 +1,127 @@
+{
+ "version": 1,
+ "name": "Agent messaging discovery",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 508,
+  "title": "Rename message-agent to message and describe it in the README and on projector.bot",
+  "head": "84e77be85983d763dd01370d8c5177d9fecbabf4",
+  "headRef": "readme-agent-messages",
+  "base": "68187aee37452e9f484bba66923739ee1e03e448",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector lets your coding-agent sessions find and message each other. This change makes that capability visible in the README and gives its skill the shorter name <code>message</code>.",
+   "The skill moves from <code>skills/message-agent/</code> to <code>skills/message/</code>. Workflow references, the package contract, and the marketing site follow that move. Messaging behavior and key handling stay the same."
+  ],
+  "cards": [
+   {
+    "id": "invocation",
+    "title": "Invoke the messaging skill",
+    "html": "<ul class=\"tight\"><li>Claude Code: <code>/projector:message</code>.</li><li>Codex: <code>$message</code>.</li><li>Across machines, the user creates and copies the shared key from a terminal.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "skill",
+   "title": "Expose the renamed skill",
+   "kicker": "Skill discovery and workflow references",
+   "intro": [
+    "Both agent hosts discover skills from the same directory tree. Renaming the directory and its frontmatter together makes <code>message</code> available to both hosts.",
+    "The review and fix workflows send peer-message handling to the renamed skill. Their ownership, delivery, and authority rules are unchanged."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/message/SKILL.md",
+     "note": "The messaging workflow keeps its instructions and changes its published name.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2,
+       "text": "Compared the renamed file with the base: its messaging instructions are unchanged."
+      }
+     ]
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Fix workers refer peer-message handling to the renamed skill."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Review workers refer peer-message handling to the renamed skill."
+    },
+    {
+     "path": "skills/review-repo/SKILL.md",
+     "note": "Repository review routing points to the renamed skill."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "The published skill contract expects message and checks its frontmatter and citations.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 30,
+       "text": "All 14 packaging tests passed, including the published skill set, frontmatter names, and citations to other skills."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Explain messaging to users",
+   "kicker": "README and CLI reference",
+   "intro": [
+    "The README introduces local messaging, cross-machine relay setup, and the rule that another agent cannot grant the user’s authority. The CLI reference identifies the renamed skill."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "README.md",
+     "note": "Lists the messaging skill and introduces registration, shared-key setup, and authority limits.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 97,
+       "text": "Checked key setup against the CLI and relay documentation: export and import are terminal commands, and messaging uses shared-repository hidden refs."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Names the skill message beside the existing command reference."
+    }
+   ]
+  },
+  {
+   "id": "website",
+   "title": "Use the skill on the website",
+   "kicker": "The session-messaging card",
+   "intro": [
+    "The marketing page shows an example request to the messaging skill beside the work and cleanup examples. Its documentation link now opens the renamed skill."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "web/lib/links.ts",
+     "note": "Provides the renamed skill’s repository URL."
+    },
+    {
+     "path": "web/components/sections/sessions.tsx",
+     "note": "Shows the message invocation and links the messaging card to its skill instructions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 25,
+       "text": "Lint, type-check, and production build passed. The built home page contains this invocation and the renamed skill URL."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
