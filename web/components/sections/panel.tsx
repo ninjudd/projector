@@ -184,7 +184,7 @@ export function Panel() {
           <p>
             The panel is part of the Claude Code plugin. In Codex or a terminal,{" "}
             <Code>project console</Code> shows every live session&apos;s pull
-            requests and items, and answers and discussions reach each session
+            requests and items, and answers and messages reach each session
             as a new turn, as they do from the panel.
           </p>
           <div className="flex flex-wrap gap-x-6 gap-y-2 pt-1">

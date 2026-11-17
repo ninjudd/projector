@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -127,31 +128,25 @@ class SessionSet(ConsoleCase):
 
 
 class HomeOrder(ConsoleCase):
-    def test_a_session_with_an_unread_reply_lists_before_one_with_more_open_questions(self) -> None:
-        for session in ("asking", "replying"):
+    def test_a_session_with_more_open_questions_lists_first(self) -> None:
+        for session in ("one", "two"):
             self.claude(session)
-        self.ask("asking")
-        self.ask("asking", "Merge it now?")
-        replied = self.ask("replying", "Retry the mirrors?")
-        inbox.discuss("replying", replied["ref"], "Which mirrors?")
-        inbox.reply("replying", replied["ref"], "The two behind the proxy.")
+        self.ask("one", "Retry the mirrors?")
+        self.ask("two")
+        self.ask("two", "Merge it now?")
 
         self.console.tick()
 
-        self.assertEqual(["replying", "asking"], self.home_names())
-        self.assertIn("‣ Retry the mirrors?  replied", self.screen())
+        self.assertEqual(["two", "one"], self.home_names())
 
-    def test_opening_a_drawer_shows_the_reply_and_marks_it_read(self) -> None:
+    def test_an_items_drawer_lists_the_messages_you_sent_about_it(self) -> None:
         self.claude("s1")
         item = self.ask("s1")
-        inbox.reply("s1", item["ref"], "The two behind the proxy.")
+        inbox.discuss("s1", item["ref"], "Which mirrors?")
 
         self.open_entry("s1", "item:1")
 
-        self.assertIn("agent: The two behind the proxy.", self.screen())
-        self.assertFalse(inbox.has_unread_reply(inbox.read_item(inbox.session_dir("s1"), "1")))
-        self.press("left")
-        self.assertNotIn("replied", self.screen())
+        self.assertIn("you: Which mirrors?", self.screen())
 
 
 class Recording(ConsoleCase):
@@ -182,7 +177,7 @@ class Recording(ConsoleCase):
         answered, discussed = (inbox.read_item(inbox.session_dir("s1"), ref) for ref in ("1", "2"))
         self.assertEqual((None, None, None, None, "Why now?"),
                          (answered.get("claim"), answered.get("deliveredAt"), discussed.get("claim"),
-                          discussed["thread"][0].get("deliveredAt"), discussed["thread"][0]["text"]))
+                          discussed["messages"][0].get("deliveredAt"), discussed["messages"][0]["text"]))
 
     def test_a_codex_sessions_answer_wakes_its_delivery_and_a_claude_sessions_does_not(self) -> None:
         self.codex("codex-session")
@@ -196,8 +191,8 @@ class Recording(ConsoleCase):
         self.assertEqual([("codex-session", "1")], self.woken)
 
 
-class Discussions(ConsoleCase):
-    def test_seven_with_no_drawer_open_starts_a_discussion_about_an_empty_session(self) -> None:
+class Messages(ConsoleCase):
+    def test_seven_with_no_drawer_open_sends_a_message_about_an_empty_session(self) -> None:
         self.claude("idle")
         self.console.tick()
         self.console.open_panel("idle")
@@ -207,10 +202,32 @@ class Discussions(ConsoleCase):
         self.press("enter")
 
         item = inbox.read_item(inbox.session_dir("idle"), "1")
-        self.assertEqual(("discussion", None, "DISCUSS 1 About this session → hello"),
+        self.assertEqual(("message", None, "DISCUSS 1 About this session → hello"),
                          (item["kind"], item["pr"], inbox.message(item)))
 
-    def test_discussing_a_pull_request_two_sessions_hold_starts_the_discussion_in_the_viewed_session(self) -> None:
+    def test_a_message_reads_sending_like_a_notice_offers_no_unclear_and_leaves_once_delivered(self) -> None:
+        self.claude("s1")
+        self.console.tick()
+        self.console.open_panel("s1")
+        self.press("7")
+        self.type("hello")
+        self.press("enter")
+        sending = self.screen()
+        self.press("enter")
+        drawer = self.screen()
+        token = inbox.claim("s1", "1")["claim"]["token"]
+        inbox.settle("s1", "1", token, True)
+        self.console.reload()
+        delivered = self.screen()
+        self.clock.now += 31
+        self.console.reload()
+
+        self.assertEqual((True, True, False, True, False),
+                         ("- About this session  sending" in sending, "7: Discuss" in drawer,
+                          "6: I don't understand" in drawer, "Delivered ✓" in delivered,
+                          "About this session" in self.screen()))
+
+    def test_discussing_a_pull_request_two_sessions_hold_sends_the_message_to_the_viewed_session(self) -> None:
         self.claude("first")
         self.claude("second")
         self.subscribe("first", "acme/app#12 fix")
@@ -223,7 +240,7 @@ class Discussions(ConsoleCase):
         self.press("enter")
 
         self.assertEqual(([], [("acme/app#12", "Why the second retry loop?")]),
-                         tuple([(item["pr"], item["thread"][0]["text"])
+                         tuple([(item["pr"], item["messages"][0]["text"])
                                 for item in inbox.load_items(inbox.store_root() / name)]
                                for name in ("first", "second")))
 
@@ -290,7 +307,7 @@ class Keys(ConsoleCase):
 
         self.assertEqual((("panel", "item:1"), ("home", None), "abc"),
                          (in_field, (self.console.view, self.console.drawer),
-                          inbox.read_item(inbox.session_dir("s1"), "1")["thread"][0]["text"]))
+                          inbox.read_item(inbox.session_dir("s1"), "1")["messages"][0]["text"]))
 
 
 class FakeCurses:
@@ -359,10 +376,10 @@ class Scrolling(ConsoleCase):
         self.claude("s1")
         item = inbox.ask("s1", "Decline the finding?", "Decline it", ["Fix it"],
                          detail="\n".join(f"Detail line {number}." for number in range(1, 41)))
-        inbox.reply("s1", item["ref"], "The newest reply.")
+        inbox.discuss("s1", item["ref"], "The newest message.")
         self.open_entry("s1", f"item:{item['ref']}")
 
-    def test_page_down_reaches_the_last_reply_and_controls_of_a_drawer_taller_than_the_screen(self) -> None:
+    def test_page_down_reaches_the_last_message_and_controls_of_a_drawer_taller_than_the_screen(self) -> None:
         self.tall_question()
         opened = self.draw()
         self.press_terminal(FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE,
@@ -371,8 +388,8 @@ class Scrolling(ConsoleCase):
         self.console.tick()
 
         self.assertEqual((True, False, False, True, True, True),
-                         ("- Decline the finding?" in opened, "agent: The newest reply." in opened,
-                          "8: Dismiss" in opened, "agent: The newest reply." in scrolled,
+                         ("- Decline the finding?" in opened, "you: The newest message." in opened,
+                          "8: Dismiss" in opened, "you: The newest message." in scrolled,
                           "1: Decline it (recommended)" in scrolled, "8: Dismiss" in self.draw()))
 
     def test_end_and_home_jump_to_a_tall_drawers_controls_and_back_to_its_row(self) -> None:
@@ -403,6 +420,122 @@ class Scrolling(ConsoleCase):
 
         self.assertEqual((None, "item:1"), (self.console.drawer, self.console.selected_key()))
         self.assertIn("- Merge it now?", self.draw())
+
+
+def claude_entry(who: str, text: str) -> str:
+    if who == "you":
+        return json.dumps({"type": "user", "origin": {"kind": "human"},
+                           "message": {"role": "user", "content": text}}) + "\n"
+    return json.dumps({"type": "assistant",
+                       "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}) + "\n"
+
+
+class Conversation(Scrolling):
+    """The panel's conversation section, read from a Claude Code transcript under a temporary `CLAUDE_CONFIG_DIR`
+    and from a Codex rollout that `codex.json` names."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        environ = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.scratch / "claude"),
+                                               "HOME": str(self.scratch / "home")})
+        environ.start()
+        self.addCleanup(environ.stop)
+
+    def transcript(self, session: str) -> Path:
+        path = self.scratch / "claude" / "projects" / "-tmp-made-up" / f"{session}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def say(self, path: Path, *said: tuple[str, str]) -> None:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write("".join(claude_entry(who, text) for who, text in said))
+
+    def test_the_conversation_is_collapsed_by_default_and_v_shows_it_for_that_session_only(self) -> None:
+        for session in ("s1", "s2"):
+            self.claude(session)
+            self.say(self.transcript(session), ("you", f"Hello from {session}."), ("agent", f"Hi, {session}."))
+        self.console.tick()
+        self.console.open_panel("s1")
+        self.console.tick()
+        collapsed = self.screen()
+
+        self.press("v")
+        self.console.tick()
+        shown = self.screen()
+        self.press("left")
+        self.console.open_panel("s2")
+        self.console.tick()
+        other = self.screen()
+        self.press("left")
+        self.console.open_panel("s1")
+        self.console.tick()
+
+        self.assertEqual(("▸ Conversation", False, "▾ Conversation", True, True, "▸ Conversation", False, True),
+                         (collapsed.splitlines()[-1][:14], "agent: Hi, s1." in collapsed,
+                          shown.splitlines()[-3][:14], "you: Hello from s1." in shown, "agent: Hi, s1." in shown,
+                          other.splitlines()[-1][:14], "Hi, s2." in other, "agent: Hi, s1." in self.screen()))
+
+    def test_a_collapsed_conversation_is_never_read(self) -> None:
+        self.claude("s1")
+        self.say(self.transcript("s1"), ("you", "Hello."))
+        self.console.tick()
+        self.console.open_panel("s1")
+        for _ in range(3):
+            self.clock.now += 1
+            self.console.tick()
+
+        self.assertEqual(({}, {}), (self.console.readers, self.console.said))
+
+    def test_an_open_conversation_starts_at_its_newest_line_and_follows_it_until_you_scroll_back(self) -> None:
+        self.claude("s1")
+        self.ask("s1")
+        path = self.transcript("s1")
+        self.say(path, *(("agent", f"Old line {number}.") for number in range(1, 31)))
+        self.console.tick()
+        self.console.open_panel("s1")
+        self.press("v")
+        self.console.tick()
+        opened = self.draw()
+        self.say(path, ("you", "A newer question."), ("agent", "A newer answer."))
+        self.clock.now += 1
+        self.console.tick()
+        followed = self.draw()
+        self.press_terminal(FakeCurses.KEY_PPAGE)
+        back = self.draw()
+        self.say(path, ("agent", "The newest answer."))
+        self.clock.now += 1
+        self.console.tick()
+        stayed = self.draw()
+        self.press_terminal("G")
+        self.say(path, ("agent", "One more answer."))
+        self.clock.now += 1
+        self.console.tick()
+
+        self.assertEqual((True, False, True, True, False, False, True, True),
+                         ("agent: Old line 30." in opened, "Old line 1." in opened,
+                          "agent: A newer answer." in followed, "Old line 20." in back,
+                          "agent: A newer answer." in back, "The newest answer." in stayed, stayed == back,
+                          "agent: One more answer." in self.draw()))
+
+    def test_a_codex_sessions_conversation_comes_from_the_rollout_codex_json_names(self) -> None:
+        rollout = self.scratch / "rollout.jsonl"
+        shutil.copy(Path(__file__).resolve().parent / "fixtures" / "conversation" / "codex.jsonl", rollout)
+        self.codex("019a2b3c-0000-7000-8000-00000000c0de", transcript_path=str(rollout))
+        self.console.tick()
+        self.console.open_panel("019a2b3c-0000-7000-8000-00000000c0de")
+        self.press("v")
+        self.console.tick()
+
+        self.assertIn("agent: Added farewell, and the README's usage section shows it.", self.screen())
+
+    def test_a_session_with_no_transcript_says_so(self) -> None:
+        self.claude("s1")
+        self.console.tick()
+        self.console.open_panel("s1")
+        self.press("v")
+        self.console.tick()
+
+        self.assertIn("No transcript found for this session.", self.screen())
 
 
 class Command(unittest.TestCase):

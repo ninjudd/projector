@@ -1,10 +1,11 @@
 """`project console`: every live session in one terminal, and each session's panel.
 
 The console opens on the home list, one entry per live session, sorted by what needs the person. Enter opens a
-session's panel: its pull request rows, as `rows.py` reads them, and its inbox items, each with a drawer that
-answers, discusses, dismisses, or snoozes it. Every choice is recorded with the functions `project inbox` runs,
-for the session on screen, and the session's own deliverer brings it in: Claude Code's panel, or the watch
-daemon's Codex adapter. The console never claims, delivers, or settles a line, so it never races a deliverer.
+session's panel: its pull request rows, as `rows.py` reads them, its inbox items, each with a drawer that
+answers, discusses, dismisses, or snoozes it, and a collapsible view of its conversation, as `conversation.py`
+reads it. Every choice and message is recorded with the functions `project inbox` runs, for the session on screen,
+and the session's own deliverer brings it in: Claude Code's panel, or the watch daemon's Codex adapter. The
+console never claims, delivers, or settles a line, so it never races a deliverer.
 
 `Console` holds what is on screen, turns key names into those calls, and lays the screen out as lines of styled
 text. `main` puts it in a terminal with curses, which only `main` imports, so tests drive `Console` without one.
@@ -22,17 +23,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from . import agents, codex_watch, inbox, rows, watch
+from . import agents, codex_watch, conversation, inbox, rows, watch
 from .core import ProjectorError
 
 INBOX_EVERY = 1.0
 ROWS_EVERY = 5.0
 THREADS_EVERY = 30.0
+CONVERSATION_EVERY = 1.0
 # How long a resolved, delivered, or snoozed item stays listed, as in the panel.
 RESOLVED_MS = 30_000
 # The host each deliverer `watch.delivery` names belongs to.
 HOSTS = {"mod": "claude", "codex": "codex"}
-KINDS = ("question", "request", "notice", "discussion")
+KINDS = ("question", "request", "notice", "message")
 ASKING_KINDS = ("question", "request")
 NOUNS = {"pr": "pull request", "review": "review request", **{kind: kind for kind in KINDS}}
 SNOOZES = (("15 min", 15), ("1 hour", 60), ("4 hours", 240), ("1 day", 1440))
@@ -41,6 +43,8 @@ DRAWER_INDENT = 4
 # Page Down or Space, Page Up or `b`, End or `G`, and Home or `g`: the second of each pair for a terminal that keeps
 # the first for its own scrollback.
 SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "G", "home", "g")
+# The key of the panel's last row, the session's conversation.
+CONVERSATION = "conversation"
 
 
 @dataclass
@@ -100,6 +104,7 @@ class Work:
     signatures: dict[str, Optional[tuple]]
     pull: Optional[rows.Pull] = None
     drawer: Optional[str] = None
+    conversation: Optional[tuple[str, conversation.Reader]] = None
 
 
 @dataclass
@@ -110,6 +115,9 @@ class Found:
     rows: dict[str, list[rows.Row]] = field(default_factory=dict)
     drawer: Optional[str] = None
     threads: Optional[list[rows.Thread]] = None
+    # The session whose conversation was read, whether its transcript started over, what was said since, and
+    # whether a transcript was found.
+    said: Optional[tuple[str, bool, list[conversation.Said], bool]] = None
 
 
 # Reading the sessions
@@ -186,10 +194,6 @@ def is_shown(item: dict, now_ms: int) -> bool:
     return delivered is None or now_ms - delivered < RESOLVED_MS
 
 
-def is_replied(item: dict) -> bool:
-    return not item.get("answer") and inbox.has_unread_reply(item)
-
-
 def stage_of(item: dict) -> Optional[str]:
     """An open request's start: `starting` until its agent reports, then `ready` or `blocked`."""
     if item["kind"] != "request" or item.get("answer"):
@@ -208,12 +212,10 @@ def start_of(item: dict) -> Optional[str]:
 def marks_of(item: dict) -> list[tuple[str, str]]:
     """The words after an item's subject, as the panel shows them."""
     is_open = not item.get("answer")
-    owes = inbox.owed_entry(item) is not None
+    owes = inbox.owed_message(item) is not None
     marks = []
     if (not is_open and not item.get("deliveredAt")) or owes:
         marks.append(("sending", "subtle"))
-    if is_replied(item):
-        marks.append(("replied", "replied"))
     if is_open and item.get("unclear"):
         marks.append(("unclear", "warning"))
     stage = stage_of(item)
@@ -254,19 +256,17 @@ def counts_of(session: Session, now_ms: int) -> list[str]:
 
 
 def needs(session: Session, now_ms: int) -> tuple:
-    """The home list's order: an unread reply first, then the most open questions and requests, then the
-    newest item, then the label."""
+    """The home list's order: the most open questions and requests first, then the newest item, then the
+    label."""
     shown = shown_items(session, now_ms)
     asking = sum(1 for item in shown if is_awake(item, now_ms) and item["kind"] in ASKING_KINDS)
     newest = max((item.get("postedAt", 0) for item in shown), default=0)
-    return (not any(map(is_replied, shown)), -asking, -newest, session.label, session.name)
+    return (-asking, -newest, session.label, session.name)
 
 
 def headline(session: Session, now_ms: int) -> Optional[dict]:
-    """The item a home entry names: the newest with an unread reply, or else the newest open one."""
-    shown = shown_items(session, now_ms)
-    return (next((item for item in shown if is_replied(item)), None)
-            or next((item for item in shown if is_awake(item, now_ms)), None))
+    """The item a home entry names: the newest open one."""
+    return next((item for item in shown_items(session, now_ms) if is_awake(item, now_ms)), None)
 
 
 def pull_key(pull: rows.Pull) -> str:
@@ -302,9 +302,17 @@ class Console:
         self.threads: Optional[list[rows.Thread]] = None
         self.offset = 0
         self.room = 1
+        # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
+        # each one's transcript was found.
+        self.expanded: set[str] = set()
+        self.readers: dict[str, conversation.Reader] = {}
+        self.said: dict[str, list[conversation.Said]] = {}
+        self.transcripts: dict[str, bool] = {}
+        # Whether the screen keeps the conversation's newest line in view.
+        self.follow = True
         self.status = ""
         self.quit = False
-        self.next_inbox = self.next_rows = self.next_threads = float("-inf")
+        self.next_inbox = self.next_rows = self.next_threads = self.next_conversation = float("-inf")
 
     # Refreshing
 
@@ -328,7 +336,15 @@ class Console:
         if row is not None and now >= self.next_threads:
             self.next_threads = now + THREADS_EVERY
             work.pull, work.drawer = row.pull, self.drawer
-        return work if work.inbox or work.rows or work.pull else None
+        session = self.viewed()
+        if (self.view == "panel" and session is not None and session.name in self.expanded
+                and now >= self.next_conversation):
+            self.next_conversation = now + CONVERSATION_EVERY
+            reader = self.readers.get(session.name)
+            if reader is None:
+                reader = self.readers[session.name] = conversation.reader_for(self.root, session.name, session.host)
+            work.conversation = (session.name, reader)
+        return work if work.inbox or work.rows or work.pull or work.conversation else None
 
     def load(self, work: Work) -> Found:
         found = Found(drawer=work.drawer)
@@ -347,6 +363,10 @@ class Console:
                 found.rows[name] = rows.rows_for(self.root, name)
         if work.pull is not None:
             found.threads = rows.fetch_threads(work.pull, self.gh)
+        if work.conversation is not None:
+            name, reader = work.conversation
+            restarted, said = reader.read()
+            found.said = (name, restarted, said, reader.path is not None)
         return found
 
     def apply(self, found: Found) -> None:
@@ -364,6 +384,14 @@ class Console:
                 self.sessions[name].rows = found_rows
         if found.drawer is not None and found.drawer == self.drawer:
             self.threads = found.threads
+        if found.said is not None:
+            name, restarted, said, transcript = found.said
+            kept = self.said.setdefault(name, [])
+            if restarted:
+                kept.clear()
+            kept += said
+            del kept[:-conversation.KEEP]
+            self.transcripts[name] = transcript
         self.settle_view()
 
     def reload(self) -> None:
@@ -376,8 +404,7 @@ class Console:
         self.settle_view()
 
     def settle_view(self) -> None:
-        """Leave a panel whose session is gone, close a drawer whose row is gone, and mark read the replies an
-        open drawer shows."""
+        """Leave a panel whose session is gone, and close a drawer whose row is gone."""
         if self.view == "panel" and self.session not in self.sessions:
             self.status = f"{self.session} is no longer live"
             self.go_home()
@@ -387,14 +414,6 @@ class Console:
         keys = [key for key, _ in self.entries()]
         if self.drawer is not None and self.drawer not in keys:
             self.close_drawer()
-        item = self.item(self.drawer)
-        if item is not None and inbox.has_unread_reply(item):
-            try:
-                inbox.mark_read(self.session, item["ref"])
-            except ProjectorError as error:
-                self.status = str(error)
-                return
-            self.reload()
 
     # What is on screen
 
@@ -419,7 +438,7 @@ class Console:
     def keys(self) -> list[str]:
         if self.view == "home":
             return [session.name for session in self.home()]
-        return [key for key, _ in self.entries()]
+        return [key for key, _ in self.entries()] + ([CONVERSATION] if self.viewed() is not None else [])
 
     def row(self, key: Optional[str]) -> Optional[rows.Row]:
         found = dict(self.entries()).get(key) if key and key.startswith("pr:") else None
@@ -454,6 +473,8 @@ class Console:
         """Move the viewport a page, or to an end. `viewport` keeps it on the cursor's row and its drawer, so these
         keys move it only through a drawer taller than the screen."""
         page = max(1, self.room - 1)
+        # `viewport` follows the conversation's newest line again once the offset reaches it.
+        self.follow = False
         if name in ("pagedown", " "):
             self.offset += page
         elif name in ("pageup", "b"):
@@ -475,6 +496,7 @@ class Console:
         self.selected = keys[max(0, min(len(keys) - 1, at + step))]
         if self.view == "panel":
             self.close_drawer()
+            self.follow = True
 
     def open_panel(self, name: str) -> None:
         self.view, self.session, self.selected = "panel", name, None
@@ -494,14 +516,31 @@ class Console:
             self.go_home()
         elif name in ("esc", "0"):
             self.close_drawer()
+        elif name == "enter" and self.selected_key() == CONVERSATION:
+            self.toggle_conversation()
         elif name == "enter":
             self.toggle_drawer()
+        elif name == "v":
+            self.toggle_conversation()
         elif self.drawer is not None:
             control = next((one for one in self.controls() if one.key == name), None)
             if control is not None:
                 control.act()
         elif name == "7":
-            self.open_field("session", None, "Discuss this session: ")
+            self.open_field("session", None, "Message this session: ")
+
+    def toggle_conversation(self) -> None:
+        """Show or hide the viewed session's conversation, which the console remembers for each session while it
+        runs. Showing it moves the cursor there, so the page keys scroll it, and starts at its newest line."""
+        name = self.session or ""
+        if name in self.expanded:
+            self.expanded.discard(name)
+            return
+        self.expanded.add(name)
+        self.close_drawer()
+        self.selected, self.follow = CONVERSATION, True
+        self.next_conversation = float("-inf")
+        self.refresh_now.set()
 
     def toggle_drawer(self) -> None:
         key = self.selected_key()
@@ -560,7 +599,7 @@ class Console:
             controls += [Control(str(index), choice,
                                  lambda choice=choice: self.record(inbox.done, ref, choice if given else None), True)
                          for index, choice in enumerate(given or ["Done"], 1 if start is None else 2)]
-        if not item.get("unclear"):
+        if not item.get("unclear") and item["kind"] != "message":
             controls.append(Control("6", "I don't understand",
                                     lambda: self.record(inbox.unclear, ref, item["subject"], item.get("detail", ""))))
         controls += [Control("7", "Discuss", lambda: self.open_field("discuss", ref, f"Discuss {ref}: ")),
@@ -649,14 +688,14 @@ class Console:
             letter = inbox.typed_letter(question) if question is not None else None
             item = self.record(inbox.answer, target, letter, said)
         else:
-            item = self.record(lambda name: inbox.start_discussion(name, said, pr=target))
+            item = self.record(lambda name: inbox.send(name, said, pr=target))
         if item is None:
             return
         self.field = None
         if typing.purpose in ("pr", "session"):
+            # The message is an item of its own, which reads `sending` until it is delivered and then leaves.
             self.close_drawer()
-            self.drawer = self.selected = item_key(item)
-            self.settle_view()
+            self.selected = item_key(item)
 
     # Laying out the screen
 
@@ -668,15 +707,25 @@ class Console:
     def viewport(self, width: int, room: int) -> list[Line]:
         """The body's lines that fit in `room` rows. The offset survives each redraw and moves only as far as it
         must to show the cursor's row and its drawer. A drawer taller than the room shows a room's worth of itself,
-        starting at its row, and the scroll keys move the offset through the rest."""
+        starting at its row, and the scroll keys move the offset through the rest. The conversation starts at its
+        newest line instead, and keeps it in view as lines arrive until a scroll key moves away from it."""
         with self.lock:
             body, (first, last) = self.lines(width)
             self.room = room
-            if last - first + 1 > room:
-                self.offset = min(max(self.offset, first), last - room + 1)
-            else:
-                self.offset = min(max(self.offset, last - room + 1), first)
-            self.offset = max(0, min(self.offset, len(body) - room))
+
+            def clamped(offset: int) -> int:
+                if last - first + 1 > room:
+                    offset = min(max(offset, first), last - room + 1)
+                else:
+                    offset = min(max(offset, last - room + 1), first)
+                return max(0, min(offset, len(body) - room))
+
+            following = self.view == "panel" and self.selected_key() == CONVERSATION
+            if following and self.follow:
+                self.offset = sys.maxsize
+            self.offset = clamped(self.offset)
+            if following:
+                self.follow = self.offset == clamped(sys.maxsize)
             return body[self.offset:self.offset + room]
 
     def footer(self) -> list[Line]:
@@ -687,8 +736,10 @@ class Console:
                 return [*lines, Line([("Enter sends · Esc cancels", "subtle")])]
             if self.view == "home":
                 hint = "↑↓ move · Enter open · q quit"
+            elif self.selected_key() == CONVERSATION and self.session in self.expanded:
+                hint = "v hide · PgUp PgDn scroll · 7 message this session · ← or Esc back · q quit"
             elif self.drawer is None:
-                hint = "↑↓ move · Enter open · 7 discuss this session · ← or Esc back · q quit"
+                hint = "↑↓ move · Enter open · 7 message this session · v conversation · ← or Esc back · q quit"
             else:
                 hint = "Enter or Esc close · PgUp PgDn scroll · ← back · q quit"
             return [*lines, Line([(hint, "subtle")])]
@@ -713,11 +764,33 @@ class Console:
                 lines.append(Line([(f"  {session.summary}", "subtle")]))
             named = headline(session, now)
             if named is not None:
-                lines.append(Line([(f"  ‣ {named['subject']}", ""),
-                                   *([("  replied", "replied")] if is_replied(named) else [])]))
+                lines.append(Line([(f"  ‣ {named['subject']}", "")]))
             if session.name == chosen:
                 focus = (start, len(lines) - 1)
         return lines, focus
+
+    def conversation_lines(self, name: str, width: int, selected: bool) -> list[Line]:
+        """The conversation's heading, and, when it is shown, what the person and the agent said, newest last."""
+        shown = name in self.expanded
+        lines = [Line([(f"{'▾' if shown else '▸'} Conversation", "bold"),
+                       (f"  v {'hides' if shown else 'shows'} what you and the agent said", "subtle")], selected)]
+        if not shown:
+            return lines
+        indent = " " * DRAWER_INDENT
+        said = self.said.get(name) or []
+        if not said:
+            found = self.transcripts.get(name)
+            note = ("reading…" if found is None else "Nothing said yet." if found
+                    else "No transcript found for this session.")
+            return [*lines, Line([(indent + note, "subtle")])]
+        for one in said:
+            who = "you: " if one.who == "you" else "agent: "
+            wrap = max(1, width - DRAWER_INDENT - len(who))
+            parts = [part for paragraph in one.text.splitlines() for part in textwrap.wrap(paragraph, wrap) or [""]]
+            lines.append(Line([(indent + who, "subtle"), (parts[0], "accent" if one.who == "you" else "")]))
+            lines += [Line([(indent + " " * len(who) + part, "accent" if one.who == "you" else "")])
+                      for part in parts[1:]]
+        return lines
 
     def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
         session = self.viewed()
@@ -733,8 +806,7 @@ class Console:
         lines.append(Line([]))
         entries = self.entries()
         if not entries:
-            lines.append(Line([("No pull requests or items. Press 7 to start a discussion about this session.",
-                                "subtle")]))
+            lines.append(Line([("No pull requests or items. Press 7 to send this session a message.", "subtle")]))
         chosen = self.selected_key()
         focus = (0, 0)
         label_width = max((len(row.label) for row in session.rows), default=0)
@@ -756,6 +828,11 @@ class Console:
                     lines += self.item_drawer(entry, width)
             if key == chosen:
                 focus = (start, len(lines) - 1)
+        lines.append(Line([]))
+        start = len(lines)
+        lines += self.conversation_lines(session.name, width, chosen == CONVERSATION)
+        if chosen == CONVERSATION:
+            focus = (start, len(lines) - 1)
         return lines, focus
 
     def pull_line(self, row: rows.Row, label_width: int, author_width: int, selected: bool) -> Line:
@@ -797,7 +874,7 @@ class Console:
     def item_line(self, item: dict, now: int, selected: bool) -> Line:
         is_open = not item.get("answer")
         style = "subtle" if not is_open or is_snoozed(item, now) else {
-            "question": "accent", "request": "warning", "notice": "", "discussion": ""}[item["kind"]]
+            "question": "accent", "request": "warning", "notice": "", "message": ""}[item["kind"]]
         parts = [(f"- {item['subject']}", style)]
         parts += [(f"  {word}", mark) for word, mark in marks_of(item)]
         parts.append((f"  {age(now - item.get('postedAt', now))}", "subtle"))
@@ -811,13 +888,14 @@ class Console:
             lines.append(Line([]))
             for paragraph in item["detail"].splitlines():
                 lines += [Line([(indent + part, "")]) for part in textwrap.wrap(paragraph, wrap) or [""]]
-        if item.get("thread"):
+        if item.get("messages"):
+            # The messages the person sent about the item, oldest first. The agent answers them in its
+            # conversation.
             lines.append(Line([]))
-            for said in item["thread"]:
-                who = "you: " if said.get("from") == "person" else "agent: "
-                first, *rest = textwrap.wrap(said.get("text", ""), max(1, wrap - len(who))) or [""]
-                lines.append(Line([(indent + who, "subtle"), (first, "")]))
-                lines += [Line([(indent + " " * len(who) + part, "")]) for part in rest]
+            for said in item["messages"]:
+                first, *rest = textwrap.wrap(said.get("text", ""), max(1, wrap - len("you: "))) or [""]
+                lines.append(Line([(indent + "you: ", "subtle"), (first, "")]))
+                lines += [Line([(indent + " " * len("you: ") + part, "")]) for part in rest]
         lines += self.answer_lines(item, indent)
         stage = stage_of(item)
         if item.get("start") and not item.get("answer"):
@@ -839,7 +917,9 @@ class Console:
         answered = item.get("answer")
         if not answered:
             return []
-        if answered.get("withdrawn"):
+        if answered.get("delivered"):
+            said = "Delivered"
+        elif answered.get("withdrawn"):
             said = "Withdrawn by its agent"
         elif answered.get("declined"):
             said = "Declined"
@@ -864,8 +944,7 @@ CURSES_KEYS = {"KEY_UP": "up", "KEY_DOWN": "down", "KEY_LEFT": "left", "KEY_RIGH
                "KEY_PPAGE": "pageup", "KEY_NPAGE": "pagedown"}
 CHARACTER_KEYS = {"\n": "enter", "\r": "enter", "\x1b": "esc", "\x7f": "backspace", "\b": "backspace",
                   "\x01": "home", "\x05": "end"}
-STYLE_COLORS = {"accent": "COLOR_CYAN", "success": "COLOR_GREEN", "warning": "COLOR_YELLOW", "error": "COLOR_RED",
-                "replied": "COLOR_MAGENTA"}
+STYLE_COLORS = {"accent": "COLOR_CYAN", "success": "COLOR_GREEN", "warning": "COLOR_YELLOW", "error": "COLOR_RED"}
 
 
 def key_name(pressed: object, curses: Any) -> Optional[str]:
@@ -887,13 +966,13 @@ def styles(curses: Any) -> dict[str, int]:
             curses.init_pair(index, getattr(curses, color), -1)
             found[style] = curses.color_pair(index)
         else:
-            found[style] = curses.A_BOLD if style in ("error", "replied") else 0
+            found[style] = curses.A_BOLD if style == "error" else 0
     return found
 
 
 def printable(text: str) -> str:
-    """Text as it can be drawn: an agent's subject or reply could hold a control character, which would move the
-    terminal's cursor."""
+    """Text as it can be drawn: an agent's subject or its conversation could hold a control character, which would
+    move the terminal's cursor."""
     return "".join(character if character.isprintable() else " " for character in text)
 
 

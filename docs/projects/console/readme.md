@@ -233,6 +233,14 @@ session itself (§ 2.6), whichever row the cursor is on. It works in a panel
 with no rows, such as an idle session's or a new one's. To write about a
 particular item or pull request, open its drawer and press `7` there.
 
+The panel ends with the session's conversation, a section collapsed to its
+heading by default. `v` shows or hides it, and so does Enter on its heading.
+Shown, it lists what you said and what the agent said, newest last, and
+nothing else: no tool calls, tool results, thinking, or host instructions.
+§ 2.9 describes how the console reads it. You often run the console in a
+split above the session's own chat, so collapsed is the right default there.
+Shown serves a session whose chat is not on screen, and later the phone.
+
 ### 2.6 Discussing an item, a pull request, or the session
 
 A message is one way: it carries your words to the agent, and the agent
@@ -339,8 +347,9 @@ $ project console
 | Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
 | Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
 | `7` in a panel with no drawer open | Sends a message about the session (§ 2.5) |
-| Page Down or Space, Page Up or `b` | Scrolls a drawer taller than the screen a page down or up |
-| End or `G`, Home or `g` | Scrolls a drawer taller than the screen to its controls, or back to its row |
+| `v` in a panel | Shows or hides the session's conversation (§ 2.5) |
+| Page Down or Space, Page Up or `b` | Scrolls a drawer or the conversation, when taller than the screen, a page down or up |
+| End or `G`, Home or `g` | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
 | Left | Returns to the home list from a session's panel, closing any open drawer. In a text field, it moves the cursor instead |
 | Enter in a text field | Sends the message. Esc cancels it |
 | `q` | Quits |
@@ -373,13 +382,14 @@ Building the console settled these details:
 - **A home entry takes up to three lines.** The first holds the label, the
   host, the repository and branch, and the counts. The summary and the
   newest open item's subject follow, each on its own line, so a narrow
-  terminal cuts neither. The counts include discussions, as the panel's
+  terminal cuts neither. The counts include messages, as the panel's
   header does. A session that `project watch stream` delivers shows the host
   its `agent.json` names, or `other`.
 - **The cursor closes a drawer.** Up and down move to the next row and close
   any open drawer. A drawer opens under its row, and the screen scrolls to
-  keep the row and its drawer in view. Starting a discussion opens the new
-  item's drawer, so you see its thread.
+  keep the row and its drawer in view. Sending a message about a pull
+  request or the session moves the cursor to the new `message` item, which
+  reads `sending` until its line is delivered and then leaves.
 - **One background thread refreshes.** It wakes every quarter second, takes
   the lock only to decide what is due and to show what it read, and reads
   the inbox, the rows, and the threads without it. Opening a pull request's
@@ -391,14 +401,28 @@ Building the console settled these details:
   recording subcommands of `project inbox` run, which starts the daemon
   when the item owes a line.
 - **Page keys scroll a tall drawer.** A drawer taller than the screen
-  opens with its row at the top, and the rest of it, the newest reply and
+  opens with its row at the top, and the rest of it, the newest message and
   the controls included, is below the screen. Up and down still close the
   drawer, so the page keys scroll it instead: Page Down and Page Up move a
   page, and End and Home jump to its controls and back to its row. Space,
   `b`, `G`, and `g` do the same for a terminal that keeps those keys for
   its own scrollback. The scroll survives each redraw, including the
-  refresh that brings in a new reply, and the screen moves only as far as
-  it must to keep the row and its drawer in view.
+  refresh that brings in a new message, and the screen moves only as far
+  as it must to keep the row and its drawer in view.
+- **The conversation is the panel's last row.** The cursor stops on its
+  heading like any other row, so Up and down reach it, and the page keys
+  scroll it once it is taller than the screen. `v` from any row shows it
+  and moves the cursor there, closing an open drawer. It opens at its newest
+  line and keeps that line in view as lines arrive. A scroll key that moves
+  away stops that, and End, `G`, or paging back to the bottom starts it
+  again.
+- **`v` is remembered for each session while the console runs.** Showing
+  one session's conversation leaves every other session's collapsed, and a
+  panel you return to keeps what you chose. The console keeps the choice in
+  memory, so it starts collapsed again after you quit.
+- **Only a shown conversation is read.** The refresh thread reads the
+  viewed session's transcript each second while its conversation is shown,
+  off the drawing thread, and never reads a collapsed one.
 
 ### 2.8 Changes by file
 
@@ -408,17 +432,54 @@ Building the console settled these details:
 | `src/projector/inbox.py` | Adds `messages`, the `message` kind, `discuss`, and `send`. `owed_line`, `message`, and `settle` handle `DISCUSS` lines, and `settle` resolves a `message` item with nothing left to send |
 | `src/projector/rows.py` | New. Turns subscriptions and the cache into rows, and queries and parses threads |
 | `src/projector/console.py` | New. Holds the session set, the model of what is on screen, key handling, and the curses drawing, kept separate so tests drive the model without a terminal |
+| `src/projector/conversation.py` | New. Finds a session's transcript and reads what the person and the agent said in it, a few bytes at a time (§ 2.9) |
 | `src/projector/cli.py` | Adds `project console` and `project inbox discuss`. `show` prints your messages. The inbox recording subcommands run `ensure_daemon` for a Codex session |
 | `src/projector/permissions.py` | Adds `Bash(project console)`, `Bash(project console *)`, and `Bash(project inbox discuss *)` to `ASK` and `ASKED`. Leaves `console` and `discuss` to Codex's approval, and updates the docstring and the `CODEX_RULES` header |
 | `hooks/inbox.ts`, `hooks/register.tsx` | `needsDelivery` counts undelivered messages. The drawer shows your messages, and the item list draws `message` items like notices, without `I don't understand` |
 | `src/projector/templates/agents-block.md`, `skills/work/SKILL.md` | Describe `DISCUSS` lines. `skills/work/SKILL.md` also tells a session not to run `project inbox watch` when its session-start context says Projector delivers its events |
 | `tests/fixtures/rows/` | New. Each case is a set of input files plus the rows they must produce |
 | `hooks/rows.test.ts` | New. Runs the panel's row model over `tests/fixtures/rows/` |
-| `tests/test_console.py`, `tests/test_rows.py` | New |
+| `tests/test_console.py`, `tests/test_rows.py`, `tests/test_conversation.py` | New |
+| `tests/fixtures/conversation/` | New. Made-up Claude Code and Codex transcripts, one of each, in each host's format |
 | `tests/test_codex_watch.py`, `tests/test_inbox.py`, `tests/test_permissions.py`, `hooks/inbox.test.ts`, `hooks/panel.test.tsx` | New cases (§ 4) |
 | `docs/cli.md` | A new "Use the console" section. "Use the inbox" describes `discuss`, the `message` kind, the Codex adapter's delivery, and the permission rules |
 | `docs/plugins.md` | Describes your messages in the drawer and the `message` kind, and says that `project console` covers Codex and terminals, where it said Codex has no equivalent |
 | `web/components/sections/panel.tsx` | Names `project console` for Codex and terminals |
+
+### 2.9 Reading a session's conversation
+
+`src/projector/conversation.py` reads a session's conversation from the
+transcript its host writes, with the standard library only. A `Reader`
+follows one transcript. Its first read takes the last 2 MiB, so a long
+session opens at once, and each later read takes only the bytes added since.
+It keeps a line that has not ended yet until the rest arrives, and it starts
+over when the transcript is replaced or cut short. It skips a line that does
+not parse, and an entry of a kind it does not know, so a host that adds a
+kind breaks nothing. The console keeps the newest 400 things said for each
+session.
+
+| Host | Transcript | What it keeps |
+| --- | --- | --- |
+| Claude Code | `projects/<project>/<session>.jsonl` under `CLAUDE_CONFIG_DIR`, or under `~/.claude`, the newest when two projects hold one | A `user` entry whose `origin.kind` is `human`, or that has no `origin`, as an older Claude Code writes, with a slash command shown as `/name args`. The inbox lines in a prompt Projector's panel submitted, from its `pluginPrompt.text`. An `assistant` entry's `text` blocks |
+| Codex | The rollout that `codex.json`'s `transcript_path` names | A user `message` item's blocks whose `content_item_kinds` entry is `user.text`, or, in an older rollout that records no kinds, those that do not open with a tag. The inbox lines in a batch Projector's Codex adapter queued. An assistant `message` item's text, whether its phase is `commentary` or `final_answer` |
+
+Both readers leave out tool calls and their results, thinking and reasoning,
+developer and hook context, and entries that are a subagent's, meta, or a
+compaction summary. They also leave out Projector's pull request events, so
+what you said is what you typed and the inbox lines that carried your
+choices and messages, such as `ANSWER 3.a` and `DISCUSS 5`. Codex's
+`agent_message` items are a subagent reporting to its parent, so the Codex
+reader leaves them out too.
+
+Codex's app server can read a thread with `thread/read`, but that needs a
+`codex app-server` process for each read and a handshake. The rollout is a
+file Codex already writes for every thread, and `codex.json` already names
+it, so the reader follows that file instead.
+
+A transcript holds whatever the conversation held, including any secret an
+agent quoted there. The console shows only what the session's own chat
+already shows, to you, in your terminal, and it never writes the
+conversation anywhere.
 
 ## 3. Why this design
 
@@ -450,6 +511,11 @@ Building the console settled these details:
   messages to
   the session, through `project agent send`, were rejected too: they carry
   none of the person's authority, and your words must.
+- **The conversation comes from the host's transcript.** Both hosts
+  already write one, so reading it needs no change to either host, no
+  process per session, and no network. Tailing it costs a stat and the new
+  bytes each second while the section is shown. The section is collapsed by
+  default because the session's own chat usually sits beside the console.
 - **`discuss` is a recording command.** It speaks for you, so it gets the
   permission rules `answer` has, and an agent cannot put words in your
   mouth.
@@ -511,6 +577,14 @@ Building the console settled these details:
 | Open a drawer for a pull request with two unresolved threads, and wait 65 seconds | Three thread queries. With no unresolved thread, none | A thread query on every tick, or a drawer that never refreshes |
 | Dismiss a pull request in one session's panel when another session also holds it | `watch drop` runs for the viewed session's roles only, and the other session keeps it | A dismiss that reaches beyond the viewed session |
 | Run `project console </dev/null` | Exit 69 with the terminal message | A console that starts without a terminal |
+| Open a session's panel | Its conversation shows only its heading, and the console reads no transcript | A conversation shown, or read, before you ask for it |
+| Press `v` in one session's panel, then open another session's panel, then return | The first session's conversation is shown both times. The second's is collapsed | A choice that leaks to every session, or that is forgotten |
+| Read the made-up Claude Code transcript in `tests/fixtures/conversation/` | Your typed prompt, the slash command, the `DISCUSS` line, and the agent's two text blocks, in order. No thinking, tool call, tool result, subagent, meta, peer, or pull request event | A reader that shows what the session's chat does not |
+| Read the made-up Codex rollout there | Your text, the `ANSWER` line from Projector's batch, and the agent's two messages, in order. No instructions, environment, reasoning, function call, hook context, or subagent report | The same, for Codex |
+| Append to a transcript in two writes that split one line | Each read returns only what was added, and the split line once it ends | A reader that rereads the whole file or parses half a line |
+| Shorten or replace the transcript | The next read starts over from its start | A reader stuck past the end of a new file |
+| Show a conversation taller than the screen, let a line arrive, page up, let another arrive | It opens at its newest line and follows the first, then stays where you paged to | A view that opens at the top or jumps while you read |
+| Press `7` with no drawer open and send `hello` | A `message` item that reads `sending` and offers no `I don't understand`, then `Delivered ✓` once its line is delivered, and gone 30 seconds later | A message the console shows as a question or never lets go |
 | Decide `project console` and `project inbox discuss` in each host | Both ask in Claude Code and are left to Codex's approval | An agent allowed to drive the console or speak for you |
 
 ## 5. Cost
@@ -521,6 +595,9 @@ Building the console settled these details:
   each subscribed pull request's cache file for the home list's counts.
   Measure one console with 10 live sessions and 30 pull requests at under
   2% of one CPU core.
+- **The conversation's reads.** While a conversation is shown, the console
+  stats its transcript each second and reads only the bytes added. The first
+  read takes at most 2 MiB. A collapsed conversation costs nothing.
 - **GitHub quota.** The rows cost no GraphQL, because the daemon's cache
   supplies them. The thread query runs only while a drawer is open. It costs
   about one point of the account's hourly GraphQL quota per query, the same
@@ -610,17 +687,24 @@ Checked against `codex-cli 0.169.0` and `openai/codex` at `d8d840d` on
 
 Shipped, in the four pull requests § 6 lists. `project console` lists every
 live session, Claude Code and Codex alike, and records answers and messages
-that each session's own deliverer brings in. § 2.6 and § 2.7 record the
-details building it settled.
+that each session's own deliverer brings in. Each panel ends with the
+session's conversation, collapsed by default, read from the host's
+transcript (§ 2.9). § 2.6 and § 2.7 record the details building it settled.
 
 Each row of § 4 has a test that was seen failing against the bug it names:
 the Codex delivery rows in `tests/test_codex_watch.py`, the thread rows in
 `tests/test_inbox.py`, `hooks/inbox.test.ts`, and `hooks/panel.test.tsx`,
 the fixtures in `tests/test_rows.py` and `hooks/rows.test.ts`, the console
-rows in `tests/test_console.py`, and the permission row in
-`tests/test_permissions.py`. A run of the real console in a pseudo-terminal
+rows in `tests/test_console.py`, the conversation reader's rows in
+`tests/test_conversation.py`, and the permission row in
+`tests/test_permissions.py`. The reader's and the conversation section's
+tests were each seen failing against a copy of the code broken the way the
+row names, one break at a time. A run of the real console in a pseudo-terminal
 answered a question, returned home with Left, and started a discussion
-about the session, with and without `NO_COLOR`.
+about the session, with and without `NO_COLOR`. After the one-way messages
+replaced threads, another run sent a message about the session, showed it
+`sending`, and showed and hid the conversation of a session with a
+transcript with `v`.
 
 The cost § 5 asked for: one console with 10 live sessions, 30 pull requests,
 and 50 open questions used 0.71 seconds of CPU in 60 seconds, 1.2% of one
