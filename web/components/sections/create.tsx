@@ -25,22 +25,17 @@ const list: TermLine[] = [
   { kind: "row", name: "recording", status: "completed", title: "Recording" },
 ];
 
-// The first lines of docs/projects/recording/readme.md in audiofield/field.
+// The first lines of docs/projects/recording/readme.md in audiofield/field,
+// with each paragraph on one line so it wraps to the width of the block.
 const plan = `---
 status: completed
 ---
 
-**Outcome:** Shipped: chunks 1–4 (#166, #167, #169, #170) — the
-daemon's input side with crash-safe capture, takes that land in the
-project and build in place, the metronome and count-in in the engine,
-punch-out, and loop takes over the region loop. …
+**Outcome:** Shipped: chunks 1–4 (#166, #167, #169, #170) — the daemon's input side with crash-safe capture, takes that land in the project and build in place, the metronome and count-in in the engine, punch-out, and loop takes over the region loop. …
 
 # Recording
 
-**Goal:** \`field record\` — capture a live performance into a track as
-takes, through the same daemon that plays: armed, crash-safe,
-latency-placed, and committed beside its bytes the way every take
-already is.`;
+**Goal:** \`field record\` — capture a live performance into a track as takes, through the same daemon that plays: armed, crash-safe, latency-placed, and committed beside its bytes the way every take already is.`;
 
 function DocLink({ href, children }: { href: string; children: ReactNode }) {
   return (

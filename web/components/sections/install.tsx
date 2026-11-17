@@ -77,7 +77,7 @@ export function Install() {
         {rows.map((row) => (
           <div
             key={row.title}
-            className="grid gap-5 p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] lg:gap-12"
+            className="grid gap-5 px-4 py-6 sm:p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] lg:gap-12"
           >
             <div>
               <h3 className="text-lg font-semibold tracking-tight text-fg">{row.title}</h3>

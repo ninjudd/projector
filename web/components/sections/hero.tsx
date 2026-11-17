@@ -26,7 +26,7 @@ export function Hero() {
   return (
     <section>
       <div className="mx-auto max-w-6xl px-6 pb-20 pt-16 lg:pb-24 lg:pt-20">
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:items-start lg:gap-16">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:items-start lg:gap-16">
           <div className="min-w-0">
             <h1 className="font-display text-6xl leading-[0.98] tracking-tight text-fg sm:text-7xl">
               Agents plan, build, and review.
@@ -78,7 +78,7 @@ export function Hero() {
           </p>
         </div>
 
-        <div className="mt-14 grid gap-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-10">
+        <div className="mt-14 grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-10">
           <InboxDemo />
           <div className="min-w-0">
             <h2 className="text-base font-semibold tracking-tight text-fg">
