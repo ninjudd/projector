@@ -1,0 +1,754 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 17e65ab6..11d9ffaf 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3069,7 +3069,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
+ | `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped, nor a failed check run of a cancelled workflow run that started at or after the cancel, as an `if: always()` job that gathers the others does, or that a newer run of the same workflow on the head tests again, by still running or by running a check of the same name rather than skipping or cancelling it. The cancel is when the first of the run's check runs that concluded `CANCELLED` ended |
+ | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
+ | `LABEL` | `fix` | A `clean` or `reviewing` label added or removed since the owner last saw the pull request, as `+clean` or `-reviewing` |
+-| `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
++| `UNREVIEWED` | `fix`, when no session the daemon can see reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, that no live session of the operator's on another machine reviews through the relay, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head. The line says `no session on this machine`, or, while the relay is on and has polled the repository within the last hour, `no session on this machine or on your other machines that share this repository's relay`; see [What a presence carries](#what-a-presence-carries) |
+ | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed; under a repository subscription, only once the pull request is ready for review |
+ | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
+ | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
+@@ -3612,10 +3612,62 @@ rejection:
+ | `relay-id-mismatch` | relay ID mismatch | A presence whose relay ID is not its ref's |
+ | `recipient-mismatch` | recipient mismatch | A message whose recipient is not its ref's |
+ | `message-id-mismatch` | message ID mismatch | A message whose ID is not its ref's |
+-| `field-shape` | field shape | A record with a missing field or a field that is not the shape `register` or `send` gives it |
++| `field-shape` | field shape | A record with a missing field or a field that is not the shape `register` or `send` gives it, including a presence that names a review target outside its own repository |
+ | `expired` | expired | A message 7 days old |
+ | `collision` | ID collision | A message under the ID of a different message already delivered |
+ 
++### What a presence carries
++
++A presence is the session's registration, as `project agent list --json`
++prints it, with its lease and a `reviews` field. Each time the relay
++encrypts the presence, it fills `reviews` with what the session reviews in
++the repository the relay publishes the presence into, with each entry's
++`target` and `model`:
++
++- **Each `review` subscription in that repository.** The target is
++  `owner/repo` for a review of the repository, or `owner/repo#number` for
++  one pull request.
++- **Each pull request the session's review of the repository adopted.**
++  GitHub drops a review request once the login reviews, so another machine
++  cannot tell from GitHub that the review still covers a pull request it
++  adopted because the pull request requested the operator.
++- **Each pull request the session dropped** with `project watch drop`, with
++  `"excluded": true`.
++
++```json
++"reviews": [
++  {"target": "acme/app#14", "model": "claude-opus-5-5", "excluded": true},
++  {"target": "acme/app", "model": "claude-opus-5-5"},
++  {"target": "acme/app#15", "model": "claude-opus-5-5"}
++]
++```
++
++A presence never names a review target in another repository, as the
++generated summary names none, because the repository the presence is
++published into can be public while another one the session reviews is
++private. A machine rejects a presence whose `reviews` names another
++repository, as `field-shape`. The list holds at most 32 entries, exclusions
++first and then reviews of a whole repository, so a session with more never
++appears to review a pull request it dropped. When `reviews` changes, as
++when the session's review subscriptions change or its review of the
++repository adopts a pull request, the daemon publishes the presence again on
++its next poll, whether or not the summary is the generated one. A session
++registered before Projector published `reviews` gains them the same way,
++without registering again.
++
++The watch daemon reads `reviews` to decide `UNREVIEWED`. A pull request has
++a reviewer on another machine when a live presence of the operator's login,
++from a machine other than this one, names the pull request, or names its
++repository and the pull request is one a repository review covers here: the
++operator wrote it, it requests the operator's review, or a review of the
++repository on this machine adopted it before. The daemon looks
++only while this machine holds the key and the relay has polled the
++repository within the last hour, and then the `UNREVIEWED` line says `no
++session on this machine or on your other machines that share this
++repository's relay`. A reviewer on another machine takes no role here and
++changes no other event. A presence from an earlier version of Projector has
++no `reviews`, and reviews nothing.
++
+ ## Change a loop's tracked file
+ 
+ A watch or review loop reads its tracked file, one `owner/repo#number` a
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 77084e67..f74453d4 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -577,18 +577,21 @@ role are these:
+   builds on that head's full review. Any other review of an earlier head,
+   and a Projector review that lists none, report nothing.
+ - **`UNREVIEWED`** reports, once per head, a pull request ready for review
+-  whose head is not signed off and that no session on this machine reviews.
+-  The daemon sees only this machine's sessions, so a session on another
+-  machine may review the pull request before it posts its start comment.
+-  Tell the user once that no session on this machine reviews it, and that
+-  `review-pr` or `review-repo` would, unless they review it elsewhere. Never
+-  say that no session reviews it at all. It is not work: any work behind it
+-  arrives as its own `FINDING`, `VERDICT`, `CONFLICT`, `CHECKS`, or `REVIEW`
+-  line. A
+-  draft reports nothing, because it waits on its author, and so does a pull
+-  request that a session here reviews, or that a live start comment from the
+-  operator or another account whose review would count shows under review
+-  elsewhere; it waits for that review.
++  whose head is not signed off and that no session the daemon can see
++  reviews. The line names what it saw: `no session on this machine`, or,
++  while the relay carries the repository, `no session on this machine or on
++  your other machines that share this repository's relay`. A session on a
++  machine outside that scope may still review the pull request before it
++  posts its start comment. Tell the user once what the line says, in its
++  scope, and that `review-pr` or `review-repo` would review it, unless they
++  review it elsewhere. Never say that no session reviews it at all. It is
++  not work: any work behind it arrives as its own `FINDING`, `VERDICT`,
++  `CONFLICT`, `CHECKS`, or `REVIEW` line. A draft reports nothing, because
++  it waits on its author, and so does a pull request that a session here
++  reviews, that a session of the operator's on another machine reviews
++  through the relay, or that a live start comment from the operator or
++  another account whose review would count shows under review elsewhere; it
++  waits for that review.
+ - **`LABEL`** reports that a review added or removed the `clean` or
+   `reviewing` label, as `+clean` or `-reviewing`. It is not work. On
+   `+clean`, tell the user that a review signed off the head. The other
+diff --git a/src/projector/agents.py b/src/projector/agents.py
+index efe1cb4c..900c1b7c 100644
+--- a/src/projector/agents.py
++++ b/src/projector/agents.py
+@@ -25,7 +25,7 @@
+ import socket
+ import uuid
+ from pathlib import Path
+-from typing import Callable, Optional
++from typing import Callable, Iterable, Optional
+ 
+ from . import codex_watch, relay, review, watch
+ from .config import MINIMUMS, Config
+@@ -39,8 +39,11 @@
+ UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+ # A model ID has no space or parenthesis, so the model `event_line` prints before its notice cannot read as prose.
+ MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}$")
++# A review target in a presence: a repository, or one of its pull requests.
++TARGET = re.compile(rf"^({watch.REPO})(?:#([1-9][0-9]*))?$")
+ MAX_SUMMARY = 120
+ MAX_MODEL = 100
++MAX_REVIEWS = 32
+ MAX_TEXT = 16 * 1024
+ PREVIEW = 160
+ MESSAGE_LIMIT = 12
+@@ -364,29 +367,64 @@ def generated_summary(lines: list[watch.Subscription], repo: Optional[str]) -> O
+     return text[:1].upper() + text[1:] or None
+ 
+ 
+-def refresh_summary(folder: Path, lines: list[str], now: float) -> None:
+-    """Make a generated summary agree with the session's subscriptions, `lines`, and mark the session's
+-    presence for the relay to publish again. The caller holds the session's lock."""
++def review_targets(lines: list[watch.Subscription], repo: Optional[str], adopted: Iterable[int] = ()) -> list[dict]:
++    """What the session reviews in its own repository, for its presence: each `review` line's target and model,
++    with `excluded` on a pull request the session dropped, and each pull request in `adopted`, which a review of
++    the repository adopted, under that review's model. GitHub drops a review request once the login reviews, so
++    another machine cannot tell from GitHub alone that the review still covers such a pull request. Only that
++    repository is ever named, as in the summary. The list keeps at most `MAX_REVIEWS` entries, exclusions first,
++    then whole repositories, so the entries a cap drops can only make the session look like it reviews less."""
++    if not repo:
++        return []
++    lines = sorted((line for line in lines if line.role == "review" and line.repo.lower() == repo.lower()
++                    and shaped(line.model, MODEL_ID)),
++                   key=lambda line: (not line.excluded, line.number is not None, line.number or 0))
++    dropped = {(line.number, review.identity(line.model or "")) for line in lines if line.excluded}
++    found: list[dict] = []
++    for line in lines:
++        entry = {"target": repo if line.number is None else f"{repo}#{line.number}", "model": line.model,
++                 **({"excluded": True} if line.excluded else {})}
++        if entry not in found:
++            found.append(entry)
++    for line in lines:
++        if line.number is None and not line.excluded:
++            for number in sorted(adopted):
++                entry = {"target": f"{repo}#{number}", "model": line.model}
++                if entry not in found and (number, review.identity(line.model or "")) not in dropped:
++                    found.append(entry)
++    return found[:MAX_REVIEWS]
++
++
++def refresh_registration(folder: Path, before: list[str], after: list[str], now: float) -> None:
++    """Make a generated summary agree with the session's subscriptions, which changed from `before` to `after`,
++    and mark the session's presence for the relay to publish again when its summary or its review targets
++    changed. The caller holds the session's lock."""
+     found = read_json(folder / "agent.json")
+-    if not found or found.get("schema_version") != 1 or found.get("summary_auto") is not True:
++    if not found or found.get("schema_version") != 1:
+         return
+-    parsed = [line for line in map(watch.Subscription.parse, lines) if line is not None and not line.excluded]
+-    summary = generated_summary(parsed, found.get("repo"))
+-    if summary == found.get("summary"):
++    repo = found.get("repo")
++    old, current = ([line for line in map(watch.Subscription.parse, lines) if line is not None]
++                    for lines in (before, after))
++    new = dict(found)
++    if found.get("summary_auto") is True:
++        new.pop("summary", None)
++        if summary := generated_summary([line for line in current if not line.excluded], repo):
++            new["summary"] = summary
++    if new == found and review_targets(old, repo) == review_targets(current, repo):
+         return
+-    new = {key: value for key, value in found.items() if key != "summary"}
+-    new.update({**({"summary": summary} if summary else {}), "updated_at": watch.stamp(now),
+-                **({"relay": "pending"} if found.get("relay") == "published" else {})})
++    new.update({"updated_at": watch.stamp(now), **({"relay": "pending"} if found.get("relay") == "published" else {})})
+     write_json(folder / "agent.json", new)
+ 
+ 
+ def mark_published(root: Path, session: str, landed: Optional[str]) -> None:
+     """Mark the session's presence published when the presence that landed, by its digest, says what the
+-    registration says now. A summary refreshed while an older presence waited to be pushed stays pending."""
++    registration and the subscriptions say now. A summary or review target that changed while an older presence
++    waited to be pushed stays pending."""
+     folder = watch.session_folder(root, session)
+     with locked(folder):
+         found = record(root, session)
+-        if found and found.get("relay") != "published" and relay.digest(relay.presence(session, found, 0)) == landed:
++        if found and found.get("relay") != "published" \
++                and relay.digest(relay.presence(root, session, found, 0)) == landed:
+             write_json(folder / "agent.json", {**found, "relay": "published"})
+ 
+ 
+@@ -643,10 +681,22 @@ def well_formed(message: dict) -> bool:
+             and isinstance(text, str) and bool(text.strip()) and len(text.encode("utf-8")) <= MAX_TEXT)
+ 
+ 
++def review_entry(entry: object, repo: object) -> bool:
++    """Whether an entry of a presence's `reviews` is in the shape `review_targets` gives it, naming `repo`."""
++    if not isinstance(entry, dict) or not isinstance(repo, str) or not shaped(entry.get("model"), MODEL_ID) \
++            or not isinstance(entry.get("target"), str) or (found := TARGET.fullmatch(entry["target"])) is None:
++        return False
++    return found[1].lower() == repo.lower() and entry.get("excluded") in ((None, True) if found[2] else (None,))
++
++
+ def well_formed_presence(found: dict) -> bool:
+     """Whether another machine's registration holds each field `list`, `send`, and `read` print, in the shape
+-    `register` gives it."""
+-    return (shaped(found.get("name"), NAME, optional=True) and shaped(found.get("model"), MODEL_ID, optional=True)
++    `register` gives it, and review targets only in its own repository. A presence from a version before review
++    targets has no `reviews`."""
++    reviews = found.get("reviews")
++    return ((reviews is None or isinstance(reviews, list) and len(reviews) <= MAX_REVIEWS
++             and all(review_entry(entry, found.get("repo")) for entry in reviews))
++            and shaped(found.get("name"), NAME, optional=True) and shaped(found.get("model"), MODEL_ID, optional=True)
+             and found.get("host") in HOSTS
+             and (found.get("summary") is None or plain_line(found["summary"], MAX_SUMMARY))
+             and plain_line(found.get("machine_name"), 64) and plain_line(found.get("cwd"), 4096)
+diff --git a/src/projector/relay.py b/src/projector/relay.py
+index 69f61b55..e3c2d603 100644
+--- a/src/projector/relay.py
++++ b/src/projector/relay.py
+@@ -419,6 +419,25 @@ def remote_agents(root: Path, now: float, repos: Optional[set[str]] = None) -> d
+     return found
+ 
+ 
++def remote_reviews(root: Path, repo: str, login: str, now: float) -> Optional[list[list[dict]]]:
++    """The review targets of each live presence of `login` from another machine in the relay's cache for `repo`,
++    one list for each presence, or None when the relay has not polled the repository within a lease. A presence
++    from a version before review targets reviews nothing."""
++    cache = read_cache(root, repo)
++    polled = watch.seconds_of(cache["polled_at"])
++    if polled is None or now - polled >= LEASE:
++        return None
++    machine = agents.this_machine(root)
++    found = []
++    for agent in cache["agents"].values():
++        if (isinstance(agent, dict) and str(agent.get("login") or "").lower() == login.lower()
++                and agent.get("machine") != machine and isinstance(agent.get("expires_at"), (int, float))
++                and agent["expires_at"] > now):
++            reviews = agent.get("reviews") if isinstance(agent.get("reviews"), list) else []
++            found.append([entry for entry in reviews if agents.review_entry(entry, repo)])
++    return found
++
++
+ # The outbox
+ 
+ def read_outbox(path: Path) -> dict:
+@@ -472,9 +491,14 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
+             write_json(path, box)
+ 
+ 
+-def presence(session: str, found: dict, now: float) -> dict:
++def presence(root: Path, session: str, found: dict, now: float) -> dict:
++    """The session's presence: its registration, what it reviews in the registration's repository as its
++    subscriptions and this machine's adoptions say when the presence is sealed, and its lease."""
+     record = {key: value for key, value in found.items() if key not in ("relay", "ended_at", "summary_auto")}
+-    return {**record, "session": session, "expires_at": now + LEASE}
++    repo = found.get("repo")
++    reviews = agents.review_targets(watch.subscriptions(watch.session_folder(root, session)), repo,
++                                    watch.read_adopted(root, repo)[0] if repo else ())
++    return {**record, "reviews": reviews, "session": session, "expires_at": now + LEASE}
+ 
+ 
+ def seal(key: Key, record: dict) -> dict:
+@@ -483,7 +507,7 @@ def seal(key: Key, record: dict) -> dict:
+ 
+ def publish(root: Path, session: str, found: dict, key: Key, now: float) -> None:
+     """Queue the session's sealed presence."""
+-    record = presence(session, found, now)
++    record = presence(root, session, found, now)
+     queue(root, found["repo"], found["cwd"], [(presence_ref(key.id, found["relay_id"]), seal(key, record),
+                                                presence_meta(record))], now)
+ 
+@@ -893,11 +917,15 @@ def maintain(self) -> None:
+             ref = presence_ref(self.key.id, relay_id)
+             # A session can unregister while this job runs, so its mark is checked again here.
+             if name in self.live and not agents.unregistered(watch.session_folder(self.root, name)):
+-                expires = (self.cache["seen"].get(ref) or {}).get("expires_at")
++                record = presence(self.root, name, found, self.now)
++                seen = self.cache["seen"].get(ref) or {}
++                expires = seen.get("expires_at")
++                # A presence says what the subscriptions and adoptions say now, so one that changes, as when a
++                # review of the repository adopts a pull request, is pushed again without waiting for its renewal.
+                 due = ref not in self.cache["remote"] or not isinstance(expires, (int, float)) \
+-                    or expires - self.now < RENEW or found.get("relay") == "pending"
++                    or expires - self.now < RENEW or found.get("relay") == "pending" \
++                    or seen.get("digest") not in (None, digest(record))
+                 if due and ref not in queued:
+-                    record = presence(name, found, self.now)
+                     self.changes.append((ref, seal(self.key, record), presence_meta(record)))
+                 continue
+             self.delete(ref)
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 2bfdc4f1..15ba3628 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -165,6 +165,14 @@ def cache_dir(root: Path, repo: str) -> Path:
+     return root / "cache" / repo.lower()
+ 
+ 
++def read_adopted(root: Path, repo: str) -> tuple[set[int], set[int]]:
++    """The pull requests this machine's reviews of the repository adopted, and those it saw close."""
++    record = read_json(cache_dir(root, repo) / "adopted.json") or {}
++    numbers, closed = ({number for number in record.get(key) or [] if isinstance(number, int)}
++                       for key in ("numbers", "closed"))
++    return numbers, closed
++
++
+ def pull_cache(root: Path, repo: str, number: int) -> Path:
+     return cache_dir(root, repo) / "pulls" / f"{number}.json"
+ 
+@@ -301,7 +309,7 @@ def edit_subscriptions(folder: Path, edit: Callable[[list[str]], list[str]]) ->
+         if after != before:
+             write_text(folder / "subscriptions", "".join(f"{line}\n" for line in after))
+             with contextlib.suppress(OSError):
+-                agents.refresh_summary(folder, after, time.time())
++                agents.refresh_registration(folder, before, after, time.time())
+ 
+ 
+ def parse_target(text: str) -> tuple[str, Optional[int]]:
+@@ -1109,6 +1117,9 @@ def __init__(self, daemon: Daemon, now: float, now_mono: float) -> None:
+         self.lock_lists: dict[tuple[str, int], list] = {}
+         self.stalled_roles: set[tuple[tuple[str, int], str]] = set()
+         self.stall_keys: dict[tuple[tuple[str, int], str], list] = {}
++        # By repository, what `adopt` found, and the review targets of the operator's sessions on other machines.
++        self.covering: dict[str, Optional[set[int]]] = {}
++        self.remote: dict[str, Optional[list[list[dict]]]] = {}
+ 
+     def tell(self, session: str, *lines: str) -> None:
+         self.outbox.setdefault(session, []).extend(lines)
+@@ -1124,6 +1135,7 @@ def run(self) -> None:
+                 self.lose_repository(spelling, lines)
+             else:
+                 adopted[repo] = numbers
++        self.covering.update(adopted)
+         roles, spellings = self.claims(lines, adopted)
+         fixed = {pull for pull, name in roles if name == "fix"}
+         results = {}
+@@ -1183,9 +1195,7 @@ def adopt(self, repo: str) -> Optional[set[int]]:
+ 
+         GitHub drops a review request once the login reviews, so a pull request stays adopted after."""
+         folder = cache_dir(self.root, repo)
+-        record = read_json(folder / "adopted.json") or {}
+-        adopted = {number for number in record.get("numbers") or [] if isinstance(number, int)}
+-        closed = {number for number in record.get("closed") or [] if isinstance(number, int)}
++        adopted, closed = read_adopted(self.root, repo)
+         operator = (self.daemon.operator or "").lower()
+         if not operator:
+             return adopted
+@@ -1533,23 +1543,26 @@ def standing(key: str, first: str, again: Optional[str], revision: object = None
+             kept[key] = last
+ 
+         head = pr.get("headRefOid") or ""
+-        # This machine sees only its own sessions, so a review running elsewhere shows only as its live start
+-        # comment, and the event says nothing about a machine it cannot see. Anyone can comment on a public
+-        # repository, so only an account whose review would count can hold the event back. Held back, the head
+-        # keeps its key, so it is still announced only once. A draft waits on its author, not on a review.
++        # This machine sees its own sessions, and, through the relay, the review targets of the operator's sessions
++        # on other machines. A review running anywhere else shows only as its live start comment, and the event
++        # says nothing about a machine it cannot see. Anyone can comment on a public repository, so only an account
++        # whose review would count can hold the event back. Held back, the head keeps its key, so it is still
++        # announced only once. A draft waits on its author, not on a review.
+         unreviewed = f"unreviewed:{number}:{head}"
+         if not pr.get("isDraft") and not reviewers \
+                 and not head_sign_off(pr, head, self.daemon.operator or "", visibility)["signed_off"]:
+             starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
+                       for comment, _ in self.live_starts(pr, head)]
+-            if review.counted_reviews(starts, self.daemon.operator or "", visibility):
++            if review.counted_reviews(starts, self.daemon.operator or "", visibility) \
++                    or self.reviewed_remotely(repo, number):
+                 if unreviewed in announced:
+                     kept[unreviewed] = announced[unreviewed]
+             else:
++                scope = "this machine" if self.remote_reviews(repo) is None else \
++                    "this machine or on your other machines that share this repository's relay"
+                 standing(unreviewed,
+                          f"UNREVIEWED {ref} head={head[:8]}: ready for review, its head is not signed off, and no "
+-                         f"session on this machine reviews it — tell the user that no session on this machine "
+-                         f"reviews {ref}",
++                         f"session on {scope} reviews it — tell the user that no session on {scope} reviews {ref}",
+                          None)
+         conflict = f"conflict:{number}:{head}"
+         mergeable = pr.get("mergeable") or "UNKNOWN"
+@@ -1613,6 +1626,39 @@ def standing(key: str, first: str, again: Optional[str], revision: object = None
+         self.states[session].data["fix"][label] = kept
+         return lines + self.route_labels(session, label, ref, pr, head)
+ 
++    def remote_reviews(self, repo: str) -> Optional[list[list[dict]]]:
++        """The review targets of the operator's live sessions on other machines that share the repository's relay,
++        one list for each session, or None when the relay is not on for the repository."""
++        name = repo.lower()
++        if name not in self.remote:
++            from . import relay
++            self.remote[name] = None if self.daemon.relay.key is None or not self.daemon.operator else \
++                relay.remote_reviews(self.root, repo, self.daemon.operator, self.now)
++        return self.remote[name]
++
++    def reviewed_remotely(self, repo: str, number: int) -> bool:
++        """Whether a session on another machine reviews the pull request: by its number, or by a review of the
++        repository that covers it as `adopt` decides for this machine's sessions, unless the session dropped the
++        pull request from that model's review."""
++        pull = f"{repo}#{number}".lower()
++        for entries in self.remote_reviews(repo) or []:
++            dropped = {review.identity(entry["model"]) for entry in entries
++                       if entry.get("excluded") and entry["target"].lower() == pull}
++            for entry in entries:
++                if entry.get("excluded") or review.identity(entry["model"]) in dropped:
++                    continue
++                target = entry["target"].lower()
++                if target == pull or target == repo.lower() and number in self.covered(repo):
++                    return True
++        return False
++
++    def covered(self, repo: str) -> set[int]:
++        """The pull requests a review of the repository covers, which `adopt` reads once a pass."""
++        name = repo.lower()
++        if name not in self.covering:
++            self.covering[name] = self.adopt(repo)
++        return self.covering[name] or set()
++
+     def route_labels(self, session: str, label: str, ref: str, pr: dict, head: str) -> list[str]:
+         """A LABEL line for each review label added or removed since the owner last saw the pull request. The
+         first look, and the first after the role moves, records the labels and announces nothing, because a line
+diff --git a/tests/test_relay.py b/tests/test_relay.py
+index be0f706b..2c83175b 100644
+--- a/tests/test_relay.py
++++ b/tests/test_relay.py
+@@ -20,6 +20,7 @@
+ import signal
+ import subprocess
+ import sys
++import tempfile
+ import threading
+ import time
+ import tomllib
+@@ -30,13 +31,14 @@
+ from unittest import mock
+ 
+ from projector import agents, cli, codex_watch as codex, config, crypto, keychain, relay, watch
+-from projector.inbox import read_json, try_lock, unlock
++from projector.inbox import read_json, try_lock, unlock, write_json
+ from tests.scratch import copy_of
+ from tests.test_watch import FakeGitHub
+ 
+ A = "a1b2c3d4-0000-4000-8000-00000000000a"
+ B = "b5e6f7a8-0000-4000-8000-00000000000b"
+ C = "c9d0e1f2-0000-4000-8000-00000000000c"
++D = "d1e2f3a4-0000-4000-8000-00000000000d"
+ URL = "git@github.com:acme/app.git"
+ LOGIN = "octocat"
+ EMAIL = "octocat@private.example"
+@@ -638,7 +640,7 @@ def test_each_rejection_records_the_reason_the_relay_rejected_it_for(self) -> No
+         message = lambda number, **fields: self.message(f"m-{number:032x}", to=b, **fields)
+         flipped = json.loads(self.sealed(message(7)))
+         flipped["tag"] = crypto.encode(bytes(32))
+-        presence = relay.presence(B, agents.record(self.two.root, B), self.now)
++        presence = relay.presence(self.two.root, B, agents.record(self.two.root, B), self.now)
+         planted = {
+             f"refs/projector/inbox/{self.key.id}/{b}/not-a-message": ({"sealed.json": self.sealed(message(1))},
+                                                                        "ref-name"),
+@@ -1816,6 +1818,160 @@ def test_a_deletion_that_fails_once_delivers_the_message_only_once(self) -> None
+         self.assertEqual([], [ref for ref in self.refs() if ref.startswith(relay.INBOX)])
+ 
+ 
++RELAYED_UNREVIEWED = ("UNREVIEWED acme/app#{number} head=aaaaaaaa: ready for review, its head is not signed off, and "
++                      "no session on this machine or on your other machines that share this repository's relay "
++                      "reviews it — tell the user that no session on this machine or on your other machines that "
++                      "share this repository's relay reviews acme/app#{number}")
++
++
++class RemoteReviewerTests(RelayCase):
++    """B on machine two reviews, and C on machine one fixes and hears UNREVIEWED for what no session reviews."""
++
++    def review_on_two(self, *targets: str, command: str = "add", session: str = B) -> None:
++        """Change the review subscriptions of a session on two, B by default, then let two publish its presence and
++        one fetch it."""
++        reviewer = ["--reviewer", LOGIN] if command == "add" else []
++        self.two.claude(session)
++        for target in targets:
++            code, _, err = self.two.project("watch", command, target, "--role", "review", "--model", "gpt-5.5",
++                                            *reviewer, claude=session)
++            self.assertEqual(0, code, err)
++        self.two.run_pass()
++        self.one.run_pass()
++
++    def fix_on_one(self, *numbers: int) -> list[str]:
++        """Subscribe C to fix each pull request, run one pass, and answer the UNREVIEWED lines C hears."""
++        self.one.claude(C)
++        for number in numbers:
++            code, _, err = self.one.project("watch", "add", f"acme/app#{number}", claude=C)
++            self.assertEqual(0, code, err)
++        self.one.run_pass()
++        return [line for line in self.one.events(C) if line.startswith("UNREVIEWED")]
++
++    def b_reviews(self) -> Optional[list]:
++        """What machine one's relay cache says B reviews, or None when it holds no presence of B."""
++        found = relay.read_cache(self.one.root, "acme/app")["agents"].get(self.b_relay_id())
++        return None if found is None else found.get("reviews")
++
++    def test_a_review_of_the_repository_on_another_machine_holds_back_unreviewed_for_what_it_covers(self) -> None:
++        self.pair()
++        self.github.pull_request(12, author=LOGIN)
++        self.github.pull_request(13, author="teammate")
++        self.review_on_two("acme/app")
++
++        heard = self.fix_on_one(12, 13)
++
++        self.assertEqual([RELAYED_UNREVIEWED.format(number=13)], heard,
++                         "#13 is neither the operator's nor requests them, so a review of acme/app does not cover it")
++
++    def test_a_pull_request_a_remote_review_of_the_repository_adopted_stays_covered_once_its_request_clears(
++            self) -> None:
++        self.pair()
++        self.github.pull_request(14, author="teammate")
++        self.review_on_two("acme/app")
++        # The teammate asks the operator for a review, so two's review of acme/app adopts #14 on its next pass.
++        self.github.pull_request(14, author="teammate", requested=[LOGIN])
++        self.two.run_pass()
++        self.one.run_pass()
++        # Two's review clears the request, and only two's record of the adoption says it still reviews #14.
++        self.github.pull_request(14, author="teammate")
++
++        heard = self.fix_on_one(14)
++
++        self.assertEqual([], heard)
++
++    def test_a_review_of_one_pull_request_by_a_session_its_subscription_registered_holds_back_only_that_one(
++            self) -> None:
++        self.pair()
++        for number in (12, 13):
++            self.github.pull_request(number, author=LOGIN)
++        self.review_on_two("acme/app#12", session=D)
++
++        heard = self.fix_on_one(12, 13)
++
++        self.assertEqual([RELAYED_UNREVIEWED.format(number=13)], heard)
++
++    def test_a_presence_never_names_a_review_target_in_another_repository(self) -> None:
++        self.pair()
++        self.github.repository("other/secret", visibility="PRIVATE")
++        self.github.pull_request(12, author=LOGIN)
++        self.github.pull_request(4, repo="other/secret", author=LOGIN)
++
++        self.review_on_two("acme/app#12", "other/secret#4", "other/secret")
++        sealed = json.loads(git("show", f"{relay.presence_ref(self.key.id, self.b_relay_id())}:sealed.json",
++                                cwd=self.origin))
++        plaintext = crypto.unseal(self.private, sealed)[1].decode()
++
++        self.assertNotIn("other/secret", plaintext)
++        self.assertEqual([{"target": "acme/app#12", "model": "gpt-5.5"}], self.b_reviews())
++
++    def test_a_registration_an_older_version_wrote_publishes_its_review_targets_without_registering_again(
++            self) -> None:
++        self.pair()
++        self.github.repository("acme/app")
++        folder = watch.session_folder(self.two.root, B)
++        # An older version subscribed B to review acme/app and wrote B's registration with no review targets.
++        watch.write_text(folder / "subscriptions", f"acme/app review gpt-5.5 {LOGIN}\n")
++        found = agents.record(self.two.root, B)
++        found.pop("reviews", None)
++        write_json(folder / "agent.json", found)
++
++        self.two.run_pass()
++        self.one.run_pass()
++
++        self.assertEqual([{"target": "acme/app", "model": "gpt-5.5"}], self.b_reviews())
++
++    def test_changing_a_review_subscription_republishes_a_presence_whose_summary_the_session_wrote(self) -> None:
++        self.pair()
++        self.github.pull_request(12, author=LOGIN)
++
++        self.review_on_two("acme/app#12")
++        added = self.b_reviews()
++        self.review_on_two("acme/app#12", command="remove")
++
++        self.assertEqual([{"target": "acme/app#12", "model": "gpt-5.5"}], added)
++        self.assertEqual([], self.b_reviews())
++
++    def test_a_presence_from_a_version_before_review_targets_is_kept_and_reviews_nothing(self) -> None:
++        self.pair()
++        self.github.pull_request(12, author=LOGIN)
++        relay_id = "d" * 16
++        older = {key: value for key, value in relay.presence(self.two.root, D, agents.record(self.two.root, B),
++                                                             self.now).items() if key != "reviews"}
++        older.update(relay_id=relay_id, name="older-peer")
++        self.plant(relay.presence_ref(self.key.id, relay_id),
++                   {"sealed.json": json.dumps(crypto.seal(self.private, self.key.public,
++                                                          json.dumps(older).encode())).encode()})
++        self.one.run_pass()
++
++        heard = self.fix_on_one(12)
++
++        self.assertEqual(0, self.one.status()["repositories"]["acme/app"]["rejected"])
++        self.assertIn("older-peer", self.one.project("agent", "list", claude=A)[1])
++        self.assertEqual([RELAYED_UNREVIEWED.format(number=12)], heard)
++
++
++class PresenceSizeTests(unittest.TestCase):
++    def test_a_presence_with_every_field_at_its_longest_and_more_reviews_than_the_cap_fits_the_relays_limit(
++            self) -> None:
++        repo = f"{'o' * 39}/{'r' * 216}"
++        lines = [watch.Subscription(repo, None, "review", "m" * 100, "octocat")] + [
++            watch.Subscription(repo, 10 ** 9 + index, "review", f"{'m' * 99}{index % 10}", "octocat",
++                               excluded=index % 2 == 0) for index in range(agents.MAX_REVIEWS * 2)]
++        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
++        watch.write_text(watch.session_folder(root, A) / "subscriptions", "".join(f"{line.text}\n" for line in lines))
++        found = {"schema_version": 1, "login": "l" * 39, "name": "n" * 32, "summary": "s" * agents.MAX_SUMMARY,
++                 "model": "m" * 100, "host": "claude", "machine": A, "machine_name": "h" * 64, "cwd": "c" * 4096,
++                 "repo": repo, "branch": "b" * 256, "relay_id": "0" * 16, "registered_at": watch.stamp(0),
++                 "updated_at": watch.stamp(0)}
++
++        record = relay.presence(root, A, found, 0)
++        sealed = json.dumps(relay.seal(relay.Key(bytes(range(1, 33)), "inline"), record), sort_keys=True)
++
++        self.assertTrue(agents.well_formed_presence(record))
++        self.assertLessEqual(len(sealed.encode()), relay.MAX_SEALED)
++
++
+ class KeychainDaemonTests(RelayCase):
+     def finds(self) -> list[dict]:
+         return [call for call in self.keychain_calls() if call["argv"][:1] == ["find-generic-password"]]
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index 96c9760e..3eedf545 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -30,8 +30,8 @@
+ from unittest import mock
+ from urllib.parse import parse_qsl, unquote, urlsplit
+ 
+-from projector import cli, review, watch
+-from projector.inbox import read_json, try_lock, unlock
++from projector import agents, cli, relay, review, watch
++from projector.inbox import read_json, try_lock, unlock, write_json
+ 
+ SHA_A = "a" * 40
+ SHA_B = "b" * 40
+@@ -477,7 +477,7 @@ def new_head(number: int, ref: str, old: str, new: str, session: str) -> str:
+             f"{review_action(number, session)}")
+ 
+ 
+-NO_REVIEWER = ", and no session on this machine reviews it"
++RELAYED = " or on your other machines that share this repository's relay"
+ 
+ 
+ def label(change: str, number: int = 1, head: str = SHA_A) -> str:
+@@ -485,9 +485,10 @@ def label(change: str, number: int = 1, head: str = SHA_A) -> str:
+     return f"LABEL acme/app#{number} {change} head={head[:8]}: {meaning}"
+ 
+ 
+-def unreviewed(number: int, head: str = SHA_A) -> str:
+-    return (f"UNREVIEWED acme/app#{number} head={head[:8]}: ready for review, its head is not signed off{NO_REVIEWER} "
+-            f"— tell the user that no session on this machine reviews acme/app#{number}")
++def unreviewed(number: int, head: str = SHA_A, relayed: bool = False) -> str:
++    scope = f"this machine{RELAYED if relayed else ''}"
++    return (f"UNREVIEWED acme/app#{number} head={head[:8]}: ready for review, its head is not signed off, and no "
++            f"session on {scope} reviews it — tell the user that no session on {scope} reviews acme/app#{number}")
+ 
+ 
+ class FixRoleTests(WatchCase):
+@@ -608,6 +609,69 @@ def test_a_session_that_fixes_and_reviews_a_pull_request_hears_no_unreviewed(sel
+ 
+         self.assertEqual([new_pr(1, "feature", "fixer")], events["fixer"])
+ 
++    def relay_cache(self, *presences: dict, polled: Optional[float] = None, key: bool = True) -> None:
++        """Turn the relay on, unless `key` is false, with its cache of acme/app polled at `polled`, now by default,
++        holding `presences`, as a relay job caches other machines' agents."""
++        self.daemon.relay.key = relay.Key(bytes(range(1, 33)), "inline") if key else None
++        path = relay.repo_file(self.root, "relay", "acme/app")
++        path.parent.mkdir(parents=True, exist_ok=True)
++        write_json(path, {"repo": "acme/app", "polled_at": watch.stamp(self.clock.wall() if polled is None else polled),
++                          "agents": {f"{index:016x}": found for index, found in enumerate(presences)}})
++
++    def presence(self, *targets: str, login: str = "operator", machine: str = "0b8e6a52-0000-4000-8000-000000000002",
++                 expires: Optional[float] = None, excluded: tuple[str, ...] = ()) -> dict:
++        """A presence from another machine, live unless `expires` says otherwise, whose session reviews `targets`
++        and dropped `excluded`."""
++        return {"session": "b5e6f7a8-0000-4000-8000-00000000000b", "login": login, "machine": machine,
++                "repo": "acme/app", "expires_at": self.clock.wall() + 3600 if expires is None else expires,
++                "reviews": [*({"target": target, "model": MODEL, "excluded": True} for target in excluded),
++                            *({"target": target, "model": MODEL} for target in targets)]}
++
++    def test_unreviewed_names_the_other_machines_only_while_the_relay_holds_the_key_and_polls_the_repository(
++            self) -> None:
++        for number in (1, 2, 3):
++            self.github.pull_request(number, draft=False)
++        self.relay_cache()
++        self.fixer("acme/app#1 fix")
++        polled = self.cycle()["fixer"]
++        self.relay_cache(polled=self.clock.wall() - relay.LEASE)
++        self.fixer("acme/app#2 fix")
++        stale = self.cycle()["fixer"]
++        self.relay_cache(key=False)
++        self.fixer("acme/app#3 fix")
++        off = self.cycle()["fixer"]
++
++        self.assertEqual([unreviewed(1, relayed=True)], polled)
++        self.assertEqual([unreviewed(2)], stale, "a cache a lease old says nothing about the other machines")
++        self.assertEqual([unreviewed(3)], off)
++
++    def test_only_a_live_presence_of_the_operator_from_another_machine_holds_back_unreviewed(self) -> None:
++        self.github.pull_request(1, draft=False)
++        self.github.pull_request(2, draft=False)
++        self.fixer("acme/app#1 fix", "acme/app#2 fix")
++        self.relay_cache(self.presence("acme/app#1", expires=self.clock.wall() - 1),
++                         self.presence("acme/app#1", login="teammate"),
++                         self.presence("acme/app#1", machine=agents.this_machine(self.root)),
++                         self.presence("acme/app#2"))
++
++        events = self.cycle()
++
++        self.assertEqual([unreviewed(1, relayed=True)], events["fixer"])
++
++    def test_a_remote_review_of_the_repository_covers_only_what_the_operator_wrote_or_is_asked_to_review(
++            self) -> None:
++        self.github.pull_request(1, draft=False)
++        self.github.pull_request(2, draft=False, author="teammate")
++        self.github.pull_request(3, draft=False, author="teammate", requested=["operator"])
++        self.github.pull_request(4, draft=False)
++        self.relay_cache(self.presence("acme/app", excluded=("acme/app#4",)))
++        self.fixer("acme/app#1 fix", "acme/app#2 fix", "acme/app#3 fix", "acme/app#4 fix")
++
++        events = self.cycle()
++
++        self.assertEqual([unreviewed(2, relayed=True), unreviewed(4, relayed=True)], events["fixer"],
++                         "#2 neither is the operator's nor requests them, and the remote session dropped #4")
++
+     def test_reports_each_review_label_added_or_removed_after_the_first_look(self) -> None:
+         self.github.pull_request(1, labels=["clean", "bug"])
+         self.fixer("acme/app#1 fix")

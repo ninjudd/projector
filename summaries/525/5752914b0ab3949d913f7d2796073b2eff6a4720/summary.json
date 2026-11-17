@@ -1,0 +1,120 @@
+{
+ "version": 1,
+ "name": "Remote reviewer coverage",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 525,
+  "title": "Count a reviewer on another machine before reporting a pull request unreviewed",
+  "head": "5752914b0ab3949d913f7d2796073b2eff6a4720",
+  "headRef": "count-remote-reviewers",
+  "base": "40d89216306ee2e1399d0b9b10de281825cea17e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The watch daemon tells a pull request’s fixer when its ready head has no reviewer it can see. A reviewer waiting on another machine was invisible between reviews, which made that notice misleading.",
+   "This change adds review targets to each encrypted session presence, the registration record shared through a repository’s relay. It carries explicit subscriptions, repository reviews and their adopted pull requests, and per-model exclusions. The receiving daemon counts live remote coverage before emitting <code>UNREVIEWED</code>, without changing local ownership or routing."
+  ],
+  "cards": [
+   {
+    "id": "review-result",
+    "title": "Review result",
+    "html": "<p>The adoption-history finding is fixed. The reviewing machine publishes its adopted pull requests, so another machine can recognize that coverage after GitHub removes a review request. No findings remain open.</p>"
+   },
+   {
+    "id": "validation",
+    "title": "Validation",
+    "html": "<p>The configured gate, exact-head CI, and focused watch, relay, agent, and packaging tests pass. The original two-machine reproduction now retains the reviewer, and deliberately omitting adopted coverage makes the new regression fail.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "presence",
+   "title": "Publish scoped review targets",
+   "kicker": "Review subscriptions travel with encrypted session registrations",
+   "intro": [
+    "A presence is a session’s registration with an expiration time. The relay reads subscriptions and the machine’s adopted pull requests whenever it seals that presence. Adoption retains a pull request after GitHub removes the review request that first brought it into a repository review.",
+    "Each target names either this repository or one of its pull requests, with the reviewing model. Exclusions come before repository targets and individual pull requests within the 32-entry cap. Nothing in this payload names subscriptions in another repository."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/agents.py",
+     "note": "Builds and validates scoped review entries, adds adopted pull requests under each repository-review model, and keeps per-model exclusions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Traced adoption serialization and exclusions: each adopted pull request stays inside the registration’s repository and is omitted for models that dropped it."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/relay.py",
+     "note": "Seals current subscriptions and adoptions into each presence, republishes changed content, and reads live remote review lists.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The two-machine regression confirms a changed adoption is republished before lease renewal. The original reproduction now retains remote coverage after the request clears."
+      },
+      {
+       "kind": "verify",
+       "text": "Cache filtering still requires the operator’s login, another machine, a live presence, and a repository polled within its lease."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_relay.py",
+     "note": "Exercises remote adoption after request removal, repository scoping, subscription updates, older registrations and records, and the sealed size limit."
+    }
+   ]
+  },
+  {
+   "id": "watch",
+   "title": "Use remote coverage before notifying fixers",
+   "kicker": "Remote review targets suppress only the unreviewed notice",
+   "intro": [
+    "The daemon keeps local ownership and routing unchanged. It consults each remote presence before telling a fixer that no reviewer covers the current head, matching explicit and adopted pull-request targets directly and applying exclusions per model.",
+    "A repository target also covers pull requests the receiving machine can recognize through the operator’s authorship, a current review request, or local adoption history. Publishing the reviewing machine’s adopted pull requests avoids relying solely on that local history."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Shares the adoption-state reader with the relay and combines local owners, live start comments, and remote review targets in the UNREVIEWED decision.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1651,
+       "text": "Re-ran the original two-machine sequence: the remote repository reviewer receives NEW HEAD after its review request clears, and a fixer with no local adoption history now receives no false UNREVIEWED notice."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Checks relay-aware notice wording, liveness, login and machine filtering, request coverage, and exclusions."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Explain the notice’s visibility limits",
+   "kicker": "Commands and fixer instructions state which machines were checked",
+   "intro": [
+    "The CLI reference documents the presence payload and the conditions under which a notice includes other machines sharing this repository’s relay. The fixer skill asks the agent to repeat that scope and avoids claiming that no reviewer exists anywhere."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents explicit and adopted remote targets, exclusions, republishing, compatibility, and the scoped UNREVIEWED notice."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Routes an UNREVIEWED notice as scoped information for the user rather than work for the fixer."
+    }
+   ]
+  }
+ ]
+}
