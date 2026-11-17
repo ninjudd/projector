@@ -1,0 +1,149 @@
+{
+ "version": 1,
+ "name": "Agent message opt-out",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 507,
+  "title": "Add project agent unregister, so a live session can stop being reachable for agent messages",
+  "head": "203f8efbb5621b20bd21bb960964788527ba4a24",
+  "headRef": "agent-unregister",
+  "base": "0bddd09d7e5188db8fe66d58185da13ee2f8af05",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector lets agent sessions find each other and exchange peer messages locally or through a Git relay between machines. A running session could previously leave that registry only by ending. This change adds <code>project agent unregister</code> so it can stop being reachable while other work continues.",
+   "Unregister removes the registration and leaves <code>unregistered.json</code>, a local opt-out marker. Automatic registration from watch subscriptions respects that marker. Explicit registration clears it, and messages received earlier stay readable."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation and review",
+    "html": "<ul class=\"tight\"><li>The local gate steps and 19 focused lifecycle tests pass.</li><li>The required CI check fails because the new command has no Codex permission decision.</li><li>A temporary-repository reproduction confirms that an already-created relay job can still deliver after unregister succeeds.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Relay cleanup",
+    "html": "A presence ref advertises a session in Git. Inbox refs hold sealed messages addressed to its relay ID. The outbox records pending ref changes; unregister queues deletion there, and the daemon pushes it later."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "registration",
+   "title": "Stop local reachability",
+   "kicker": "Remove the registration and remember the opt-out",
+   "intro": [
+    "The registry stores each session in <code>agent.json</code>. Unregister replaces it with an opt-out marker that retains the repository and relay ID needed for remote cleanup. A repeated unregister succeeds, and a first unregister also prevents a future watch subscription from automatically registering the session.",
+    "Explicit registration removes the marker and creates a new registration. Existing message files remain in place so the session can still read them."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/agents.py",
+     "note": "Adds the opt-out marker, combines active and departed registrations for relay cleanup, and implements unregister.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused UnregisterTests pass: listing and send refuse an unregistered recipient, its name becomes available, automatic registration stays off, explicit registration works, and old messages remain readable."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Documents the opt-out marker in the watch state layout."
+    },
+    {
+     "path": "tests/test_agents.py",
+     "note": "Exercises local unregistration through the command interface.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "relay",
+   "title": "Delete remote presence and inbox refs",
+   "kicker": "The daemon carries queued cleanup to the shared repository",
+   "intro": [
+    "The Git relay advertises registered sessions and transports sealed messages through hidden refs. Unregister queues deletions instead of pushing from the command. The daemon includes opt-out markers when it locates refs that belong to this machine and treats those sessions as departed.",
+    "Each other machine stops listing the session after it polls and observes the deleted presence ref. The changed lifecycle tests cover deletion, rejection of later messages, and removal from another machine’s list."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/relay.py",
+     "note": "Queues known ref deletions and excludes departed sessions from relay liveness.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 508,
+       "text": "An existing Job snapshots registration before unregister and can still deliver afterward. The temporary-repository reproduction constructs the job, unregisters its recipient, then runs the job and observes a new peer-message event. Synchronize delivery with unregister and revalidate the registration before delivery or renewal."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_relay.py",
+     "note": "Adds relay deletion and cross-machine disappearance regressions.",
+     "collapsed": true,
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1145,
+       "text": "The new job-race test constructs Job after unregister. It does not exercise a job that was already created before the registration changed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "command",
+   "title": "Expose unregister in the CLI",
+   "kicker": "A command that preserves the session’s other work",
+   "intro": [
+    "<code>project agent unregister</code> accepts the usual session selector and optional JSON output. It removes only the agent-message registration; subscription cleanup remains a separate step. The command reports whether it removed a registration and how many relay refs are queued for deletion."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the unregister subcommand and its text and JSON results.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 1306,
+       "text": "The new command is missing from permissions.CODEX_ALLOW and the explicit omissions. The required CI check and focused permissions test fail on unregister; update the rule and its documented copy or explicitly exclude the command."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "workflow",
+   "title": "Use unregister when ending reachability",
+   "kicker": "Document the opt-out and release it during cleanup",
+   "intro": [
+    "The messaging skill tells a session to unregister when the user asks it to stop taking messages. The cleanup skill unregisters after withdrawing inbox items and before removing worktrees, so later watch subscriptions cannot make the session reachable again.",
+    "The CLI reference explains the opt-out marker, explicit re-registration, retained messages, JSON output, and deferred relay cleanup."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/message-agent/SKILL.md",
+     "note": "Adds the user-triggered unregister workflow and forbids unregistering another session.",
+     "collapsed": true
+    },
+    {
+     "path": "skills/cleanup/SKILL.md",
+     "note": "Adds agent unregistration to the ordered release steps and report.",
+     "collapsed": true
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the command, state marker, automatic-registration interaction, and relay cleanup.",
+     "collapsed": true
+    }
+   ]
+  }
+ ]
+}
