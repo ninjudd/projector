@@ -156,6 +156,16 @@ sys.exit(sys.version_info < (3, 11))
   return 69
 }
 
+# A host on PATH can still fail to start, as an npm install of Codex does when
+# its native binary is missing. Every command it is given then fails the same
+# way, so the installer asks for its version first rather than read that
+# failure as a slow clone or an absent plugin.
+host_runs() { "$1" --version >/dev/null 2>&1; }
+
+broken_host() {
+  printf '%s is installed but does not run: `%s --version` fails -- reinstall %s' "$1" "$2" "$1"
+}
+
 run_claude() { CLAUDE_CONFIG_DIR="$CLAUDE_DIR" "$CLAUDE_COMMAND" "$@"; }
 run_codex() { CODEX_HOME="$CODEX_DIR" "$CODEX_COMMAND" "$@"; }
 
@@ -318,6 +328,10 @@ install_claude() {
     echo "install.sh: Claude Code is not installed" >&2
     return 69
   }
+  host_runs "$CLAUDE_COMMAND" || {
+    echo "install.sh: $(broken_host "Claude Code" "$CLAUDE_COMMAND")" >&2
+    return 69
+  }
   mkdir -p "$CLAUDE_DIR"
   remove_legacy_links claude
   local marketplace source installed
@@ -375,6 +389,10 @@ install_claude_gh_stack() {
 install_codex() {
   command -v "$CODEX_COMMAND" >/dev/null 2>&1 || {
     echo "install.sh: Codex is not installed" >&2
+    return 69
+  }
+  host_runs "$CODEX_COMMAND" || {
+    echo "install.sh: $(broken_host Codex "$CODEX_COMMAND")" >&2
     return 69
   }
   mkdir -p "$CODEX_DIR"
@@ -530,6 +548,10 @@ report_plugin() {
     printf '%-14s %s\n' "host-missing" "$host"
     return
   }
+  host_runs "$command" || {
+    warn_row "host-broken" "$host -- \`$command --version\` fails, so reinstall it and run $(rerun "$host")"
+    return
+  }
   marketplace="$(host_marketplace "$host")"
   if [ -n "$marketplace" ]; then
     printf '%-14s %s\n' "marketplace" "$host $marketplace"
@@ -562,6 +584,7 @@ report_plugin() {
 report_codex_hooks() {
   local installed
   command -v "$CODEX_COMMAND" >/dev/null 2>&1 || return 0
+  host_runs "$CODEX_COMMAND" || return 0
   installed="$(host_plugin_version codex projector-hooks@projector)"
   if [ -z "$installed" ]; then
     printf '%-14s %s\n' "hooks-absent" "codex projector-hooks@projector -- run $(rerun codex)"
@@ -674,22 +697,26 @@ case "${1:-all}" in
   all)
     install_cli
     installed_hosts=0
-    if command -v "$CLAUDE_COMMAND" >/dev/null 2>&1; then
+    if ! command -v "$CLAUDE_COMMAND" >/dev/null 2>&1; then
+      printf '%-14s %s\n' "skipped" "Claude Code is not installed"
+    elif ! host_runs "$CLAUDE_COMMAND"; then
+      warn_row "skipped" "$(broken_host "Claude Code" "$CLAUDE_COMMAND"), then run $(rerun claude)"
+    else
       install_claude
       installed_hosts=$((installed_hosts + 1))
-    else
-      printf '%-14s %s\n' "skipped" "Claude Code is not installed"
     fi
-    if command -v "$CODEX_COMMAND" >/dev/null 2>&1; then
+    if ! command -v "$CODEX_COMMAND" >/dev/null 2>&1; then
+      printf '%-14s %s\n' "skipped" "Codex is not installed"
+    elif ! host_runs "$CODEX_COMMAND"; then
+      warn_row "skipped" "$(broken_host Codex "$CODEX_COMMAND"), then run $(rerun codex)"
+    else
       install_codex
       installed_hosts=$((installed_hosts + 1))
-    else
-      printf '%-14s %s\n' "skipped" "Codex is not installed"
     fi
     install_gh_stack
     report_checkout
     if [ "$installed_hosts" -eq 0 ]; then
-      echo "install.sh: neither Claude Code nor Codex is installed" >&2
+      echo "install.sh: neither Claude Code nor Codex is installed and runs" >&2
       exit 69
     fi
     ;;

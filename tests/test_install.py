@@ -719,6 +719,78 @@ class InstallTests(unittest.TestCase):
         self.assertIn("skipped", result.stdout)
         self.assertIn("codex plugin add projector@projector", self.log.read_text())
 
+    def breaks(self, executable: str) -> Path:
+        """Make a host fail every command, as one whose binary is missing does."""
+        path = self.fake_bin / executable
+        path.write_text(
+            "#!/bin/sh\n"
+            "printf '%s %s\\n' broken \"$*\" >> \"$PROJECTOR_TEST_LOG\"\n"
+            "exit 1\n"
+        )
+        return path
+
+    def test_all_skips_a_codex_that_does_not_run_and_finishes_the_rest(self) -> None:
+        codex = self.breaks("host-b")
+
+        result = self.install("all")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            f"skipped        ⚠️  Codex is installed but does not run: `{codex} --version` fails"
+            " -- reinstall Codex, then run ./install.sh codex",
+            result.stdout,
+        )
+        self.assertNotIn("retrying", result.stdout)
+        log = self.log.read_text()
+        self.assertEqual(["broken --version"], [line for line in log.splitlines() if line.startswith("broken")])
+        self.assertIn("claude plugin install projector@projector", log)
+        self.assertIn("gh extension install github/gh-stack", log)
+
+    def test_all_skips_a_claude_code_that_does_not_run(self) -> None:
+        claude = self.breaks("host-a")
+
+        result = self.install("all")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"Claude Code is installed but does not run: `{claude} --version` fails", result.stdout)
+        self.assertIn("codex plugin add projector@projector", self.log.read_text())
+
+    def test_a_host_install_stops_at_a_host_that_does_not_run(self) -> None:
+        for target, executable, name in (("claude", "host-a", "Claude Code"), ("codex", "host-b", "Codex")):
+            with self.subTest(target):
+                self.breaks(executable)
+                self.log.write_text("")
+
+                result = self.install(target)
+
+                self.assertEqual(69, result.returncode)
+                self.assertIn(f"install.sh: {name} is installed but does not run", result.stderr)
+                self.assertNotIn("retrying", result.stdout)
+                self.assertEqual("broken --version\n", self.log.read_text())
+
+    def test_all_fails_when_no_host_runs(self) -> None:
+        self.breaks("host-a")
+        self.breaks("host-b")
+
+        result = self.install("all")
+
+        self.assertEqual(69, result.returncode)
+        self.assertIn("neither Claude Code nor Codex is installed and runs", result.stderr)
+
+    def test_status_reports_a_host_that_does_not_run(self) -> None:
+        codex = self.breaks("host-b")
+
+        result = self.install("status")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            f"host-broken    ⚠️  codex -- `{codex} --version` fails, so reinstall it and run ./install.sh codex",
+            result.stdout,
+        )
+        self.assertNotIn("plugin-absent  codex", result.stdout)
+        self.assertNotIn("hooks-absent", result.stdout)
+        self.assertIn("plugin-absent  claude", result.stdout)
+
     def test_all_fails_when_both_hosts_are_missing(self) -> None:
         self.environment["PROJECTOR_CLAUDE_COMMAND"] = "missing-claude"
         self.environment["PROJECTOR_CODEX_COMMAND"] = "missing-codex"
