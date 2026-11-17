@@ -1,0 +1,2567 @@
+diff --git a/web/app/layout.tsx b/web/app/layout.tsx
+index bbc275cf..ba2dc117 100644
+--- a/web/app/layout.tsx
++++ b/web/app/layout.tsx
+@@ -20,9 +20,9 @@ const instrumentSerif = Instrument_Serif({
+   variable: "--font-instrument-serif",
+ });
+ 
+-const title = "Projector — Project plans that live in Git";
++const title = "Projector — Agents plan, build, and review. You make the calls.";
+ const description =
+-  "Projector keeps each project's plan as a Markdown file in the repository, under docs/projects/, and gives developers and coding agents one CLI to update it.";
++  "Projector gives Claude Code and Codex a workflow for a whole project: agents write the plan into the repository, build it, review each other's pull requests, and fix what the reviews find, while a panel shows you what needs you.";
+ 
+ export const metadata: Metadata = {
+   metadataBase: new URL(SITE_URL),
+diff --git a/web/app/opengraph-image.tsx b/web/app/opengraph-image.tsx
+index 9df3c66e..bd602bed 100644
+--- a/web/app/opengraph-image.tsx
++++ b/web/app/opengraph-image.tsx
+@@ -1,6 +1,6 @@
+ import { ImageResponse } from "next/og";
+ 
+-export const alt = "Projector — project plans that live in Git";
++export const alt = "Projector — agents plan, build, and review. You make the calls.";
+ export const size = { width: 1200, height: 630 };
+ export const contentType = "image/png";
+ 
+@@ -39,11 +39,11 @@ export default function Image() {
+               maxWidth: 1000,
+             }}
+           >
+-            Project plans that live in Git.
++            Agents plan, build, and review. You make the calls.
+           </div>
+           <div style={{ fontSize: 30, color: "#a5a094", maxWidth: 960 }}>
+-            Each plan is a Markdown file under docs/projects/. Developers and
+-            coding agents update it with the same CLI.
++            Plans live in the repository. Agents build them, review each
++            other&rsquo;s pull requests, and fix what the reviews find.
+           </div>
+         </div>
+         <div
+diff --git a/web/app/page.tsx b/web/app/page.tsx
+index 5c3c5714..e7b0bedb 100644
+--- a/web/app/page.tsx
++++ b/web/app/page.tsx
+@@ -1,10 +1,13 @@
+-import { Agents } from "@/components/sections/agents";
+ import { Create } from "@/components/sections/create";
+ import { Example } from "@/components/sections/example";
+ import { Hero } from "@/components/sections/hero";
+ import { Install } from "@/components/sections/install";
+-import { ReviewLoop } from "@/components/sections/review-loop";
++import { Loop } from "@/components/sections/loop";
++import { Panel } from "@/components/sections/panel";
++import { Sessions } from "@/components/sections/sessions";
+ import { Site } from "@/components/sections/site";
++import { Summaries } from "@/components/sections/summaries";
++import { Tools } from "@/components/sections/tools";
+ import { SiteFooter } from "@/components/site-footer";
+ import { SiteHeader } from "@/components/site-header";
+ 
+@@ -14,11 +17,14 @@ export default function Home() {
+       <SiteHeader />
+       <main id="main" className="flex-1">
+         <Hero />
++        <Panel />
++        <Summaries />
++        <Loop />
+         <Create />
+         <Example />
+-        <Agents />
+-        <ReviewLoop />
++        <Sessions />
+         <Site />
++        <Tools />
+         <Install />
+       </main>
+       <SiteFooter />
+diff --git a/web/components/inbox-demo.tsx b/web/components/inbox-demo.tsx
+new file mode 100644
+index 00000000..d8ce9476
+--- /dev/null
++++ b/web/components/inbox-demo.tsx
+@@ -0,0 +1,872 @@
++"use client";
++
++import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
++
++// A working drawing of Projector's panel in Claude Code, in its dark theme.
++// Its rows, drawers, digits, and colors follow docs/plugins.md, so a click
++// here does what a click does in the real panel, up to the prompt it fills.
++
++const WIDTH = 92;
++
++const color = {
++  fg: "text-[#e8e6e3]",
++  subtle: "text-[#6b6b6b]",
++  inactive: "text-[#999999]",
++  accent: "text-[#d77757]",
++  red: "text-[#f2777a]",
++  yellow: "text-[#e5c07b]",
++  orange: "text-[#f99157]",
++  green: "text-[#99c794]",
++  blue: "text-[#8fc1e3]",
++  fixer: "text-[#6ca0dc]",
++  cyan: "text-[#66cccc]",
++  question: "text-[#b1b9f9]",
++  request: "text-[rgb(255,190,140)]",
++} as const;
++
++type Color = keyof typeof color;
++
++type Kind = "question" | "request" | "notice";
++
++type ItemState = "open" | "dismissed" | "snoozed";
++
++type StartState = "none" | "starting" | "ready";
++
++type Item = {
++  id: string;
++  kind: Kind;
++  subject: string;
++  pr: string;
++  age: string;
++  detail: string[];
++  options: string[];
++  start?: string;
++};
++
++const ITEMS: Item[] = [
++  {
++    id: "lifetime",
++    kind: "question",
++    subject: "Decline the finding about the cache's lifetime?",
++    pr: "#344",
++    age: "5m",
++    detail: [
++      "The review asks the cache to expire after an hour. The cache",
++      "already reloads when the config file's timestamp changes, which",
++      "covers the stale read the finding names.",
++    ],
++    options: [
++      "Decline it: the file's timestamp already invalidates the cache",
++      "Add a one-hour lifetime as well",
++    ],
++  },
++  {
++    id: "split",
++    kind: "question",
++    subject: "Split #347 into two pull requests?",
++    pr: "#347",
++    age: "9m",
++    detail: [
++      "#347 moves the settings screen into a sheet and also renames the",
++      "keys it stores. The rename touches every reader of the settings,",
++      "so a reviewer would hold two unrelated changes at once.",
++    ],
++    options: [
++      "Split it: move the screen first, rename the keys after",
++      "Keep it as one pull request",
++    ],
++  },
++  {
++    id: "ios",
++    kind: "request",
++    subject: "Try #345's build on your iPhone",
++    pr: "#345",
++    age: "1m",
++    detail: [
++      "1. Export the largest project you have.",
++      "   The share sheet should appear within a second.",
++      "2. Watch the progress bar. It should move steadily, not jump",
++      "   from empty to full at the end.",
++    ],
++    options: ["Looks good", "Some feedback"],
++    start: "Install #345's build of the app on your iPhone and open it",
++  },
++  {
++    id: "scope",
++    kind: "request",
++    subject: "Let gh push workflow changes",
++    pr: "#347",
++    age: "14m",
++    detail: [
++      "#347 edits .github/workflows/ci.yml, and GitHub refuses that push",
++      "without the workflow scope, which only you can grant.",
++      "",
++      "1. Run gh auth refresh -h github.com -s workflow",
++      "2. Approve the scope in the browser window it opens.",
++    ],
++    options: ["Done"],
++  },
++  {
++    id: "merged",
++    kind: "notice",
++    subject: "Merged main into #344 to clear a conflict",
++    pr: "#344",
++    age: "3m",
++    detail: [
++      "main moved the config loader into its own module. The merge",
++      "keeps that move and points the cache at the new loader.",
++      "Tests pass.",
++    ],
++    options: [],
++  },
++  {
++    id: "clean",
++    kind: "notice",
++    subject: "#341 came back clean and is ready for you to merge",
++    pr: "#341",
++    age: "22m",
++    detail: [
++      "The review of the head found nothing, so #341 carries the clean",
++      "label. Its two earlier findings were fixed in 9c2e41a.",
++    ],
++    options: [],
++  },
++];
++
++type Finding = { line: string; who: string; text: string };
++
++type Row = {
++  number: string;
++  state: string;
++  tone: Color;
++  title: string;
++  age: string;
++  author?: string;
++  draft?: boolean;
++  role: "fixer" | "reviewer";
++  branch: string;
++  add: number;
++  del: number;
++  files: number;
++  checks: [string, Color];
++  labels: [string, Color][];
++  findings: { file: string; threads: Finding[] }[];
++};
++
++const YOURS: Row[] = [
++  {
++    number: "#347",
++    state: "conflict",
++    tone: "red",
++    title: "Move settings into a sheet",
++    age: "6m",
++    role: "fixer",
++    branch: "settings-sheet",
++    add: 212,
++    del: 140,
++    files: 9,
++    checks: ["checks failing", "red"],
++    labels: [["ui", "blue"]],
++    findings: [],
++  },
++  {
++    number: "#345",
++    state: "draft",
++    tone: "fg",
++    title: "Stream the export instead of buffering",
++    age: "2m",
++    draft: true,
++    role: "fixer",
++    branch: "stream-export",
++    add: 96,
++    del: 41,
++    files: 4,
++    checks: ["checks passing", "green"],
++    labels: [],
++    findings: [],
++  },
++  {
++    number: "#344",
++    state: "findings",
++    tone: "yellow",
++    title: "Cache the parsed config between runs",
++    age: "8m",
++    role: "fixer",
++    branch: "config-cache",
++    add: 84,
++    del: 12,
++    files: 5,
++    checks: ["checks passing", "green"],
++    labels: [["bug", "red"]],
++    findings: [
++      {
++        file: "src/config/cache.ts",
++        threads: [
++          {
++            line: ":48",
++            who: "grace",
++            text: "P2 · The cache keeps a stale config after an edit",
++          },
++          {
++            line: ":91",
++            who: "grace",
++            text: "P3 · Name the unit of the lifetime setting",
++          },
++        ],
++      },
++      {
++        file: "docs/config.md",
++        threads: [
++          {
++            line: ":12",
++            who: "grace",
++            text: "P3 · Say where the cache file lives",
++          },
++        ],
++      },
++    ],
++  },
++  {
++    number: "#341",
++    state: "clean",
++    tone: "green",
++    title: "Retry failed webhook deliveries",
++    age: "22m",
++    role: "fixer",
++    branch: "webhook-retry",
++    add: 142,
++    del: 18,
++    files: 6,
++    checks: ["checks passing", "green"],
++    labels: [["clean", "green"]],
++    findings: [],
++  },
++];
++
++const THEIRS: Row[] = [
++  {
++    number: "#339",
++    state: "reviewing",
++    tone: "orange",
++    title: "Add a dry-run flag to the importer",
++    age: "20m",
++    author: "ada",
++    role: "reviewer",
++    branch: "importer-dry-run",
++    add: 61,
++    del: 3,
++    files: 3,
++    checks: ["checks passing", "green"],
++    labels: [["reviewing", "orange"]],
++    findings: [],
++  },
++];
++
++// The inbox lists its items newest first, whatever their kind.
++const NEWEST_FIRST = [...ITEMS].sort(
++  (a, b) => parseInt(a.age, 10) - parseInt(b.age, 10),
++);
++
++const SNOOZE = ["15 min", "1 hour", "4 hours", "1 day"];
++
++type Open =
++  { type: "pr"; number: string } | { type: "item"; id: string } | null;
++
++type Press = {
++  digit: string;
++  label: string;
++  recommended?: boolean;
++  onPress: () => void;
++};
++
++function Seg({
++  tone = "fg",
++  className = "",
++  children,
++}: {
++  tone?: Color;
++  className?: string;
++  children: ReactNode;
++}) {
++  return <span className={`${color[tone]} ${className}`}>{children}</span>;
++}
++
++function spaces(count: number): string {
++  return " ".repeat(Math.max(1, count));
++}
++
++function Action({
++  digit,
++  label,
++  onPress,
++}: {
++  digit: string;
++  label: string;
++  onPress: () => void;
++}) {
++  return (
++    <button
++      type="button"
++      onClick={onPress}
++      className="rounded-[2px] text-left hover:bg-[#e8e6e3] focus-visible:bg-[#e8e6e3] focus-visible:outline-none [&:focus-visible>span]:text-[#141414] [&:hover>span]:text-[#141414]"
++    >
++      <span className={color.accent}>{digit}</span>
++      <span className={color.fg}>: {label}</span>
++    </button>
++  );
++}
++
++function quote(subject: string): string {
++  return `"${subject}"`;
++}
++
++const FRESH: Record<string, ItemState> = Object.fromEntries(
++  ITEMS.map((item) => [item.id, "open" as ItemState]),
++);
++
++const lineButton =
++  "block w-full text-left hover:bg-white/5 focus-visible:bg-white/10 focus-visible:outline-none";
++
++export function InboxDemo() {
++  const [open, setOpen] = useState<Open>(null);
++  const [states, setStates] = useState<Record<string, ItemState>>(FRESH);
++  const [snoozing, setSnoozing] = useState(false);
++  const [confirmDismiss, setConfirmDismiss] = useState(false);
++  const [dismissedRows, setDismissedRows] = useState<string[]>([]);
++  const [openFiles, setOpenFiles] = useState<string[]>(["src/config/cache.ts"]);
++  const [start, setStart] = useState<StartState>("none");
++  const [prompt, setPrompt] = useState("");
++
++  // A started request reads starting until the agent has installed the
++  // build, then ready.
++  useEffect(() => {
++    if (start !== "starting") return;
++    const timer = setTimeout(() => {
++      setStart("ready");
++    }, 1800);
++    return () => {
++      clearTimeout(timer);
++    };
++  }, [start]);
++
++  function close() {
++    setOpen(null);
++    setSnoozing(false);
++    setConfirmDismiss(false);
++  }
++
++  function toggle(next: Exclude<Open, null>) {
++    setSnoozing(false);
++    setConfirmDismiss(false);
++    const same =
++      open !== null &&
++      ((open.type === "pr" &&
++        next.type === "pr" &&
++        open.number === next.number) ||
++        (open.type === "item" && next.type === "item" && open.id === next.id));
++    setOpen(same ? null : next);
++  }
++
++  function setState(id: string, state: ItemState) {
++    setStates((current) => ({ ...current, [id]: state }));
++  }
++
++  function reset() {
++    setOpen(null);
++    setStates(FRESH);
++    setSnoozing(false);
++    setConfirmDismiss(false);
++    setDismissedRows([]);
++    setOpenFiles(["src/config/cache.ts"]);
++    setStart("none");
++    setPrompt("");
++  }
++
++  const openItem =
++    open?.type === "item"
++      ? ITEMS.find((item) => item.id === open.id)
++      : undefined;
++  const yours = YOURS.filter((row) => !dismissedRows.includes(row.number));
++  const theirs = THEIRS.filter((row) => !dismissedRows.includes(row.number));
++  const count = (kind: Kind) =>
++    ITEMS.filter((item) => item.kind === kind && states[item.id] === "open")
++      .length;
++  const plural = (n: number, word: string) =>
++    n ? `${String(n)} ${word}${n === 1 ? "" : "s"}` : "";
++  const header = [
++    plural(yours.length, "pull request"),
++    plural(theirs.length, "review request"),
++    plural(count("question"), "question"),
++    plural(count("request"), "request"),
++    plural(count("notice"), "notice"),
++  ]
++    .filter(Boolean)
++    .join(" · ");
++
++  function itemOptions(item: Item): Press[] {
++    if (states[item.id] !== "open") return [];
++    if (snoozing) {
++      return SNOOZE.map((length, index) => ({
++        digit: String(index + 1),
++        label: length,
++        onPress: () => {
++          setState(item.id, "snoozed");
++          close();
++        },
++      }));
++    }
++    const list: Press[] = [];
++    let digit = 1;
++    if (item.start && start === "none") {
++      list.push({
++        digit: String(digit++),
++        label: "Start",
++        onPress: () => {
++          setStart("starting");
++        },
++      });
++    }
++    item.options.forEach((option, index) => {
++      list.push({
++        digit: String(digit++),
++        label: option,
++        recommended: item.kind === "question" && index === 0,
++        onPress: () => {
++          setPrompt(`${quote(item.subject)}\n\n${option}`);
++        },
++      });
++    });
++    return list;
++  }
++
++  function itemActions(item: Item): Press[][] {
++    const state = states[item.id];
++    if (snoozing) {
++      return [
++        [
++          {
++            digit: "9",
++            label: "Cancel",
++            onPress: () => {
++              setSnoozing(false);
++            },
++          },
++        ],
++      ];
++    }
++    if (state === "dismissed") {
++      return [
++        [
++          {
++            digit: "8",
++            label: "Restore",
++            onPress: () => {
++              setState(item.id, "open");
++            },
++          },
++        ],
++      ];
++    }
++    if (state === "snoozed") {
++      return [
++        [
++          {
++            digit: "9",
++            label: "Unsnooze",
++            onPress: () => {
++              setState(item.id, "open");
++            },
++          },
++        ],
++      ];
++    }
++    return [
++      [
++        {
++          digit: "6",
++          label: "I don't understand",
++          onPress: () => {
++            setPrompt(`${quote(item.subject)}\n\nI don't understand `);
++          },
++        },
++      ],
++      [
++        {
++          digit: "7",
++          label: "Discuss",
++          onPress: () => {
++            setPrompt(`${quote(item.subject)}\n\n`);
++          },
++        },
++        {
++          digit: "8",
++          label: "Dismiss",
++          onPress: () => {
++            setState(item.id, "dismissed");
++            close();
++          },
++        },
++        {
++          digit: "9",
++          label: "Snooze",
++          onPress: () => {
++            setSnoozing(true);
++          },
++        },
++      ],
++    ];
++  }
++
++  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
++    if (!openItem || event.metaKey || event.ctrlKey || event.altKey) return;
++    if (event.key === "0") {
++      close();
++      event.preventDefault();
++      return;
++    }
++    const presses = [...itemOptions(openItem), ...itemActions(openItem).flat()];
++    const match = presses.find((press) => press.digit === event.key);
++    if (match) {
++      match.onPress();
++      event.preventDefault();
++    }
++  }
++
++  function itemTone(item: Item): Color {
++    if (states[item.id] !== "open") return "subtle";
++    return item.kind === "notice" ? "inactive" : item.kind;
++  }
++
++  function statusOf(item: Item): string {
++    return item.start && start !== "none" ? start : "";
++  }
++
++  function tail(item: Item): ReactNode {
++    const status = statusOf(item);
++    return (
++      <>
++        {status ? (
++          <Seg tone={start === "ready" ? "green" : itemTone(item)}>
++            {status}{" "}
++          </Seg>
++        ) : null}
++        <Seg tone={itemTone(item)}>{`${item.pr}  ${item.age}`}</Seg>
++      </>
++    );
++  }
++
++  function tailLength(item: Item): number {
++    const status = statusOf(item);
++    return (
++      (status ? status.length + 1 : 0) + item.pr.length + 2 + item.age.length
++    );
++  }
++
++  function itemLine(item: Item) {
++    const left = `   - ${item.subject}`;
++    const struck = states[item.id] === "dismissed";
++    return (
++      <button
++        key={item.id}
++        type="button"
++        onClick={() => {
++          toggle({ type: "item", id: item.id });
++        }}
++        className={lineButton}
++      >
++        <Seg tone={itemTone(item)} className={struck ? "line-through" : ""}>
++          {left}
++        </Seg>
++        {spaces(WIDTH - left.length - tailLength(item))}
++        {tail(item)}
++      </button>
++    );
++  }
++
++  function prRow(row: Row) {
++    const author = row.author ? `${row.author} ` : "";
++    const left = `   ${row.number} ${row.state} ${author}${row.title}`;
++    const isOpen = open?.type === "pr" && open.number === row.number;
++    return (
++      <div key={row.number}>
++        <button
++          type="button"
++          onClick={() => {
++            toggle({ type: "pr", number: row.number });
++          }}
++          className={lineButton}
++          aria-expanded={isOpen}
++        >
++          {"   "}
++          <span
++            className={`${row.draft ? "italic" : ""} ${isOpen ? "bg-[#e8e6e3] text-[#141414]" : color.fg}`}
++          >
++            {row.number}
++          </span>{" "}
++          <Seg tone={row.tone} className={row.draft ? "italic" : ""}>
++            {row.state}
++          </Seg>{" "}
++          {author ? <Seg tone="inactive">{author}</Seg> : null}
++          <Seg>{row.title}</Seg>
++          {spaces(WIDTH - left.length - row.age.length)}
++          <Seg tone="subtle">{row.age}</Seg>
++        </button>
++        {isOpen ? prDrawer(row) : null}
++      </div>
++    );
++  }
++
++  function prDrawer(row: Row) {
++    const pad = "        ";
++    return (
++      <div>
++        <span className="block">
++          {pad}
++          <Seg tone={row.role === "fixer" ? "fixer" : "accent"}>
++            {row.role}
++          </Seg>{" "}
++          · <Seg tone="cyan">{row.branch}</Seg> ·{" "}
++          <Seg tone="green">+{row.add}</Seg> <Seg tone="red">−{row.del}</Seg> in{" "}
++          {row.files} files · <Seg tone={row.checks[1]}>{row.checks[0]}</Seg>
++          {row.labels.map(([name, tone]) => (
++            <span key={name}>
++              {" "}
++              · <Seg tone={tone}>{name}</Seg>
++            </span>
++          ))}
++        </span>
++        <span className="block">
++          {pad}
++          {confirmDismiss ? (
++            <>
++              <Action
++                digit="8"
++                label="Yes, dismiss it"
++                onPress={() => {
++                  setDismissedRows((current) => [...current, row.number]);
++                  close();
++                }}
++              />
++              {"  "}
++              <Action
++                digit="9"
++                label="No, keep it"
++                onPress={() => {
++                  setConfirmDismiss(false);
++                }}
++              />
++            </>
++          ) : (
++            <>
++              <Action
++                digit="7"
++                label="Discuss"
++                onPress={() => {
++                  setPrompt(`${row.number} `);
++                }}
++              />
++              {"  "}
++              <Action
++                digit="8"
++                label="Dismiss"
++                onPress={() => {
++                  setConfirmDismiss(true);
++                }}
++              />
++            </>
++          )}
++        </span>
++        <span className="block">
++          {pad}
++          <Seg className="underline decoration-white/30 underline-offset-2">
++            open in github
++          </Seg>
++          {"  "}
++          <Seg className="underline decoration-white/30 underline-offset-2">
++            open in projector
++          </Seg>
++        </span>
++        {row.findings.map((group) => {
++          const shown = openFiles.includes(group.file);
++          const n = group.threads.length;
++          return (
++            <div key={group.file}>
++              <button
++                type="button"
++                onClick={() => {
++                  setOpenFiles((current) =>
++                    shown
++                      ? current.filter((file) => file !== group.file)
++                      : [...current, group.file],
++                  );
++                }}
++                className={lineButton}
++              >
++                {pad}
++                {shown ? "-" : "+"} {group.file}{" "}
++                <Seg tone="yellow">
++                  {n} finding{n === 1 ? "" : "s"}
++                </Seg>
++              </button>
++              {shown
++                ? group.threads.map((thread) => (
++                    <span key={thread.line} className="block">
++                      {pad}
++                      {"  "}
++                      {thread.line} · {thread.who} · {thread.text}
++                    </span>
++                  ))
++                : null}
++            </div>
++          );
++        })}
++      </div>
++    );
++  }
++
++  function itemDrawer(item: Item) {
++    const options = itemOptions(item);
++    const actions = itemActions(item);
++    const state = states[item.id];
++    const label =
++      start === "none"
++        ? "Start:"
++        : start === "starting"
++          ? "Starting:"
++          : "Ready:";
++    return (
++      <div>
++        <button
++          type="button"
++          onClick={close}
++          aria-label={`Close the drawer of ${item.subject}`}
++          className={lineButton}
++        >
++          {"   "}
++          <Seg tone="accent">0</Seg>
++          <Seg tone={itemTone(item)}>: {item.subject}</Seg>
++          {spaces(WIDTH - 5 - item.subject.length - tailLength(item))}
++          {tail(item)}
++        </button>
++        <span className="block"> </span>
++        {item.detail.map((line, index) => (
++          <span key={index} className="block">
++            {"      "}
++            {line || " "}
++          </span>
++        ))}
++        {item.start ? (
++          <>
++            <span className="block"> </span>
++            <span className="block">
++              {"      "}
++              <Seg tone={start === "ready" ? "green" : "fg"}>{label}</Seg>{" "}
++              {item.start}
++            </span>
++          </>
++        ) : null}
++        {state === "dismissed" && item.kind === "request" ? (
++          <>
++            <span className="block"> </span>
++            <span className="block">{"      "}Declined</span>
++          </>
++        ) : null}
++        {options.length > 0 ? <span className="block"> </span> : null}
++        {options.map((option) => (
++          <span key={option.digit + option.label} className="block">
++            {"      "}
++            <Action
++              digit={option.digit}
++              label={option.label}
++              onPress={option.onPress}
++            />
++            {option.recommended ? (
++              <span className="block">
++                {"      "}
++                <Seg tone="inactive">(recommended)</Seg>
++              </span>
++            ) : null}
++          </span>
++        ))}
++        <span className="block"> </span>
++        {actions.map((line, index) => (
++          <span key={index} className="block">
++            {"      "}
++            {line.map((press, position) => (
++              <span key={press.label}>
++                {position > 0 ? "  " : ""}
++                <Action
++                  digit={press.digit}
++                  label={press.label}
++                  onPress={press.onPress}
++                />
++              </span>
++            ))}
++          </span>
++        ))}
++      </div>
++    );
++  }
++
++  return (
++    <div className="space-y-3">
++      <div
++        role="group"
++        aria-label="A working example of Projector's panel"
++        tabIndex={0}
++        onKeyDown={onKeyDown}
++        className="overflow-hidden rounded-xl border border-line-strong bg-[#141414] text-[#e8e6e3] focus-visible:outline-2 focus-visible:outline-accent"
++      >
++        <div className="flex items-center justify-between border-b border-white/10 px-4 py-2 font-mono text-xs text-[#8d877a]">
++          <span>Claude Code · Projector&rsquo;s panel</span>
++          <button
++            type="button"
++            onClick={reset}
++            className="rounded px-2 py-0.5 transition-colors hover:bg-white/10 hover:text-[#e8e6e3]"
++          >
++            Reset
++          </button>
++        </div>
++        <div className="overflow-x-auto whitespace-pre p-4 font-mono text-[12px] leading-6 sm:px-5">
++          <div className="w-max min-w-full">
++            {openItem ? (
++              itemDrawer(openItem)
++            ) : (
++              <>
++                <span className="block">
++                  <Seg tone="subtle">{"  /projector"}</Seg>
++                  {spaces(WIDTH - 12 - header.length - 5)}
++                  <Seg tone="subtle">{header} 12s</Seg>
++                </span>
++                {yours.map(prRow)}
++                {theirs.length > 0 ? <span className="block"> </span> : null}
++                {theirs.map(prRow)}
++                <span className="block"> </span>
++                {NEWEST_FIRST.map(itemLine)}
++              </>
++            )}
++            <span className="block">
++              <Seg tone="subtle">{"ctrl+x tab to focus".padStart(WIDTH)}</Seg>
++            </span>
++          </div>
++        </div>
++      </div>
++      <div className="rounded-xl border border-line-strong bg-[#141414] px-4 py-3 font-mono text-[12.5px] leading-6 text-[#e8e6e3] sm:px-5">
++        <div className="flex gap-2">
++          <span className="select-none text-[#8d877a]">&gt;</span>
++          <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
++            {prompt ? (
++              prompt
++            ) : (
++              <span className="text-[#6b6b6b]">
++                Pick an option or Discuss, and the panel fills the prompt for
++                you to send.
++              </span>
++            )}
++            <span className="ml-px inline-block h-4 w-2 translate-y-0.5 animate-pulse bg-[#e8e6e3]/70" />
++          </span>
++        </div>
++      </div>
++    </div>
++  );
++}
+diff --git a/web/components/sections/agents.tsx b/web/components/sections/agents.tsx
+deleted file mode 100644
+index 84a77465..00000000
+--- a/web/components/sections/agents.tsx
++++ /dev/null
+@@ -1,92 +0,0 @@
+-import type { ReactNode } from "react";
+-import { ArrowUpRightIcon } from "@/components/icons";
+-import { Code } from "@/components/inline-code";
+-import { Section } from "@/components/section";
+-import { DOCS } from "@/lib/links";
+-
+-const steps: { title: string; invoke: string; body: ReactNode }[] = [
+-  {
+-    title: "Spec a project",
+-    invoke: "/projector:spec a session chooser opened by the detach key",
+-    body: (
+-      <>
+-        The agent reads the repository and the existing projects first, asks only what the code
+-        cannot answer, and writes the plan with <Code>project create</Code>. It leaves the change
+-        for ordinary review, so the plan can go up as its own pull request, the way trip&rsquo;s
+-        did.
+-      </>
+-    ),
+-  },
+-  {
+-    title: "Come back and build it",
+-    invoke: "/projector:implement session-switcher",
+-    body: (
+-      <>
+-        A later session starts from the file, not from the earlier conversation. The agent moves
+-        the status to <Code>in-progress</Code> in the implementation branch, builds the work, and
+-        appends what implementation settled to the plan instead of rewriting the sections that
+-        were reviewed.
+-      </>
+-    ),
+-  },
+-  {
+-    title: "Finish it",
+-    invoke: "/projector:finish session-switcher",
+-    body: (
+-      <>
+-        The agent checks each acceptance criterion in the plan against the repository, records
+-        whether the work shipped, was abandoned, or was superseded, and runs{" "}
+-        <Code>project done</Code> in the change that completes it.
+-      </>
+-    ),
+-  },
+-];
+-
+-export function Agents() {
+-  return (
+-    <Section
+-      id="agents"
+-      title="Use with Claude Code or Codex"
+-      lead={
+-        <>
+-          Projector&rsquo;s plugin adds skills to Claude Code and Codex. A skill is a written
+-          procedure the agent follows, and each one works through the same <Code>project</Code>{" "}
+-          command you use, so what the agent saves is a file you can open and edit. No MCP server is
+-          involved.
+-        </>
+-      }
+-    >
+-      <ol className="grid gap-8 lg:grid-cols-3">
+-        {steps.map((step, index) => (
+-          <li key={step.title} className="min-w-0">
+-            <div className="flex items-baseline gap-3">
+-              <span className="font-mono text-sm text-accent">{index + 1}</span>
+-              <h3 className="text-lg font-semibold tracking-tight text-fg">{step.title}</h3>
+-            </div>
+-            <pre className="mt-4 overflow-x-auto rounded-lg border border-line bg-surface px-4 py-3 font-mono text-[13px] text-fg">
+-              {step.invoke}
+-            </pre>
+-            <p className="mt-4 text-[15px] leading-relaxed text-muted">{step.body}</p>
+-          </li>
+-        ))}
+-      </ol>
+-      <p className="mt-10 max-w-2xl text-[15px] leading-relaxed text-muted">
+-        In Codex the same skills are <Code>$spec</Code>, <Code>$implement</Code>, and{" "}
+-        <Code>$finish</Code>. The plugin also carries the review skills described next;{" "}
+-        <Code>summarize-pr</Code>, which summarizes the changes in a large pull request as a guided page for
+-        its reviewers; and <Code>write</Code>, which writes or revises any prose so that it follows
+-        Projector&rsquo;s writing guide. Its marketplace also serves GitHub&rsquo;s <Code>gh-stack</Code>{" "}
+-        skill, for splitting a large change into a chain of dependent pull requests.{" "}
+-        <a
+-          href={DOCS.plugins}
+-          target="_blank"
+-          rel="noreferrer"
+-          className="inline-flex items-center gap-0.5 text-fg transition-colors hover:text-accent"
+-        >
+-          Plugin guide
+-          <ArrowUpRightIcon className="h-3.5 w-3.5" />
+-        </a>
+-      </p>
+-    </Section>
+-  );
+-}
+diff --git a/web/components/sections/create.tsx b/web/components/sections/create.tsx
+index 1c2faba3..8739d47e 100644
+--- a/web/components/sections/create.tsx
++++ b/web/components/sections/create.tsx
+@@ -4,31 +4,43 @@ import { CommandList } from "@/components/command";
+ import { ArrowUpRightIcon } from "@/components/icons";
+ import { Code } from "@/components/inline-code";
+ import { Section } from "@/components/section";
++import { Terminal, type TermLine } from "@/components/terminal";
+ import { DOCS, EXAMPLE } from "@/lib/links";
+ 
+ const commands = [
+   "project init",
+-  "project create session-switcher --priority now",
+-  "project status session-switcher ready",
++  "project create count-in --priority now",
++  "project status count-in ready",
+ ];
+ 
+-// The first lines of docs/projects/session-switcher/readme.md as it merged in
+-// ninjudd/trip#13.
++// Part of `project list` in audiofield/field.
++const list: TermLine[] = [
++  { kind: "cmd", text: "project list" },
++  { kind: "label", text: "now:" },
++  { kind: "row", name: "arming", status: "in-progress", title: "Arming" },
++  { kind: "row", name: "instrument-knobs", status: "in-progress", title: "Instrument knobs" },
++  { kind: "row", name: "sequencer", status: "ready", title: "Sequencer" },
++  { kind: "out", text: "  …" },
++  { kind: "label", text: "completed:" },
++  { kind: "row", name: "recording", status: "completed", title: "Recording" },
++];
++
++// The first lines of docs/projects/recording/readme.md in audiofield/field.
+ const plan = `---
+-status: ready
+-priority: now
++status: completed
+ ---
+ 
+-# Session Switcher
+-
+-## 1. Outcome
++**Outcome:** Shipped: chunks 1–4 (#166, #167, #169, #170) — the
++daemon's input side with crash-safe capture, takes that land in the
++project and build in place, the metronome and count-in in the engine,
++punch-out, and loop takes over the region loop. …
+ 
+-The session list becomes the hub of trip rather than a special case of
+-\`enter\`. Three changes, one interaction model:
++# Recording
+ 
+-- **The detach key opens a chooser.** Pressing it inside an attached session
+-  (\`TRIP_DETACH_KEY\`, \`^\\\` by default) detaches the *view* and shows the
+-  interactive session list.`;
++**Goal:** \`field record\` — capture a live performance into a track as
++takes, through the same daemon that plays: armed, crash-safe,
++latency-placed, and committed beside its bytes the way every take
++already is.`;
+ 
+ function DocLink({ href, children }: { href: string; children: ReactNode }) {
+   return (
+@@ -47,24 +59,28 @@ function DocLink({ href, children }: { href: string; children: ReactNode }) {
+ export function Create() {
+   return (
+     <Section
+-      id="create"
+-      title="Create a project"
++      id="plans"
++      title="Every plan is a file in the repository"
+       lead={
+         <>
+-          A project is a directory under <Code>docs/projects/</Code> with a lowercase{" "}
+-          <Code>readme.md</Code>. The file opens with two frontmatter fields and continues as an
+-          ordinary Markdown plan.
++          Under the loop, each project is a directory under <Code>docs/projects/</Code> with a
++          lowercase <Code>readme.md</Code>. The file opens with two frontmatter fields and continues
++          as an ordinary Markdown plan. You and the agents change it with the same{" "}
++          <Code>project</Code> command.
+         </>
+       }
+     >
+       <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:gap-16">
+         <div className="min-w-0 space-y-5 text-[15px] leading-relaxed text-muted">
++          <CommandList commands={commands} />
+           <p>
+-            <Code>project init</Code> writes the convention file once per repository, and{" "}
+-            <Code>project create</Code> makes the directory and the plan. <Code>project status</Code>{" "}
+-            changes one frontmatter field, <Code>project done</Code> marks the project completed,
+-            and <Code>project list</Code> groups what exists by priority. Add <Code>--json</Code> to
+-            any of them for scripts and agents.
++            <Code>project init</Code> writes the convention once per repository, and Projector&rsquo;s
++            rules into <Code>AGENTS.md</Code>, linked as <Code>CLAUDE.md</Code>, so every agent
++            session follows them, with the plugin or without it. <Code>project create</Code> makes the
++            directory and the plan. <Code>project status</Code> changes one frontmatter field,{" "}
++            <Code>project done</Code> marks the project completed, and <Code>project list</Code>{" "}
++            groups what exists by priority. Add <Code>--json</Code> to any of them for scripts and
++            agents.
+           </p>
+           <p>
+             Because the plan is a file in the repository, it comes with every clone, along with its
+@@ -87,14 +103,24 @@ export function Create() {
+           </div>
+         </div>
+         <div className="min-w-0 space-y-4">
+-          <CommandList commands={commands} />
++          <Terminal title="audiofield/field" lines={list} />
+           <CodeBlock
+             lang="markdown"
+-            title="docs/projects/session-switcher/readme.md · ninjudd/trip#13"
++            title="audiofield/field · docs/projects/recording/readme.md"
+             code={plan}
+           />
+           <p className="text-sm text-muted">
+-            The excerpt is the first lines of a real plan.{" "}
++            Both are from{" "}
++            <a
++              href={EXAMPLE.projects}
++              target="_blank"
++              rel="noreferrer"
++              className="underline decoration-line-strong underline-offset-4 transition-colors hover:text-fg"
++            >
++              the plans in field
++            </a>
++            , the repository the next section follows. The plan excerpt skips the rest of its outcome
++            and the start of its body.{" "}
+             <a
+               href={EXAMPLE.plan}
+               target="_blank"
+diff --git a/web/components/sections/example.tsx b/web/components/sections/example.tsx
+index 19f4f0bd..5228d919 100644
+--- a/web/components/sections/example.tsx
++++ b/web/components/sections/example.tsx
+@@ -5,62 +5,69 @@ import { Code } from "@/components/inline-code";
+ import { Section } from "@/components/section";
+ import { EXAMPLE } from "@/lib/links";
+ 
+-// The frontmatter hunk from ninjudd/trip#16.
+-const diff = `-status: ready
+-+status: completed
+- priority: now`;
++// The frontmatter hunk from audiofield/field#166.
++const diff = `-status: draft
++-priority: later
+++status: in-progress
+++priority: now`;
+ 
+-// git log --oneline -- docs/projects/session-switcher/readme.md, in ninjudd/trip.
+-const log = `39814bc Ground the terminal's keyboard protocol on every re-render (#18)
+-5d7c2a5 Order the chooser by when sessions were last opened (#17)
+-3cc4333 Implement the session switcher (#16)
+-66de6c6 Plan the session switcher (#13)`;
++// The plan's history in audiofield/field, from the first chunk to the later fix.
++const log = `5cd6b9f Keep a loop take running when the heartbeat falls behind its wraps (recording.md §15.4) (#204)
++ca065ec Punch-out, the region loop, and loop takes (recording.md chunk 4) (#170)
++2a44085 Move the metronome into the engine and count a take in on the exact sample (recording.md chunk 3) (#169)
++7c84226 Land recorded takes: the record entry, takes.yaml, and placement on the track (recording.md chunk 2) (#167)
++e7f862b Open the daemon's input side: arm, record, stop, crash-safe capture (recording.md chunk 1) (#166)`;
++
++// The first line and the closing counts of the last review of audiofield/field#204.
++const review = `Projector review · 0.7.8 · model claude-opus-5-5 · effort xhigh · CLEAN
++
++4 finding threads: 4 resolved, 0 open
++Covered 6 of 6 changed files; none generated.`;
+ 
+ const steps: { pr: number; title: string; body: ReactNode }[] = [
+   {
+-    pr: 13,
+-    title: "The plan merges on its own",
++    pr: 135,
++    title: "The plan merges before any code",
+     body: (
+       <>
+-        The pull request added the plan and no code, so the design was reviewed before anything
+-        was built. Its frontmatter said <Code>ready</Code> and <Code>now</Code>. Among the decisions
+-        it listed as worth arguing with: sort the current workspace first, so its sessions hold the
+-        low digits.
++        The pull request added the recording plan, and the plan for the real-time engine it waited
++        behind, with no code. Every review thread on it was resolved before it merged, so the
++        design was argued out before anything was built.
+       </>
+     ),
+   },
+   {
+-    pr: 16,
+-    title: "Implementation marks it completed",
++    pr: 166,
++    title: "Four pull requests build it, and the plan records each",
+     body: (
+       <>
+-        The pull request that built the switcher set the status to <Code>completed</Code> in the
+-        same change. Two things the plan got wrong were recorded as a new section 9 rather than by
+-        editing the sections that had been reviewed. A retry the plan specified could never fire,
+-        so it became an allocation, and a daemon response the plan relied on turned out to be dead
+-        code.
++        The first chunk moved the plan to <Code>in-progress</Code> and <Code>now</Code>. Each of
++        the four chunks appended a section on what its build settled, sections 12 to 15, instead of
++        editing the sections that had been reviewed.
+       </>
+     ),
+   },
+   {
+-    pr: 17,
+-    title: "A decision changes after use",
++    pr: 167,
++    title: "A review catches a misplaced take",
+     body: (
+       <>
+-        After a day with the switcher, the ordering changed from current workspace first to most
+-        recently opened first, like a task switcher. Section 9.10 records the new rule and the
+-        create gesture it retired. Section 3.5 still holds the original reasoning, so the tradeoff
+-        can be read from both sides.
++        The review of the second chunk found that the code that lands a take counted its start from
++        the track, while the audio graph counted it from the take&rsquo;s own entry. So a take could
++        sound somewhere other than where <Code>field record</Code> said it did. The fix kept the
++        graph&rsquo;s reading, added a test that checks both, and replied with the commit,{" "}
++        <Code>888d33d</Code>. The next review signed off that head.
+       </>
+     ),
+   },
+   {
+-    pr: 18,
+-    title: "A later fix lands the same way",
++    pr: 204,
++    title: "A later fix runs the whole loop",
+     body: (
+       <>
+-        A keyboard-protocol leak found in use was fixed and recorded as section 9.11. The file has
+-        not moved since the first pull request.
++        A month later, a bug found in use came back as its own pull request, and amended section
++        15.4 of the plan. Six reviews read it, one for each head. Four found something, and each
++        reply named the commit that fixed it. Two came back clean, the last on the head that merged.
+       </>
+     ),
+   },
+@@ -70,7 +77,7 @@ export function Example() {
+   return (
+     <Section
+       id="example"
+-      title="An example: the session switcher in trip"
++      title="An example: recording in field"
+       lead={
+         <>
+           <a
+@@ -79,11 +86,12 @@ export function Example() {
+             rel="noreferrer"
+             className="text-fg underline decoration-line-strong underline-offset-4 transition-colors hover:text-accent"
+           >
+-            trip
++            field
+           </a>{" "}
+-          is a terminal session runtime that keeps its plans with Projector. Its session-switcher
+-          project went from plan to completion in four pull requests, and the plan recorded each
+-          step.
++          is a music production system that keeps its plans with Projector. Its recording project
++          added <Code>field record</Code>, which captures a live performance into a track as takes.
++          Agents built it in four pull requests after the plan, reviewed each one, and fixed what
++          the reviews found.
+         </>
+       }
+     >
+@@ -101,7 +109,7 @@ export function Example() {
+                   rel="noreferrer"
+                   className="mt-3 inline-flex items-center gap-1 font-mono text-sm text-muted transition-colors hover:text-fg"
+                 >
+-                  ninjudd/trip#{step.pr}
++                  audiofield/field#{step.pr}
+                   <ArrowUpRightIcon className="h-3.5 w-3.5" />
+                 </a>
+               </div>
+@@ -111,14 +119,22 @@ export function Example() {
+         <div className="min-w-0 space-y-4 lg:sticky lg:top-24 lg:self-start">
+           <CodeBlock
+             lang="diff"
+-            title="ninjudd/trip#16 · docs/projects/session-switcher/readme.md"
++            title="audiofield/field#166 · docs/projects/recording/readme.md"
+             code={diff}
+           />
+           <figure className="overflow-hidden rounded-xl border border-line bg-surface">
+             <figcaption className="border-b border-line px-4 py-2 font-mono text-xs text-faint">
+-              git log --oneline -- docs/projects/session-switcher/readme.md
++              The plan&rsquo;s history, from the first chunk to the later fix
++            </figcaption>
++            <pre className="whitespace-pre-wrap break-words p-4 font-mono text-[12.5px] leading-6 text-fg">{log}</pre>
++          </figure>
++          <figure className="overflow-hidden rounded-xl border border-line bg-surface">
++            <figcaption className="border-b border-line px-4 py-2 font-mono text-xs text-faint">
++              audiofield/field#204 · the last review
+             </figcaption>
+-            <pre className="overflow-x-auto p-4 font-mono text-[13px] leading-6 text-fg">{log}</pre>
++            <pre className="whitespace-pre-wrap break-words p-4 font-mono text-[12.5px] leading-6 text-fg">
++              {review}
++            </pre>
+           </figure>
+           <a
+             href={EXAMPLE.plan}
+@@ -132,20 +148,15 @@ export function Example() {
+         </div>
+       </div>
+ 
+-      {/*
+-        Drawn from the description of ninjudd/projector#24, the pull request
+-        that planned Projector, and from the completion record in
+-        docs/projects/projector/readme.md. Written in Justin's voice for him
+-        to edit.
+-      */}
++      {/* Written in Justin's voice for him to edit. */}
+       <div className="mt-16 max-w-2xl border-t border-line pt-8">
+         <h3 className="text-lg font-semibold tracking-tight text-fg">Why I built it</h3>
+         <p className="mt-3 text-[15px] leading-relaxed text-muted">
+-          Before Projector, the repositories I work in kept their plans in shared{" "}
+-          <Code>now.md</Code>, <Code>next.md</Code>, and <Code>later.md</Code> files. Every branch
+-          that changed a project&rsquo;s status edited the same three files, so unrelated branches
+-          conflicted with each other, and the plans sat next to my personal agent configuration,
+-          where nothing about them could be reused. Projector started as a plan for fixing that,
++          My plans used to live wherever I happened to write them: Linear, Apple Notes, Notion,
++          Google Docs, and Sheets. None of those places sat next to the code, so a coding agent
++          could read a plan only when I pasted it in, and nothing kept the plan current as the work
++          changed it. Projector keeps each plan in the repository it describes, where every clone,
++          every review, and every agent session can read it. It started as a plan of its own,
+           written in the format it proposed, before the CLI existed.
+         </p>
+         <p className="mt-3 text-sm text-muted">
+diff --git a/web/components/sections/hero.tsx b/web/components/sections/hero.tsx
+index 7e04fa18..53e81df6 100644
+--- a/web/components/sections/hero.tsx
++++ b/web/components/sections/hero.tsx
+@@ -1,80 +1,111 @@
+ import { Command } from "@/components/command";
+ import { ArrowUpRightIcon } from "@/components/icons";
+-import { Code } from "@/components/inline-code";
+-import { Terminal, type TermLine } from "@/components/terminal";
+-import { DOCS, EXAMPLE, GITHUB, INSTALL } from "@/lib/links";
++import { InboxDemo } from "@/components/inbox-demo";
++import { DOCS, GITHUB, INSTALL } from "@/lib/links";
+ 
+-// Real output from `project list` and `project check` in ninjudd/trip.
+-const lines: TermLine[] = [
+-  { kind: "cmd", text: "project list" },
+-  { kind: "label", text: "now:" },
+-  { kind: "row", name: "resume", status: "ready", title: "Resume" },
+-  { kind: "label", text: "completed:" },
+-  { kind: "row", name: "session-switcher", status: "completed", title: "Session Switcher" },
+-  { kind: "blank" },
+-  { kind: "cmd", text: "project check" },
+-  { kind: "out", text: "Project plans are valid." },
++const tries: { label: string; body: string }[] = [
++  {
++    label: "#344",
++    body: "Open its drawer to see the findings, gathered under their files.",
++  },
++  {
++    label: "A question",
++    body: "Pick an option, and the panel fills in your prompt.",
++  },
++  {
++    label: "The iPhone request",
++    body: "Press Start, and the agent installs the build on your phone.",
++  },
++  {
++    label: "A notice",
++    body: "Read it, then dismiss it, snooze it, or ask about it.",
++  },
+ ];
+ 
+ export function Hero() {
+   return (
+     <section>
+-      <div className="mx-auto grid max-w-6xl items-center gap-14 px-6 pb-20 pt-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:pb-28 lg:pt-24">
+-        <div className="min-w-0">
+-          <h1 className="font-display text-6xl leading-[0.98] tracking-tight text-fg sm:text-7xl">
+-            Project plans that
+-            <br />
+-            <em className="text-accent">live in Git.</em>
+-          </h1>
+-          <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted">
+-            Projector keeps each project&rsquo;s plan as a Markdown file in the repository, under{" "}
+-            <Code>docs/projects/</Code>. Developers and coding agents read and update it with the
+-            same command-line tool.
+-          </p>
+-          <div className="mt-8 max-w-xl">
+-            <Command text={INSTALL.script} />
++      <div className="mx-auto max-w-6xl px-6 pb-20 pt-16 lg:pb-24 lg:pt-20">
++        <div className="grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:items-start lg:gap-16">
++          <div className="min-w-0">
++            <h1 className="font-display text-6xl leading-[0.98] tracking-tight text-fg sm:text-7xl">
++              Agents plan, build, and review.
++              <br />
++              <em className="text-accent">You make the calls.</em>
++            </h1>
++            <div className="mt-8 max-w-xl">
++              <Command text={INSTALL.script} />
++            </div>
++            <p className="mt-3 font-mono text-xs text-faint">
++              Python 3.11 or newer · MIT license · plugins for Claude Code and
++              Codex
++            </p>
++            <div className="mt-5 flex flex-wrap items-center gap-x-7 gap-y-3 text-sm">
++              <a
++                href="#loop"
++                className="font-medium text-fg transition-colors hover:text-accent"
++              >
++                How it works
++              </a>
++              <a
++                href={DOCS.index}
++                target="_blank"
++                rel="noreferrer"
++                className="inline-flex items-center gap-1 text-muted transition-colors hover:text-fg"
++              >
++                Read the docs
++                <ArrowUpRightIcon className="h-4 w-4" />
++              </a>
++              <a
++                href={GITHUB}
++                target="_blank"
++                rel="noreferrer"
++                className="inline-flex items-center gap-1 text-muted transition-colors hover:text-fg"
++              >
++                GitHub
++                <ArrowUpRightIcon className="h-4 w-4" />
++              </a>
++            </div>
+           </div>
+-          <p className="mt-3 font-mono text-xs text-faint">
+-            Python 3.11 or newer · MIT license · plugins for Claude Code and Codex
++          <p className="min-w-0 text-lg leading-relaxed text-muted lg:pt-2">
++            Projector gives Claude Code and Codex a workflow for projects.
++            Agents write the plan into the repository, build it, review each
++            other&rsquo;s pull requests, and fix what the reviews find. You
++            review the plan, answer the questions only you can, and decide what
++            merges. Every question waits for you in a panel above your prompt,
++            and every pull request comes with a summary that walks you through
++            the change.
+           </p>
+-          <div className="mt-6 flex flex-wrap items-center gap-x-7 gap-y-3 text-sm">
+-            <a href="#create" className="font-medium text-fg transition-colors hover:text-accent">
+-              How it works
+-            </a>
+-            <a
+-              href={DOCS.index}
+-              target="_blank"
+-              rel="noreferrer"
+-              className="inline-flex items-center gap-1 text-muted transition-colors hover:text-fg"
+-            >
+-              Read the docs
+-              <ArrowUpRightIcon className="h-4 w-4" />
+-            </a>
+-            <a
+-              href={GITHUB}
+-              target="_blank"
+-              rel="noreferrer"
+-              className="inline-flex items-center gap-1 text-muted transition-colors hover:text-fg"
+-            >
+-              GitHub
+-              <ArrowUpRightIcon className="h-4 w-4" />
+-            </a>
+-          </div>
+         </div>
+-        <div className="min-w-0">
+-          <Terminal title="ninjudd/trip" lines={lines} />
+-          <p className="mt-3 text-sm text-muted">
+-            Output from{" "}
++
++        <div className="mt-14 grid gap-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-10">
++          <InboxDemo />
++          <div className="min-w-0">
++            <h2 className="text-base font-semibold tracking-tight text-fg">
++              Try the panel
++            </h2>
++            <p className="mt-2 text-sm leading-relaxed text-muted">
++              This is Projector&rsquo;s panel as it sits above your prompt in
++              Claude Code. Every line opens.
++            </p>
++            <ul className="mt-5 space-y-4">
++              {tries.map((item) => (
++                <li
++                  key={item.label}
++                  className="border-t border-line pt-3 text-sm leading-relaxed"
++                >
++                  <span className="font-medium text-fg">{item.label}.</span>{" "}
++                  <span className="text-muted">{item.body}</span>
++                </li>
++              ))}
++            </ul>
+             <a
+-              href={EXAMPLE.projects}
+-              target="_blank"
+-              rel="noreferrer"
+-              className="underline decoration-line-strong underline-offset-4 transition-colors hover:text-fg"
++              href="#panel"
++              className="mt-5 inline-block text-sm font-medium text-fg transition-colors hover:text-accent"
+             >
+-              the plans in ninjudd/trip
++              What each line means ↓
+             </a>
+-            , the project used as the example below.
+-          </p>
++          </div>
+         </div>
+       </div>
+     </section>
+diff --git a/web/components/sections/install.tsx b/web/components/sections/install.tsx
+index 5815e8a7..382f8f73 100644
+--- a/web/components/sections/install.tsx
++++ b/web/components/sections/install.tsx
+@@ -11,7 +11,8 @@ const rows: { title: string; body: ReactNode; commands: string[] }[] = [
+     body: (
+       <>
+         Installs the <Code>project</Code> command from the newest release, and the plugin for
+-        Claude Code and Codex, whichever you have. It needs Python 3.11 or newer, and no git. Run{" "}
++        Claude Code and Codex, whichever you have. It needs Python 3.11 or newer, Codex 0.107 or
++        newer if you use Codex, and no git. Run{" "}
+         <Code>{INSTALL.upgrade}</Code> later to move everything to the newest release.
+       </>
+     ),
+@@ -31,8 +32,9 @@ const rows: { title: string; body: ReactNode; commands: string[] }[] = [
+     title: "Claude Code",
+     body: (
+       <>
+-        Adds the repository as a plugin marketplace and installs the plugin for your user. Skills
+-        are invoked as <Code>/projector:&lt;skill&gt;</Code>.
++        Adds the repository as a plugin marketplace and installs the plugin for your user. Invoke a
++        skill by its name, such as <Code>/spec</Code>. When another plugin has a skill of the same
++        name, use the full name, such as <Code>/projector:spec</Code>.
+       </>
+     ),
+     commands: INSTALL.claude,
+diff --git a/web/components/sections/loop.tsx b/web/components/sections/loop.tsx
+new file mode 100644
+index 00000000..b98c46fb
+--- /dev/null
++++ b/web/components/sections/loop.tsx
+@@ -0,0 +1,140 @@
++import type { ReactNode } from "react";
++import { ArrowUpRightIcon } from "@/components/icons";
++import { Code } from "@/components/inline-code";
++import { Section } from "@/components/section";
++import { DOCS } from "@/lib/links";
++
++const steps: { title: string; invoke: string; body: ReactNode }[] = [
++  {
++    title: "Spec it",
++    invoke: "/spec a count-in before each take",
++    body: (
++      <>
++        The agent reads the repository and its existing projects, asks only what the code cannot
++        answer, and writes the plan to <Code>docs/projects/&lt;name&gt;/readme.md</Code>. It opens
++        the plan as a draft pull request and asks you in the inbox to review it, so the design is
++        settled before any code.
++      </>
++    ),
++  },
++  {
++    title: "Implement it",
++    invoke: "/implement count-in",
++    body: (
++      <>
++        A later session starts from the plan, not from the earlier conversation. It builds the
++        work, appends what the build settled to the plan, and opens a draft pull request. Once its
++        work is done, it marks the pull request ready with <Code>project review ready</Code>, which
++        asks for a review.
++      </>
++    ),
++  },
++  {
++    title: "Review it",
++    invoke: "/review-repo",
++    body: (
++      <>
++        Another session reviews each pull request once it is ready. It checks out the exact head,
++        reads the change against the plan and the repository&rsquo;s rules, and posts one review,
++        linked to a summary of the change.
++        A clean review labels the pull request <Code>clean</Code>. The next push removes the label,
++        so each new head waits for its own review.
++      </>
++    ),
++  },
++  {
++    title: "Fix what the review finds",
++    invoke:
++      "FINDING acme/app#12 docs/x.md:40 [bugbot]: P2 the link is broken — run fix-pr on acme/app#12 in subagent fix-12",
++    body: (
++      <>
++        A daemon watches the pull requests, and wakes the session that pushed one with each
++        finding, conflict, and failing check. That session runs <Code>fix-pr</Code>: it verifies
++        each finding, fixes and pushes the real ones, replies with the commit, and declines the
++        rest with evidence. The reviewer then checks each fix on the new head.
++      </>
++    ),
++  },
++  {
++    title: "You decide what merges",
++    invoke: "/finish count-in",
++    body: (
++      <>
++        Projector opens pull requests and never merges them. You read the plan, the review, and its
++        summary, and merge when you agree. The pull request that carries the last of the
++        project&rsquo;s code runs <Code>project done</Code>, so the plan reads{" "}
++        <Code>completed</Code> once it merges.
++      </>
++    ),
++  },
++];
++
++function DocLink({ href, children }: { href: string; children: ReactNode }) {
++  return (
++    <a
++      href={href}
++      target="_blank"
++      rel="noreferrer"
++      className="inline-flex items-center gap-1 text-sm font-medium text-fg transition-colors hover:text-accent"
++    >
++      {children}
++      <ArrowUpRightIcon className="h-4 w-4" />
++    </a>
++  );
++}
++
++export function Loop() {
++  return (
++    <Section
++      id="loop"
++      title="From plan to merge, the agents do the work between"
++      lead={
++        <>
++          Projector&rsquo;s plugin adds skills to Claude Code and Codex. A skill is a written
++          procedure the agent follows. Together they carry a project from its plan to a pull
++          request you can merge, and each stops for you only where you have to decide.
++        </>
++      }
++    >
++      <ol className="divide-y divide-line border-y border-line">
++        {steps.map((step, index) => (
++          <li
++            key={step.title}
++            className="grid gap-4 py-7 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:gap-12"
++          >
++            <div className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] gap-x-2">
++              <span className="mt-0.5 font-mono text-sm text-accent">{index + 1}</span>
++              <div className="min-w-0">
++                <h3 className="text-lg font-semibold tracking-tight text-fg">{step.title}</h3>
++                <p className="mt-2 text-[15px] leading-relaxed text-muted">{step.body}</p>
++              </div>
++            </div>
++            <pre className="min-w-0 self-start whitespace-pre-wrap break-words rounded-lg border border-line bg-surface px-4 py-3 font-mono text-[13px] leading-6 text-fg lg:mt-1">
++              {step.invoke}
++            </pre>
++          </li>
++        ))}
++      </ol>
++      <div className="mt-12 grid gap-8 lg:grid-cols-2 lg:gap-16">
++        <p className="text-[15px] leading-relaxed text-muted">
++          There is no loop for you to start. Opening or pushing a pull request subscribes the session
++          to fix it, and one background process per machine polls GitHub for every session. In
++          Claude Code the events arrive as prompts, and in Codex through its own queue. The session
++          that wrote a pull request does not review it unless you ask.
++        </p>
++        <p className="text-[15px] leading-relaxed text-muted">
++          A clean review is one model&rsquo;s reading of one commit. It catches what a careful first
++          pass catches, and it is not proof that the change is correct. A review runs a pull
++          request&rsquo;s tests only when it trusts everyone who could push to it, and asks you
++          before it runs anyone else&rsquo;s code.
++        </p>
++      </div>
++      <div className="mt-8 flex flex-wrap gap-x-6 gap-y-2">
++        <DocLink href={DOCS.plugins}>Plugin guide</DocLink>
++        <DocLink href={DOCS.reviewPr}>review-pr</DocLink>
++        <DocLink href={DOCS.fixPr}>fix-pr</DocLink>
++        <DocLink href={DOCS.watch}>project watch</DocLink>
++      </div>
++    </Section>
++  );
++}
+diff --git a/web/components/sections/panel.tsx b/web/components/sections/panel.tsx
+new file mode 100644
+index 00000000..cf78f066
+--- /dev/null
++++ b/web/components/sections/panel.tsx
+@@ -0,0 +1,198 @@
++import type { ReactNode } from "react";
++import { ArrowUpRightIcon } from "@/components/icons";
++import { Code } from "@/components/inline-code";
++import { Section } from "@/components/section";
++import { DOCS } from "@/lib/links";
++
++const kinds: { title: string; tool: string; tone: string; body: ReactNode }[] =
++  [
++    {
++      title: "Questions",
++      tool: "ask",
++      tone: "text-[#5560c9] dark:text-[#b1b9f9]",
++      body: (
++        <>
++          A decision only you can make, with the agent&rsquo;s recommendation
++          first. Press a digit to answer, or reply in your own words.
++        </>
++      ),
++    },
++    {
++      title: "Requests",
++      tool: "request",
++      tone: "text-[#b4592a] dark:text-[rgb(255,190,140)]",
++      body: (
++        <>
++          Work only you can do, such as signing in or trying a build on your
++          phone. Installing that build waits until you press{" "}
++          <strong className="font-medium text-fg">Start</strong>.
++        </>
++      ),
++    },
++    {
++      title: "Notices",
++      tool: "tell",
++      tone: "text-muted",
++      body: (
++        <>
++          News you should not miss, such as a conflict an agent merged away.
++          Read it, then dismiss it.
++        </>
++      ),
++    },
++  ];
++
++const states: { word: string; tone: string; italic?: boolean; body: string }[] =
++  [
++    {
++      word: "conflict",
++      tone: "text-[#c43d3d] dark:text-[#f2777a]",
++      body: "The branch conflicts with its base.",
++    },
++    {
++      word: "failing",
++      tone: "text-[#c43d3d] dark:text-[#f2777a]",
++      body: "The head's checks fail.",
++    },
++    {
++      word: "changes",
++      tone: "text-[#9a6b00] dark:text-[#e5c07b]",
++      body: "A review requests changes.",
++    },
++    {
++      word: "findings",
++      tone: "text-[#9a6b00] dark:text-[#e5c07b]",
++      body: "Review threads are unresolved. Each one is a finding.",
++    },
++    {
++      word: "reviewing",
++      tone: "text-[#c25a12] dark:text-[#f99157]",
++      body: "A review of the head is running.",
++    },
++    {
++      word: "clean",
++      tone: "text-[#3d7a35] dark:text-[#99c794]",
++      body: "A review signed off the current head.",
++    },
++    {
++      word: "draft",
++      tone: "text-fg",
++      italic: true,
++      body: "Its author is still working on it.",
++    },
++    {
++      word: "ready",
++      tone: "text-[#2b6f9e] dark:text-[#8fc1e3]",
++      body: "It waits for its first review.",
++    },
++  ];
++
++function DocLink({ href, children }: { href: string; children: ReactNode }) {
++  return (
++    <a
++      href={href}
++      target="_blank"
++      rel="noreferrer"
++      className="inline-flex items-center gap-1 text-sm font-medium text-fg transition-colors hover:text-accent"
++    >
++      {children}
++      <ArrowUpRightIcon className="h-4 w-4" />
++    </a>
++  );
++}
++
++export function Panel() {
++  return (
++    <Section
++      id="panel"
++      title="Answer your agents from one inbox"
++      lead={
++        <>
++          In Claude Code, Projector&rsquo;s panel sits above your prompt. Agents
++          post what they need from you to its inbox and keep working: a question
++          to answer, a request for work only you can do, or a notice to read.
++          Above the inbox, each pull request your session fixes or reviews shows
++          its state. The panel at the top of this page works the same way.
++        </>
++      }
++    >
++      <ul className="grid gap-10 md:grid-cols-3">
++        {kinds.map((kind) => (
++          <li
++            key={kind.title}
++            className="min-w-0 border-t border-line-strong pt-5"
++          >
++            <h3 className="flex items-baseline gap-2 text-lg font-semibold tracking-tight">
++              <span className={kind.tone}>{kind.title}</span>
++              <Code>{kind.tool}</Code>
++            </h3>
++            <p className="mt-3 text-[15px] leading-relaxed text-muted">
++              {kind.body}
++            </p>
++          </li>
++        ))}
++      </ul>
++      <p className="mt-8 max-w-3xl text-[15px] leading-relaxed text-muted">
++        Every item offers{" "}
++        <strong className="font-medium text-fg">
++          I don&rsquo;t understand
++        </strong>
++        . Say what you don&rsquo;t follow, and the agent rewrites the item in
++        place. <strong className="font-medium text-fg">Snooze</strong> puts an
++        item off for up to a day, and a dismissed item can be restored until it
++        leaves the list.
++      </p>
++
++      <div className="mt-16 grid gap-12 lg:grid-cols-2 lg:gap-16">
++        <div className="min-w-0">
++          <h3 className="text-lg font-semibold tracking-tight text-fg">
++            Each row says what a pull request is waiting for
++          </h3>
++          <dl className="mt-4 grid grid-cols-[6rem_minmax(0,1fr)] gap-x-4 gap-y-2 text-[15px]">
++            {states.map((state) => (
++              <div key={state.word} className="contents">
++                <dt
++                  className={`font-mono text-sm leading-relaxed ${state.tone} ${state.italic ? "italic" : ""}`}
++                >
++                  {state.word}
++                </dt>
++                <dd className="leading-relaxed text-muted">{state.body}</dd>
++              </div>
++            ))}
++          </dl>
++        </div>
++        <div className="min-w-0 space-y-4 text-[15px] leading-relaxed text-muted">
++          <h3 className="text-lg font-semibold tracking-tight text-fg">
++            A drawer holds the rest
++          </h3>
++          <p>
++            Click a pull request&rsquo;s number to open its drawer: whether your
++            session fixes or reviews it, its branch, its size, its checks, and
++            its labels. Under those come links to the pull request on GitHub and
++            to its summary, and each unresolved finding, gathered under its
++            file. <strong className="font-medium text-fg">Discuss</strong> puts
++            the number in your prompt, and{" "}
++            <strong className="font-medium text-fg">Dismiss</strong> stops the
++            session watching it.
++          </p>
++          <p>
++            Your own pull requests come first, then the ones that ask for your
++            review. The panel works from the keyboard too:{" "}
++            <Code>ctrl+x tab</Code> moves into it, and Esc gives the keyboard
++            back.
++          </p>
++          <p>
++            The panel is part of the Claude Code plugin. In Codex or a terminal,{" "}
++            <Code>project inbox</Code> reaches the same inbox, and Codex gets
++            the same pull request events as prompts.
++          </p>
++          <div className="flex flex-wrap gap-x-6 gap-y-2 pt-1">
++            <DocLink href={DOCS.panel}>The panel</DocLink>
++            <DocLink href={DOCS.inboxPanel}>The inbox</DocLink>
++            <DocLink href={DOCS.inbox}>project inbox</DocLink>
++          </div>
++        </div>
++      </div>
++    </Section>
++  );
++}
+diff --git a/web/components/sections/review-loop.tsx b/web/components/sections/review-loop.tsx
+deleted file mode 100644
+index 86373cf8..00000000
+--- a/web/components/sections/review-loop.tsx
++++ /dev/null
+@@ -1,84 +0,0 @@
+-import type { ReactNode } from "react";
+-import { ArrowUpRightIcon } from "@/components/icons";
+-import { Code } from "@/components/inline-code";
+-import { Section } from "@/components/section";
+-import { DOCS } from "@/lib/links";
+-
+-const steps = [
+-  {
+-    title: "You push",
+-    body: "A new commit lands on one of your pull requests, whichever session opened it.",
+-  },
+-  {
+-    title: "A reviewing session reviews it",
+-    body: "The session that reviews your repository checks out that exact commit locally, reads the change, and posts what it finds as one comment review. Each pull request keeps its own reviewer, so the next review knows the last, and a large one gets a summary on the repository\u2019s site.",
+-  },
+-  {
+-    title: "The pushing session fixes it",
+-    body: "The session that pushed the pull request hears about each finding, then checks, fixes, commits, and pushes it, and a branch that conflicts with its base gets the base merged in. It replies with the commit and resolves the thread. Each pull request keeps its own fixer, so the next round knows the last.",
+-  },
+-  {
+-    title: "The draft becomes ready",
+-    body: "The reviewer verifies each finding on the new head, resolving what is fixed and reopening what is not. When nothing is left open, the pull request is marked ready for a person to review.",
+-  },
+-];
+-
+-function DocLink({ href, children }: { href: string; children: ReactNode }) {
+-  return (
+-    <a
+-      href={href}
+-      target="_blank"
+-      rel="noreferrer"
+-      className="inline-flex items-center gap-1 text-sm font-medium text-fg transition-colors hover:text-accent"
+-    >
+-      {children}
+-      <ArrowUpRightIcon className="h-4 w-4" />
+-    </a>
+-  );
+-}
+-
+-export function ReviewLoop() {
+-  return (
+-    <Section
+-      id="reviews"
+-      title="Automated reviews"
+-      lead={
+-        <>
+-          <Code>review-pr</Code> reviews a pull request&rsquo;s current head and each head pushed
+-          after it, and <Code>review-repo</Code> does the same for every pull request of yours in a
+-          repository. <Code>fix-pr</Code> fixes what a review found and resolves merge conflicts,
+-          and the session that pushed a pull request runs it again whenever a review finds
+-          something. One background process watches the pull requests for every session, so
+-          nothing needs starting while you keep working. The plans and the CLI do not depend on
+-          any of them.
+-        </>
+-      }
+-      size="tight"
+-    >
+-      <ol className="grid gap-8 md:grid-cols-2 lg:grid-cols-4">
+-        {steps.map((step, index) => (
+-          <li key={step.title} className="border-t border-line-strong pt-5">
+-            <span className="font-mono text-sm text-accent">{index + 1}</span>
+-            <h3 className="mt-2 text-base font-semibold tracking-tight text-fg">{step.title}</h3>
+-            <p className="mt-2 text-sm leading-relaxed text-muted">{step.body}</p>
+-          </li>
+-        ))}
+-      </ol>
+-      <div className="mt-10 max-w-2xl space-y-4 text-[15px] leading-relaxed text-muted">
+-        <p>
+-          Until then the pull request stays a draft, so draft means a review still has something to
+-          say. A clean review is one model&rsquo;s reading of one commit. It catches what a careful
+-          first pass catches, and it is not proof that the change is correct, so a human review
+-          still follows. The rules the skills follow on GitHub, including who may mark a draft
+-          ready and how findings are labeled, are in the skill documents. A review runs a pull
+-          request&rsquo;s tests only when it trusts who could push to it, and asks you before
+-          running code from anyone else.
+-        </p>
+-        <div className="flex flex-wrap gap-x-6 gap-y-2 pt-1">
+-          <DocLink href={DOCS.reviewRepo}>review-repo</DocLink>
+-          <DocLink href={DOCS.fixPr}>fix-pr</DocLink>
+-        </div>
+-      </div>
+-    </Section>
+-  );
+-}
+diff --git a/web/components/sections/sessions.tsx b/web/components/sections/sessions.tsx
+new file mode 100644
+index 00000000..6e7881a6
+--- /dev/null
++++ b/web/components/sections/sessions.tsx
+@@ -0,0 +1,92 @@
++import type { ReactNode } from "react";
++import { ArrowUpRightIcon } from "@/components/icons";
++import { Code } from "@/components/inline-code";
++import { Section } from "@/components/section";
++import { DOCS } from "@/lib/links";
++
++const parts: { title: string; invoke: string; body: ReactNode; href: string; link: string }[] = [
++  {
++    title: "Work while you are away",
++    invoke: "/work finish the retry plan",
++    body: (
++      <>
++        The session makes each decision that has a reasonable answer itself. It posts the ones you
++        must review to your inbox, with the answer it recommends, and builds what they do not
++        block. It marks each pull request ready once its work is done, and fixes what each review
++        finds. It still opens pull requests and never merges them, and it asks before an action
++        that is hard to undo.
++      </>
++    ),
++    href: DOCS.work,
++    link: "work",
++  },
++  {
++    title: "Let sessions talk to each other",
++    invoke: 'project agent send test-writer "Which error should a truncated header raise?"',
++    body: (
++      <>
++        A session registers under a name and a summary of what it is doing. Another session lists
++        them and sends one a message, and the watch daemon wakes the recipient with it. Between
++        your machines, the messages travel encrypted through hidden refs of a repository both
++        machines work in. A message from another agent carries none of your authority.
++      </>
++    ),
++    href: DOCS.agents,
++    link: "project agent",
++  },
++  {
++    title: "Clean up when you are done",
++    invoke: "/cleanup",
++    body: (
++      <>
++        The session checks each thing you asked for against evidence that it was delivered, such
++        as a pull request URL. For anything left, it asks whether to do it now, open an issue, or
++        leave it. Then it releases its subscriptions, inbox items, and worktrees, and tells you when
++        it is safe to shut down.
++      </>
++    ),
++    href: DOCS.cleanup,
++    link: "cleanup",
++  },
++];
++
++export function Sessions() {
++  return (
++    <Section
++      id="sessions"
++      title="Leave sessions working"
++      lead={
++        <>
++          A session keeps fixing and reviewing its pull requests with no loop for you to start.
++          Three more tools let it work unattended, reach your other sessions, and finish cleanly.
++        </>
++      }
++      size="tight"
++    >
++      <ol className="grid gap-8 lg:grid-cols-3">
++        {parts.map((part) => (
++          <li key={part.title} className="flex min-w-0 flex-col border-t border-line-strong pt-5">
++            <h3 className="text-lg font-semibold tracking-tight text-fg">{part.title}</h3>
++            <pre className="mt-4 whitespace-pre-wrap break-words rounded-lg border border-line bg-surface px-4 py-3 font-mono text-[13px] leading-6 text-fg">
++              {part.invoke}
++            </pre>
++            <p className="mt-4 text-[15px] leading-relaxed text-muted">{part.body}</p>
++            <a
++              href={part.href}
++              target="_blank"
++              rel="noreferrer"
++              className="mt-3 inline-flex items-center gap-1 font-mono text-sm text-muted transition-colors hover:text-fg"
++            >
++              {part.link}
++              <ArrowUpRightIcon className="h-3.5 w-3.5" />
++            </a>
++          </li>
++        ))}
++      </ol>
++      <p className="mt-10 max-w-2xl text-[15px] leading-relaxed text-muted">
++        In Codex, the same skills are <Code>$work</Code>, <Code>$message-agent</Code>, and{" "}
++        <Code>$cleanup</Code>.
++      </p>
++    </Section>
++  );
++}
+diff --git a/web/components/sections/site.tsx b/web/components/sections/site.tsx
+index c9f560bb..890a8132 100644
+--- a/web/components/sections/site.tsx
++++ b/web/components/sections/site.tsx
+@@ -19,8 +19,8 @@ const parts: { title: string; body: ReactNode }[] = [
+     title: "Reviews",
+     body: (
+       <>
+-        Guided summaries of large pull requests, which the <Code>summarize-pr</Code> skill
+-        writes and publishes, one for each head the pull request reaches.
++        The summaries shown above, one for each head a pull request reaches, listed with the
++        state of each pull request&rsquo;s review.
+       </>
+     ),
+   },
+diff --git a/web/components/sections/summaries.tsx b/web/components/sections/summaries.tsx
+new file mode 100644
+index 00000000..eb835686
+--- /dev/null
++++ b/web/components/sections/summaries.tsx
+@@ -0,0 +1,178 @@
++import Image, { type StaticImageData } from "next/image";
++import type { ReactNode } from "react";
++import { ArrowUpRightIcon } from "@/components/icons";
++import { Code } from "@/components/inline-code";
++import { Section } from "@/components/section";
++import overviewDark from "@/public/summaries/overview-dark.png";
++import overviewLight from "@/public/summaries/overview-light.png";
++import sectionDark from "@/public/summaries/section-dark.png";
++import sectionLight from "@/public/summaries/section-light.png";
++import { DOCS, SUMMARY_EXAMPLE } from "@/lib/links";
++
++const parts: { title: string; body: ReactNode }[] = [
++  {
++    title: "What the pull request does, for someone new to the code",
++    body: (
++      <>
++        The overview says what the part of the system is for, what problem the change solves, and
++        how, and defines each term a newcomer would trip on.
++      </>
++    ),
++  },
++  {
++    title: "Where the real review is",
++    body: (
++      <>
++        The page counts hand-written, test, generated, and documentation lines apart, and folds
++        generated code, tests, and docs away so the files you must read come first.
++      </>
++    ),
++  },
++  {
++    title: "Sections in reading order",
++    body: (
++      <>
++        The diff is split into logical sections, from the contract outward: interfaces first, then
++        the core, then the callers. Each section opens with what it does and why, then shows its
++        files with every hunk highlighted.
++      </>
++    ),
++  },
++  {
++    title: "Notes pinned to the line",
++    body: (
++      <>
++        A <Code>context</Code> note says what to hold in mind. A verified note states something the
++        summary&rsquo;s author checked and how, such as a test it ran. A flag raises a concern that needs your
++        decision, with a box to mark it handled.
++      </>
++    ),
++  },
++  {
++    title: "Stacks read as one change",
++    body: (
++      <>
++        A pull request that is one layer of a stack lists every layer in its sidebar, so you can
++        read the plan, the change, and what builds on it in order.
++      </>
++    ),
++  },
++  {
++    title: "What the reviews found so far",
++    body: (
++      <>
++        The overview says what earlier reviews found and how each push answered them. Every head
++        gets a page of its own, and boxes on each file and section track what you have read.
++      </>
++    ),
++  },
++];
++
++function Shot({
++  dark,
++  light,
++  alt,
++  sizes,
++}: {
++  dark: StaticImageData;
++  light: StaticImageData;
++  alt: string;
++  sizes: string;
++}) {
++  return (
++    <div className="overflow-hidden rounded-xl border border-line-strong bg-surface shadow-sm">
++      <Image src={light} alt={alt} sizes={sizes} className="block h-auto w-full dark:hidden" />
++      <Image src={dark} alt={alt} sizes={sizes} className="hidden h-auto w-full dark:block" />
++    </div>
++  );
++}
++
++function DocLink({ href, children }: { href: string; children: ReactNode }) {
++  return (
++    <a
++      href={href}
++      target="_blank"
++      rel="noreferrer"
++      className="inline-flex items-center gap-1 text-sm font-medium text-fg transition-colors hover:text-accent"
++    >
++      {children}
++      <ArrowUpRightIcon className="h-4 w-4" />
++    </a>
++  );
++}
++
++export function Summaries() {
++  return (
++    <Section
++      id="summaries"
++      title="Summaries that make a pull request reviewable by humans"
++      lead={
++        <>
++          A diff in file order is hard to review, and harder when an agent wrote it.{" "}
++          <Code>review-pr</Code> writes a guided summary of each pull request it reviews, and the
++          repository&rsquo;s Projector site serves it, linked from the review. You read the change
++          the way its author would explain it.
++        </>
++      }
++    >
++      <figure>
++        <Shot
++          light={overviewLight}
++          dark={overviewDark}
++          alt="The top of a Projector summary: the stack the pull request sits in, what it does, its size by kind of line, and the files it changes"
++          sizes="(min-width: 1152px) 1104px, 100vw"
++        />
++        <figcaption className="mt-3 text-sm text-muted">
++          The top of the summary of{" "}
++          <a
++            href={SUMMARY_EXAMPLE.page}
++            target="_blank"
++            rel="noreferrer"
++            className="underline decoration-line-strong underline-offset-4 transition-colors hover:text-fg"
++          >
++            ninjudd/projector#456
++          </a>
++          , which added <Code>project ios</Code>. Its sidebar lists the stack it sits in: the plan
++          in #450, this change, and the skill change in #457 that uses it.
++        </figcaption>
++      </figure>
++
++      <div className="mt-16 grid gap-12 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)] lg:gap-12">
++        <div className="min-w-0">
++          <ol className="space-y-6">
++            {parts.map((part, index) => (
++              <li key={part.title} className="grid grid-cols-[2rem_minmax(0,1fr)] gap-x-2">
++                <span className="mt-0.5 font-mono text-sm text-accent">{index + 1}</span>
++                <div>
++                  <h3 className="text-base font-semibold tracking-tight text-fg">{part.title}</h3>
++                  <p className="mt-1.5 text-[15px] leading-relaxed text-muted">{part.body}</p>
++                </div>
++              </li>
++            ))}
++          </ol>
++          <p className="mt-8 text-[15px] leading-relaxed text-muted">
++            Run <Code>/summarize-pr</Code> on any pull request to write one yourself. The
++            summary lives on a hidden ref in the repository, so it adds no branch and nothing to
++            anyone&rsquo;s clone.
++          </p>
++          <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2">
++            <DocLink href={SUMMARY_EXAMPLE.page}>Open this summary</DocLink>
++            <DocLink href={SUMMARY_EXAMPLE.index}>Every summary of Projector</DocLink>
++            <DocLink href={DOCS.summarizePr}>summarize-pr</DocLink>
++          </div>
++        </div>
++        <figure className="min-w-0 lg:sticky lg:top-24 lg:self-start">
++          <Shot
++            light={sectionLight}
++            dark={sectionDark}
++            alt="Part of a Projector summary's diff, with two context notes under the lines they concern"
++            sizes="(min-width: 1152px) 700px, 100vw"
++          />
++          <figcaption className="mt-3 text-sm text-muted">
++            Part of section 1 of the same summary. Each note sits under the lines it concerns.
++          </figcaption>
++        </figure>
++      </div>
++    </Section>
++  );
++}
+diff --git a/web/components/sections/tools.tsx b/web/components/sections/tools.tsx
+new file mode 100644
+index 00000000..e81ec5b4
+--- /dev/null
++++ b/web/components/sections/tools.tsx
+@@ -0,0 +1,129 @@
++import type { ReactNode } from "react";
++import { ArrowUpRightIcon } from "@/components/icons";
++import { Code } from "@/components/inline-code";
++import { Section } from "@/components/section";
++import { DOCS } from "@/lib/links";
++
++const tools: {
++  title: string;
++  command: string;
++  body: ReactNode;
++  href: string;
++  link: string;
++}[] = [
++  {
++    title: "Require a clean review to merge",
++    command: "project init --require-review",
++    body: (
++      <>
++        In a repository that relies on Projector alone to sign off pull requests, a ruleset makes
++        GitHub block a merge until the current head has a clean review. Each review posts the{" "}
++        <Code>projector/review</Code> status on the commit it read.
++      </>
++    ),
++    href: DOCS.requireReview,
++    link: "CLI reference",
++  },
++  {
++    title: "Write prose people can read",
++    command: "/rewrite the install section of the README",
++    body: (
++      <>
++        Every plan, review, summary, and pull request body follows one writing guide.{" "}
++        <Code>write</Code> applies it to any prose you ask for, and <Code>rewrite</Code> revises
++        text that exists and writes it back where it lives.
++      </>
++    ),
++    href: DOCS.writing,
++    link: "Writing guide",
++  },
++  {
++    title: "Write tests that catch bugs",
++    command: "/write-tests audit tests/test_site.py",
++    body: (
++      <>
++        Each test names the bug it catches. <Code>write-tests</Code> writes those tests, and deletes
++        or rewrites the ones that catch nothing. The spec, build, and review skills follow the same
++        testing guide.
++      </>
++    ),
++    href: DOCS.testing,
++    link: "Testing guide",
++  },
++  {
++    title: "Split large work into a stack",
++    command: "gh stack view",
++    body: (
++      <>
++        Dependent work too large for one review becomes a stack of draft pull requests that GitHub
++        records with <Code>gh stack</Code>. A fix on a lower layer is carried up through every layer
++        above it, so the stack stays mergeable as a unit.
++      </>
++    ),
++    href: DOCS.plugins,
++    link: "Plugin guide",
++  },
++  {
++    title: "Put a branch's iOS app on your phone",
++    command: "project ios build 12",
++    body: (
++      <>
++        Builds pull request 12 in a worktree of its own, installs it on your iPhone, iPad, or Mac,
++        and opens it. <Code>project ios crashes</Code> and <Code>project ios logs</Code> bring the
++        device&rsquo;s reports back.
++      </>
++    ),
++    href: DOCS.ios,
++    link: "project ios",
++  },
++  {
++    title: "Find a pull request's worktree",
++    command: 'cd "$(project worktree 12)"',
++    body: (
++      <>
++        Prints the folder of the worktree that has pull request 12&rsquo;s branch checked out. An
++        agent&rsquo;s worktree is often named for the agent rather than the branch, so this saves
++        reading <Code>git worktree list</Code>.
++      </>
++    ),
++    href: DOCS.worktree,
++    link: "project worktree",
++  },
++];
++
++export function Tools() {
++  return (
++    <Section
++      id="tools"
++      title="More for the same workflow"
++      lead={
++        <>
++          The plugin and the <Code>project</Code> command carry smaller tools that the skills use
++          and that you can run yourself.
++        </>
++      }
++      size="tight"
++    >
++      <ul className="grid gap-x-10 gap-y-10 md:grid-cols-2 lg:grid-cols-3">
++        {tools.map((tool) => (
++          <li key={tool.title} className="flex min-w-0 flex-col border-t border-line-strong pt-5">
++            <h3 className="text-base font-semibold tracking-tight text-fg">{tool.title}</h3>
++            <pre className="mt-3 whitespace-pre-wrap break-words rounded-lg border border-line bg-surface px-3 py-2 font-mono text-[12.5px] leading-6 text-fg">
++              {tool.command}
++            </pre>
++            <p className="mt-3 text-sm leading-relaxed text-muted">{tool.body}</p>
++            <a
++              href={tool.href}
++              target="_blank"
++              rel="noreferrer"
++              className="mt-3 inline-flex items-center gap-1 text-sm text-muted transition-colors hover:text-fg"
++            >
++              {tool.link}
++              <ArrowUpRightIcon className="h-3.5 w-3.5" />
++            </a>
++          </li>
++        ))}
++      </ul>
++    </Section>
++  );
++}
+diff --git a/web/components/site-footer.tsx b/web/components/site-footer.tsx
+index e4467b70..aa3a11a2 100644
+--- a/web/components/site-footer.tsx
++++ b/web/components/site-footer.tsx
+@@ -25,8 +25,8 @@ export function SiteFooter() {
+         <div>
+           <Logo />
+           <p className="mt-4 max-w-sm text-sm leading-relaxed text-muted">
+-            Git-native project plans for people and coding agents. Open source under the MIT
+-            license.
++            Plans in Git, and coding agents that build them, review each other, and leave the
++            merge to you. Open source under the MIT license.
+           </p>
+           {version ? <p className="mt-4 font-mono text-xs text-faint">v{version}</p> : null}
+         </div>
+@@ -35,6 +35,7 @@ export function SiteFooter() {
+           <FooterLink href={DOCS.convention}>Project convention</FooterLink>
+           <FooterLink href={DOCS.cli}>CLI reference</FooterLink>
+           <FooterLink href={DOCS.plugins}>Plugin guide</FooterLink>
++          <FooterLink href={DOCS.site}>Site guide</FooterLink>
+           <FooterLink href={DOCS.reviewRepo}>review-repo</FooterLink>
+           <FooterLink href={DOCS.fixPr}>fix-pr</FooterLink>
+         </div>
+diff --git a/web/components/site-header.tsx b/web/components/site-header.tsx
+index 5d0163a5..d4cb35ba 100644
+--- a/web/components/site-header.tsx
++++ b/web/components/site-header.tsx
+@@ -3,11 +3,11 @@ import { GitHubIcon } from "./icons";
+ import { Logo } from "./logo";
+ 
+ const nav = [
+-  { href: "#create", label: "How it works" },
++  { href: "#panel", label: "Inbox" },
++  { href: "#summaries", label: "Summaries" },
++  { href: "#loop", label: "How it works" },
++  { href: "#plans", label: "Plans" },
+   { href: "#example", label: "Example" },
+-  { href: "#agents", label: "Agents" },
+-  { href: "#reviews", label: "Reviews" },
+-  { href: "#site", label: "Site" },
+ ];
+ 
+ export function SiteHeader() {
+diff --git a/web/lib/links.ts b/web/lib/links.ts
+index b9f6f3f7..3ff39bde 100644
+--- a/web/lib/links.ts
++++ b/web/lib/links.ts
+@@ -7,6 +7,20 @@ export const DOCS = {
+   cli: `${GITHUB}/blob/main/docs/cli.md`,
+   plugins: `${GITHUB}/blob/main/docs/plugins.md`,
+   site: `${GITHUB}/blob/main/docs/site.md`,
++  panel: `${GITHUB}/blob/main/docs/plugins.md#see-your-sessions-pull-requests-in-projectors-panel`,
++  inbox: `${GITHUB}/blob/main/docs/cli.md#use-the-inbox`,
++  inboxPanel: `${GITHUB}/blob/main/docs/plugins.md#read-your-inbox-in-projectors-panel`,
++  watch: `${GITHUB}/blob/main/docs/cli.md#watch-pull-requests`,
++  agents: `${GITHUB}/blob/main/docs/cli.md#message-other-agents`,
++  worktree: `${GITHUB}/blob/main/docs/cli.md#find-a-branchs-worktree`,
++  ios: `${GITHUB}/blob/main/docs/cli.md#put-an-ios-app-on-a-device`,
++  requireReview: `${GITHUB}/blob/main/docs/cli.md#require-a-clean-review-before-merge`,
++  work: `${GITHUB}/blob/main/skills/work/SKILL.md`,
++  cleanup: `${GITHUB}/blob/main/skills/cleanup/SKILL.md`,
++  reviewPr: `${GITHUB}/blob/main/skills/review-pr/SKILL.md`,
++  summarizePr: `${GITHUB}/blob/main/skills/summarize-pr/SKILL.md`,
++  writing: `${GITHUB}/blob/main/skills/writing.md`,
++  testing: `${GITHUB}/blob/main/skills/testing.md`,
+   convention: `${GITHUB}/blob/main/docs/projects/README.md`,
+   reviewRepo: `${GITHUB}/blob/main/skills/review-repo/SKILL.md`,
+   fixPr: `${GITHUB}/blob/main/skills/fix-pr/SKILL.md`,
+@@ -17,14 +31,20 @@ export const DOCS = {
+ // Projector's own Projector site, which its repository deploys from main.
+ export const PROJECTOR_SITE = "https://ninjudd.com/projector/";
+ 
+-// The example on the front page is a real project in ninjudd/trip.
+-const TRIP = "https://github.com/ninjudd/trip";
++// The summary the front page shows, on Projector's own site.
++export const SUMMARY_EXAMPLE = {
++  page: `${PROJECTOR_SITE}reviews/456/`,
++  index: `${PROJECTOR_SITE}reviews/`,
++};
++
++// The example on the front page is a real project in audiofield/field.
++const FIELD = "https://github.com/audiofield/field";
+ 
+ export const EXAMPLE = {
+-  repo: TRIP,
+-  projects: `${TRIP}/tree/main/docs/projects`,
+-  plan: `${TRIP}/blob/main/docs/projects/session-switcher/readme.md`,
+-  pr: (number: number) => `${TRIP}/pull/${number}`,
++  repo: FIELD,
++  projects: `${FIELD}/tree/main/docs/projects`,
++  plan: `${FIELD}/blob/main/docs/projects/recording/readme.md`,
++  pr: (number: number) => `${FIELD}/pull/${number}`,
+ };
+ 
+ export const INSTALL = {
+diff --git a/web/public/summaries/overview-dark.png b/web/public/summaries/overview-dark.png
+new file mode 100644
+index 00000000..499e4a30
+Binary files /dev/null and b/web/public/summaries/overview-dark.png differ
+diff --git a/web/public/summaries/overview-light.png b/web/public/summaries/overview-light.png
+new file mode 100644
+index 00000000..3b509f2b
+Binary files /dev/null and b/web/public/summaries/overview-light.png differ
+diff --git a/web/public/summaries/section-dark.png b/web/public/summaries/section-dark.png
+new file mode 100644
+index 00000000..28b14564
+Binary files /dev/null and b/web/public/summaries/section-dark.png differ
+diff --git a/web/public/summaries/section-light.png b/web/public/summaries/section-light.png
+new file mode 100644
+index 00000000..16b5d12b
+Binary files /dev/null and b/web/public/summaries/section-light.png differ

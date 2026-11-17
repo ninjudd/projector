@@ -1,0 +1,211 @@
+{
+ "version": 1,
+ "name": "projector.bot agent loop page",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 503,
+  "title": "Lead projector.bot with the agent loop, and follow field's recording project as the example",
+  "head": "0d2bc8aaac8955e2d26c13268a9d68abdd6237fd",
+  "headRef": "site-agent-loop",
+  "base": "8ecd6778a42c82bb0cf494570ef3e6b601e982ec",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "projector.bot is Projector's marketing site, a static Next.js page that lives in <code>web/</code> and builds every route at build time. Until this change it introduced Projector as project plans kept in Git. It said nothing about the parts people now meet first: the panel above the Claude Code prompt, its inbox of agent questions, requests, and notices, and the pull request summaries.",
+   "This pull request rewrites the front page around the agent loop. A new hero carries a working copy of Projector's panel that a visitor can click through. New sections follow for the inbox, the summaries, the spec, build, review, and fix loop, sessions left working, and smaller tools. The plans-in-Git explanation stays as the section under the loop, and the worked example moves from trip's session switcher to the recording project in the public <code>audiofield/field</code> repository.",
+   "Nothing outside <code>web/</code> changes, and nothing on the page talks to a server. The demo panel keeps all of its state in React and resets with a button."
+  ],
+  "cards": [
+   {
+    "id": "order",
+    "title": "The page, top to bottom",
+    "html": "<ol><li>Hero, with the demo panel</li><li>Inbox (<code>#panel</code>)</li><li>Summaries (<code>#summaries</code>)</li><li>The loop (<code>#loop</code>)</li><li>Plans in Git (<code>#plans</code>)</li><li>The field example (<code>#example</code>)</li><li>Leave sessions working</li><li>The Projector site</li><li>Smaller tools</li><li>Install</li></ol>"
+   },
+   {
+    "id": "review",
+    "title": "What the review found",
+    "html": "<p>One finding is open. The inbox section says the <code>ready</code> row state means a pull request \"waits for its first review\". The panel also shows <code>ready</code> after a push takes <code>clean</code> off a reviewed pull request. Two suggestions concern the demo: some lines end one column away from the ages' column, and the digit keys do nothing in a pull request's drawer.</p><p class=\"note\">The site lints, type-checks, and builds, and the field example's commits, reviews, and numbers match GitHub.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "shell",
+   "title": "Page order, navigation, and metadata",
+   "kicker": "Which sections the page renders, and where the header links go",
+   "intro": [
+    "<code>page.tsx</code> decides the order of sections. It drops the old agents and review sections and adds the inbox, summaries, loop, sessions, and tools sections. The header's links now point at the new anchors, and the title, description, and share image carry the new headline.",
+    "<code>links.ts</code> holds every outbound URL, so the new doc links, the summary example on Projector's own site, and the field example all live there."
+   ],
+   "files": [
+    {
+     "path": "web/app/page.tsx",
+     "note": "The new section order."
+    },
+    {
+     "path": "web/components/site-header.tsx",
+     "note": "Header links to <code>#panel</code>, <code>#summaries</code>, <code>#loop</code>, <code>#plans</code>, and <code>#example</code>."
+    },
+    {
+     "path": "web/app/layout.tsx",
+     "note": "Page title and meta description."
+    },
+    {
+     "path": "web/app/opengraph-image.tsx",
+     "note": "The share image's headline and subhead."
+    },
+    {
+     "path": "web/components/site-footer.tsx",
+     "note": "New tagline, and a link to the site guide."
+    },
+    {
+     "path": "web/lib/links.ts",
+     "note": "New doc anchors, the summary example, and the field repository in place of trip.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The review checked each new anchor against the headings of <code>docs/plugins.md</code> and <code>docs/cli.md</code> at the head, by GitHub's slug rules."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "demo",
+   "title": "The hero and its working panel",
+   "kicker": "A clickable copy of Projector's panel, drawn in its dark theme",
+   "intro": [
+    "The hero now leads with the headline \"Agents plan, build, and review. You make the calls.\" and puts the install command under it. Below sits <code>InboxDemo</code>, a client component that draws the panel as monospaced text: four of your pull requests, one review request, then the inbox items newest first.",
+    "Each line is a button. A pull request opens a drawer with its role, branch, size, checks, labels, and findings by file. An item opens a drawer with its detail, its options, and the actions <b>I don't understand</b>, <b>Discuss</b>, <b>Dismiss</b>, and <b>Snooze</b>. An option or <b>Discuss</b> fills the fake prompt box under the panel, the way the real panel fills Claude Code's prompt. The iPhone request's <b>Start</b> moves it to <code>starting</code> and, after a timer, to <code>ready</code>."
+   ],
+   "files": [
+    {
+     "path": "web/components/inbox-demo.tsx",
+     "note": "All the demo's data and behavior. Line widths are counted by hand against <code>WIDTH = 92</code> so that the ages line up.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The keyboard handler serves only item drawers. A pull request's drawer shows <code>7</code> and <code>8</code>, which work by click but not by key.",
+       "line": 521
+      },
+      {
+       "kind": "context",
+       "text": "This line's prefix, <code>   0: </code>, is six characters, so subtracting 5 makes the open item's top line one column longer than the list's lines. The header at line 838 ends one column short for the same kind of reason.",
+       "line": 748
+      }
+     ]
+    },
+    {
+     "path": "web/components/sections/hero.tsx",
+     "note": "Headline, install command, description, and the \"Try the panel\" guide beside the demo."
+    }
+   ]
+  },
+  {
+   "id": "sections",
+   "title": "The new feature sections",
+   "kicker": "Inbox, summaries, the loop, sessions, and smaller tools",
+   "intro": [
+    "Five new sections explain what the demo shows and what happens around it. Each is a static component with its copy inline and links into the docs.",
+    "The summaries section shows screenshots of the summary of <code>ninjudd/projector#456</code>, a light and a dark copy of each, and shows the one that matches the reader's theme."
+   ],
+   "files": [
+    {
+     "path": "web/components/sections/panel.tsx",
+     "note": "Questions, requests, and notices; the row states; and what a drawer holds.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 86,
+       "text": "Open review finding: <code>ready</code> is described as \"It waits for its first review\", but <code>docs/plugins.md</code> says the panel also shows <code>ready</code> on a pull request whose <code>clean</code> label a push removed. Say that it waits for a review of its current head."
+      }
+     ]
+    },
+    {
+     "path": "web/components/sections/summaries.tsx",
+     "note": "What a summary gives a reviewer, with the screenshots."
+    },
+    {
+     "path": "web/components/sections/loop.tsx",
+     "note": "Spec, implement, review, fix, and you merge, with the draft, ready, and <code>clean</code> behavior."
+    },
+    {
+     "path": "web/components/sections/sessions.tsx",
+     "note": "<code>work</code>, agent messaging, and <code>cleanup</code>."
+    },
+    {
+     "path": "web/components/sections/tools.tsx",
+     "note": "The merge gate, the writing and testing guides, stacks, <code>project ios</code>, and <code>project worktree</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The review checked each command shown against <code>docs/cli.md</code>: <code>project init --require-review</code>, <code>project ios build 12</code>, <code>crashes</code>, <code>logs</code>, and <code>project worktree 12</code> all exist as documented."
+      }
+     ]
+    },
+    {
+     "path": "web/public/summaries/overview-light.png"
+    },
+    {
+     "path": "web/public/summaries/overview-dark.png"
+    },
+    {
+     "path": "web/public/summaries/section-light.png"
+    },
+    {
+     "path": "web/public/summaries/section-dark.png"
+    }
+   ]
+  },
+  {
+   "id": "plans",
+   "title": "Plans in Git and the field example",
+   "kicker": "The existing sections, rewritten around a real project",
+   "intro": [
+    "The plans section keeps its explanation and adds <code>project list</code> output and the opening of a real plan, both from <code>audiofield/field</code>. The example section follows that repository's recording project: the plan merging before any code, four pull requests that build it, a review that caught a misplaced take, and a later fix that went through six reviews."
+   ],
+   "files": [
+    {
+     "path": "web/components/sections/create.tsx",
+     "note": "Now <code>#plans</code>, with field's project list and plan excerpt."
+    },
+    {
+     "path": "web/components/sections/example.tsx",
+     "note": "The recording project in place of trip's session switcher.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The review checked against GitHub the five commit SHAs and subjects, <code>888d33d</code>, the #166 frontmatter hunk, and #204's six Projector reviews: four requested changes and two were clean, the last on the merged head <code>b4363fa</code>."
+      }
+     ]
+    },
+    {
+     "path": "web/components/sections/install.tsx",
+     "note": "Codex 0.107 or newer, and skills invoked by their bare name."
+    },
+    {
+     "path": "web/components/sections/site.tsx",
+     "note": "The site's Reviews card now points back at the summaries section."
+    }
+   ]
+  },
+  {
+   "id": "removed",
+   "title": "Removed sections",
+   "kicker": "The old agents and review sections, replaced by the loop",
+   "intro": [
+    "The loop section replaces both. Nothing else imports them, and the build passes without them."
+   ],
+   "files": [
+    {
+     "path": "web/components/sections/agents.tsx"
+    },
+    {
+     "path": "web/components/sections/review-loop.tsx"
+    }
+   ]
+  }
+ ]
+}
