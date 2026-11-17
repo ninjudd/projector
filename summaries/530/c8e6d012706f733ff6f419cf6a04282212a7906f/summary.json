@@ -1,0 +1,132 @@
+{
+ "version": 1,
+ "name": "Multi-session terminal console",
+ "project": "console",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 530,
+  "title": "Add project console, a terminal list of every live session that answers and discusses its items and pull requests",
+  "head": "c8e6d012706f733ff6f419cf6a04282212a7906f",
+  "headRef": "console/tui",
+  "base": "14309e9c099e6775107f659536903f8b1e949cbd",
+  "baseRef": "console/rows",
+  "basePr": 528
+ },
+ "overview": {
+  "summary": [
+   "Projector keeps pull request subscriptions and inbox items for each agent session. This layer adds <code>project console</code>, a terminal interface that lists every live session and lets you open one session at a time to answer, discuss, dismiss, or snooze its work.",
+   "The console records choices in the existing inbox store. Each session’s existing deliverer sends them into its conversation, so the terminal does not claim or deliver answers itself. It reads pull request rows from the watch daemon’s local cache and fetches review threads only for an open pull request drawer."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "What the console shows",
+    "html": "<ul><li><b>Session:</b> one Claude Code or Codex conversation with live delivery.</li><li><b>Inbox item:</b> a question, request, notice, or discussion stored for that session.</li><li><b>Drawer:</b> the expanded details, replies, and actions below a selected row.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Review result",
+    "html": "The configured gate, exact-head CI, metadata checks, and 424 focused tests passed. The earlier long-drawer finding is fixed: Page Down reaches later replies and controls, scroll position survives refresh, and Home returns to the selected row. The regression fails against the previous implementation."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "console",
+   "title": "Browse and act on live sessions",
+   "kicker": "A Python model and curses screen drive the terminal interface.",
+   "intro": [
+    "The home list gathers live sessions from the inbox and watch stores and orders those with unread replies or open questions first. Opening a session shows its pull request rows and inbox items, with expanded drawers for details, discussion, and actions.",
+    "The model keeps each action tied to the viewed session, including when two sessions have the same item number. A background thread refreshes local state and open review threads; the terminal thread handles keys and draws the current state.",
+    "Drawers taller than the terminal now scroll with Page Down or Space and Page Up or <code>b</code>. End or <code>G</code> jumps to the controls, and Home or <code>g</code> returns to the row. Moving between rows still closes the drawer; scrolling keeps it open."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "The new console model, actions, refresh loop, text input, and curses renderer.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "424 focused tests passed. A 24×80 terminal reproduction reaches later replies and controls with Page Down, keeps the scroll across refresh, and returns to the row with Home."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "Exercises session-specific recording and terminal exits, plus tall-drawer scrolling through the real screen renderer with a fake window.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The new Page Down regression fails against the previous console implementation and passes at this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "entry",
+   "title": "Expose the command with answer permissions",
+   "kicker": "The command uses existing recording and wake-up paths.",
+   "intro": [
+    "<code>project console</code> starts only with a terminal and Python’s curses module. Its recording actions use the inbox functions already called by <code>project inbox</code>; recording for Codex reuses the helper that wakes its delivery daemon.",
+    "The permission policy treats the console as a way to record the person’s answers. Claude Code asks before an agent starts it, and Codex’s automatic allow list leaves the command to normal approval."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Registers the console command, validates terminal support, and passes the existing Codex wake helper.",
+     "checks": []
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds console ask rules and documents its omission from automatic Codex permission.",
+     "checks": []
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Checks that the new command asks in Claude Code and remains outside Codex’s allow rules.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Document the terminal workflow and project outcome",
+   "kicker": "CLI guidance, website links, and the completed project record.",
+   "intro": [
+    "The CLI guide explains the home list, panel drawers, key bindings, recording behavior, refresh cadence, and terminal requirements. Plugin and website copy point terminal and Codex users to the new console.",
+    "The console plan records the implementation decisions and marks the four-layer project completed. Its outcome reports a real pseudo-terminal smoke check and a CPU measurement; this review checked the code and metadata rather than rerunning that reported cost measurement."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the console, its controls, delivery behavior, and permission policy.",
+     "checks": []
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Points terminal and Codex users to the console.",
+     "checks": []
+    },
+    {
+     "path": "docs/projects/console/readme.md",
+     "note": "Records implementation decisions, completion, acceptance coverage, and reported cost measurement.",
+     "checks": []
+    },
+    {
+     "path": "web/components/sections/panel.tsx",
+     "note": "Names the console as the terminal counterpart of the panel.",
+     "checks": []
+    },
+    {
+     "path": "web/lib/links.ts",
+     "note": "Links the website to the console section in the CLI guide.",
+     "checks": []
+    }
+   ]
+  }
+ ]
+}
