@@ -293,6 +293,118 @@ class Keys(ConsoleCase):
                           inbox.read_item(inbox.session_dir("s1"), "1")["thread"][0]["text"]))
 
 
+class FakeCurses:
+    """The parts of `curses` that `console.Screen` draws with, for a terminal with no colors."""
+
+    A_DIM, A_BOLD, A_REVERSE = 1, 2, 4
+    KEY_NPAGE, KEY_PPAGE, KEY_HOME, KEY_END = 338, 339, 262, 360
+
+    class error(Exception):
+        pass
+
+    @staticmethod
+    def has_colors() -> bool:
+        return False
+
+    @staticmethod
+    def curs_set(visibility: int) -> None:
+        pass
+
+
+class FakeWindow:
+    """A terminal `height` rows tall that keeps the text each row was last drawn with."""
+
+    def __init__(self, height: int, width: int = 80) -> None:
+        self.height, self.width = height, width
+        self.rows: dict[int, str] = {}
+
+    def getmaxyx(self) -> tuple[int, int]:
+        return self.height, self.width
+
+    def erase(self) -> None:
+        self.rows = {}
+
+    def addstr(self, y: int, x: int, text: str, attributes: int) -> None:
+        self.rows[y] = self.rows.get(y, "").ljust(x) + text
+
+    def move(self, y: int, x: int) -> None:
+        pass
+
+    def refresh(self) -> None:
+        pass
+
+    def text(self) -> str:
+        return "\n".join(self.rows.get(y, "") for y in range(self.height))
+
+
+class Scrolling(ConsoleCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.window = FakeWindow(12)
+        self.terminal = console.Screen(self.window, self.console, FakeCurses)
+
+    def draw(self) -> str:
+        self.terminal.draw()
+        return self.window.text()
+
+    def press_terminal(self, *pressed: object) -> None:
+        """Press keys as `get_wch` returns them, so the curses key names are tested too."""
+        for one in pressed:
+            name = console.key_name(one, FakeCurses)
+            if name is not None:
+                self.console.key(name)
+            self.terminal.draw()
+
+    def tall_question(self) -> None:
+        self.claude("s1")
+        item = inbox.ask("s1", "Decline the finding?", "Decline it", ["Fix it"],
+                         detail="\n".join(f"Detail line {number}." for number in range(1, 41)))
+        inbox.reply("s1", item["ref"], "The newest reply.")
+        self.open_entry("s1", f"item:{item['ref']}")
+
+    def test_page_down_reaches_the_last_reply_and_controls_of_a_drawer_taller_than_the_screen(self) -> None:
+        self.tall_question()
+        opened = self.draw()
+        self.press_terminal(FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE,
+                            FakeCurses.KEY_NPAGE)
+        scrolled = self.draw()
+        self.console.tick()
+
+        self.assertEqual((True, False, False, True, True, True),
+                         ("- Decline the finding?" in opened, "agent: The newest reply." in opened,
+                          "8: Dismiss" in opened, "agent: The newest reply." in scrolled,
+                          "1: Decline it (recommended)" in scrolled, "8: Dismiss" in self.draw()))
+
+    def test_end_and_home_jump_to_a_tall_drawers_controls_and_back_to_its_row(self) -> None:
+        self.tall_question()
+        self.draw()
+
+        self.press_terminal(FakeCurses.KEY_END)
+        at_end = self.draw()
+        self.press("g")
+        self.terminal.draw()
+        self.press(" ", "b")
+        at_top = self.draw()
+
+        self.assertEqual((True, False, True, False),
+                         ("8: Dismiss" in at_end, "- Decline the finding?" in at_end,
+                          "- Decline the finding?" in at_top, "8: Dismiss" in at_top))
+
+    def test_the_cursor_still_closes_a_tall_drawer_and_moves_to_the_next_row(self) -> None:
+        self.claude("s1")
+        self.ask("s1", "Merge it now?")
+        self.tall_question()
+        self.draw()
+        self.press_terminal(FakeCurses.KEY_NPAGE)
+        # Both items can share a millisecond, so either may list first.
+        step = "down" if self.console.keys()[0] == "item:2" else "up"
+
+        self.press(step)
+
+        self.assertEqual((None, "item:1"), (self.console.drawer, self.console.selected_key()))
+        self.assertIn("- Merge it now?", self.draw())
+
+
 class Command(unittest.TestCase):
     @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
     def test_project_console_without_a_terminal_on_standard_input_exits_69(self) -> None:

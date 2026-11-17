@@ -13,6 +13,7 @@ text. `main` puts it in a terminal with curses, which only `main` imports, so te
 from __future__ import annotations
 
 import os
+import sys
 import textwrap
 import threading
 import time
@@ -37,6 +38,9 @@ NOUNS = {"pr": "pull request", "review": "review request", **{kind: kind for kin
 SNOOZES = (("15 min", 15), ("1 hour", 60), ("4 hours", 240), ("1 day", 1440))
 SUBSCRIPTION_ROLE = {held: role for role, held in rows.ROLE_OF.items()}
 DRAWER_INDENT = 4
+# Page Down or Space, Page Up or `b`, End or `G`, and Home or `g`: the second of each pair for a terminal that keeps
+# the first for its own scrollback.
+SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "G", "home", "g")
 
 
 @dataclass
@@ -296,6 +300,8 @@ class Console:
         self.asking: Optional[str] = None
         self.field: Optional[Field] = None
         self.threads: Optional[list[rows.Thread]] = None
+        self.offset = 0
+        self.room = 1
         self.status = ""
         self.quit = False
         self.next_inbox = self.next_rows = self.next_threads = float("-inf")
@@ -427,7 +433,7 @@ class Console:
 
     def key(self, name: str) -> None:
         """Do what the key named `name` does: a character, or `up`, `down`, `left`, `right`, `enter`, `esc`,
-        `backspace`, `delete`, `home`, or `end`."""
+        `backspace`, `delete`, `home`, `end`, `pageup`, or `pagedown`."""
         with self.lock:
             self.status = ""
             if self.field is not None:
@@ -436,11 +442,26 @@ class Console:
                 self.quit = True
             elif name in ("up", "k", "down", "j"):
                 self.move(-1 if name in ("up", "k") else 1)
+            elif name in SCROLL_KEYS:
+                self.scroll(name)
             elif self.view == "home":
                 if name == "enter" and self.selected_key() is not None:
                     self.open_panel(self.selected_key())
             else:
                 self.panel_key(name)
+
+    def scroll(self, name: str) -> None:
+        """Move the viewport a page, or to an end. `viewport` keeps it on the cursor's row and its drawer, so these
+        keys move it only through a drawer taller than the screen."""
+        page = max(1, self.room - 1)
+        if name in ("pagedown", " "):
+            self.offset += page
+        elif name in ("pageup", "b"):
+            self.offset -= page
+        elif name in ("end", "G"):
+            self.offset = sys.maxsize
+        else:
+            self.offset = 0
 
     def selected_key(self) -> Optional[str]:
         keys = self.keys()
@@ -644,6 +665,20 @@ class Console:
         with self.lock:
             return self.home_lines() if self.view == "home" else self.panel_lines(width)
 
+    def viewport(self, width: int, room: int) -> list[Line]:
+        """The body's lines that fit in `room` rows. The offset survives each redraw and moves only as far as it
+        must to show the cursor's row and its drawer. A drawer taller than the room shows a room's worth of itself,
+        starting at its row, and the scroll keys move the offset through the rest."""
+        with self.lock:
+            body, (first, last) = self.lines(width)
+            self.room = room
+            if last - first + 1 > room:
+                self.offset = min(max(self.offset, first), last - room + 1)
+            else:
+                self.offset = min(max(self.offset, last - room + 1), first)
+            self.offset = max(0, min(self.offset, len(body) - room))
+            return body[self.offset:self.offset + room]
+
     def footer(self) -> list[Line]:
         """The lines under the body: what the keys do, and the last refusal or note."""
         with self.lock:
@@ -655,7 +690,7 @@ class Console:
             elif self.drawer is None:
                 hint = "↑↓ move · Enter open · 7 discuss this session · ← or Esc back · q quit"
             else:
-                hint = "Enter or Esc close · ← back · q quit"
+                hint = "Enter or Esc close · PgUp PgDn scroll · ← back · q quit"
             return [*lines, Line([(hint, "subtle")])]
 
     def home_lines(self) -> tuple[list[Line], tuple[int, int]]:
@@ -825,7 +860,8 @@ class Console:
 # The terminal
 
 CURSES_KEYS = {"KEY_UP": "up", "KEY_DOWN": "down", "KEY_LEFT": "left", "KEY_RIGHT": "right", "KEY_ENTER": "enter",
-               "KEY_BACKSPACE": "backspace", "KEY_DC": "delete", "KEY_HOME": "home", "KEY_END": "end"}
+               "KEY_BACKSPACE": "backspace", "KEY_DC": "delete", "KEY_HOME": "home", "KEY_END": "end",
+               "KEY_PPAGE": "pageup", "KEY_NPAGE": "pagedown"}
 CHARACTER_KEYS = {"\n": "enter", "\r": "enter", "\x1b": "esc", "\x7f": "backspace", "\b": "backspace",
                   "\x01": "home", "\x05": "end"}
 STYLE_COLORS = {"accent": "COLOR_CYAN", "success": "COLOR_GREEN", "warning": "COLOR_YELLOW", "error": "COLOR_RED",
@@ -867,7 +903,6 @@ class Screen:
     def __init__(self, window: Any, console: Console, curses: Any) -> None:
         self.window, self.console, self.curses = window, console, curses
         self.styles = styles(curses)
-        self.offset = 0
 
     def put(self, y: int, line: Line, width: int) -> None:
         x = 0
@@ -884,17 +919,12 @@ class Screen:
 
     def draw(self) -> None:
         height, width = self.window.getmaxyx()
-        body, (first, last) = self.console.lines(width)
         footer = self.console.footer()
         typing = self.console.field
         room = max(1, height - len(footer) - (1 if typing else 0))
-        if last - first + 1 > room:
-            self.offset = first
-        else:
-            self.offset = min(max(self.offset, last - room + 1), first)
-        self.offset = max(0, min(self.offset, max(0, len(body) - room)))
+        shown = self.console.viewport(width, room)
         self.window.erase()
-        for y, line in enumerate(body[self.offset:self.offset + room]):
+        for y, line in enumerate(shown):
             self.put(y, line, width)
         for y, line in enumerate(footer, room):
             self.put(y, line, width)

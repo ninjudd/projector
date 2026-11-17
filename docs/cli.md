@@ -2936,6 +2936,8 @@ open a one-line text field at the bottom of the screen.
 | Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
 | Left | Returns to the home list from a panel, closing any open drawer |
 | `7` in a panel with no drawer open | Starts a discussion about the session |
+| Page Down or Space, Page Up or `b` | Scrolls a drawer taller than the screen a page down or up |
+| End or `G`, Home or `g` | Scrolls a drawer taller than the screen to its controls, or back to its row |
 | Enter in a text field | Sends the message. Esc cancels it, and Left and Right move the cursor |
 | `q` | Quits |
 

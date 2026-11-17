@@ -339,6 +339,8 @@ $ project console
 | Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
 | Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
 | `7` in a panel with no drawer open | Sends a message about the session (§ 2.5) |
+| Page Down or Space, Page Up or `b` | Scrolls a drawer taller than the screen a page down or up |
+| End or `G`, Home or `g` | Scrolls a drawer taller than the screen to its controls, or back to its row |
 | Left | Returns to the home list from a session's panel, closing any open drawer. In a text field, it moves the cursor instead |
 | Enter in a text field | Sends the message. Esc cancels it |
 | `q` | Quits |
@@ -388,6 +390,15 @@ Building the console settled these details:
   session, the console runs `wake_codex_delivery`, the helper the
   recording subcommands of `project inbox` run, which starts the daemon
   when the item owes a line.
+- **Page keys scroll a tall drawer.** A drawer taller than the screen
+  opens with its row at the top, and the rest of it, the newest reply and
+  the controls included, is below the screen. Up and down still close the
+  drawer, so the page keys scroll it instead: Page Down and Page Up move a
+  page, and End and Home jump to its controls and back to its row. Space,
+  `b`, `G`, and `g` do the same for a terminal that keeps those keys for
+  its own scrollback. The scroll survives each redraw, including the
+  refresh that brings in a new reply, and the screen moves only as far as
+  it must to keep the row and its drawer in view.
 
 ### 2.8 Changes by file
 
