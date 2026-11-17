@@ -220,7 +220,7 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "agent", ["list", "read", "register", "reply", "send"]],
+      pattern = ["project", "agent", ["list", "read", "register", "reply", "send", "unregister"]],
       decision = "allow",
   )
   prefix_rule(
