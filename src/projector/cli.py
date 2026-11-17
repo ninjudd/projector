@@ -1068,19 +1068,12 @@ def add_inbox_parser(subcommands) -> None:
     unclear.add_argument("--subject", help="the item's line as you read it, which must match the item's")
     unclear.add_argument("--detail", help="the item's detail as you read it, which must match the item's")
 
-    discuss = command("discuss", "add your message to an open item's thread, or start a discussion about a pull "
-                                 "request or the session and print its number")
+    discuss = command("discuss", "send the agent your message about an open item, or about a pull request or the "
+                                 "session as a message item, whose number it prints")
     discuss.add_argument("reference", nargs="?",
-                         help="the item's number, such as 3; leave it out to start a discussion")
+                         help="the item's number, such as 3; leave it out to write about a pull request or the session")
     discuss.add_argument("--text", required=True, help="your message, one paragraph of at most 4 KiB")
-    discuss.add_argument("--pr", help="start a discussion about this pull request, as owner/repo#number")
-
-    reply = command("reply", "answer the person in an open item's thread")
-    reply.add_argument("reference", help="the item's number, such as 3")
-    reply.add_argument("--text", required=True, help="your answer, one paragraph of at most 4 KiB")
-
-    read = command("read", "record that you read the agent's replies in an item's thread")
-    read.add_argument("reference", help="the item's number, such as 3")
+    discuss.add_argument("--pr", help="write about this pull request, as owner/repo#number")
 
     withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
     withdraw.add_argument("reference")
@@ -2334,9 +2327,7 @@ def item_state(item: dict) -> str:
         progress = item.get("progress")
         if progress:
             return progress["state"]
-        if item.get("started"):
-            return "started"
-        return "replied" if inbox.has_unread_reply(item) else "open"
+        return "started" if item.get("started") else "open"
     if answered.get("dismissed"):
         return "withdrawn" if answered.get("withdrawn") else "declined" if answered.get("declined") else "dismissed"
     if answered.get("done"):
@@ -2362,8 +2353,8 @@ def print_item(item: dict) -> None:
         print(f"start: {item['start']}")
     if (item.get("progress") or {}).get("reason"):
         print(f"blocked: {item['progress']['reason']}")
-    for said in item.get("thread") or []:
-        print(f"{'you' if said['from'] == 'person' else 'agent'}: {said['text']}")
+    for said in item.get("messages") or []:
+        print(f"you: {said['text']}")
     print(item_state(item))
 
 
@@ -2448,18 +2439,13 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
     elif command == "discuss":
         if ref is not None and arguments.pr is not None:
-            raise inbox.InboxError("`discuss` takes an item's number, to add to its thread, or --pr, to start a "
-                                   "discussion about a pull request, not both")
+            raise inbox.InboxError("`discuss` takes an item's number, to write about that item, or --pr, to write "
+                                   "about a pull request, not both")
         session = inbox_session(arguments, ref is None)
         item = (inbox.discuss(session, ref, arguments.text) if ref is not None
-                else inbox.start_discussion(session, arguments.text, pr=arguments.pr))
+                else inbox.send(session, arguments.text, pr=arguments.pr))
         wake_codex_delivery(session, item)
         print(json_text({"item": item}) if json_output else f"discussed {ref}" if ref is not None else item["ref"])
-    elif command in ("reply", "read"):
-        session = inbox_session(arguments, False)
-        item = (inbox.reply(session, ref, arguments.text) if command == "reply"
-                else inbox.mark_read(session, ref))
-        print(json_text({"item": item}) if json_output else f"{'replied' if command == 'reply' else 'read'} {ref}")
     elif command == "revise":
         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
         options = [] if arguments.no_options else arguments.option

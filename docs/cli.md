@@ -228,7 +228,7 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "reply", "request", "restore", "revise", "show", "tell", "watch", "withdraw"]],
+      pattern = ["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore", "revise", "show", "tell", "watch", "withdraw"]],
       decision = "allow",
   )
   prefix_rule(
@@ -2530,15 +2530,13 @@ your prompt. The agent then withdraws the question if the reply settles it,
 revises it if the reply shows it was unclear, or leaves it open while it still
 needs you.
 
-`answer`, `dismiss`, `snooze`, `done`, `decline`, `start`, `unclear`,
-`discuss`, and `read` record your choice, your words, or that you read a
-reply, so the permission rules `project init` adds ask you before an agent
-runs one, in Claude Code, and leave them to Codex's usual approval.
-Otherwise an agent could answer its own question, mark its own request done,
-press start for you, say for you that you don't understand its item, write
-in a thread as you, or mark its own reply read. `reply` records the agent's
-own words, so an agent runs it without asking, in either host. Projector's
-panel runs them itself, so answering there never asks. `restore` takes no
+`answer`, `dismiss`, `snooze`, `done`, `decline`, `start`, `unclear`, and
+`discuss` record your choice or your words, so the permission rules
+`project init` adds ask you before an agent runs one, in Claude Code, and
+leave them to Codex's usual approval. Otherwise an agent could answer its
+own question, mark its own request done, press start for you, say for you
+that you don't understand its item, or send itself a message as you.
+Projector's panel runs them itself, so answering there never asks. `restore` takes no
 choice from you, so an agent runs it without asking, in either host, when
 you say a dismissal was a mistake.
 
@@ -2814,11 +2812,10 @@ nothing when it refuses. A number no session holds exits 66. In Claude
 Code, the agent revises an item with Projector's `revise` tool, and the
 panel redraws it at once.
 
-### Discuss an item
+### Send the agent a message
 
-Each item can carry a thread: the messages you and the agent exchange about
-it, oldest first. To talk an item over outside the session's conversation,
-such as from a terminal, add your message to its thread with `discuss`:
+To talk an item over outside the session's conversation, such as from a
+terminal, send the agent a message about it with `discuss`:
 
 ```console
 $ project inbox discuss 3 --text "Which hosts does the reviewer mean?" --session "$SESSION"
@@ -2828,43 +2825,18 @@ DISCUSS 3 Decline the finding about the retry budget? → Which hosts does the r
 ```
 
 The item's deliverer sends the agent a line that starts `DISCUSS 3` with
-the item's line, an arrow, and your message. The item stays open. Each
+the item's line, an arrow, and your message. The agent answers in its own
+conversation, and nothing comes back to the item, which stays open. Each
 message waits behind any line the item already owes, its answer or outcome,
 `RESTORED`, `STARTED`, or `UNCLEAR`, and an item's messages go out one at a
 time, oldest first. A message reaches the agent even when you dismiss the
 item before it goes out. When the line cannot be delivered, the message is
-taken back, so you send it again.
+taken back, so you send it again. `show` prints each message you sent after
+`you:`.
 
-The agent answers into the thread with `reply`, or with Projector's `reply`
-tool in Claude Code, and in its conversation as well:
-
-```console
-$ project inbox reply 3 --text "Only the two mirrors behind the proxy." --session "$SESSION"
-replied 3
-$ project inbox list --session "$SESSION"
-3	question	replied	Decline the finding about the retry budget?
-$ project inbox show 3 --session "$SESSION"
-3 Decline the finding about the retry budget?
-about acme/app#337
-a. Decline it: the total cap already bounds retries (recommended)
-b. Add a budget of two retries per host
-c. type an answer with --text
-you: Which hosts does the reviewer mean?
-agent: Only the two mirrors behind the proxy.
-replied
-$ project inbox read 3 --session "$SESSION"
-read 3
-```
-
-A reply goes to no deliverer, because you read it where the item is shown.
-`list` shows an open item with a reply you have not read as `replied`, and
-`read` records that you read the item's replies. Projector's panel runs
-`read` when you open the item's drawer.
-
-To talk about something that has no item yet, start a discussion. Without a
-number, `discuss` posts an item of kind `discussion`, with your message as
-the first entry of its thread, and prints its number. With `--pr`, the
-discussion is about that pull request, and its line is
+To write about something that has no item, leave out the number. `discuss`
+then posts an item of kind `message` that holds your message, and prints its
+number. With `--pr`, the message is about that pull request, and its line is
 `About owner/repo#number`. Without `--pr`, it is about the session itself,
 and its line is `About this session`:
 
@@ -2876,19 +2848,24 @@ $ project inbox discuss --text "Pause after this pull request." --session "$SESS
 $ project inbox watch --once --session "$SESSION"
 DISCUSS 7 About acme/app#337 → Why the second retry loop?
 DISCUSS 8 About this session → Pause after this pull request.
+$ project inbox list --all --session "$SESSION"
+7	message	delivered 7	About acme/app#337
+8	message	delivered 8	About this session
 ```
 
-A discussion has no options, and it stays open until you dismiss it or the
-agent withdraws it. `answer`, `done`, `decline`, `start`, and `revise`
-refuse one with exit code 65. Dismissing a discussion sends the agent
-nothing, as dismissing a notice does, and `snooze`, `restore`, and
-`unclear` work on it as on any item.
+A `message` item asks nothing of you. It shows `open` until its message is
+delivered, and then it is resolved and leaves `list`, as a delivered answer
+does. `answer`, `done`, `decline`, `start`, `revise`, and `unclear` refuse
+one with exit code 65. Dismissing one sends the agent nothing, as
+dismissing a notice does, and its message still goes out. `restore` refuses
+one that has no message left to send.
 
 Each message is one paragraph of at most 4 KiB in UTF-8, with no line
-breaks. `discuss` and `reply` refuse, with exit code 65, an empty message, a
-longer one, and one with a line break. They refuse an item already answered,
-dismissed, or withdrawn too. `discuss` refuses a number together with `--pr`
-and records nothing, and it needs `--session` to start a discussion.
+breaks. `discuss` refuses, with exit code 65, an empty message, a longer
+one, and one with a line break. It refuses an item already answered,
+dismissed, withdrawn, or delivered too. `discuss` refuses a number together
+with `--pr` and records nothing, and it needs `--session` to write about a
+pull request or the session.
 
 ## Watch pull requests
 

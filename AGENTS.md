@@ -151,7 +151,7 @@ because squash merges preserve that body as the commit message.
 For review findings, verify first, commit locally, reply with the commit, push,
 resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 30 -->
+<!-- projector:begin 31 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -266,15 +266,13 @@ instead, answer what they asked. Then withdraw the item with the `withdraw`
 tool if the reply settles it, revise it with the `revise` tool if the reply
 shows it was unclear or the choice or the work has changed, or leave it open
 while it still needs them. When a message that starts `DISCUSS` arrives, the
-person wrote to you about that item, or started a discussion about a pull
-request or about the session, outside the conversation. Answer it in the
-item's thread with the `reply` tool or
-`project inbox reply <number> --text <words>`, and in the conversation as
-well, because they may be reading either one. Then withdraw, revise, or
-leave the item open, as for a reply. When a message that starts `UNCLEAR`
-arrives, the person did not understand that item, so revise it with the
-`revise` tool to explain it more simply or to add the context they lack,
-keeping its number, rather than posting it again. Each time the person writes to you, also look
+person wrote to you about that item from outside the conversation. Answer
+it in the conversation, where they read your reply, then withdraw, revise,
+or leave the item open, as for a reply. A `DISCUSS` about a pull request or
+about the session needs no inbox action. When a message that starts
+`UNCLEAR` arrives, the person did not understand that item, so revise it
+with the `revise` tool to explain it more simply or to add the context they
+lack, keeping its number, rather than posting it again. Each time the person writes to you, also look
 over the other items you posted that are still open, and withdraw any that
 no longer need them, such as news that has gone stale. When the person says
 they dismissed or declined an item by mistake, restore it with the `restore`

@@ -6,7 +6,6 @@ import {
   ASK_SCHEMA,
   askArguments,
   forMainLoop,
-  hasUnreadReply,
   isShownAt,
   isSnoozedAt,
   liveAgent,
@@ -20,10 +19,8 @@ import {
   REQUEST_DESCRIPTION,
   REQUEST_SCHEMA,
   requestArguments,
-  REPLY_DESCRIPTION,
   RESTORE_DESCRIPTION,
   RESTORE_SCHEMA,
-  replyArguments,
   restoreArguments,
   REVISE_DESCRIPTION,
   REVISE_SCHEMA,
@@ -43,7 +40,7 @@ import {
   wokeBetween,
   type Proposal,
 } from './inbox'
-import type { Item, Notice, Question, Request } from './types'
+import type { Item, MessageItem, Notice, Question, Request } from './types'
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
 
@@ -128,7 +125,6 @@ test('every inbox tool tells the agent to name an item to the person by its text
     WITHDRAW_DESCRIPTION,
     REVISE_DESCRIPTION,
     RESTORE_DESCRIPTION,
-    REPLY_DESCRIPTION,
   ]) {
     expect(description).toMatch(
       / The panel never shows an item’s number, so name the item to the person by what it asks, tells, or requests, never by its number\.$/,
@@ -988,39 +984,21 @@ test('the main loop is told which subagent posted an item it receives UNCLEAR fo
   )
 })
 
-test('a message of yours in a thread waits for a deliverer until DISCUSS is delivered, whatever became of the item', () => {
-  const said = { from: 'person' as const, text: 'Why decline?', at: NOW - 1_000 }
+test('a message you sent waits for a deliverer until DISCUSS is delivered, whatever became of its item', () => {
+  const said = { text: 'Why decline?', at: NOW - 1_000 }
   const dismissed = { dismissed: true as const, answeredAt: NOW }
-  for (const item of [question({ thread: [said] }), notice({ thread: [said], answer: dismissed, deliveredAt: NOW })]) {
+  const about: MessageItem = { ...notice(), kind: 'message', subject: 'About this session', pr: null }
+  for (const item of [
+    question({ messages: [said] }),
+    notice({ messages: [said], answer: dismissed, deliveredAt: NOW }),
+    { ...about, messages: [said] },
+  ]) {
     expect(needsDelivery(item, NOW)).toBe(true)
     const claim = { token: 't', renewedAt: NOW - 5_000, line: 'discuss' as const, entry: 0 }
     expect(needsDelivery({ ...item, claim }, NOW)).toBe(false)
-    expect(needsDelivery({ ...item, thread: [{ ...said, deliveredAt: NOW }] }, NOW)).toBe(false)
+    expect(needsDelivery({ ...item, messages: [{ ...said, deliveredAt: NOW }] }, NOW)).toBe(false)
   }
-  // The agent's own reply goes to no one: you read it in the drawer.
-  expect(needsDelivery(question({ thread: [{ from: 'agent', text: 'The cap bounds it.', at: NOW }] }), NOW)).toBe(false)
-})
-
-test('a reply reads as unread until its readAt, and your own messages never do', () => {
-  const said = { from: 'person' as const, text: 'Why decline?', at: NOW - 1_000 }
-  const replied = { from: 'agent' as const, text: 'The cap bounds retries.', at: NOW - 500 }
-  expect(
-    [[said], [said, replied], [said, { ...replied, readAt: NOW }]].map(thread => hasUnreadReply(question({ thread }))),
-  ).toEqual([false, true, false])
-})
-
-test('a call of the reply tool becomes `project inbox reply`, text kept as text, and only a whole number names an item', () => {
-  expect(replyArguments({ number: 3, text: '-- the cap bounds it' }, 's1')).toEqual([
-    'inbox',
-    'reply',
-    '3',
-    '--text=-- the cap bounds it',
-    '--session',
-    's1',
-    '--json',
-  ])
-  expect(replyArguments({ number: '3', text: 'x' }, 's1')).toEqual({
-    error: '`number` must be the whole number the `DISCUSS` message gave, such as 3',
-  })
-  expect(replyArguments({ number: 3 }, 's1')).toEqual({ error: '`text` must be a string' })
+  // A message item owes nothing but its messages: it has no answer to send.
+  const delivered = { delivered: true as const, answeredAt: NOW }
+  expect(needsDelivery({ ...about, answer: delivered, messages: [{ ...said, deliveredAt: NOW }] }, NOW)).toBe(false)
 })

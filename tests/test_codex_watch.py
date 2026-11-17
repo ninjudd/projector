@@ -664,7 +664,7 @@ else:
         self.assertIn("CLOSED Acme/App#15", self.sent()[2])
 
     def test_two_messages_reach_the_session_in_order_and_settle_once_codex_takes_each(self):
-        # Catches an adapter that settles a DISCUSS line as the item's answer, or marks the wrong entry delivered.
+        # Catches an adapter that settles a DISCUSS line as the item's answer, or marks the wrong message delivered.
         inbox.discuss("session-A", "1", "Why decline?")
         inbox.discuss("session-A", "1", "What does the budget cost?")
         self.tick()
@@ -676,7 +676,7 @@ else:
         self.assertIn("DISCUSS 1 Decline the finding? → Why decline?", self.sent()[0])
         self.assertIn("DISCUSS 1 Decline the finding? → What does the budget cost?", self.sent()[1])
         item = self.item()
-        delivered = ["deliveredAt" in said for said in item["thread"]]
+        delivered = ["deliveredAt" in said for said in item["messages"]]
         self.assertEqual((None, None, [True, True]), (item.get("answer"), item.get("deliveredAt"), delivered))
 
     def test_recording_an_answer_starts_the_daemon_for_a_codex_session(self):

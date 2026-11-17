@@ -1,7 +1,7 @@
 import type { AgentInfo, ConfigRow, FsEntry, On, PromptEditInput, PromptEditResult } from 'claude-code'
 import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testing'
 
-import type { Discussion, Notice, Question, Request, ThreadEntry } from './types'
+import type { Message, MessageItem, Notice, Question, Request } from './types'
 
 const HOME = '/home/ada'
 const REVIEW = `${HOME}/loops/review/tracked`
@@ -1857,8 +1857,8 @@ const TICK = 5_000
 type HeldQuestion = Omit<Question, 'session'>
 type HeldNotice = Omit<Notice, 'session'>
 type HeldRequest = Omit<Request, 'session'>
-type HeldDiscussion = Omit<Discussion, 'session'>
-type Held = HeldQuestion | HeldNotice | HeldRequest | HeldDiscussion
+type HeldMessage = Omit<MessageItem, 'session'>
+type Held = HeldQuestion | HeldNotice | HeldRequest | HeldMessage
 type Clock = ReturnType<typeof mock.clock>
 
 const HOUR = 3_600_000
@@ -1898,20 +1898,21 @@ const requested = (fields: Partial<HeldRequest> = {}): HeldRequest => ({
   ...fields,
 })
 
-const discussion = (fields: Partial<HeldDiscussion> = {}): HeldDiscussion => ({
+/** A message you sent about a pull request or the session, as `project inbox discuss` without a number posts it. */
+const messageItem = (fields: Partial<HeldMessage> = {}): HeldMessage => ({
   ref: '4',
-  kind: 'discussion',
+  kind: 'message',
   number: 4,
   pr: null,
   postedAt: NOW - 10_000,
   subject: 'About this session',
   detail: '',
-  thread: [{ from: 'person', text: 'Why the retry?', at: NOW - 10_000, deliveredAt: NOW - 9_000 }],
+  messages: [{ text: 'Why the retry?', at: NOW - 10_000 }],
   ...fields,
 })
 
-/** A message of yours in a thread, not yet delivered. */
-const yours = (text: string, at = NOW - 1_000): ThreadEntry => ({ from: 'person', text, at })
+/** A message you sent about an item, not yet delivered. */
+const yours = (text: string, at = NOW - 1_000): Message => ({ text, at })
 
 /** A held item when it is a request, so a test reads a request's own fields. */
 const heldRequest = (item: Held | undefined): HeldRequest | undefined => (item?.kind === 'request' ? item : undefined)
@@ -1964,19 +1965,18 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
   /** An item without `unclear` and without a claim on its `UNCLEAR` line, as a revision leaves it. */
   const unmarked = <T extends Held>(item: T): T =>
     without(item, 'unclear', ...(item.claim?.line === 'unclear' ? ['claim'] : []))
-  /** The index of the oldest message of yours not yet delivered, as the CLI owes it; -1 for none. */
-  const owedEntry = (item: Held) => item.thread?.findIndex(said => said.from === 'person' && said.deliveredAt === undefined) ?? -1
+  /** The index of the oldest message you sent not yet delivered, as the CLI owes it; -1 for none. */
+  const owedMessage = (item: Held) => item.messages?.findIndex(said => said.deliveredAt === undefined) ?? -1
   const textOf = (item: Held) => {
     const { answer, ref, subject } = item
-    if (item.claim?.line === 'discuss') return `DISCUSS ${ref} ${subject} → ${item.thread?.[item.claim.entry ?? 0]?.text ?? ''}`
-    // A notice or a discussion owes no other line but `UNCLEAR`.
-    if (item.claim?.line === 'unclear' || item.kind === 'notice' || item.kind === 'discussion') {
-      return `UNCLEAR ${ref} ${subject}`
-    }
+    if (item.claim?.line === 'discuss') return `DISCUSS ${ref} ${subject} → ${item.messages?.[item.claim.entry ?? 0]?.text ?? ''}`
+    // A notice owes no other line but `UNCLEAR`.
+    if (item.claim?.line === 'unclear' || item.kind === 'notice') return `UNCLEAR ${ref} ${subject}`
     if (item.kind === 'request' && item.claim?.line === 'started') {
       return `STARTED ${ref} ${subject} → ${item.started?.action ?? ''}`
     }
-    if (item.restoredAt !== undefined) return `RESTORED ${ref} ${subject}`
+    // A message item owes nothing but `DISCUSS`.
+    if (item.kind !== 'message' && item.restoredAt !== undefined) return `RESTORED ${ref} ${subject}`
     if (answer !== undefined && 'letter' in answer) return `ANSWER ${ref}.${answer.letter} ${subject} → ${answer.text}`
     if (answer !== undefined && ('done' in answer || 'declined' in answer)) {
       const said = answer.text === undefined ? '' : ` → ${answer.text}`
@@ -2011,7 +2011,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         })
         .then(() => listed)
     }
-    if (['ask', 'tell', 'request', 'withdraw', 'revise', 'restore', 'reply'].includes(command)) {
+    if (['ask', 'tell', 'request', 'withdraw', 'revise', 'restore'].includes(command)) {
       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
     }
@@ -2075,13 +2075,21 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       return printed(put(restored))
     }
     // Dismissing or answering an item drops word of a restore not yet claimed, as the CLI does, and word that you
-    // don't understand it unless a deliverer holds that word.
+    // don't understand it unless a deliverer holds that word. A claimed message of yours keeps its claim too.
     const isUnclearClaimed = item.claim?.line === 'unclear'
-    const awake = without(item, 'snoozedUntil', 'snoozedAt', 'restoredAt', ...(isUnclearClaimed ? [] : ['claim', 'unclear']))
+    const isHeld = isUnclearClaimed || item.claim?.line === 'discuss'
+    const awake = without(
+      item,
+      'snoozedUntil',
+      'snoozedAt',
+      'restoredAt',
+      ...(isHeld ? [] : ['claim']),
+      ...(isUnclearClaimed ? [] : ['unclear']),
+    )
     const isUnsaid = 'restoredAt' in item && !('claim' in item)
     if (command === 'dismiss') {
       const answer = { dismissed: true as const, answeredAt: time }
-      const isDelivered = awake.kind === 'notice' || awake.kind === 'discussion' || isUnsaid
+      const isDelivered = awake.kind === 'notice' || awake.kind === 'message' || isUnsaid
       const declined = awake.kind === 'request' ? { declined: true as const } : {}
       const recorded = { ...awake, answer: { ...answer, ...declined } } as Held
       return printed(put(isDelivered ? { ...recorded, deliveredAt: time } : recorded))
@@ -2133,13 +2141,13 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       return printed(put({ ...item, unclear: { at: time } }))
     }
     // An item owes its answer, outcome, `RESTORED`, or `STARTED` before its `UNCLEAR`, and that before a message of
-    // yours, `DISCUSS`. A notice or a discussion owes only `UNCLEAR` and `DISCUSS`.
+    // yours, `DISCUSS`. A notice owes only `UNCLEAR` and `DISCUSS`, and a message item only `DISCUSS`.
     if (command === 'claim') {
       const isOwed =
         (item.kind === 'question' || item.kind === 'request') &&
         (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined))
       const renew = flag(args, 'renew')
-      const isNothing = !isOwed && !owesStart(item) && !owesUnclear(item) && owedEntry(item) === -1
+      const isNothing = !isOwed && !owesStart(item) && !owesUnclear(item) && owedMessage(item) === -1
       if (isNothing && renew === undefined) return failed(65, 'nothing to deliver')
       if (renew !== undefined) {
         if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
@@ -2156,32 +2164,24 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
           : owesUnclear(item)
             ? 'unclear'
             : 'discuss'
-      const entry = line === 'discuss' ? { entry: owedEntry(item) } : {}
+      const entry = line === 'discuss' ? { entry: owedMessage(item) } : {}
       const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line, ...entry } } as Held
       return printed(put(claimed), { token: claimed.claim?.token, text: textOf(claimed) })
     }
-    // A message of yours is marked delivered, or taken back when it failed.
+    // A message of yours is marked delivered, or taken back when it failed. A message item with none left to
+    // send is resolved, as delivered when one of its messages was.
     if ((command === 'delivered' || command === 'reopen') && item.claim?.line === 'discuss') {
       if (item.claim.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
       const at = item.claim.entry ?? 0
-      const thread = (item.thread ?? []).flatMap((said, index) =>
+      const messages = (item.messages ?? []).flatMap((said, index) =>
         index !== at ? [said] : command === 'delivered' ? [{ ...said, deliveredAt: time }] : [],
       )
-      return printed(put({ ...without(item, 'claim'), thread }))
-    }
-    // The agent's reply joins the thread of an open item, and you read every reply in it.
-    if (command === 'reply' || command === 'read') {
-      if (command === 'reply' && item.answer !== undefined) return failed(65, `${ref} is already dismissed`)
-      const thread = item.thread ?? []
-      return printed(
-        put({
-          ...item,
-          thread:
-            command === 'reply'
-              ? [...thread, { from: 'agent' as const, text: flag(args, 'text') ?? '', at: time }]
-              : thread.map(said => (said.from === 'agent' && said.readAt === undefined ? { ...said, readAt: time } : said)),
-        }),
-      )
+      const settled = messages.length === 0 ? without(item, 'claim', 'messages') : { ...without(item, 'claim'), messages }
+      if (settled.kind !== 'message' || settled.answer !== undefined || owedMessage(settled) !== -1) {
+        return printed(put(settled))
+      }
+      const answer = messages.length === 0 ? { dismissed: true as const, answeredAt: time } : { delivered: true as const, answeredAt: time }
+      return printed(put({ ...settled, answer, deliveredAt: time }))
     }
     // Word that you don't understand an item is marked delivered, or taken back when it failed.
     if ((command === 'delivered' || command === 'reopen') && item.claim?.line === 'unclear') {
@@ -2200,7 +2200,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         put({ ...unmarked(item), subject: flag(args, 'notice') ?? item.subject, detail: flag(args, 'detail') ?? item.detail }),
       )
     }
-    if (item.kind === 'notice' || item.kind === 'discussion') {
+    if (item.kind === 'notice' || item.kind === 'message') {
       return failed(65, `${ref} is a ${item.kind}; dismiss it with \`project inbox dismiss\``)
     }
     if (command === 'revise' && item.kind === 'request') {
@@ -2361,7 +2361,6 @@ test('asks through the tool, and the panel lists the question below the pull req
     expect.objectContaining({ name: 'withdraw', isDeferred: false }),
     expect.objectContaining({ name: 'revise', isDeferred: false }),
     expect.objectContaining({ name: 'restore', isDeferred: false }),
-    expect.objectContaining({ name: 'reply', isDeferred: false }),
   ])
   expect(session.project()).toContain(
     'inbox ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
@@ -5406,16 +5405,16 @@ test('an open item’s line draws its title with no rule after it', async ($, on
   await desktop.unmount()
 })
 
-/** The messages an open drawer's thread shows, in order, each after who wrote it. */
-async function threadOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+/** The messages you sent that an open drawer shows, in order. */
+async function messagesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   return (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(text => /^(you|agent): \S/.test(text))
 }
 
 test('messages discussed from a terminal reach the agent as DISCUSS, each once and in order, and the item stays open', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const thread = [yours('Why decline?', NOW - 2_000), yours('What does the budget cost?')]
-  const session = questionWorld(on, clock, [held({ thread })])
+  const messages = [yours('Why decline?', NOW - 2_000), yours('What does the budget cost?')]
+  const session = questionWorld(on, clock, [held({ messages })])
   await startSession($, clock, false)
   for (let tick = 0; tick < 3; tick += 1) {
     await clock.advance(TICK)
@@ -5427,13 +5426,13 @@ test('messages discussed from a terminal reach the agent as DISCUSS, each once a
     'DISCUSS 1 Decline the finding? → What does the budget cost?',
   ])
   const item = session.store.store.get('1')
-  expect([item?.answer, item?.thread?.map(said => said.deliveredAt !== undefined)]).toEqual([undefined, [true, true]])
+  expect([item?.answer, item?.messages?.map(said => said.deliveredAt !== undefined)]).toEqual([undefined, [true, true]])
 })
 
 test('a message that cannot be delivered is taken back, and the panel says to send it again', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const session = questionWorld(on, clock, [held({ thread: [yours('Why decline?')] })], { drop: 'a hook refused it' })
+  const session = questionWorld(on, clock, [held({ messages: [yours('Why decline?')] })], { drop: 'a hook refused it' })
   await startSession($, clock)
   await clock.advance(TICK)
   await clock.settle()
@@ -5441,111 +5440,75 @@ test('a message that cannot be delivered is taken back, and the panel says to se
   expect(session.toasts).toEqual([
     'projector: your message about "Decline the finding?" did not reach its agent (a hook refused it); send it again',
   ])
-  expect(session.store.store.get('1')?.thread).toEqual([])
+  expect(session.store.store.get('1')?.messages).toBeUndefined()
 })
 
-test('a reply reads `replied` until its item’s drawer opens, which shows the thread and marks the reply read once', async ($, on) => {
+/** A claim another deliverer holds on an item's `DISCUSS` line, which lapses a minute after `NOW`. */
+const elsewhere = (entry: number) => ({ token: 'elsewhere', renewedAt: NOW, line: 'discuss' as const, entry })
+
+/** Moves the clock past the claim `elsewhere` holds, and through the tick that claims the line itself. */
+async function outlast(clock: Clock): Promise<void> {
+  await clock.advance(60_000 + TICK)
+  await clock.settle()
+}
+
+test('an item’s line reads `sending` until your message is delivered, and its drawer shows what you sent', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const thread: ThreadEntry[] = [
-    { from: 'person', text: 'Why decline?', at: NOW - 3_000, deliveredAt: NOW - 2_000 },
-    { from: 'agent', text: 'The cap bounds retries.', at: NOW - 1_000 },
-  ]
-  const session = questionWorld(on, clock, [held({ thread })])
+  const messages = [{ ...yours('Why decline?', NOW - 3_000), deliveredAt: NOW - 2_000 }, yours('Which hosts?')]
+  const session = questionWorld(on, clock, [held({ messages, claim: elsewhere(1) })])
   await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
-  expect((await ui.find({ type: 'Text', text: 'replied' }))?.props.color).toBe('suggestion')
-  expect(await ui.find({ type: 'Text', text: 'you: Why decline?' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'sending' })).toBeDefined()
+  expect(await messagesOf(ui)).toEqual([])
 
   await ui.press({ key: 'item:1' })
-  await clock.settle()
-  expect(await threadOf(ui)).toEqual([
-    'you: Why decline?',
-    'agent: The cap bounds retries.',
-  ])
-  expect(await ui.find({ type: 'Text', text: 'replied' })).toBeUndefined()
-  await clock.advance(TICK)
-  await clock.settle()
-  expect(session.project().filter(command => command.startsWith('inbox read'))).toEqual(['inbox read 1 --session s1 --json'])
+  expect(await messagesOf(ui)).toEqual(['you: Why decline?', 'you: Which hosts?'])
+  await outlast(clock)
+  expect(session.submitted.map(one => one.text)).toEqual(['DISCUSS 1 Decline the finding? → Which hosts?'])
+  expect(await ui.find({ type: 'Text', text: 'sending' })).toBeUndefined()
+  expect(await messagesOf(ui)).toEqual(['you: Why decline?', 'you: Which hosts?'])
+  // Nothing comes back to the item: the agent answers in its conversation.
+  expect(session.project().filter(command => /^inbox (read|reply)/.test(command))).toEqual([])
   await ui.unmount()
 })
 
-test('a reply that arrives while the panel is hidden stays unread until the panel shows its open drawer again', async ($, on) => {
+test('a message about the session is counted and drawn like a notice, takes no I don’t understand, and leaves once delivered', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const thread: ThreadEntry[] = [{ from: 'person', text: 'Why decline?', at: NOW - 3_000, deliveredAt: NOW - 2_000 }]
-  const session = questionWorld(on, clock, [held({ thread })])
+  const session = questionWorld(on, clock, [held(), messageItem({ claim: elsewhere(0) })])
   await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
-  await ui.press({ key: 'item:1' })
-  await clock.advance(TICK)
-  await clock.settle()
-  await ui.unmount()
-
-  // `/projector` hides the panel and leaves the drawer open for when it shows again.
-  await $.command.run(COMMAND)
-  await $.tool.call({ tool: 'mcp__projector__reply', number: 1, text: 'The cap bounds retries.' })
-  for (let tick = 0; tick < 3; tick += 1) {
-    await clock.advance(TICK)
-    await clock.settle()
-  }
-  const reads = () => session.project().filter(command => command.startsWith('inbox read'))
-  expect(reads()).toEqual([])
-  expect(session.store.store.get('1')?.thread?.map(said => said.readAt)).toEqual([undefined, undefined])
-
-  await $.command.run(COMMAND)
-  await clock.advance(1)
-  await clock.settle()
-  const shown = await $.ui.mount(PANEL)
-  expect(await threadOf(shown)).toEqual(['you: Why decline?', 'agent: The cap bounds retries.'])
-  expect(reads()).toEqual(['inbox read 1 --session s1 --json'])
-  expect(await shown.find({ type: 'Text', text: 'replied' })).toBeUndefined()
-  await shown.unmount()
-})
-
-test('the reply tool puts the agent’s reply in the item’s thread, and refuses what the CLI refuses', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  const session = questionWorld(on, clock, [held()])
-  await startSession($, clock)
-
-  const called = await $.tool.call({ tool: 'mcp__projector__reply', number: 1, text: 'The cap bounds retries.' })
-  expect(String(called.text ?? called.result)).toMatch(/^Replied in 1’s thread\. /)
-  expect(session.project()).toContain('inbox reply 1 --text=The cap bounds retries. --session s1 --json')
-  const ui = await $.ui.mount(PANEL)
-  expect((await ui.find({ type: 'Text', text: 'replied' }))?.props.color).toBe('suggestion')
-  await ui.unmount()
-
-  Object.assign(session.store.refusal, { code: 65, message: '1 is already dismissed' })
-  const refused = await $.tool.call({ tool: 'mcp__projector__reply', number: 1, text: 'late' })
-  expect(refused.deny ?? refused.text).toBe('1 is already dismissed')
-})
-
-test('a discussion is counted and listed in the text color, offers no options, and its dismissal sends nothing', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  const session = questionWorld(on, clock, [held(), discussion()])
-  await startSession($, clock)
-  const ui = await $.ui.mount(PANEL)
-  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question · 1 discussion  \d+s$/)
-  expect((await ui.find({ type: 'Text', text: 'About this session' }))?.props.color).toBe('text')
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question · 1 message  \d+s$/)
+  expect((await ui.find({ type: 'Text', text: 'About this session' }))?.props.color).toBe('inactive')
 
   await ui.press({ key: 'item:4' })
-  expect(await threadOf(ui)).toEqual(['you: Why the retry?'])
+  expect(await messagesOf(ui)).toEqual(['you: Why the retry?'])
   expect((await ui.findAll({ type: 'Button' })).filter(button => /^(answer|outcome|start):4/.test(button.key ?? ''))).toEqual([])
-  expect(await actionLinesOf(ui)).toEqual([
-    "unclear:4 6 I don't understand",
-    'discuss:4 7 Discuss',
-    'dismiss:4 8 Dismiss',
-    'snooze:4 9 Snooze',
-  ])
-  await ui.press({ key: 'dismiss:4' })
-  await clock.advance(TICK)
+  expect(await actionLinesOf(ui)).toEqual(['discuss:4 7 Discuss', 'dismiss:4 8 Dismiss', 'snooze:4 9 Snooze'])
+  await outlast(clock)
+  expect(session.submitted.map(one => one.text)).toEqual(['DISCUSS 4 About this session → Why the retry?'])
+  expect(session.store.store.get('4')?.answer).toEqual({ delivered: true, answeredAt: expect.any(Number) })
+
+  await clock.advance(30_000 + TICK)
   await clock.settle()
-  expect(session.project().filter(command => /^inbox (dismiss|claim)/.test(command))).toEqual([
-    'inbox dismiss 4 --session s1 --json',
-  ])
-  expect(session.submitted).toEqual([])
+  expect(await ui.find({ type: 'Text', text: 'About this session' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('dismissing a message about the session sends the agent nothing but the message itself', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [messageItem({ claim: elsewhere(0) })])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:4' })
+  await ui.press({ key: 'dismiss:4' })
+  await outlast(clock)
+  await outlast(clock)
+  expect(session.project().filter(command => /^inbox dismiss/.test(command))).toEqual(['inbox dismiss 4 --session s1 --json'])
+  expect(session.submitted.map(one => one.text)).toEqual(['DISCUSS 4 About this session → Why the retry?'])
+  expect(session.store.store.get('4')?.answer).toEqual({ dismissed: true, answeredAt: expect.any(Number) })
   await ui.unmount()
 })
 

@@ -1438,7 +1438,7 @@ class UnclearTests(InboxCase):
         self.assertEqual(0, self.press()[0])
 
 
-class ThreadTests(InboxCase):
+class MessageTests(InboxCase):
     def setUp(self) -> None:
         super().setUp()
         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget")
@@ -1474,23 +1474,23 @@ class ThreadTests(InboxCase):
                           "DISCUSS 3 Force-pushed #12 → About 3"], self.watch().splitlines())
 
     def test_two_messages_reach_the_agent_in_order_once_each_and_leave_the_item_open(self) -> None:
-        # Catches entries delivered newest first, one delivered twice, or a message that closes its item.
+        # Catches messages delivered newest first, one delivered twice, or a message that closes its item.
         self.assertEqual("discussed 1", self.discuss("1", "--text", "Why decline?"))
         self.discuss("1", "--text", "What does the budget cost?")
         self.assertEqual("DISCUSS 1 Decline it? → Why decline?\n", self.watch())
         self.assertEqual("DISCUSS 1 Decline it? → What does the budget cost?\n", self.watch())
         self.assertEqual("", self.watch())
         item = self.item(1)
-        self.assertEqual((None, None, [True, True]),
-                         (item.get("answer"), item.get("claim"), ["deliveredAt" in said for said in item["thread"]]))
-        self.assertEqual("open", cli.item_state(item))
+        self.assertEqual([{"text", "at", "deliveredAt"}] * 2, [set(said) for said in item["messages"]])
+        self.assertEqual((None, None, "open"), (item.get("answer"), item.get("claim"), cli.item_state(item)))
+        self.assertIn("\nyou: Why decline?\nyou: What does the budget cost?\nopen\n", self.cli("show", "1")[1])
 
     def test_a_message_whose_delivery_failed_is_taken_back_so_you_say_it_again(self) -> None:
         # Catches a reopen that marks the message delivered, drops a later one, or reopens the item's answer.
         self.discuss("1", "--text", "Why decline?")
         self.discuss("1", "--text", "What does the budget cost?")
         self.assertEqual(0, self.cli("reopen", "1", "--claim", self.claim())[0])
-        self.assertEqual(["What does the budget cost?"], [said["text"] for said in self.item(1)["thread"]])
+        self.assertEqual(["What does the budget cost?"], [said["text"] for said in self.item(1)["messages"]])
         self.assertEqual(0, self.cli("reopen", "1", "--claim", self.claim())[0])
         self.assertEqual({"ref", "kind", "number", "pr", "postedAt", "subject", "detail", "choices"},
                          set(self.item(1)))
@@ -1507,13 +1507,14 @@ class ThreadTests(InboxCase):
         self.assertEqual("ANSWER 1.b Decline it? → Add a budget\n", self.watch())
         self.assertEqual("", self.watch())
 
-    def test_discuss_without_a_number_starts_a_discussion_and_refuses_a_number_with_a_pull_request(self) -> None:
-        # Catches a session discussion missing from the CLI, or a call naming both targets that picks one.
+    def test_discuss_without_a_number_sends_a_message_and_refuses_a_number_with_a_pull_request(self) -> None:
+        # Catches a message about the session missing from the CLI, or a call naming both targets that picks one.
         self.assertEqual("2", self.discuss("--text", "hello"))
         self.assertEqual("3", self.discuss("--pr", "acme/app#12", "--text", "Why the retry?"))
-        self.assertEqual([("discussion", None, "About this session"),
-                          ("discussion", "acme/app#12", "About acme/app#12")],
-                         [(self.item(ref)["kind"], self.item(ref)["pr"], self.item(ref)["subject"]) for ref in (2, 3)])
+        self.assertEqual([("message", None, "About this session", ["hello"]),
+                          ("message", "acme/app#12", "About acme/app#12", ["Why the retry?"])],
+                         [(self.item(ref)["kind"], self.item(ref)["pr"], self.item(ref)["subject"],
+                           [said["text"] for said in self.item(ref)["messages"]]) for ref in (2, 3)])
         before = (self.item(3), (self.folder() / "count.json").read_text())
         code, out, err = self.cli("discuss", "3", "--pr", "acme/app#12", "--text", "more")
         self.assertEqual((65, ""), (code, out))
@@ -1522,39 +1523,43 @@ class ThreadTests(InboxCase):
         self.assertEqual(["DISCUSS 2 About this session → hello", "DISCUSS 3 About acme/app#12 → Why the retry?"],
                          self.watch().splitlines())
 
-    def test_a_discussion_takes_no_answer_or_revision_and_its_dismissal_sends_nothing(self) -> None:
-        # Catches a discussion handled as a question, which would take an answer or owe its agent DISMISSED.
+    def test_a_message_item_takes_nothing_from_you_and_is_resolved_once_its_message_is_delivered(self) -> None:
+        # Catches a message handled as a question, which would take an answer, or one that stays open
+        # in the list after the agent heard it.
         self.discuss("--text", "hello")
-        self.watch()
-        for args in (["answer", "2.a"], ["revise", "2", "--detail", "x"], ["done", "2"]):
+        for args in (["answer", "2.a"], ["revise", "2", "--detail", "x"], ["done", "2"], ["decline", "2"],
+                     ["start", "2", "--action", "Install it"], ["unclear", "2"]):
             with self.subTest(command=args[0]):
                 self.assertEqual(65, self.cli(*args)[0])
-        self.assertEqual(0, self.cli("unclear", "2")[0])
-        self.assertEqual("UNCLEAR 2 About this session\n", self.watch())
-        self.assertEqual(0, self.cli("dismiss", "2")[0])
-        self.assertEqual("", self.watch())
-        self.assertEqual(0, self.cli("restore", "2")[0])
-        self.assertEqual(("", "open"), (self.watch(), cli.item_state(self.item(2))))
+        self.assertEqual("2\tmessage\topen\tAbout this session", self.cli("list")[1].splitlines()[-1])
+        self.assertEqual("DISCUSS 2 About this session → hello\n", self.watch())
+        self.assertEqual(("", "delivered 2"), (self.watch(), cli.item_state(self.item(2))))
+        self.assertEqual("1\tquestion\topen\tDecline it?\n", self.cli("list")[1])
+        code, _, err = self.cli("discuss", "2", "--text", "more")
+        self.assertEqual(65, code)
+        self.assertIn("2 is already delivered", err)
+        self.assertEqual(65, self.cli("restore", "2")[0])
 
-    def test_a_message_sent_before_a_dismissal_still_reaches_the_agent(self) -> None:
-        # Catches a dismissal that silently drops the person's words before any deliverer sent them.
+    def test_a_message_sent_before_a_dismissal_still_reaches_the_agent_and_the_dismissal_sends_nothing(self) -> None:
+        # Catches a dismissal that silently drops the person's words before any deliverer sent them,
+        # or a restore that reopens an item with nothing left to send.
         self.discuss("--text", "hello")
         self.cli("dismiss", "2")
         self.assertEqual("DISCUSS 2 About this session → hello\n", self.watch())
         self.assertEqual("", self.watch())
-
-    def test_a_reply_needs_no_delivery_and_reads_as_replied_until_you_read_it(self) -> None:
-        # Catches a reply delivered back to the agent, one nobody sees, or one that stays unread after you read it.
-        self.assertEqual((0, "replied 1\n", ""), self.cli("reply", "1", "--text", "The cap bounds retries."))
-        self.assertEqual("", self.watch())
-        self.assertEqual("1\tquestion\treplied\tDecline it?", self.cli("list")[1].strip())
-        self.assertEqual((0, "read 1\n", ""), self.cli("read", "1"))
-        self.assertIn("readAt", self.item(1)["thread"][0])
-        self.assertEqual("1\tquestion\topen\tDecline it?", self.cli("list")[1].strip())
-        self.cli("dismiss", "1")
-        code, _, err = self.cli("reply", "1", "--text", "late")
+        code, _, err = self.cli("restore", "2")
         self.assertEqual(65, code)
-        self.assertIn("answer in the conversation instead", err)
+        self.assertIn("nothing left to send", err)
+
+    def test_a_message_item_whose_message_failed_is_resolved_rather_than_left_open_and_empty(self) -> None:
+        # Catches a taken-back message that leaves an item open with nothing to send, which no
+        # deliverer would ever resolve.
+        self.discuss("--text", "hello")
+        self.assertEqual(0, self.cli("reopen", "2", "--claim", self.claim("2"))[0])
+        item = self.item(2)
+        self.assertEqual((None, "dismissed"), (item.get("messages"), cli.item_state(item)))
+        self.assertEqual(("", "1\tquestion\topen\tDecline it?\n"), (self.watch(), self.cli("list")[1]))
+        self.assertEqual(65, self.cli("restore", "2")[0])
 
     def test_a_message_is_one_paragraph_of_at_most_4_kib(self) -> None:
         # Catches a limit counted in characters rather than UTF-8 bytes, or a line break that splits a DISCUSS line.
@@ -1562,8 +1567,9 @@ class ThreadTests(InboxCase):
         for text in ("é" * 2049, "a" * 4097, "one\ntwo", " "):
             with self.subTest(text=text[:8]):
                 self.assertEqual(65, self.cli("discuss", "1", "--text", text)[0])
-                self.assertEqual(65, self.cli("reply", "1", "--text", text)[0])
-        self.assertEqual(1, len(self.item(1)["thread"]))
+                self.assertEqual(65, self.cli("discuss", "--text", text)[0])
+        self.assertEqual(1, len(self.item(1)["messages"]))
+        self.assertEqual({"last": 1}, json.loads((self.folder() / "count.json").read_text()))
 
 
 if __name__ == "__main__":

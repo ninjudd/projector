@@ -90,12 +90,8 @@ export type Outcome =
   | { dismissed: true; declined: true; text?: string; answeredAt: number }
   | Dismissal
 
-/**
- * One message in an item's thread: yours, which reaches the agent as
- * `DISCUSS` and has `deliveredAt` once it did, or the agent's, which has
- * `readAt` once you opened the item's drawer.
- */
-export type ThreadEntry = { from: 'person' | 'agent'; text: string; at: number; deliveredAt?: number; readAt?: number }
+/** A message you sent the agent about an item, which reaches it as `DISCUSS` and has `deliveredAt` once it did. */
+export type Message = { text: string; at: number; deliveredAt?: number }
 
 /** What every item has, as `project inbox list --json` gives it, with the session whose store holds it. */
 export type Posted = {
@@ -123,17 +119,18 @@ export type Posted = {
   unclear?: { at: number; deliveredAt?: number }
   /**
    * A deliverer's hold on the line the item owes its agent: `line` says
-   * which, the answer or outcome, `RESTORED`, `STARTED`, or `UNCLEAR`.
+   * which, the answer or outcome, `RESTORED`, `STARTED`, `UNCLEAR`, or
+   * `DISCUSS`.
    */
   claim?: {
     token: string
     renewedAt: number
     line?: 'answer' | 'restored' | 'started' | 'unclear' | 'discuss'
-    /** The thread entry a `DISCUSS` claim delivers, by its index. */
+    /** The message a `DISCUSS` claim delivers, by its index in `messages`. */
     entry?: number
   }
-  /** The messages you and the agent exchanged about the item, oldest first; absent until the first. */
-  thread?: ThreadEntry[]
+  /** The messages you sent the agent about the item, oldest first; absent until the first. */
+  messages?: Message[]
   deliveredAt?: number
   session: string
 }
@@ -174,16 +171,17 @@ export type Request = Posted & {
 }
 
 /**
- * A discussion you started about a pull request or about the session itself,
- * whose thread holds your messages and the agent's replies. It takes no
- * answer, and dismissing it delivers it.
+ * A message you sent about a pull request or about the session itself. It
+ * asks nothing of you, and dismissing it delivers it at once. It is resolved
+ * as `delivered` once its message reached the agent, or as dismissed when the
+ * message was taken back.
  */
-export type Discussion = Posted & {
-  kind: 'discussion'
-  answer?: Dismissal
+export type MessageItem = Posted & {
+  kind: 'message'
+  answer?: Dismissal | { delivered: true; answeredAt: number }
 }
 
-export type Item = Question | Notice | Request | Discussion
+export type Item = Question | Notice | Request | MessageItem
 
 /** An item whose answer or outcome goes back to the agent that posted it. */
 export type Answerable = Question | Request

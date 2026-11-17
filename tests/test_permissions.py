@@ -56,8 +56,6 @@ DECISIONS = (
     ("project inbox block 3 --reason 'Unlock the phone' --session s1", "allow", "allow"),
     ("project inbox discuss 3 --text 'Why decline it?' --session s1", "ask", "none"),
     ("project inbox discuss --pr acme/app#12 --text hello --session s1", "ask", "none"),
-    ("project inbox read 3 --session s1", "ask", "none"),
-    ("project inbox reply 3 --text 'The cap bounds retries.' --session s1", "allow", "allow"),
     ("project list --json", "allow", "allow"),
     ("project config get review.username", "allow", "allow"),
     ("project config list", "allow", "allow"),
@@ -122,7 +120,7 @@ DECISIONS = (
 # subcommands left out, or None where the whole command is.
 CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "agent": {"key"},
                   "config": {"set", "unset"},
-                  "inbox": {"answer", "decline", "discuss", "dismiss", "done", "read", "snooze", "start", "unclear"},
+                  "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},
                   "review": {"gate"},
                   "site": {"build", "serve"}, "ios": {"build", "logs"}}
 

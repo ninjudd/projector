@@ -633,11 +633,10 @@ it in place with the `revise` tool, `mcp__projector__revise`, keeping its
 number. When you tell it you dismissed, declined, or snoozed an item by
 mistake, the agent brings the item back under its number with the `restore`
 tool, `mcp__projector__restore`, rather than asking again. When a message
-that starts `DISCUSS` brings it your words about an item, the agent answers
-in the item's thread with the `reply` tool, `mcp__projector__reply`, and in
-the conversation as well. An agent that runs `project inbox ask`, `tell`,
-`request`, `withdraw`, `revise`, `restore`, or `reply` from the shell
-reaches the same inbox, as
+that starts `DISCUSS` brings it your words about an item, a pull request, or
+the session, the agent answers in the conversation. An agent that runs
+`project inbox ask`, `tell`, `request`, `withdraw`, `revise`, or `restore`
+from the shell reaches the same inbox, as
 [Use the inbox](cli.md#use-the-inbox) describes.
 
 The items are a list below the pull requests, newest first, each line
@@ -651,9 +650,8 @@ Code's themes give no key a pastel apart from the question's color, so the
 panel picks the request's color by theme, as it picks its background. An
 open notice's line is drawn in the theme's mid gray, `inactive`, apart from
 the `subtle` of a resolved or snoozed item, so you can tell which items want
-an answer, which want work, and which want a read. An open discussion, which
-you start from a terminal with `project inbox discuss`, is drawn in the
-theme's own `text` color, because its words are yours. Each line ends with the
+an answer, which want work, and which want a read. A message you send with
+`project inbox discuss` is drawn like a notice. Each line ends with the
 pull request the item is about, as the panel labels it, and how long ago it
 was posted. An item about a pull request the panel does not list names it
 as the agent wrote it, such as `Acme/App#12`. The
@@ -841,25 +839,20 @@ notice's drawer; the notice stays in the panel until you dismiss it.
 **Dismiss** clears the notice once you have read it and closes its
 drawer, and nothing goes back to the agent.
 
-An item's thread holds the messages you and the agent exchanged about it
-outside the conversation: yours, which you add from a terminal with
-`project inbox discuss`, and the agent's, which it adds with the `reply`
-tool. The drawer shows the thread below the detail, oldest first, each
-message after `you:` or `agent:`. An item whose thread holds a reply you
-have not read ends its line with `replied`, in the theme's `suggestion`
-blue, and opening its drawer marks the reply read, so the mark goes. A
-drawer stays open while you hide the panel, but a reply that arrives then
-stays unread until the panel shows that drawer again. The
-panel delivers each
-message of yours as a line that starts `DISCUSS`, one at a time and oldest
-first, after any line the item already owes, and the line reads `sending`
-until it is delivered. When a message cannot reach the agent, the panel
-takes it back and says why, so you send it again. A discussion, an item
-you start about a pull request or about the session with
-`project inbox discuss`, has a drawer like a notice's: its thread, then
-**I don't understand**, **Discuss**, **Dismiss**, and **Snooze**. Dismissing
-it sends the agent nothing. In the panel, **Discuss** still puts the quoted
-item in the prompt, so you talk it over in the conversation.
+You can also send the agent a message from outside the conversation, such
+as from a terminal, with `project inbox discuss`, which
+[Send the agent a message](cli.md#send-the-agent-a-message) describes. The
+panel delivers each message as a line that starts `DISCUSS`, one at a time
+and oldest first, after any line the item already owes. The item's line
+reads `sending` until the message is delivered, and its drawer shows each
+message you sent after `you:`, below the detail. The agent answers in the
+conversation. When a message cannot reach the agent, the panel takes it
+back and says why, so you send it again. A message about a pull request or
+about the session is an item of its own, of kind `message`. Its drawer
+shows your message, then **Discuss**, **Dismiss**, and **Snooze**, and it
+leaves the panel 30 seconds after its message is delivered. Dismissing it
+sends the agent nothing more. In the panel, **Discuss** still puts the
+quoted item in the prompt, so you talk it over in the conversation.
 
 A request's drawer shows its steps, then the options its agent gave, on `1`
 and on, in the options' place, then **I don't understand**, **Discuss**,
@@ -1343,7 +1336,7 @@ marketplace files, and read upstream's new skill against the rules in
 ## Work without MCP
 
 Projector currently ships no MCP server. The `ask`, `tell`, `withdraw`,
-`revise`, `restore`, and `reply` tools carry the `mcp__projector__` prefix, but
+`revise`, and `restore` tools carry the `mcp__projector__` prefix, but
 Projector's hooks module in Claude Code serves them: no MCP server runs, and
 no skill depends on them. Every core skill uses the public `project` CLI and
 ordinary Git or GitHub commands. A future MCP adapter can expose the same
