@@ -52,6 +52,15 @@ reviewable and verify each behavior in proportion to its risk. Follow the
 repository's branch, stack, commit, review, and merge rules, and
 [Hand the work over](#hand-the-work-over) where they are silent.
 
+Start each new branch from the base as the remote has it now. A local
+`origin/main` is only as new as the last fetch, and a host's worktree tool
+can branch from it without fetching. A pull request that merged since then
+is then missing from the branch, and a change to the same code conflicts on
+its first push. So run `git fetch origin` first, and before the first edit
+check that `git merge-base HEAD origin/<default branch>` prints the fetched
+tip, as `git rev-parse origin/<default branch>` does. While the new branch
+holds nothing, start it again from that tip when it is behind.
+
 Apply the review method's passes to your own change before a review does;
 `../review-pr/method.md` § 3 describes them, and three apply to nearly every
 change:
