@@ -3213,7 +3213,7 @@ added acme/app#12 fix
 events: mod
 $ project agent list
 local only: no agent.key is set; run `project agent key init` to make one
-a1b2c3d4 (you)	claude	laptop	acme/app feature	0s ago	Fixing acme/app#12
+7c41d9e2b086 (you)	claude	laptop	acme/app feature	0s ago	Fixing acme/app#12
 ```
 
 The summary says what the session reviews and fixes, such as `Reviewing
@@ -3248,17 +3248,29 @@ daemon has read it yet.
 
 `list` prints the live registered sessions signed in to your login, one a
 line, under a header that says whether the relay runs. Each line holds the
-name, or the first 8 characters of the session ID when the session has no
-name, then the host and model, the machine, the repository and branch, how
-long ago the record changed, and the summary. `(you)` marks the session the
-command acts for:
+name, or its short ID when the session has no name, then the host and
+model, the machine, the repository and branch, how long ago the record
+changed, and the summary. `(you)` marks the session the command acts for:
 
 ```console
 $ project agent list
 relay: on, key 3f2a9c1d7e4b6a05 in the keychain
-b5e6f7a8	codex gpt-5.5	desktop	acme/app feature	4m ago	Writing the parser's tests
+11d1a9295838	codex gpt-5.5	desktop	acme/app main	4m ago	Reviewing acme/app pull requests
+a659f011e432	codex gpt-5.5	desktop	acme/app feature	4m ago	Writing the parser's tests
 parser-refactor (you)	claude claude-opus-5-5	laptop	acme/app feature	1m ago	Refactoring the parser
 ```
+
+A session's short ID is the last group of its session ID, so
+`01a1e770-79df-7340-90dc-11d1a9295838` shows as `11d1a9295838`. A session
+ID that is not a UUID shows as its last 12 characters. The last group of a
+UUID is random, while a Codex session ID starts with the time the session
+started, so two Codex sessions started within a minute of each other, such
+as `01a1e770-79df-7340-90dc-11d1a9295838` and
+`01a1e770-94fa-7cb0-99b6-a659f011e432`, share their first 8 characters and
+differ in their last group. The short ID depends only on the session's own
+ID, so `list`, the `PEER MESSAGE` line, `read`, and the output of `send` and
+`reply` always show a session the same way. `send` takes a name or a full
+session ID, never a short ID.
 
 The list holds this machine's sessions, then the sessions the relay found on
 your other machines in the repositories this machine's live sessions work

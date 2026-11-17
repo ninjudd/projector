@@ -1204,7 +1204,7 @@ class LifecycleTests(RelayCase):
             self.one.run_pass()
             self.two.run_pass()
             listed += [line.split("\t")[-1] for line in self.two.project("agent", "list", claude=B)[1].splitlines()
-                       if line.startswith(C[:8])]
+                       if line.startswith(agents.short_id(C))]
 
         self.assertEqual(["Fixing acme/app#12", "Fixing acme/app#12 and acme/app#13"], listed)
 
@@ -1222,7 +1222,7 @@ class LifecycleTests(RelayCase):
         self.two.run_pass()
 
         listed = [line.split("\t")[-1] for line in self.two.project("agent", "list", claude=B)[1].splitlines()
-                  if line.startswith(C[:8])]
+                  if line.startswith(agents.short_id(C))]
         self.assertEqual(["Fixing acme/app#12 and acme/app#13"], listed)
 
     def test_an_idle_codex_agent_keeps_its_daemon_renews_its_lease_and_receives(self) -> None:

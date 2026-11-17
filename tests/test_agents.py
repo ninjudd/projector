@@ -123,7 +123,7 @@ class RegisterTests(AgentCase):
 
         self.assertEqual(0, code, err)
         self.assertEqual("local only: no agent.key is set; run `project agent key init` to make one\n"
-                         "b5e6f7a8\tcodex\tlaptop\tacme/app feature\t1m ago\tWriting the parser's tests\n"
+                         "00000000000b\tcodex\tlaptop\tacme/app feature\t1m ago\tWriting the parser's tests\n"
                          f"parser-refactor (you)\tclaude {MODEL}\tlaptop\tacme/app feature\t1m ago\t"
                          "Refactoring the parser\n", out)
 
@@ -363,6 +363,70 @@ class MessageTests(AgentCase):
         [message_id] = self.message_ids(A)
         self.assertEqual("Which error type?", read_json(self.folder(A) / "messages" / f"{message_id}.json")["text"])
         self.assertEqual([], self.events(A))
+
+
+# Two Codex session IDs, UUIDv7s whose shared first 8 characters are the creation time.
+EARLY = "01a1e770-79df-7340-90dc-11d1a9295838"
+LATE = "01a1e770-94fa-7cb0-99b6-a659f011e432"
+
+
+class ShortIdTests(AgentCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.git_checkout()
+        self.codex(EARLY)
+        self.register(EARLY, "--summary", "Reviewing acme/app pull requests")
+
+    def join_late(self) -> None:
+        self.codex(LATE)
+        self.register(LATE, "--summary", "Writing the parser's tests")
+
+    def test_two_codex_sessions_started_within_a_minute_list_under_different_labels(self) -> None:
+        self.join_late()
+
+        code, out, err = self.project("list", "--session", EARLY)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(["11d1a9295838 (you)\tcodex\tlaptop\tacme/app feature\t0s ago\t"
+                          "Reviewing acme/app pull requests",
+                          "a659f011e432\tcodex\tlaptop\tacme/app feature\t0s ago\tWriting the parser's tests"],
+                         out.splitlines()[1:])
+
+    def test_a_message_between_two_codex_sessions_sharing_a_prefix_names_each_by_its_own_label(self) -> None:
+        self.join_late()
+
+        code, out, err = self.send(EARLY, LATE, "Which error type?")
+        [message_id] = self.message_ids(LATE)
+        [line] = [item["line"] for item in codex.queued(self.folder(LATE))]
+        read_code, read_out, read_err = self.project("read", message_id, "--session", LATE)
+
+        self.assertEqual((0, 0), (code, read_code), err + read_err)
+        self.assertEqual(f"Sent {message_id} to a659f011e432 (codex); delivery: codex\n", out)
+        self.assertTrue(line.startswith(f"PEER MESSAGE {message_id} from 11d1a9295838 (codex). "), line)
+        self.assertTrue(read_out.startswith(f"{message_id} from 11d1a9295838 (codex) on laptop\n"), read_out)
+
+    def test_a_session_keeps_the_label_its_messages_carry_as_other_sessions_come_and_go(self) -> None:
+        self.claude(A)
+        self.register(A, "--name", "parser-refactor", "--summary", "Refactoring the parser")
+        self.send(EARLY, "parser-refactor", "Which error type?")
+        self.join_late()
+
+        [message_id] = self.message_ids(A)
+        [line] = self.events(A)
+        listed = self.project("list", claude=A)[1].splitlines()[1:]
+
+        self.assertTrue(line.startswith(f"PEER MESSAGE {message_id} from 11d1a9295838 (codex). "), line)
+        self.assertEqual(["11d1a9295838", "a659f011e432", "parser-refactor (you)"],
+                         [row.split("\t")[0] for row in listed])
+
+    def test_a_session_id_that_is_no_uuid_lists_by_its_last_12_characters(self) -> None:
+        session = "ci-runner-2026-11-16.build-417"
+        self.claude(session)
+        self.register(session, "--summary", "Running the nightly build")
+
+        listed = self.project("list", "--session", EARLY)[1].splitlines()[1:]
+
+        self.assertEqual(["11d1a9295838 (you)", "16.build-417"], [row.split("\t")[0] for row in listed])
 
 
 class SubscriberTests(AgentCase):

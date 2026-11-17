@@ -114,8 +114,8 @@ has ever carried:
 ## Find a peer
 
 `project agent list` prints each live registered session signed in to the
-same GitHub login: its name, or the first 8 characters of its ID when it
-has none, its host and model, its machine, its repository and branch, how
+same GitHub login: its name, or the last group of its ID when it has
+none, its host and model, its machine, its repository and branch, how
 long ago its record changed, and its summary. It marks this session
 `(you)`. `--all` adds lapsed sessions, and `--json` prints the records.
 Choose the session whose summary matches what you need to ask.
