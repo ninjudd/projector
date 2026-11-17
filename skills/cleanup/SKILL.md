@@ -189,7 +189,7 @@ describes under "Hold the pull request while changes are built".
 Release each kind of resource in this order, so that nothing still running
 recreates what you released.
 
-Steps 5 and 6 remove worktrees and branches without asking, on the
+Steps 6 and 7 remove worktrees and branches without asking, on the
 strength of step 4 of
 [Take stock of the session](#take-stock-of-the-session). That step ran
 before step 2 here stopped the subagents, and a subagent can commit or
@@ -223,7 +223,12 @@ describes, and remove it only when the answer says to discard the change.
    `project inbox withdraw <number> --session <id>`. No session will read
    the answer once this one shuts down. Name each withdrawn question or
    request in the report, so nothing the user meant to answer is lost.
-5. **Worktrees.** Remove each worktree the session created that the checks
+5. **Agent registration.** Run `project agent unregister --session <id>`,
+   so the user's other sessions stop listing and messaging this one and the
+   relay deletes its refs. It succeeds, and says so, when the session was
+   never registered, so run it whether or not the session registered or
+   subscribed. Say in the report whether it unregistered the session.
+6. **Worktrees.** Remove each worktree the session created that the checks
    above find holds no change that exists nowhere else. The user's request
    to clean up is their consent, so remove these without asking. Leave a
    worktree first when the session's working directory is inside it.
@@ -239,14 +244,14 @@ describes, and remove it only when the answer says to discard the change.
    like any other change the checks find. Pass an override or
    `--force` for a worktree that holds a change that exists nowhere else
    only when the user's answer to its gap said to discard the change.
-6. **Branches.** Delete a local branch the session created only when its
+7. **Branches.** Delete a local branch the session created only when its
    pull request has merged or closed and the checks above find no change on
    it that exists nowhere else, or when the user said to discard it. Delete
    it with `git branch -D`, without asking: `git branch -d` refuses a
    squash-merged branch once its remote branch is gone, because the squash
    put different commits on the base, and the checks already proved its
    commits delivered. Keep the branch of an open pull request.
-7. **Stashes and temporary files.** Drop each stash entry the session
+8. **Stashes and temporary files.** Drop each stash entry the session
    pushed and no gap kept. Another session can shift an entry's
    `stash@{n}` position, and `git stash drop` refuses a SHA, so find the
    entry's current reference by its SHA just before you drop it:
@@ -282,7 +287,7 @@ Then report, as a list with one entry per thing:
 - **Waiting on you:** each pull request that waits for the user's review or
   merge. No session fixes its findings after this one shuts down, so say
   that the user can run `fix-pr` on it from another session.
-- **Released:** what you stopped, removed, and withdrew.
+- **Released:** what you stopped, removed, withdrew, and unregistered.
 - **Withdrawn from the inbox:** each question or request that was still open.
 
 End with one line that says the session is safe to shut down, such as

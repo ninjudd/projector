@@ -1138,6 +1138,19 @@ class LifecycleTests(RelayCase):
         self.assertEqual([], [ref for ref in self.refs() if presence.rsplit("/", 1)[1] in ref])
         self.assertEqual([], self.one.events(A))
 
+    def test_a_job_handed_a_session_live_before_it_unregistered_neither_delivers_to_it_nor_renews_it(self) -> None:
+        self.pair()
+        presence = relay.presence_ref(self.key.id, agents.record(self.one.root, A)["relay_id"])
+        self.message_to_a()
+        self.one.project("agent", "unregister", claude=A)
+
+        with self.one.acting():
+            relay.Job(self.one.root, "acme/app", self.key, {A}, self.now, poll=True, full=False,
+                      gh=self.github).run()
+
+        self.assertEqual([], [ref for ref in self.refs() if presence.rsplit("/", 1)[1] in ref])
+        self.assertEqual([], self.one.events(A))
+
     def test_another_machine_drops_an_unregistered_agent_after_its_next_poll(self) -> None:
         self.pair()
         self.one.project("agent", "unregister", claude=A)

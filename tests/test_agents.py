@@ -535,7 +535,8 @@ class UnregisterTests(AgentCase):
 
     def watch(self, *args: str) -> None:
         with contextlib.chdir(self.work), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), \
-                mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": C}), mock.patch("time.time", return_value=self.now):
+                mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": C}), \
+                mock.patch("time.time", return_value=self.now):
             self.assertEqual(0, cli.main(["watch", *args]))
 
     def test_an_unregistered_session_is_neither_listed_nor_reachable(self) -> None:
@@ -563,8 +564,8 @@ class UnregisterTests(AgentCase):
         registered = agents.record(self.root, C)
         self.unregister(C)
 
+        self.watch("add", "acme/app#12")
         self.watch("add", "acme/app#13")
-        self.watch("add", "--from-output", "-")
 
         self.assertEqual("Fixing acme/app#12", (registered or {}).get("summary"))
         self.assertIsNone(agents.record(self.root, C))
@@ -586,9 +587,9 @@ class UnregisterTests(AgentCase):
         twice = self.unregister(B, "--json")
         never = self.unregister(C)
 
+        expected = {"session": B, "registered": False, "name": None, "relay_refs_queued": 0}
         shown = json.loads(twice[1])
-        self.assertEqual((0, {"session": B, "registered": False, "name": None, "relay_refs_queued": 0}),
-                         (twice[0], {key: shown[key] for key in ("session", "registered", "name", "relay_refs_queued")}))
+        self.assertEqual((0, expected), (twice[0], {key: shown[key] for key in expected}))
         self.assertEqual((0, "this session is not registered; subscribing will not register it\n", ""), never)
 
     def test_a_message_delivered_before_unregister_stays_readable_and_a_reply_from_it_is_refused(self) -> None:
