@@ -3269,8 +3269,8 @@ as `01a1e770-79df-7340-90dc-11d1a9295838` and
 `01a1e770-94fa-7cb0-99b6-a659f011e432`, share their first 8 characters and
 differ in their last group. The short ID depends only on the session's own
 ID, so `list`, the `PEER MESSAGE` line, `read`, and the output of `send` and
-`reply` always show a session the same way. `send` takes a name or a full
-session ID, never a short ID.
+`reply` always show a session the same way, and `send` takes it in place of
+the full ID.
 
 The list holds this machine's sessions, then the sessions the relay found on
 your other machines in the repositories this machine's live sessions work
@@ -3290,7 +3290,8 @@ registered session, `list` reads the login from `gh`.
 ### Send, read, and answer a message
 
 `send <to> <text>` sends a message to the session that `<to>` names, by its
-name first and then by its full session ID. A `<text>` of `-` reads
+name first, then by its full session ID, and then by the short ID `list`
+shows for it, in any case. A `<text>` of `-` reads
 standard input. The message can span several lines, up to 16 KiB:
 
 ```console
@@ -3305,6 +3306,8 @@ Sent m-3f2a9c1d7e4b6a0590c2d4e6f8a1b3c5 to test-writer (codex gpt-5.5); delivery
   signed in to another login.
 - A name that two live sessions hold, as two machines can when both
   register it within one poll. Send to one by its full session ID.
+- A short ID that two live sessions share. The error names both full
+  session IDs; send to one by its full session ID or its name.
 - A recipient on another machine when the sender does not work in the same
   repository, or when the relay is off on this machine.
 - An empty message, or one longer than 16 KiB, with exit code 2.

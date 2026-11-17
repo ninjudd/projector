@@ -428,6 +428,55 @@ class ShortIdTests(AgentCase):
 
         self.assertEqual(["11d1a9295838 (you)", "16.build-417"], [row.split("\t")[0] for row in listed])
 
+    def test_send_reaches_the_session_whose_short_id_it_is_given_in_any_case(self) -> None:
+        self.join_late()
+
+        sent = [self.send(EARLY, to, "Which error type?") for to in ("a659f011e432", "A659F011E432")]
+
+        self.assertEqual([0, 0], [code for code, _, _ in sent], [err for _, _, err in sent])
+        self.assertEqual([f"Sent {message_id} to a659f011e432 (codex); delivery: codex\n"
+                          for message_id in sorted(self.message_ids(LATE))], sorted(out for _, out, _ in sent))
+        self.assertEqual([], self.message_ids(EARLY))
+
+    def test_a_name_that_is_another_sessions_short_id_reaches_the_named_session(self) -> None:
+        self.join_late()
+        self.claude(A)
+        self.register(A, "--name", "a659f011e432", "--summary", "Refactoring the parser")
+
+        code, _, err = self.send(EARLY, "a659f011e432", "Which error type?")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(1, len(self.message_ids(A)))
+        self.assertEqual([], self.message_ids(LATE))
+
+    def test_a_short_id_two_live_sessions_share_is_refused_naming_both_and_writes_nothing(self) -> None:
+        twin = "02b2f881-1a2b-7c3d-8e4f-11d1a9295838"
+        self.codex(twin)
+        self.register(twin, "--summary", "Reviewing acme/web pull requests")
+        self.join_late()
+        before = self.files()
+
+        code, _, err = self.send(LATE, "11d1a9295838", "Which of you?")
+
+        self.assertEqual(65, code)
+        self.assertIn(f"11d1a9295838 is the short ID of 2 live sessions, {EARLY} and {twin}", err)
+        self.assertIn("pass its full session ID or its name", err)
+        self.assertEqual(before, self.files())
+
+    def test_the_short_id_of_a_lapsed_session_is_refused_as_its_full_id_is(self) -> None:
+        self.claude(C)
+        self.register(C, "--summary", "Writing the parser's docs")
+        self.now += watch.LAPSE
+        self.codex(EARLY)
+        before = self.files()
+
+        refused = [self.send(EARLY, to, "Which error type?") for to in ("00000000000C", C)]
+
+        self.assertEqual([65, 65], [code for code, _, _ in refused])
+        self.assertIn("00000000000C has lapsed", refused[0][2])
+        self.assertIn(f"{C} has lapsed", refused[1][2])
+        self.assertEqual(before, self.files())
+
 
 class SubscriberTests(AgentCase):
     """A session that subscribes to a pull request is registered with a generated summary."""

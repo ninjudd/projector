@@ -409,6 +409,19 @@ def recipient(session: str, sender: dict, found: dict[str, dict], reachable: Cal
     raise AgentError(f"no registered session is named {to}; run `project agent list` to see who is")
 
 
+def shortened(session: str, sender: dict, found: dict[str, dict], reachable: Callable[[str], bool],
+              to: str) -> list[str]:
+    """The sessions whose short ID is `to`, in any case, refusing a short ID that two live sessions `sender` could
+    message share, since only a full ID or a name tells them apart."""
+    matched = sorted(name for name in found if short_id(name).lower() == to.lower())
+    shared = [name for name in matched
+              if name != session and found[name].get("login") == sender["login"] and reachable(name)]
+    if len(shared) > 1:
+        raise AgentError(f"{to} is the short ID of {len(shared)} live sessions, {series(shared)}; pass its full "
+                         "session ID or its name")
+    return matched
+
+
 def preview(text: str) -> str:
     first = text.strip().splitlines()[0]
     return first if len(first) <= PREVIEW else first[:PREVIEW - 1] + "…"
@@ -456,8 +469,8 @@ def compose(session: str, sender: dict, message_id: str, to: str, text: str, ans
 
 def send(root: Path, session: str, to: str, text: str, now: float, *, limit: int, answering: Optional[dict] = None,
          environ: Optional[dict] = None) -> tuple[dict, dict, str]:
-    """Store a message for the session `to` names and append its line, or queue it for the relay when that
-    session is on another machine. Answers the message, the recipient's record with its `session`, and how the
+    """Store a message for the session `to` names, by its name, then its full ID, then its short ID, and append
+    its line, or queue it for the relay when that session is on another machine. Answers the message, the recipient's record with its `session`, and how the
     message travels. A reply `answering` a message goes to its sender."""
     sender = record(root, session)
     if sender is None:
@@ -467,9 +480,14 @@ def send(root: Path, session: str, to: str, text: str, now: float, *, limit: int
     registered = records(root)
     remote = {name: found for name, found in relay.remote_agents(root, now).items() if name not in registered}
     everyone = {**registered, **remote}
+
+    def reachable(name: str) -> bool:
+        return name in remote or live(root, name, now)
+
     named = [] if answering else [name for name, found in everyone.items() if found.get("name") == to.lower()]
-    target = recipient(session, sender, everyone, lambda name: name in remote or live(root, name, now),
-                       named or ([to] if to in everyone else []), to)
+    candidates = named or ([to] if to in everyone else []) or ([] if answering else shortened(
+        session, sender, everyone, reachable, to))
+    target = recipient(session, sender, everyone, reachable, candidates, to)
     found = {**everyone[target], "session": target}
     sent = [item for item in recent(watch.session_folder(root, session), now) if item.get("to") == target]
     if len(sent) >= limit:
