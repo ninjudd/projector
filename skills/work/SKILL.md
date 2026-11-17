@@ -92,7 +92,12 @@ block. When an answer arrives, as a line that starts `ANSWER`, `DONE`, or
 `DECLINED`, act on it before you go on, including undoing what you built on
 a recommendation the user did not pick. When a reply in their own words
 settles an item, withdraw it, and when a line that starts `UNCLEAR` arrives,
-revise the item to explain it better.
+revise the item to explain it better. A line that starts `DISCUSS` carries
+the user's words about an item, or starts a discussion about a pull request
+or the session. Answer it in the item's thread with Projector's `reply` tool
+or `project inbox reply <number> --text <words> --session <id>`, and in the
+conversation as well. Then withdraw the item, revise it, or leave it open,
+as for a reply.
 
 ## Hand each pull request to review
 
