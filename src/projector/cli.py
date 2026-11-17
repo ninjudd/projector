@@ -1308,7 +1308,7 @@ def add_agent_parser(subcommands) -> None:
     listed = command("list", "list your live registered sessions")
     listed.add_argument("--all", action="store_true", dest="everyone", help="list lapsed sessions too")
     send = command("send", "send a message to another of your registered sessions")
-    send.add_argument("to", help="the session's name, or its full session ID")
+    send.add_argument("to", help="the session's name, its full session ID, or the short ID list shows")
     send.add_argument("text", help="the message, at most 16 KiB; - reads standard input")
     reply = command("reply", "answer a message, to the session that sent it")
     reply.add_argument("id", help="the message's ID, m- and 32 hex digits")
