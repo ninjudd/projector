@@ -1138,18 +1138,45 @@ class LifecycleTests(RelayCase):
         self.assertEqual([], [ref for ref in self.refs() if presence.rsplit("/", 1)[1] in ref])
         self.assertEqual([], self.one.events(A))
 
-    def test_a_job_handed_a_session_live_before_it_unregistered_neither_delivers_to_it_nor_renews_it(self) -> None:
+    def test_a_job_built_before_its_session_unregisters_does_not_deliver_to_it(self) -> None:
         self.pair()
         presence = relay.presence_ref(self.key.id, agents.record(self.one.root, A)["relay_id"])
         self.message_to_a()
-        self.one.project("agent", "unregister", claude=A)
-
         with self.one.acting():
-            relay.Job(self.one.root, "acme/app", self.key, {A}, self.now, poll=True, full=False,
-                      gh=self.github).run()
+            job = relay.Job(self.one.root, "acme/app", self.key, {A}, self.now, poll=True, full=False,
+                            gh=self.github)
+
+        self.one.project("agent", "unregister", claude=A)
+        with self.one.acting():
+            job.run()
 
         self.assertEqual([], [ref for ref in self.refs() if presence.rsplit("/", 1)[1] in ref])
         self.assertEqual([], self.one.events(A))
+
+    def test_a_session_that_unregisters_as_a_job_weighs_its_renewal_has_its_presence_deleted_not_renewed(
+            self) -> None:
+        self.pair()
+        presence = relay.presence_ref(self.key.id, agents.record(self.one.root, A)["relay_id"])
+        self.advance(relay.LEASE - relay.RENEW + 60)
+        self.one.claude(A)
+        self.two.claude(B)
+        outbox_items = relay.outbox_items
+        unregistered: list[int] = []
+
+        def unregistering(root: Path, repo: str) -> list[dict]:
+            """The outbox as maintain reads it just before the session's unregister lands."""
+            found = outbox_items(root, repo)
+            if not unregistered:
+                with mock.patch.object(relay, "outbox_items", outbox_items):
+                    unregistered.append(self.one.project("agent", "unregister", claude=A)[0])
+            return found
+
+        with self.one.acting(), mock.patch.object(relay, "outbox_items", unregistering):
+            relay.Job(self.one.root, "acme/app", self.key, {A}, self.now, poll=True, full=False,
+                      gh=self.github).run()
+
+        self.assertEqual([0], unregistered)
+        self.assertNotIn(presence, self.refs())
 
     def test_another_machine_drops_an_unregistered_agent_after_its_next_poll(self) -> None:
         self.pair()

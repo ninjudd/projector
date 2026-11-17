@@ -76,6 +76,11 @@ def departure(root: Path, session: str) -> Optional[dict]:
     return found if found and found.get("schema_version") == 1 else None
 
 
+def unregistered(folder: Path) -> bool:
+    """Whether the session whose folder this is has unregistered and not registered again since."""
+    return (folder / UNREGISTERED).exists()
+
+
 def relayed(root: Path) -> tuple[dict[str, dict], set[str]]:
     """This machine's sessions whose relay refs the relay keeps or deletes, by session ID: each registered one,
     and each that unregistered, whose refs it deletes as a lapsed session's. Answers them and the ones that
@@ -206,7 +211,7 @@ def write_registration(root: Path, session: str, login: str, place: dict, cwd: P
                                      f"holds the name {name}; its summary: {found.get('summary') or '(none)'}")
         with locked(folder):
             if given is None:
-                if (folder / "agent.json").exists() or (folder / UNREGISTERED).exists():
+                if (folder / "agent.json").exists() or unregistered(folder):
                     return None, off
                 given = generated_fields(watch.subscriptions(folder), place.get("repo"))
                 if given is None:
@@ -238,7 +243,7 @@ def register_subscriber(root: Path, session: str, cwd: Path, now: float, config:
     refuse it. It never raises, because the subscription it follows has already succeeded."""
     folder = watch.session_folder(root, session)
     if (config.setting("agent.auto_register") is False or (folder / "agent.json").exists()
-            or (folder / UNREGISTERED).exists() or not live(root, session, now)):
+            or unregistered(folder) or not live(root, session, now)):
         return None
     try:
         login = running_operator(root) or watch.signed_in(watch.run_gh)
@@ -583,9 +588,13 @@ def well_formed_presence(found: dict) -> bool:
 
 def deliver(root: Path, session: str, message: dict, now: float) -> str:
     """Write a message the relay carried to the session's folder and append its line, once: answers `delivered`,
-    `replay` for a message already there, or `collision` for another message under a delivered ID."""
+    `replay` for a message already there, `collision` for another message under a delivered ID, or
+    `unregistered` for a session that unregistered since the relay's job began. `unregister` takes the same lock,
+    so no message lands after it."""
     folder = watch.session_folder(root, session)
     with locked(folder):
+        if unregistered(folder):
+            return "unregistered"
         (folder / "messages").mkdir(exist_ok=True)
         prune(folder, now)
         path = folder / "messages" / f"{message['id']}.json"

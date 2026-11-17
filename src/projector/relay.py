@@ -741,7 +741,8 @@ class Job:
         for name, found in self.sessions.items():
             relay_id = found["relay_id"]
             ref = presence_ref(self.key.id, relay_id)
-            if name in self.live:
+            # A session can unregister while this job runs, so its mark is checked again here.
+            if name in self.live and not agents.unregistered(watch.session_folder(self.root, name)):
                 expires = (self.cache["seen"].get(ref) or {}).get("expires_at")
                 due = ref not in self.cache["remote"] or not isinstance(expires, (int, float)) \
                     or expires - self.now < RENEW or found.get("relay") == "pending"
