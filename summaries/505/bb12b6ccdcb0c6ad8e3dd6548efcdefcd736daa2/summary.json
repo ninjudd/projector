@@ -1,0 +1,52 @@
+{
+ "version": 1,
+ "name": "Fresh implementation branches",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 505,
+  "title": "Start each implementation branch from the remote's current base",
+  "head": "bb12b6ccdcb0c6ad8e3dd6548efcdefcd736daa2",
+  "headRef": "implement-fresh-base",
+  "base": "0bddd09d7e5188db8fe66d58185da13ee2f8af05",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The <code>implement</code> skill tells an agent how to build a requested change. This update prevents a new branch from starting on an outdated local copy of the default branch.",
+   "Before editing, the agent fetches <code>origin</code> and compares the branch’s merge base with the fetched default-branch tip. A branch that contains no work is recreated from that tip when it is behind."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "fresh-base",
+   "title": "Check the base before editing",
+   "kicker": "New implementation branches include the fetched default-branch tip.",
+   "intro": [
+    "A remote-tracking reference such as <code>origin/main</code> records the last fetch. A worktree created from that reference can miss changes already merged on GitHub.",
+    "The instruction applies to implementations with a project plan and to changes built directly from a description. It checks ancestry before the first edit and limits restarting a branch to one that holds no work."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "collapsed": false,
+     "note": "Adds the fetch and ancestry check to the shared implementation workflow.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 60,
+       "text": "A temporary Git remote confirmed that a stale branch has a different merge base after fetching, while a fresh branch and a dependent layer containing the fetched tip both pass the comparison."
+      },
+      {
+       "kind": "context",
+       "line": 62,
+       "text": "The instruction restarts a branch only while it holds no work. Existing changes still follow the repository’s branch and stack update rules."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
