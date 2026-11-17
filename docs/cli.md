@@ -2924,14 +2924,14 @@ to open its drawer:
   for its options, the first marked `(recommended)`, and `t` to type an
   answer of your own. A request offers `1: Start`, or `1: Retry` once its
   agent reports it blocked, when it has a start action, and then its
-  outcomes, or `Done`. Up and down move a highlight through a question's
-  options or a request's outcomes, starting on the first, and Enter picks
-  the highlighted one, as its number does. Picking one opens a one-line
-  field under it for an optional note: Enter records your choice, with the
-  note when you typed one, and Esc goes back to the options without
+  outcomes, or `Done`. The drawer opens with the focus on the first option,
+  and Enter picks the focused one, as its number does. Picking one opens a
+  one-line field under it for an optional note: Enter records your choice,
+  with the note when you typed one, and Esc goes back to the options without
   recording. Every open item offers `6: I don't understand`, `7: Discuss`,
-  `8: Dismiss`, and `9: Snooze`, which asks for 15 minutes, 1 hour, 4 hours,
-  or 1 day. A dismissed item offers `8: Restore`.
+  `8: Dismiss`, and `9: Snooze`, which lists 15 minutes, 1 hour, 4 hours,
+  and 1 day, with the focus on the first. A dismissed item offers
+  `8: Restore`.
 - **A pull request's drawer** shows the session's role, the branch, the size,
   the checks, and the labels, then the unresolved review threads by file.
   `7` sends the session a message about the pull request, `8` asks before it
@@ -2949,16 +2949,17 @@ then leaves the list 30 seconds later. A message about an item stays in that
 item's drawer.
 
 The conversation sits at the bottom of the panel, collapsed to its heading.
-Press `v`, or Enter on its heading, to show it, and `v` again to hide it. The
-console remembers which sessions show it until you quit. It lists what you
-said and what the agent said, newest last, and leaves out tool calls, tool
-results, thinking, and the instructions the host adds. What you said includes
-the prompts you typed and the inbox lines Projector delivered for you, such as
-`ANSWER 3.a` and `DISCUSS 5`, but not pull request events. Showing it moves
-the cursor to it and starts at its newest line, which stays in view as the
-agent writes, until you scroll back with the page keys. Collapsed suits a
-split whose other half shows the session's own chat; shown suits a session
-whose chat is not on screen.
+Press `v`, or Enter on its heading, to show it, and either again to hide it.
+The console remembers which sessions show it until you quit. It lists what
+you said and what the agent said, newest last, and leaves out tool calls,
+tool results, thinking, and the instructions the host adds. What you said
+includes the prompts you typed and the inbox lines Projector delivered for
+you, such as `ANSWER 3.a` and `DISCUSS 5`, but not pull request events.
+Showing it moves the focus to its heading and starts at its newest line,
+which stays in view as the agent writes, until you scroll back with the page
+keys. Up moves the focus off it again. Collapsed suits a split whose other
+half shows the session's own chat; shown suits a session whose chat is not
+on screen.
 
 The console reads the conversation from the transcript the session's host
 writes: for Claude Code, `projects/<project>/<session>.jsonl` under
@@ -2969,6 +2970,17 @@ second while it stays shown, and never while it is hidden. A transcript holds
 whatever the conversation held, including any secret an agent quoted there, so
 the console shows only what the session's own chat already shows you.
 
+In a panel, one focus moves through everything you can press. Up and down
+move it through the rows and, directly under the open drawer's row, the
+drawer's options and then its actions, and on past them to the next row,
+ending on the conversation's heading. The open drawer stays open while the
+focus moves, so you can look at another row first. Enter presses what has the focus: an option, an action
+such as `7: Discuss` or `9: Snooze`, or a row, which opens that row's drawer
+in place of the open one, or closes the drawer when it is the open row
+itself. A drawer without options opens with the focus on its row, so Enter
+twice opens and closes it. The focused row, option, or action is drawn
+reversed, with a `›` before an option or an action.
+
 The note goes to the agent on the same line as your choice, as
 `project inbox answer --note` and `done --note` send it, such as
 `ANSWER 3.a Decline the finding? → Decline it — note: keep the cap`. A note
@@ -2978,16 +2990,16 @@ question open, because the console has no prompt to carry your words.
 
 | Key | Effect |
 | --- | --- |
-| Up and down, or `k` and `j` | Move between rows. In an open question's or request's drawer, they move the highlight through its options instead, and stay put at the first and the last |
-| Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor. In an open question's or request's drawer, picks the highlighted option and opens its note field |
-| Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
-| Left | Returns to the home list from a panel, closing any open drawer |
+| Up and down, or `k` and `j` | On the home list, move between sessions. In a panel, move the focus through the rows, the open drawer's options and actions, and the conversation's heading, and stay put at the first and the last |
+| Enter | On the home list, opens the session's panel. In a panel, presses the focused option or action, closes the open drawer when its row has the focus, opens the focused row's drawer in place of the open one, or, on the conversation's heading, shows or hides the conversation |
+| An option's or action's own key, such as `2` or `8` | Presses it in the open drawer, as Enter on it does |
+| Left, Esc, or `0` | Closes the open drawer, leaving the focus on its row, or, with no drawer open, returns to the home list |
 | `7` in a panel with no drawer open | Sends a message about the session |
 | `v` in a panel | Shows or hides the session's conversation |
 | Page Down or Space, Page Up or `b` | Scrolls a drawer or the conversation, when taller than the screen, a page down or up |
 | End or `G`, Home or `g` | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
-| Enter in a text field | Sends the message, or, in a note field, records the option with the note you typed, if any. Esc cancels it, or goes back to the options, and Left and Right move the cursor |
-| `q` | Quits |
+| Enter in a text field | Sends the message, or, in a note field, records the option with the note you typed, if any. Esc or Ctrl-C cancels it, or goes back to the options, and Left and Right move the cursor |
+| Ctrl-C | Quits from the home list. In a panel, the first press shows `Press Ctrl-C again to exit`, and a second within 3 seconds quits |
 
 The console records each choice with the same functions `project inbox`
 runs, for the session on screen: an option is `project inbox answer`, `7` is
@@ -3014,7 +3026,12 @@ watch daemon's cache every 5 seconds, so they cost no GitHub query. An open
 pull request drawer asks GitHub for its threads when it opens and every 30
 seconds while it stays open, at about one point of your hourly GraphQL quota
 each, and asks nothing when the cache counts no unresolved thread. The console
-draws in your terminal's own colors, and draws none when `NO_COLOR` is set.
+draws in the colors of Projector's panel in Claude Code, on your terminal's
+own background: a question in Claude Code's `permission` blue, a request in
+peach, a notice in gray, and each pull request's state as the panel draws
+it. It uses Claude Code's default dark theme, or its light theme when your
+terminal's `COLORFGBG` names a white background. A terminal of 8 colors
+gets the nearest of them, and `NO_COLOR` turns color off.
 
 Without a terminal on standard input and standard output, `project console`
 exits with code 69 and says it needs one. On a Python without the `curses`

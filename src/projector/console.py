@@ -14,6 +14,7 @@ text. `main` puts it in a terminal with curses, which only `main` imports, so te
 from __future__ import annotations
 
 import os
+import signal
 import sys
 import textwrap
 import threading
@@ -45,6 +46,18 @@ DRAWER_INDENT = 4
 SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "G", "home", "g")
 # The key of the panel's last row, the session's conversation.
 CONVERSATION = "conversation"
+# How long after a panel's first Ctrl-C a second one quits, in seconds.
+EXIT_WINDOW = 3.0
+# What Enter on Snooze or on a pull request's Dismiss puts the focus on, and what leaving that question puts it back on.
+ASKED_FOCUS = {"snooze": ("1", "9"), "dismiss": ("8", "8")}
+# The color of each word after a pull request's label or title, as the panel's `HOLDS`, `REVIEW_LABELS`, `rowState`,
+# and `notesOf` give them; `draft` draws in the default color.
+WORD_STYLES = {"conflict": "error", "failing": "error", "changes": "warning", "findings": "warning",
+               "reviewing": "claude", "clean": "success", "ready": "suggestion", "approved": "success",
+               "passing": "success", "cancelled": "subtle"}
+CHECK_STYLES = {"passing": "success", "failing": "error", "pending": "warning", "cancelled": "subtle"}
+ROLE_STYLES = {"fixing": "fixer", "reviewing": "claude"}
+STAGE_STYLES = {"starting": "subtle", "ready": "success", "blocked": "warning"}
 
 
 @dataclass
@@ -82,8 +95,8 @@ class Field:
 @dataclass(frozen=True)
 class Control:
     """A key a drawer offers, its label, what pressing it does, and whether it is one of the item's options, which
-    the drawer lists one to a line above its other keys. A `choice` is an option the highlight moves through: a
-    question's answers and a request's outcomes, but not a request's Start or a snooze length."""
+    the drawer lists one to a line above its other keys. A `choice` is an option opening the drawer puts the focus
+    on: a question's answers and a request's outcomes, but not a request's Start or a snooze length."""
 
     key: str
     label: str
@@ -94,14 +107,16 @@ class Control:
 
 @dataclass
 class Line:
-    """One line of the screen: its parts, each text with a style name, and whether the cursor's row or the
-    highlighted option is on it. A `spot` line, the highlighted option or its note field, scrolls into view when
-    the highlight moves, and `cursor` is the column of the terminal's cursor on the note field's line."""
+    """One line of the screen: its parts, each text with a style name, and whether the focus is on it: on the whole
+    line for a row or an option, or on the part at `lit` for one of a line of actions. A `spot` line, the focus or
+    a note field, scrolls into view when the focus moves, and `cursor` is the column of the terminal's cursor on
+    the note field's line."""
 
     parts: list[tuple[str, str]]
     selected: bool = False
     spot: bool = False
     cursor: Optional[int] = None
+    lit: Optional[int] = None
 
     @property
     def text(self) -> str:
@@ -233,7 +248,7 @@ def marks_of(item: dict) -> list[tuple[str, str]]:
         marks.append(("unclear", "warning"))
     stage = stage_of(item)
     if stage is not None:
-        marks.append((stage, {"starting": "subtle", "ready": "success", "blocked": "warning"}[stage]))
+        marks.append((stage, STAGE_STYLES[stage]))
     if item.get("pr"):
         marks.append((item["pr"], "subtle"))
     return marks
@@ -313,9 +328,12 @@ class Console:
         self.asking: Optional[str] = None
         self.field: Optional[Field] = None
         self.threads: Optional[list[rows.Thread]] = None
-        # The choice the highlight is on in the open drawer, and whether the next layout scrolls it into view.
-        self.highlight = 0
+        # The key of the open drawer's control the focus is on, or None while it is on a row, and whether the next
+        # layout scrolls the focus into view.
+        self.control: Optional[str] = None
         self.reveal = False
+        # When a panel's first Ctrl-C asked for a second, by `clock`.
+        self.exit_at: Optional[float] = None
         self.offset = 0
         self.room = 1
         # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
@@ -433,6 +451,8 @@ class Console:
             self.close_drawer()
         if self.field is not None and self.field.inline and not self.choices():
             self.field = None
+        if self.control is not None and self.control not in {one.key for one in self.controls()}:
+            self.control = None
 
     # What is on screen
 
@@ -471,17 +491,19 @@ class Console:
 
     def key(self, name: str) -> None:
         """Do what the key named `name` does: a character, or `up`, `down`, `left`, `right`, `enter`, `esc`,
-        `backspace`, `delete`, `home`, `end`, `pageup`, or `pagedown`."""
+        `backspace`, `delete`, `home`, `end`, `pageup`, `pagedown`, or `ctrl-c`."""
         with self.lock:
             self.status = ""
+            if name == "ctrl-c" and self.field is None:
+                self.interrupt()
+                return
+            self.exit_at = None
             if self.field is not None:
                 self.field_key(name)
-            elif name == "q":
-                self.quit = True
             elif name in ("up", "k", "down", "j"):
                 step = -1 if name in ("up", "k") else 1
-                if self.view == "panel" and self.choices():
-                    self.step_highlight(step)
+                if self.view == "panel":
+                    self.step_focus(step)
                 else:
                     self.move(step)
             elif name in SCROLL_KEYS:
@@ -511,28 +533,54 @@ class Console:
         keys = self.keys()
         return self.selected if self.selected in keys else (keys[0] if keys else None)
 
+    def interrupt(self) -> None:
+        """Ctrl-C: quit from the home list, and from a panel on the second press within `EXIT_WINDOW` seconds."""
+        now = self.clock()
+        if self.view == "home" or (self.exit_at is not None and now - self.exit_at < EXIT_WINDOW):
+            self.quit = True
+        else:
+            self.exit_at = now
+
     def move(self, step: int) -> None:
+        """Move the cursor a session up or down the home list, staying put at either end."""
         keys = self.keys()
         if not keys:
             return
         at = keys.index(self.selected) if self.selected in keys else 0
         self.selected = keys[max(0, min(len(keys) - 1, at + step))]
-        if self.view == "panel":
-            self.close_drawer()
-            self.follow = True
 
     def choices(self) -> list[Control]:
-        """The open drawer's choices, which the arrows and Enter pick from."""
+        """The open drawer's choices, which the note field opens under."""
         return [one for one in self.controls() if one.choice]
 
-    def highlighted(self, choices: list[Control]) -> int:
-        """Where the highlight is among `choices`, kept on one after a revision takes some away."""
-        return max(0, min(self.highlight, len(choices) - 1))
+    def ring(self) -> list[tuple[str, Optional[str]]]:
+        """Every place the panel's focus can be, in order: each row, as its key and None, with the open drawer's
+        controls, as its key and each control's, directly under its row, and last the conversation's heading."""
+        found: list[tuple[str, Optional[str]]] = []
+        for key, _ in self.entries():
+            found.append((key, None))
+            if key == self.drawer:
+                found += [(key, one.key) for one in self.controls()]
+        if self.viewed() is not None:
+            found.append((CONVERSATION, None))
+        return found
 
-    def step_highlight(self, step: int) -> None:
-        """Move the highlight a choice up or down, staying put at either end."""
-        choices = self.choices()
-        self.highlight = max(0, min(len(choices) - 1, self.highlighted(choices) + step))
+    def focus(self) -> tuple[Optional[str], Optional[str]]:
+        """Where the panel's focus is: a row's key, and the key of the open drawer's control it is on, if any."""
+        key = self.selected_key()
+        return key, self.control if key is not None and key == self.drawer else None
+
+    def step_focus(self, step: int) -> None:
+        """Move the focus a place up or down the ring, staying put at either end. The open drawer stays open. Arriving
+        on the conversation's heading starts at its newest line, as `viewport` shows it."""
+        ring = self.ring()
+        if not ring:
+            return
+        at = ring.index(self.focus()) if self.focus() in ring else 0
+        row = self.selected_key()
+        self.selected, self.control = ring[max(0, min(len(ring) - 1, at + step))]
+        if self.selected != row:
+            self.follow = True
         self.reveal = True
 
     def open_panel(self, name: str) -> None:
@@ -545,28 +593,26 @@ class Console:
         self.view, self.selected, self.session = "home", self.session, None
 
     def close_drawer(self) -> None:
+        """Close the open drawer. A focus on one of its controls goes to its row, where `selected` already is."""
         self.drawer = self.asking = None
         self.threads = None
-        self.highlight = 0
+        self.control = None
 
     def panel_key(self, name: str) -> None:
-        if name == "left" or (name in ("esc", "0") and self.drawer is None):
-            self.go_home()
-        elif name in ("esc", "0"):
-            self.close_drawer()
-        elif name == "enter" and self.selected_key() == CONVERSATION:
-            self.toggle_conversation()
-        elif name == "enter" and self.drawer is not None and self.choices():
-            choices = self.choices()
-            choices[self.highlighted(choices)].act()
+        if name in ("left", "esc", "0"):
+            if self.drawer is None:
+                self.go_home()
+            else:
+                self.selected = self.drawer
+                self.close_drawer()
         elif name == "enter":
-            self.toggle_drawer()
+            self.press_focus()
         elif name == "v":
             self.toggle_conversation()
         elif self.drawer is not None:
             control = next((one for one in self.controls() if one.key == name), None)
             if control is not None:
-                control.act()
+                self.press(control)
         elif name == "7":
             self.open_field("session", None, "Message this session: ")
 
@@ -583,13 +629,34 @@ class Console:
         self.next_conversation = float("-inf")
         self.refresh_now.set()
 
-    def toggle_drawer(self) -> None:
-        key = self.selected_key()
-        if key is None or key == self.drawer:
-            self.close_drawer()
+    def press_focus(self) -> None:
+        """Enter: press the control the focus is on, close the drawer of the open row, open another row's, or show or
+        hide the conversation, as `v` does."""
+        key, control = self.focus()
+        if key is None:
             return
+        if key == CONVERSATION:
+            self.toggle_conversation()
+            return
+        found = next((one for one in self.controls() if one.key == control), None)
+        if found is not None:
+            self.press(found)
+        elif key == self.drawer:
+            self.close_drawer()
+        else:
+            self.open_drawer(key)
+
+    def press(self, control: Control) -> None:
+        """Press one of the open drawer's controls, from Enter or its own key, moving the focus onto it first."""
+        self.selected, self.control = self.drawer, control.key
+        control.act()
+
+    def open_drawer(self, key: str) -> None:
+        """Open the row's drawer in place of the open one, with the focus on its first choice, or else on its row."""
         self.close_drawer()
         self.drawer = self.selected = key
+        choices = self.choices()
+        self.control = choices[0].key if choices else None
         if key.startswith("pr:"):
             self.next_threads = float("-inf")
             self.refresh_now.set()
@@ -629,20 +696,19 @@ class Console:
         if item["kind"] == "question":
             letters = [chr(ord("a") + index) for index in range(len(item["choices"]))]
             controls += [Control(str(at + 1), f"{choice}{' (recommended)' if at == 0 else ''}",
-                                 lambda at=at, letter=letter: self.choose(
-                                     at, ref, lambda note: self.record(inbox.answer, ref, letter, None, note)),
+                                 lambda letter=letter: self.choose(
+                                     ref, lambda note: self.record(inbox.answer, ref, letter, None, note)),
                                  True, True)
                          for at, (choice, letter) in enumerate(zip(item["choices"], letters))]
-            controls.append(Control("t", "type an answer", lambda: self.type_answer(len(letters), ref), True, True))
+            controls.append(Control("t", "type an answer", lambda: self.type_answer(ref), True, True))
         elif item["kind"] == "request":
             start = start_of(item)
             if start is not None:
                 controls.append(Control("1", start, lambda: self.record(inbox.start, ref, item["start"]), True))
             given = item.get("choices")
             controls += [Control(str(at + (1 if start is None else 2)), choice,
-                                 lambda at=at, choice=choice: self.choose(
-                                     at, ref, lambda note: self.record(inbox.done, ref, choice if given else None,
-                                                                       note)),
+                                 lambda choice=choice: self.choose(
+                                     ref, lambda note: self.record(inbox.done, ref, choice if given else None, note)),
                                  True, True)
                          for at, choice in enumerate(given or ["Done"])]
         if not item.get("unclear") and item["kind"] != "message":
@@ -654,19 +720,22 @@ class Console:
                      else Control("9", "Snooze", lambda: self.ask("snooze"))]
         return controls
 
-    def choose(self, at: int, ref: str, then: Callable[[Optional[str]], Optional[dict]]) -> None:
-        """Pick the choice at `at`: highlight it and open the note field under it, whose Enter records it."""
-        self.highlight, self.reveal = at, True
+    def choose(self, ref: str, then: Callable[[Optional[str]], Optional[dict]]) -> None:
+        """Pick the focused choice: open the note field under it, whose Enter records it."""
+        self.reveal = True
         self.field = Field("note", ref, "Note (optional): ", then=then)
 
-    def type_answer(self, at: int, ref: str) -> None:
-        self.highlight = at
+    def type_answer(self, ref: str) -> None:
         self.open_field("typed", ref, f"Answer {ref}: ")
 
     def ask(self, what: str) -> None:
-        self.asking = what
+        """Ask a follow-up question, the snooze lengths or a pull request's confirmation, with the focus on it."""
+        self.asking, self.control = what, ASKED_FOCUS[what][0]
 
     def stop_asking(self) -> None:
+        """Put away the follow-up question, and the focus back on the control that asked it."""
+        if self.asking is not None:
+            self.control = ASKED_FOCUS[self.asking][1]
         self.asking = None
 
     # Recording
@@ -682,7 +751,7 @@ class Console:
         except ProjectorError as error:
             self.status = str(error)
             return None
-        self.asking = None
+        self.stop_asking()
         if session.host == "codex":
             try:
                 self.wake(session.name, item)
@@ -696,7 +765,7 @@ class Console:
         session = self.viewed()
         if session is None:
             return
-        self.asking = None
+        self.stop_asking()
         try:
             for role in row.roles:
                 watch.drop(self.root, session.name, row.pull.repo, row.pull.number, SUBSCRIPTION_ROLE[role])
@@ -712,7 +781,7 @@ class Console:
     def field_key(self, name: str) -> None:
         typing = self.field
         assert typing is not None
-        if name == "esc":
+        if name in ("esc", "ctrl-c"):
             self.field = None
         elif name == "enter":
             self.send(typing)
@@ -798,16 +867,18 @@ class Console:
                                        "subtle")])]
             if self.field is not None:
                 return [*lines, Line([("Enter sends · Esc cancels", "subtle")])]
+            if self.exit_at is not None and self.clock() - self.exit_at < EXIT_WINDOW:
+                return [*lines, Line([("Press Ctrl-C again to exit", "warning")])]
             if self.view == "home":
-                hint = "↑↓ move · Enter open · q quit"
+                hint = "↑↓ move · Enter open · Ctrl-C quit"
             elif self.selected_key() == CONVERSATION and self.session in self.expanded:
-                hint = "v hide · PgUp PgDn scroll · 7 message this session · ← or Esc back · q quit"
+                hint = ("↑↓ move · v or Enter hide · PgUp PgDn scroll · 7 message this session · ← or Esc back"
+                        " · Ctrl-C twice quit")
             elif self.drawer is None:
-                hint = "↑↓ move · Enter open · 7 message this session · v conversation · ← or Esc back · q quit"
-            elif self.choices():
-                hint = "↑↓ choose · Enter pick · Esc close · PgUp PgDn scroll · ← back · q quit"
+                hint = ("↑↓ move · Enter open · 7 message this session · v conversation · ← or Esc back"
+                        " · Ctrl-C twice quit")
             else:
-                hint = "Enter or Esc close · PgUp PgDn scroll · ← back · q quit"
+                hint = "↑↓ move · Enter press or open · ← or Esc close · PgUp PgDn scroll · Ctrl-C twice quit"
             return [*lines, Line([(hint, "subtle")])]
 
     def home_lines(self) -> tuple[list[Line], tuple[int, int]]:
@@ -823,7 +894,7 @@ class Console:
         for session in listed:
             start = len(lines)
             lines.append(Line([(session.label, "bold"), (f"  {session.host}", "subtle"),
-                               *([(f"  {session.place}", "accent")] if session.place else []),
+                               *([(f"  {session.place}", "branch")] if session.place else []),
                                *([(f"  {' · '.join(counts_of(session, now))}", "")] if counts_of(session, now) else [])],
                               selected=session.name == chosen))
             if session.summary:
@@ -865,7 +936,7 @@ class Console:
         now = self.now_ms()
         counts = counts_of(session, now)
         lines = [Line([(session.label, "bold"), (f"  {session.host}", "subtle"),
-                       *([(f"  {session.place}", "accent")] if session.place else []),
+                       *([(f"  {session.place}", "branch")] if session.place else []),
                        *([(f"  {' · '.join(counts)}", "subtle")] if counts else [])])]
         if session.summary:
             lines.append(Line([(session.summary, "subtle")]))
@@ -873,7 +944,7 @@ class Console:
         entries = self.entries()
         if not entries:
             lines.append(Line([("No pull requests or items. Press 7 to send this session a message.", "subtle")]))
-        chosen = self.selected_key()
+        chosen, control = self.focus()
         focus = (0, 0)
         label_width = max((len(row.label) for row in session.rows), default=0)
         author_width = max((len(row.pull.author or "") for row in session.rows if row.section == "review"), default=0)
@@ -884,12 +955,14 @@ class Console:
                 lines.append(Line([]))
             previous = group
             start = len(lines)
+            # The row is lit only while the focus is on the row itself, not on one of its drawer's controls.
+            lit = key == chosen and control is None
             if isinstance(entry, rows.Row):
-                lines.append(self.pull_line(entry, label_width, author_width, key == chosen))
+                lines.append(self.pull_line(entry, label_width, author_width, lit))
                 if key == self.drawer:
                     lines += self.pull_drawer(entry)
             else:
-                lines.append(self.item_line(entry, now, key == chosen))
+                lines.append(self.item_line(entry, now, lit))
                 if key == self.drawer:
                     lines += self.item_drawer(entry, width)
             if key == chosen:
@@ -907,25 +980,37 @@ class Console:
         if pull.is_loading:
             parts.append(("  loading…", "subtle"))
             return Line(parts, selected)
-        parts.append((f"  {row.state}", {"conflict": "error", "failing": "error", "changes": "warning",
-                                         "findings": "warning", "clean": "success"}.get(row.state, "accent")))
+        parts.append((f"  {row.state}", WORD_STYLES.get(row.state, "")))
         if row.section == "review":
             parts.append((f"  {(pull.author or '').ljust(author_width)}", "subtle"))
         parts.append((f"  {pull.title}", ""))
-        if row.notes:
-            parts.append((f"  {' · '.join(row.notes)}", "subtle"))
+        for at, note in enumerate(row.notes):
+            parts += [("  " if at == 0 else " · ", ""), (note, WORD_STYLES.get(note, ""))]
         return Line(parts, selected)
 
     def pull_drawer(self, row: rows.Row) -> list[Line]:
+        """The facts line, in the panel's colors for the roles, the branch, the size, and the checks, then the
+        actions and the threads by file."""
         pull, indent = row.pull, " " * DRAWER_INDENT
-        facts = [" and ".join(row.roles)] if row.roles else []
-        facts += [pull.branch] if pull.branch else []
+        facts: list[list[tuple[str, str]]] = []
+        if row.roles:
+            roles: list[tuple[str, str]] = []
+            for at, role in enumerate(row.roles):
+                roles += [(" and ", "")] if at else []
+                roles.append((role, ROLE_STYLES.get(role, "")))
+            facts.append(roles)
+        facts += [[(pull.branch, "branch")]] if pull.branch else []
         if not pull.is_loading:
             files = int(pull.changed_files)
-            facts.append(f"+{int(pull.additions)} −{int(pull.deletions)} in {files} file{'' if files == 1 else 's'}")
-        facts += [f"checks {pull.checks}"] if pull.checks else []
-        facts += pull.labels
-        lines = [Line([(indent + " · ".join(facts), "subtle")]), self.controls_line(self.controls())]
+            facts.append([(f"+{int(pull.additions)}", "success"), (" ", ""), (f"−{int(pull.deletions)}", "error"),
+                          (f" in {files} file{'' if files == 1 else 's'}", "")])
+        facts += [[(f"checks {pull.checks}", CHECK_STYLES.get(pull.checks, ""))]] if pull.checks else []
+        facts += [[(label, "")] for label in pull.labels]
+        said: list[tuple[str, str]] = [(indent, "")]
+        for at, fact in enumerate(facts):
+            said += [(" · ", "subtle")] if at else []
+            said += fact
+        lines = [Line(said), self.controls_line(self.controls())]
         if pull.open_threads and self.threads is None:
             lines.append(Line([(f"{indent}loading threads…", "subtle")]))
         for path, threads in rows.threads_by_file(self.threads or []):
@@ -939,8 +1024,10 @@ class Console:
 
     def item_line(self, item: dict, now: int, selected: bool) -> Line:
         is_open = not item.get("answer")
+        # The panel's `kindColors`: `permission` for a question, its own peach or orange for a request, `inactive`
+        # for a notice, and the default for a message.
         style = "subtle" if not is_open or is_snoozed(item, now) else {
-            "question": "accent", "request": "warning", "notice": "", "message": ""}[item["kind"]]
+            "question": "permission", "request": "request", "notice": "inactive", "message": ""}[item["kind"]]
         parts = [(f"- {item['subject']}", style)]
         parts += [(f"  {word}", mark) for word, mark in marks_of(item)]
         parts.append((f"  {age(now - item.get('postedAt', now))}", "subtle"))
@@ -967,18 +1054,17 @@ class Console:
         if item.get("start") and not item.get("answer"):
             reason = (item.get("progress") or {}).get("reason")
             said = f"Blocked: {reason}" if stage == "blocked" else f"{(stage or 'start').capitalize()}: {item['start']}"
-            lines += [Line([]), Line([(indent + said, "warning" if stage == "blocked" else "")])]
+            lines += [Line([]), Line([(indent + said, STAGE_STYLES.get(stage or "", ""))])]
         controls = self.controls()
         options = [one for one in controls if one.option]
-        choices = [one for one in options if one.choice]
-        lit = choices[self.highlighted(choices)] if choices else None
+        _, focused = self.focus()
         if options:
             lines.append(Line([]))
         for one in options:
-            if one is not lit:
-                lines.append(Line([(f"{indent}{one.key}: {one.label}", "accent")]))
+            if one.key != focused:
+                lines.append(Line([(f"{indent}{one.key}: {one.label}", "")]))
                 continue
-            lines.append(Line([(f"{indent[:-2]}› {one.key}: {one.label}", "accent")], selected=True, spot=True))
+            lines.append(Line([(f"{indent[:-2]}› {one.key}: {one.label}", "")], selected=True, spot=True))
             if self.field is not None and self.field.inline and self.field.target == item["ref"]:
                 lines.append(self.note_line(self.field, indent + " " * (len(one.key) + 2), width))
         rest = [one for one in controls if not one.option]
@@ -1013,14 +1099,27 @@ class Console:
             said = f"Answered: {answered.get('text', '')}"
         if answered.get("text") and (answered.get("done") or answered.get("declined")):
             said += f": {answered['text']}"
-        lines = [Line([]), Line([(f"{indent}{said} ✓", "success")])]
+        lines = [Line([]), Line([(f"{indent}{said}", ""), (" ✓", "success")])]
         if answered.get("note"):
             lines += [Line([(indent + part, "subtle")])
                       for part in textwrap.wrap(f"note: {answered['note']}", wrap)]
         return lines
 
     def controls_line(self, controls: list[Control]) -> Line:
-        return Line([(" " * DRAWER_INDENT + "   ".join(f"{one.key}: {one.label}" for one in controls), "accent")])
+        """The drawer's actions on one line, the focused one after a `›` in the gap before it."""
+        _, focused = self.focus()
+        parts: list[tuple[str, str]] = []
+        lit = None
+        for at, one in enumerate(controls):
+            gap = " " * DRAWER_INDENT if at == 0 else "   "
+            label = f"{one.key}: {one.label}"
+            if one.key == focused:
+                parts.append((f"{gap[:-2]}› ", ""))
+                lit = len(parts)
+                parts.append((label, ""))
+            else:
+                parts.append((gap + label, ""))
+        return Line(parts, spot=lit is not None, lit=lit)
 
 
 # The terminal
@@ -1029,8 +1128,39 @@ CURSES_KEYS = {"KEY_UP": "up", "KEY_DOWN": "down", "KEY_LEFT": "left", "KEY_RIGH
                "KEY_BACKSPACE": "backspace", "KEY_DC": "delete", "KEY_HOME": "home", "KEY_END": "end",
                "KEY_PPAGE": "pageup", "KEY_NPAGE": "pagedown"}
 CHARACTER_KEYS = {"\n": "enter", "\r": "enter", "\x1b": "esc", "\x7f": "backspace", "\b": "backspace",
-                  "\x01": "home", "\x05": "end"}
-STYLE_COLORS = {"accent": "COLOR_CYAN", "success": "COLOR_GREEN", "warning": "COLOR_YELLOW", "error": "COLOR_RED"}
+                  "\x01": "home", "\x05": "end", "\x03": "ctrl-c"}
+# The cursor and editing keys by the last byte of their escape sequence, or by its number and `~`. A terminal sends
+# `ESC [` before them, or `ESC O` before an arrow in application mode; curses names only the form the terminfo
+# entry lists, and hands over the rest of the other byte by byte.
+ESCAPES = {"A": "up", "B": "down", "C": "right", "D": "left", "H": "home", "F": "end", "1~": "home", "7~": "home",
+           "4~": "end", "8~": "end", "3~": "delete", "5~": "pageup", "6~": "pagedown"}
+# How long to wait for the rest of an escape sequence, in milliseconds, and how long `get_wch` waits for a key
+# before the screen is drawn again.
+ESCAPE_WAIT = 50
+REDRAW_WAIT = 250
+
+# The colors of Claude Code's theme keys that the panel draws with, in Claude Code 2.1.326's default `dark` theme
+# and its `light` theme, as the theme tables in the JavaScript bundled into the `claude` executable define them.
+# They were read by a script that searched the executable for `permission:"rgb(` and printed each table around a
+# match, and the function there that maps a theme's name to its table. `request` is no theme key: it is
+# `hooks/register.tsx`'s own `OTHER_REQUEST_COLOR` and `REQUEST_COLORS` for a light theme.
+THEMES: dict[str, dict[str, tuple[int, int, int]]] = {
+    "dark": {"permission": (177, 185, 249), "suggestion": (177, 185, 249), "claude": (215, 119, 87),
+             "inactive": (153, 153, 153), "subtle": (80, 80, 80), "success": (78, 186, 101),
+             "error": (255, 107, 128), "warning": (255, 193, 7), "request": (255, 190, 140)},
+    "light": {"permission": (87, 105, 247), "suggestion": (87, 105, 247), "claude": (215, 119, 87),
+              "inactive": (102, 102, 102), "subtle": (175, 175, 175), "success": (44, 122, 57),
+              "error": (171, 43, 63), "warning": (150, 108, 30), "request": (180, 90, 40)},
+}
+# The panel's two terminal palette colors, `ansi256(4)` for a fixer and `ansi256(6)` for a branch, which are the
+# same slot among 8 colors as among 256.
+PALETTE = {"fixer": 4, "branch": 6}
+# Each theme key's color on a terminal of 8 colors, after Claude Code's `dark-ansi` theme. `subtle` has none and
+# draws dim. A request has no ansi color of its own in the panel, so it shares `warning`'s yellow.
+BASIC = {"permission": "COLOR_BLUE", "suggestion": "COLOR_BLUE", "claude": "COLOR_RED", "inactive": "COLOR_WHITE",
+         "success": "COLOR_GREEN", "error": "COLOR_RED", "warning": "COLOR_YELLOW", "request": "COLOR_YELLOW"}
+# The six levels of each channel in xterm's 6×6×6 color cube, colors 16 to 231.
+CUBE = (0, 95, 135, 175, 215, 255)
 
 
 def key_name(pressed: object, curses: Any) -> Optional[str]:
@@ -1040,19 +1170,46 @@ def key_name(pressed: object, curses: Any) -> Optional[str]:
     return next((name for constant, name in CURSES_KEYS.items() if pressed == getattr(curses, constant, None)), None)
 
 
+def xterm_color(rgb: tuple[int, int, int]) -> int:
+    """The xterm-256 color nearest `rgb`, from the color cube and the gray ramp. Colors 0 to 15 are left out,
+    because each terminal's palette sets them."""
+    colors = [(16 + 36 * red + 6 * green + blue, (CUBE[red], CUBE[green], CUBE[blue]))
+              for red in range(6) for green in range(6) for blue in range(6)]
+    colors += [(232 + step, (8 + 10 * step,) * 3) for step in range(24)]
+    return min(colors, key=lambda color: sum((one - other) ** 2 for one, other in zip(color[1], rgb)))[0]
+
+
+def theme_name(environ: Optional[dict] = None) -> str:
+    """`light` when `COLORFGBG`, which some terminals set, names a light background, white or bright white, and
+    otherwise `dark`, Claude Code's default."""
+    environ = os.environ if environ is None else environ
+    background = (environ.get("COLORFGBG") or "").split(";")[-1]
+    return "light" if background in ("7", "15") else "dark"
+
+
 def styles(curses: Any) -> dict[str, int]:
-    """Each style's attributes: the terminal's own colors on its own background, or none under `NO_COLOR`."""
+    """Each style's attributes: the panel's colors on the terminal's own background, as the nearest of 256 colors
+    or one of 8, or none under `NO_COLOR`."""
     found = {"": 0, "subtle": curses.A_DIM, "bold": curses.A_BOLD}
-    colored = not os.environ.get("NO_COLOR") and curses.has_colors()
-    if colored:
-        curses.start_color()
-        curses.use_default_colors()
-    for index, (style, color) in enumerate(STYLE_COLORS.items(), 1):
-        if colored:
-            curses.init_pair(index, getattr(curses, color), -1)
-            found[style] = curses.color_pair(index)
+    names = [*THEMES["dark"], *PALETTE]
+    if os.environ.get("NO_COLOR") or not curses.has_colors():
+        found.update({name: curses.A_BOLD if name == "error" else 0 for name in names if name != "subtle"})
+        return found
+    curses.start_color()
+    curses.use_default_colors()
+    theme = THEMES[theme_name()]
+    rich = getattr(curses, "COLORS", 8) >= 256
+    for index, name in enumerate(names, 1):
+        if name in PALETTE:
+            color = PALETTE[name]
+        elif rich:
+            color = xterm_color(theme[name])
+        elif name in BASIC:
+            color = getattr(curses, BASIC[name])
         else:
-            found[style] = curses.A_BOLD if style == "error" else 0
+            continue
+        curses.init_pair(index, color, -1)
+        found[name] = curses.color_pair(index)
     return found
 
 
@@ -1068,13 +1225,16 @@ class Screen:
     def __init__(self, window: Any, console: Console, curses: Any) -> None:
         self.window, self.console, self.curses = window, console, curses
         self.styles = styles(curses)
+        # What `read_key` read past the end of an escape sequence, to hand over next.
+        self.pending: list[object] = []
 
     def put(self, y: int, line: Line, width: int) -> None:
         x = 0
-        for text, style in line.parts:
+        for at, (text, style) in enumerate(line.parts):
             if x >= width:
                 break
-            attributes = self.styles.get(style, 0) | (self.curses.A_REVERSE if line.selected else 0)
+            lit = line.selected or at == line.lit
+            attributes = self.styles.get(style, 0) | (self.curses.A_REVERSE if lit else 0)
             shown = printable(text)[:width - x]
             try:
                 self.window.addstr(y, x, shown, attributes)
@@ -1111,9 +1271,45 @@ class Screen:
             pass
         self.window.refresh()
 
+    def read_key(self) -> Optional[str]:
+        """The next key's name, or None for one the console does not use. An escape sequence curses did not name
+        is read to its last byte and named by `ESCAPES`. Raises `curses.error` when no key came in time."""
+        pressed = self.pending.pop(0) if self.pending else self.window.get_wch()
+        if pressed != "\x1b":
+            return key_name(pressed, self.curses)
+        follow = self.follow()
+        if follow not in ("[", "O"):
+            if follow is not None:
+                self.pending.append(follow)
+            return "esc"
+        body = ""
+        while len(body) < 8:
+            byte = self.follow()
+            if not isinstance(byte, str):
+                break
+            body += byte
+            if "@" <= byte <= "~":
+                break
+        final = body[-1:]
+        return ESCAPES.get(body[:-1].split(";")[0] + final if final == "~" else final)
+
+    def follow(self) -> object:
+        """The key after an Esc, when one comes within `ESCAPE_WAIT` milliseconds, or None."""
+        self.window.timeout(ESCAPE_WAIT)
+        try:
+            return self.window.get_wch()
+        except self.curses.error:
+            return None
+        finally:
+            self.window.timeout(REDRAW_WAIT)
+
     def run(self) -> int:
+        """Draw and take keys until the console quits. The terminal's Ctrl-C reaches curses as SIGINT, which only
+        sets a flag here, so it is a key like any other and never stops the console between two of its steps."""
         self.window.keypad(True)
-        self.window.timeout(250)
+        self.window.timeout(REDRAW_WAIT)
+        interrupted = threading.Event()
+        previous = signal.signal(signal.SIGINT, lambda number, frame: interrupted.set())
         stop = threading.Event()
 
         def refresh() -> None:
@@ -1129,22 +1325,26 @@ class Screen:
         worker.start()
         try:
             while not self.console.quit:
+                if interrupted.is_set():
+                    interrupted.clear()
+                    self.console.key("ctrl-c")
+                    continue
                 self.draw()
                 try:
-                    pressed = self.window.get_wch()
+                    name = self.read_key()
                 except self.curses.error:
                     continue
-                name = key_name(pressed, self.curses)
                 if name is not None:
                     self.console.key(name)
         finally:
+            signal.signal(signal.SIGINT, previous)
             stop.set()
             self.console.refresh_now.set()
         return 0
 
 
 def main(wake: Callable[[str, dict], None]) -> int:
-    """Run the console in this terminal until `q`."""
+    """Run the console in this terminal until Ctrl-C quits it."""
     import curses
 
     os.environ.setdefault("ESCDELAY", "25")

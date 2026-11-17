@@ -343,23 +343,23 @@ $ project console
 
 | Key | Effect |
 | --- | --- |
-| Up and down, or `k` and `j` | Move between rows. In an open question's or request's drawer, they move the highlight through its options instead |
-| Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor. In an open question's or request's drawer, picks the highlighted option and opens its note field |
-| Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
+| Up and down, or `k` and `j` | On the home list, move between sessions. In a panel, move one focus through the rows and, directly under the open drawer's row, its controls: the options, then the actions. The conversation's heading is the last place. The open drawer stays open |
+| Enter | On the home list, opens the session's panel. In a panel, presses the focused control, closes the drawer of the focused row when it is open, opens the focused row's drawer in place of the open one, or, on the conversation's heading, shows or hides the conversation as `v` does |
+| A control's own key, such as `2` or `8` | Presses that control of the open drawer, as Enter on it does |
+| Left, Esc, or `0` | Closes the open drawer, leaving the focus on its row, or, with no drawer open, returns to the home list. In a text field, Left moves the cursor instead |
 | `7` in a panel with no drawer open | Sends a message about the session (§ 2.5) |
 | `v` in a panel | Shows or hides the session's conversation (§ 2.5) |
 | Page Down or Space, Page Up or `b` | Scrolls a drawer or the conversation, when taller than the screen, a page down or up |
 | End or `G`, Home or `g` | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
-| Left | Returns to the home list from a session's panel, closing any open drawer. In a text field, it moves the cursor instead |
-| Enter in a text field | Sends the message, or, in a note field, records the option with the note typed, if any. Esc cancels it, or returns to the options |
-| `q` | Quits |
+| Enter in a text field | Sends the message, or, in a note field, records the option with the note typed, if any. Esc or Ctrl-C cancels it, or returns to the options, and Left and Right move the cursor |
+| Ctrl-C | Quits from the home list. In a panel, the first press asks for a second within 3 seconds, which quits |
 
 The console reads the inbox store each second. It compares each live
 session's directory signature (names, sizes, and modification times) and
 reloads only the sessions whose signature changed. It reloads the pull
-request rows from the cache every 5 seconds. It draws with the terminal's
-own colors through `curses.use_default_colors`, and it honors `NO_COLOR`.
-`panel.background` and Claude Code's themes stay the panel's settings.
+request rows from the cache every 5 seconds. It draws in the colors of
+Claude Code's panel on the terminal's own background, and it honors
+`NO_COLOR`. `panel.background` stays the panel's setting.
 
 Without a terminal, `project console` exits with code 69 and the message
 `project console needs a terminal; run it in its own window or split`.
@@ -469,6 +469,93 @@ every drawer:
   would undo what you chose. The note still gives the agent your words on
   the answer's line, and the agent can ask again when the note changes what
   it should do.
+
+A second round of testing by hand settled these details, which replace the
+decisions above that the arrows move a highlight through an open item's
+options and leave other drawers by closing them, that Left returns to the
+home list from a panel, and that `q` quits:
+
+- **One focus moves through the whole panel.** Up and Down move a single
+  focus through a flat list: the pull request rows, then the item rows,
+  with the open drawer's controls directly under its row. A question lists
+  its options, `type an answer`, and then `6: I don't understand`,
+  `7: Discuss`, `8: Dismiss` or `Restore`, and `9: Snooze`. A request lists
+  its Start or Retry, its choices or `Done`, and the same actions. A notice,
+  a message, and a pull request list their actions. Past a drawer's last
+  control the focus goes on to the next row, and above its first to its own
+  row. Moving the focus never closes the drawer, and it stays put at the
+  first and last places. The focused row, option, or action is drawn
+  reversed, and a focused option or action also has a `›` before it. A
+  tall drawer scrolls only as far as it must to show the focus.
+- **Enter presses what has the focus.** On an option, it opens the note
+  field under it. On `type an answer`, it opens the typed answer's field.
+  On Start it starts, on Discuss it opens the message field, and on
+  Dismiss or Restore it records at once, except that a pull request's
+  Dismiss still asks first. On another row, it closes the open drawer and
+  opens that row's. On the open drawer's own row, it closes the drawer.
+  A control's own key still presses it directly and moves the focus onto
+  it.
+- **Opening a drawer focuses its first choice, or else its row.** A
+  question's drawer opens with the focus on the recommended answer, and a
+  request's on its first outcome, not on Start, which records at once. A
+  drawer with no choices keeps the focus on its row, so Enter twice opens
+  and closes it. Claude Code's panel puts its ring on Discuss there
+  instead. The console does not, because Enter on Discuss opens a text
+  field rather than closing the drawer.
+- **Follow-up questions join the ring.** Enter on Snooze lists the four
+  lengths and Cancel as controls, with the focus on the first length.
+  Enter on a pull request's Dismiss lists `Yes, dismiss it` and
+  `No, keep it`, with the focus on Yes, as the panel does. Cancel and
+  No, keep it put the focus back on the control that asked.
+- **The conversation's heading is the ring's last place.** Down from the
+  last row, or from the last control of the last row's open drawer,
+  reaches the heading, and Enter on it shows or hides the conversation, as
+  `v` does from anywhere in the panel. Showing it closes the open drawer and
+  leaves the focus on the heading, so the page keys scroll the conversation.
+  Up moves the focus off it, and coming back to it starts again at its
+  newest line.
+- **Left closes the open drawer.** With a drawer open, Left, Esc, and `0`
+  close it and leave the focus on its row. With none open, they return to
+  the home list. In a text field, Left still moves the cursor.
+- **Ctrl-C quits, and `q` is an ordinary key.** A stray `q` quit the
+  console. Now Ctrl-C quits at once from the home list. In a panel, the
+  first Ctrl-C shows `Press Ctrl-C again to exit`, as Claude Code does, and
+  a second within 3 seconds quits. Any other key, or the 3 seconds passing,
+  clears it. In a text field, Ctrl-C cancels the field, as Esc does, and
+  does not count toward quitting, so pressing it twice to clear a field
+  never quits. The terminal delivers Ctrl-C as `SIGINT`, so the console
+  sets a handler that only marks the press, and the loop reads it as a
+  key. A press never interrupts the console between two steps, and curses
+  restores the terminal on the way out.
+- **The console reads cursor keys in either encoding.** A terminal sends
+  Down as `ESC O B` in the application mode curses asks for, or as
+  `ESC [ B` when it ignores that request. curses names only the form the
+  terminfo entry lists, and passes the other on byte by byte. Before this
+  change, a run of the console in a pseudo-terminal under the
+  `xterm-256color`, `tmux-256color`, and `screen` entries recorded the
+  second option when Down came as `ESC O B` and nothing when it came as
+  `ESC [ B`, because the Esc closed the drawer. The console now reads the rest of a sequence curses did not name,
+  waiting up to 50 milliseconds after the Esc, and names it by its last
+  byte: `A` to `D` for the arrows, `H` and `F` for Home and End, and `5~`,
+  `6~`, and `3~` for Page Up, Page Down, and Delete. Esc alone is still
+  Esc.
+- **Colors match the panel.** An open question draws in Claude Code's
+  `permission` color, a request in the panel's own peach (an orange on a
+  light theme), a notice in `inactive`, and a message in the default
+  color. A resolved or snoozed item draws in `subtle`, as do the ages and
+  the header. A pull request's `ready` draws in `suggestion`,
+  `conflict` and `failing` in `error`, `changes` and `findings` in
+  `warning`, `reviewing` in `claude`, and `clean`, `approved`, and
+  `passing` in `success`. A drawer draws the fixer role in palette color 4,
+  the reviewer in `claude`, the branch in palette color 6, the checks by
+  their state, and the additions and deletions in `success` and `error`.
+  The theme colors come from the tables in the JavaScript bundled into
+  Claude Code 2.1.326's executable, and `console.py` records each one. On a
+  terminal of 256 colors the console draws the nearest of xterm's color
+  cube and gray ramp, and on one of 8 the nearest named color, as Claude
+  Code's `dark-ansi` theme picks them. It takes the `light` theme when
+  `COLORFGBG` names a white background, and Claude Code's default `dark`
+  theme otherwise. It cannot read the theme Claude Code is set to.
 
 ### 2.8 Changes by file
 
@@ -732,8 +819,10 @@ Checked against `codex-cli 0.169.0` and `openai/codex` at `d8d840d` on
 ## 9. Outcome
 
 Shipped, in the four pull requests § 6 lists and a fifth from testing it by
-hand, which moves the arrows through an open item's options and lets a note
-follow any choice (§ 2.7). `project console` lists every
+hand, which moves one focus through a panel's rows and its open drawer's
+options and actions, lets a note follow any choice, quits with Ctrl-C,
+reads either encoding of the cursor keys, and draws in the panel's colors
+(§ 2.7). `project console` lists every
 live session, Claude Code and Codex alike, and records answers and messages
 that each session's own deliverer brings in. Each panel ends with the
 session's conversation, collapsed by default, read from the host's
@@ -752,7 +841,10 @@ answered a question, returned home with Left, and started a discussion
 about the session, with and without `NO_COLOR`. After the one-way messages
 replaced threads, another run sent a message about the session, showed it
 `sending`, and showed and hid the conversation of a session with a
-transcript with `v`.
+transcript with `v`. The `Terminal` tests in `tests/test_console.py` now run
+it in a pseudo-terminal on every run: Down as `ESC [ B` and as `ESC O B`
+each picks a question's second option, one Ctrl-C quits from the home list,
+and a panel quits on the second.
 
 The cost § 5 asked for: one console with 10 live sessions, 30 pull requests,
 and 50 open questions used 0.71 seconds of CPU in 60 seconds, 1.2% of one
