@@ -5,10 +5,10 @@ priority: now
 
 # Console
 
-`project console` gives you one terminal view of every live session's pull
-requests and inbox. It lets you answer any item there, whether a Claude Code
-session or a Codex session posted it, and each answer reaches its session
-as a new turn.
+`project console` lists every live session in a terminal, and opens any one
+of them as a panel. There you answer or discuss its items and pull requests,
+whether the session is Claude Code or Codex, and each answer and each
+message reaches the session as a new turn.
 
 ## 1. Problem
 
@@ -16,11 +16,12 @@ Projector's panel is how you answer an agent. It sits beside a Claude Code
 chat and lists the pull requests the session fixes or reviews. It also lists
 the items the agent posted to the inbox: questions you answer, requests you
 mark done, and notices you read. You press an option, and the answer reaches
-the agent as your prompt. The panel is built on Claude Code's plugin API, in
+the agent as your prompt. Or you press Discuss and talk the item over in the
+chat. The panel is built on Claude Code's plugin API, in
 `hooks/register.tsx`.
 
-Codex has nothing like it, and so a Codex user has no easy way to answer.
-They have two ways in, and neither works well:
+Codex has nothing like it, so a Codex user has no easy way to answer or to
+discuss. They have two ways in, and neither works well:
 
 - **`project inbox answer` in another terminal records the answer, but
   nothing brings it into the session.** A Codex session hears an answer only
@@ -33,29 +34,36 @@ They have two ways in, and neither works well:
   built-in status line items. Statusline providers backed by MCP exist on
   Codex's `main` branch but are not wired in yet, and they show text only.
   An MCP elicitation form can be raised only during an active turn, so it
-  cannot wait for you while the agent works. § 7 records the evidence.
+  cannot wait for you while the agent works. § 8 records the evidence.
 
 Answering is the inbox's whole point: an item the agent cannot hear back on
-stalls that agent's work.
+stalls that agent's work. And an answer often needs a conversation first,
+which no terminal command offers today.
 
 ## 2. Solution
 
-Two changes, built together. First, the watch daemon's Codex adapter
+Three changes, built together. First, the watch daemon's Codex adapter
 becomes the deliverer of inbox lines for Codex sessions. It claims each
 line a Codex session is owed and sends it in the same `codex queue` batch
 as that session's watch events. It marks the line delivered when Codex
-acknowledges the batch. Second, `project console` is a curses TUI that you
-run in a split or a second window. It shows every live session's pull
-requests and inbox items, and records your answers in the inbox store.
-Delivery stays with each session's own deliverer: Claude Code's panel for a
-Claude Code session, and the Codex adapter for a Codex session. So the
-console works for both hosts and never sends anything to a session itself.
+acknowledges the batch. Second, each inbox item gets a thread, so you can
+discuss it without the session's chat: your messages reach the agent as
+`DISCUSS` lines, and the agent answers into the thread with
+`project inbox reply`. Discussing a pull request starts a new item of kind
+`discussion` with the same thread. Third, `project console` is a curses
+TUI that you run in a split or a second window. It opens on a list of every
+live session, sorted by what needs you. Enter opens that session's panel,
+where you answer, discuss, and dismiss for that one session. The console
+records your choices and messages in the inbox store. Delivery stays with
+each session's own deliverer: Claude Code's panel for a Claude Code
+session, and the Codex adapter for a Codex session. So the console works
+for both hosts and never sends anything to a session itself.
 
-### 2.1 Answering from the console
+### 2.1 Answering and discussing from the console
 
 1. You run `project console` in a terminal. It refuses to start when
    standard input or standard output is not a terminal, or when the
-   standard library's `curses` module is missing, as on Windows (§ 2.5).
+   standard library's `curses` module is missing, as on Windows (§ 2.7).
 2. The console builds the set of live sessions. That set is the union of
    `inbox.sessions()` and `watch.session_names(root)`, kept where
    `watch.delivery(root, session, now)` is not `none`. It labels each
@@ -64,31 +72,31 @@ console works for both hosts and never sends anything to a session itself.
    `delivery()`, where `codex` means Codex and `mod` means Claude Code. The
    repository and branch come from `agent.json`, or from `codex.json`'s
    `cwd`.
-3. The console draws two sections, laid out as the panel lays them out. The
-   pull request list covers every pull request any live session is
-   subscribed to, so a pull request two sessions hold appears once. Below
-   it, the inbox items of every live session appear newest first, each with
-   its session's label.
-4. You open an item's drawer and press an option. The console records the
-   choice with the functions in `src/projector/inbox.py`, passing the item's
-   own session: `answer`, `done`, `decline`, `unclear`, `start`, `dismiss`,
-   `snooze`, or `restore`. These are the same functions `project inbox`
-   runs. The console never calls `claim`, `delivered`, `reopen`,
-   `watch take`, or `watch renew`, because those belong to the session's
-   deliverer.
-5. When the item's session is a Codex session, the console runs
+3. The console shows the home list (§ 2.3). You press Enter on a session,
+   and the console shows that session's panel: its pull requests (§ 2.4)
+   and its inbox items (§ 2.5).
+4. You open an item's drawer and press an option, or type a message with
+   Discuss. The console records it with the functions in
+   `src/projector/inbox.py`, passing the session you are viewing: `answer`,
+   `done`, `decline`, `unclear`, `start`, `dismiss`, `snooze`, `restore`,
+   or the new `discuss` (§ 2.6). These are the same functions
+   `project inbox` runs. The console never calls `claim`, `delivered`,
+   `reopen`, `watch take`, or `watch renew`, because those belong to the
+   session's deliverer.
+5. When the session is a Codex session, the console runs
    `watch.ensure_daemon`. The daemon can be down while a Codex session is
    idle, and the line would otherwise wait for the next hook.
-   `project inbox answer` and the other recording subcommands do the same
-   for a Codex session.
+   `project inbox answer`, `project inbox discuss`, and the other recording
+   subcommands do the same for a Codex session.
 6. The session's deliverer brings the line in:
    - **A Claude Code session.** The panel's `checkInbox` claims the line on
      its next 5-second tick and submits it as a prompt. That path already
      carries answers recorded from a terminal today.
    - **A Codex session.** The daemon's Codex adapter claims the line and
      sends it, as § 2.2 describes.
-7. The item shows `sending` until its line is delivered, then leaves the
-   list 30 seconds later, as it does in the panel.
+7. The item shows `sending` until its line is delivered. An answered item
+   leaves the list 30 seconds later, as it does in the panel. A discussed
+   item stays open, and the agent's reply appears in its thread.
 
 ### 2.2 Delivering inbox lines to Codex
 
@@ -133,12 +141,31 @@ context also tells the agent to pass the same `--session` to
 under the ID the adapter delivers to. It also says that Projector delivers
 the session's answers, so the agent runs no `project inbox watch`.
 
-### 2.3 The console's pull request list
+### 2.3 The home list
 
-The console shows the panel's pull request list. It reads the same files:
-each session's `subscriptions` and `state.json`, `daemon.json` for the
-viewer's login, and the daemon's cache at
-`cache/<owner>/<repo>/pulls/<number>.json`. A new module,
+Each live session gets one row: its label, host, repository and branch,
+and its summary from `agent.json`, then the counts the panel's header
+shows (pull requests, review requests, questions, requests, and notices),
+then the subject of its newest open item. A session with no open item and
+no pull request still gets a row, so you can open it and start a
+discussion.
+
+Sessions are sorted by what needs you:
+
+1. Sessions with an agent reply you have not read.
+2. Then sessions with an open question or request, most of them first.
+3. Then sessions with only notices or pull requests.
+4. Ties go to the session whose newest item is newest, then to the label.
+
+The row of a session with an unread reply shows `replied` beside the
+subject of the item that carries it.
+
+### 2.4 A session's panel: pull requests
+
+The session's panel shows the panel's pull request list for that one
+session. It reads the files the panel reads: the session's `subscriptions`
+and `state.json`, `daemon.json` for the viewer's login, and the daemon's
+cache at `cache/<owner>/<repo>/pulls/<number>.json`. A new module,
 `src/projector/rows.py`, turns those files into rows the way
 `hooks/github.ts` and `hooks/register.tsx` do:
 
@@ -150,38 +177,81 @@ viewer's login, and the daemon's cache at
 | Checks | Passing, pending, failing, or cancelled, from the cache's check runs |
 | Section | Yours first, then review requests grouped by author, each group by repository and then newest number first |
 
-The drawer shows the facts line (each holding session with its role, the
-branch, the size, the checks, and the labels) and the unresolved threads by
-file. The daemon's cache lacks the thread fields the drawer shows, so
-`rows.py` also carries the panel's thread query. It runs as a `gh api
-graphql` call for that one pull request when the drawer opens, and every 30
-seconds while the drawer stays open. It is skipped when the pull request
-has no unresolved thread. The drawer's actions are these:
+The drawer shows the facts line (the session's role, the branch, the size,
+the checks, and the labels) and the unresolved threads by file. The
+daemon's cache lacks the thread fields the drawer shows, so `rows.py` also
+carries the panel's thread query. It runs as a `gh api graphql` call for
+that one pull request when the drawer opens, and every 30 seconds while the
+drawer stays open. It is skipped when the pull request has no unresolved
+thread. The drawer's actions are these:
 
 | Key | Action |
 | --- | --- |
+| `7` | Discuss: opens a text field, and starts a `discussion` item about this pull request in this session (§ 2.6) |
+| `8` | Dismiss, after a confirmation. The console runs `project watch drop <owner>/<repo>#<n> --role <role> --session <s>` for each role this session holds |
 | `o` | Opens the pull request in a browser with `webbrowser.open` |
 | `p` | Opens its projector.bot summary, when the description carries one |
-| `8` | Dismisses it, after a confirmation that names each session holding it. The console runs `project watch drop <owner>/<repo>#<n> --role <role> --session <s>` for each holding session and role |
 
-### 2.4 The console's inbox items
+### 2.5 A session's panel: inbox items
 
-Each item line shows the subject, the session's label, the state words the
-panel shows (`sending`, `unclear`, `starting`, `ready`, `blocked`), the pull
-request, and the age. The item drawer shows the detail as wrapped text, with
-the panel's controls:
+Each item line shows the subject, the state words the panel shows
+(`sending`, `unclear`, `starting`, `ready`, `blocked`, and the new
+`replied`), the pull request, and the age. The item drawer shows the detail
+as wrapped text, then the item's thread, then the panel's controls:
 
 | Kind | Controls |
 | --- | --- |
 | Question | `1`… for the options, the first marked `(recommended)`. The last option, `type an answer`, opens a one-line text field |
 | Request | `1: Start` or `Retry` when the item has a start action, then the choices, or `Done` |
-| Any open item | `6: I don't understand`, `8: Dismiss` or `Restore`, and `9: Snooze`, whose options are 15 minutes, 1 hour, 4 hours, and 1 day |
+| Discussion | No options. It stays open until you dismiss it or the agent withdraws it |
+| Any open item | `6: I don't understand`, `7: Discuss`, `8: Dismiss` or `Restore`, and `9: Snooze`, whose options are 15 minutes, 1 hour, 4 hours, and 1 day |
 
-The panel's `7: Discuss` puts a reference in Claude Code's prompt. The
-console has no prompt to fill, so it has no `Discuss`. You discuss an item
-in the session's own chat.
+Opening a drawer marks the agent's replies in its thread read.
 
-### 2.5 Running the console
+### 2.6 Threads
+
+An item's thread holds the messages you and the agent exchange about it.
+Each entry is one paragraph of up to 4 KiB, which keeps a `DISCUSS` line
+well inside the adapter's batch limit.
+
+| Item field | Value |
+| --- | --- |
+| `thread` | A list of entries, oldest first. Absent until the first message |
+| `thread[].from` | `person` or `agent` |
+| `thread[].text` | The message |
+| `thread[].at` | When it was recorded, in milliseconds |
+| `thread[].deliveredAt` | Set on a `person` entry when its line is delivered |
+| `thread[].readAt` | Set on an `agent` entry when you open the item's drawer, in the console or in the panel |
+
+A `discussion` item is an item of a new kind that you start, about a pull
+request. It has `pr`, a `subject` of `About <owner>/<repo>#<n>`, and a
+thread whose first entry is your message. It takes the next number in the
+session's count, like any other item.
+
+The commands:
+
+| Command | Who runs it | What it does |
+| --- | --- | --- |
+| `project inbox discuss <number> --text <words> --session <s>` | You, through the console or a terminal | Adds a `person` entry to an open item's thread |
+| `project inbox discuss --pr <owner>/<repo>#<n> --text <words> --session <s>` | You | Starts a `discussion` item about that pull request, and prints its number |
+| `project inbox reply <number> --text <words> --session <s>` | The agent | Adds an `agent` entry to the thread. It needs no delivery, because you read it in the console or the panel |
+
+Each undelivered `person` entry owes a line, after the lines the item
+already owes in this order: `answer`, `restored`, `started`, and `unclear`.
+An item has one claim at a time, so its entries are delivered one at a
+time, oldest first. The line is
+`DISCUSS 3 Decline the finding about the retry budget? → <words>`.
+
+The agent treats a `DISCUSS` line as a reply to the item. It answers with
+`project inbox reply`, or with the panel's new `reply` tool in Claude Code.
+Then it withdraws the item if the discussion settles it, revises it if the
+discussion changed the choice, or leaves it open. It answers in its chat as
+well, because you may be reading either one. `src/projector/templates/agents-block.md`
+and `skills/work/SKILL.md` say so beside their instructions for `ANSWER`
+lines. In the panel, `7: Discuss` still fills Claude Code's prompt, and
+the drawer shows the item's thread.
+
+### 2.7 Running the console
 
 ```console
 $ tmux split-window -h project console
@@ -191,8 +261,9 @@ $ project console
 | Key | Effect |
 | --- | --- |
 | Up and down, or `k` and `j` | Move between rows |
-| Enter | Opens or closes the drawer of the row under the cursor |
-| Esc or `0` | Closes the drawer |
+| Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
+| Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
+| Enter in a text field | Sends the message. Esc cancels it |
 | `q` | Quits |
 
 The console reads the inbox store each second. It compares each live
@@ -207,23 +278,24 @@ Without a terminal, `project console` exits with code 69 and the message
 Without `curses`, it also exits with code 69 and points you to
 `project inbox list` and `project watch list`.
 
-### 2.6 Changes by file
+### 2.8 Changes by file
 
 | File | Change |
 | --- | --- |
 | `src/projector/codex_watch.py` | Claims, renews, batches, and settles inbox lines (§ 2.2). Adds the inbox key to `eligible`, sends an oversized event alone, counts owed lines in `has_work`, keeps inbox events out of `drain`, and rewords `message` and the hook context |
-| `src/projector/inbox.py` | No new state. The console and the adapter reuse `undelivered`, `claim`, `settle`, `message`, and the recording functions |
+| `src/projector/inbox.py` | Adds `thread`, the `discussion` kind, `discuss`, `reply`, and marking replies read. `owed_line`, `message`, and `settle` handle `DISCUSS` lines |
 | `src/projector/rows.py` | New. Turns subscriptions and the cache into rows, and queries and parses threads |
 | `src/projector/console.py` | New. Holds the session set, the model of what is on screen, key handling, and the curses drawing, kept separate so tests drive the model without a terminal |
-| `src/projector/cli.py` | Adds `project console`. The inbox recording subcommands run `ensure_daemon` for a Codex session |
-| `src/projector/permissions.py` | Adds `Bash(project console)` and `Bash(project console *)` to `ASK` and `ASKED`, and updates the docstring and the `CODEX_RULES` header to leave `console` to Codex's approval |
-| `skills/work/SKILL.md` | Tells a session not to run `project inbox watch` when its session-start context says Projector delivers its events, because the daemon then delivers its answers too. The Codex `SessionStart` hook registers every Codex session, so that context reaches each one, before it subscribes to anything |
+| `src/projector/cli.py` | Adds `project console`, `project inbox discuss`, and `project inbox reply`. The inbox recording subcommands run `ensure_daemon` for a Codex session |
+| `src/projector/permissions.py` | Adds `Bash(project console)`, `Bash(project console *)`, and `Bash(project inbox discuss *)` to `ASK` and `ASKED`. Adds `reply` to the inbox subcommands in `CODEX_ALLOW`. Leaves `console` and `discuss` to Codex's approval, and updates the docstring and the `CODEX_RULES` header |
+| `hooks/inbox.ts`, `hooks/register.tsx` | `needsDelivery` counts undelivered `person` entries. The drawer shows the thread and marks replies read. The item list draws `discussion` items and `replied`. Registers the `reply` tool |
+| `src/projector/templates/agents-block.md`, `skills/work/SKILL.md` | Describe `DISCUSS` lines and `reply`. `skills/work/SKILL.md` also tells a session not to run `project inbox watch` when its session-start context says Projector delivers its events |
 | `tests/fixtures/rows/` | New. Each case is a set of input files plus the rows they must produce |
 | `hooks/rows.test.ts` | New. Runs the panel's row model over `tests/fixtures/rows/` |
 | `tests/test_console.py`, `tests/test_rows.py` | New |
-| `tests/test_codex_watch.py`, `tests/test_permissions.py` | New cases (§ 4) |
-| `docs/cli.md` | A new "Use the console" section. "Use the inbox" says the Codex adapter delivers answers, and describes the permission rule for `console` |
-| `docs/plugins.md` | Says that `project console` covers Codex and terminals, where it said Codex has no equivalent |
+| `tests/test_codex_watch.py`, `tests/test_inbox.py`, `tests/test_permissions.py`, `hooks/inbox.test.ts`, `hooks/panel.test.tsx` | New cases (§ 4) |
+| `docs/cli.md` | A new "Use the console" section. "Use the inbox" describes threads, `discuss`, `reply`, the Codex adapter's delivery, and the permission rules |
+| `docs/plugins.md` | Describes the thread in the drawer and the `reply` tool, and says that `project console` covers Codex and terminals, where it said Codex has no equivalent |
 | `web/components/sections/panel.tsx` | Names `project console` for Codex and terminals |
 
 ## 3. Why this design
@@ -243,11 +315,23 @@ Without `curses`, it also exits with code 69 and points you to
   question, which is right when a person must answer again. A queue
   failure is the adapter's problem, not the person's, so the adapter keeps
   the claim and retries.
-- **The console shows every live session.** One window covers every agent
-  you run, so you never need to know which session posted an item. The
-  inbox already stores items per session, and every recording function
-  takes the session, so this costs no new state. Items of a session that
-  is no longer live are left out, because nothing could deliver them.
+- **The thread lives on the item.** In Claude Code, Discuss works because
+  your words and the agent's reply both happen in the chat. In the console,
+  the agent's reply would land in a chat you are not reading. So the agent
+  answers into the item, where you are looking. Agent messages to the
+  session, through `project agent send`, were rejected: they carry none of
+  the person's authority, and your words must.
+- **`discuss` is a recording command, and `reply` is not.** `discuss`
+  speaks for you, so it gets the permission rules `answer` has, and an
+  agent cannot put words in your mouth. `reply` speaks for the agent, so
+  agents run it freely.
+- **The home list is per session.** You chose a list of sessions over one
+  combined view. Each session's panel then scopes every action to that
+  session: Dismiss drops a pull request only from the session you are
+  viewing, a pull request two sessions hold shows each session's own role,
+  and Discuss always has exactly one session to talk to. Items of a
+  session that is no longer live are left out, because nothing could
+  deliver to it.
 - **The row model is ported to Python, with shared fixtures.** The panel's
   row rules live only in TypeScript. Two alternatives were rejected:
   - **Have the daemon write rows that both views read.** The panel also
@@ -284,23 +368,28 @@ Without `curses`, it also exits with code 69 and points you to
 | Disconnect the session with an inbox event queued | `events` holds no inbox line, and `inbox.undelivered` returns the item after 60 seconds | Inbox lines drained into a file whose reader never settles them |
 | Record an answer whose text is 9 KiB | It goes out alone, and the watch event queued behind it goes out in the next batch | An oversized line that wedges the queue |
 | Record an answer for a Codex session while the daemon is stopped | The daemon is running when the command exits | An answer that waits for the session's next hook |
-| Start the console with one Claude Code session renewed by `mod`, one Codex session, and one session whose `session.json` is 10 minutes old | Items from the first two, each labelled with its host. None from the third | A session set that includes dead sessions, or one that misses a host |
-| Two sessions each own an item 3. Press option `a` on the second session's item | Only that session's item 3 is answered | A recording call made without the item's session |
+| Discuss item 3 twice, then let the Codex adapter and, separately, the panel deliver | Two `DISCUSS 3` lines, in the order you sent them, each delivered once, and item 3 still open | Entries delivered out of order or twice, or a discussion that closes the item |
+| Have the agent run `project inbox reply 3 --text …` | The home list sorts that session first and shows `replied`. Opening the drawer shows the reply and clears `replied` | A reply nobody sees, or one that stays unread after you read it |
+| Discuss a pull request that two sessions hold, from the second session's panel | A `discussion` item about it in the second session only, with your words as the first entry | A discussion started in the wrong session |
+| Start the console with one Claude Code session renewed by `mod`, one Codex session, and one session whose `session.json` is 10 minutes old | Home rows for the first two, each labelled with its host. None for the third | A session set that includes dead sessions, or one that misses a host |
+| On the home list, give one session an unread reply and another two open questions | The session with the reply comes first | A sort that ignores replies |
+| Two sessions each own an item 3. In the second session's panel, press option `a` | Only that session's item 3 is answered | A recording call made with the wrong session |
 | Answer from the console for a Claude Code session | The panel delivers it. `hooks/panel.test.tsx` already covers an answer recorded outside the panel | Covered by the existing test |
-| Answer from the console | The item has no `claim` and no `deliveredAt` | A console that delivers, racing the session's deliverer |
+| Answer or discuss from the console | The item has no `claim` and no `deliveredAt` | A console that delivers, racing the session's deliverer |
 | Run each fixture in `tests/fixtures/rows/` through `rows.py` and through the panel's model | Both produce the fixture's expected rows | A state, note, check, or section rule changed in one copy only |
 | Open a drawer for a pull request with two unresolved threads, and wait 65 seconds | Three thread queries. With no unresolved thread, none | A thread query on every tick, or a drawer that never refreshes |
-| Dismiss a pull request held by two sessions with different roles | One `watch drop` for each session and role, and the row leaves the list | A dismiss that drops it from one session only |
+| Dismiss a pull request in one session's panel when another session also holds it | `watch drop` runs for the viewed session's roles only, and the other session keeps it | A dismiss that reaches beyond the viewed session |
 | Run `project console </dev/null` | Exit 69 with the terminal message | A console that starts without a terminal |
-| Decide `project console` in each host | `ask` in Claude Code. Left to Codex's approval | An agent allowed to drive the console |
+| Decide `project console`, `project inbox discuss`, and `project inbox reply` in each host | `console` and `discuss` ask in Claude Code and are left to Codex's approval. `reply` runs freely in both | An agent allowed to drive the console or speak for you, or one blocked from replying |
 
 ## 5. Cost
 
 - **The console's local reads.** Each second, the console lists one
   directory per live session and compares signatures. It reads item files
   only from a session whose signature changed. Every 5 seconds, it reads
-  each subscribed pull request's cache file. Measure one console with 10
-  live sessions and 30 pull requests at under 2% of one CPU core.
+  each subscribed pull request's cache file for the home list's counts.
+  Measure one console with 10 live sessions and 30 pull requests at under
+  2% of one CPU core.
 - **GitHub quota.** The rows cost no GraphQL, because the daemon's cache
   supplies them. The thread query runs only while a drawer is open. It costs
   about one point of the account's hourly GraphQL quota per query, the same
@@ -312,26 +401,25 @@ Without `curses`, it also exits with code 69 and points you to
 
 ## 6. Rollout
 
-The three pull requests can merge in this order. Each one works on its own.
+The four pull requests merge in this order. Each one works on its own.
 
-1. Codex delivery (§ 2.2), with the `ensure_daemon` call, the `skills/work`
-   change, and its tests. After it merges, `project inbox answer` in a
-   terminal reaches a Codex session.
-2. `rows.py`, the shared fixtures, and `hooks/rows.test.ts`.
-3. `project console`, the permission rules, and the documentation.
+1. Codex delivery (§ 2.2), with the `ensure_daemon` call, the
+   `skills/work` change, and its tests. After it merges,
+   `project inbox answer` in a terminal reaches a Codex session.
+2. Threads (§ 2.6): `discuss`, `reply`, the `discussion` kind, the
+   panel's thread and `reply` tool, and the agent instructions. After it
+   merges, `project inbox discuss` in a terminal works with both hosts.
+3. `rows.py`, the shared fixtures, and `hooks/rows.test.ts`.
+4. `project console`, its permission rules, and the documentation.
 
 Open them as a stack with `gh stack`, so each layer stays on the current
 head of the one below.
 
 ## 7. Open questions
 
-- **Discussing an item from the console.** Deferred. The console has no
-  prompt to fill. A reply typed in the console could be delivered as a line
-  of its own, but that needs a new kind of line in the inbox. Owner:
-  whoever builds the console, if users ask for it.
-- **Dismissing from one session only.** Deferred. The first version drops
-  a pull request from every session that holds it, after a confirmation
-  that names them.
+- **A combined view across sessions.** Deferred. The home list's counts
+  and newest subjects cover triage. A key that shows every session's items
+  in one list can follow if the home list proves too slow.
 - **Showing items from sessions that are no longer live.** Deferred. Such
   an item cannot be delivered, so it would need its own state in the
   console.
