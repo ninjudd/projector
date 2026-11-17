@@ -1,0 +1,113 @@
+{
+ "version": 1,
+ "name": "Mobile homepage layout",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 532,
+  "title": "Fit projector.bot to a phone screen",
+  "head": "886b46591ace2ea80bc03ce0bbb4ebfb4c7e7f3e",
+  "headRef": "web-mobile",
+  "base": "76ef53570d7039de70e0bdadcb81fc3b4f22ace8",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The homepage includes an interactive terminal-style panel and copyable installation commands. Its fixed column widths forced phone users to scroll sideways, and narrow drawers hid the text and choices the demo asks them to read.",
+   "This change measures the panel’s available character columns, shortens row titles, and wraps drawer content. Shared code and command components wrap within their containers, while section grids use one constrained column below the desktop breakpoint.",
+   "The command copy buttons retain the original strings. The example terminal that shows the command-line project list intentionally keeps its horizontal scrolling."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Verified behavior",
+    "html": "<ul class=\"tight\"><li>Gate and exact-head CI pass.</li><li>Website lint, type-check, and production build pass.</li><li>Headless Chrome checks at 320, 375, 430, and 1280 pixels preserve viewport width and keep panel drawers within their box.</li><li>Copying, the request start transition, and resizing work without browser errors.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "text",
+   "title": "Wrap shared commands and code",
+   "kicker": "Readable text without horizontal scrolling",
+   "intro": [
+    "The shared command component now renders each space-separated word as a bounded inline block. Commands wrap between words, and a word wider than its container can break internally. The copy button still receives the untouched command string.",
+    "Inline code stays together when it fits and can wrap when it is longer than the line. Syntax-highlighted code blocks preserve whitespace while allowing their text to wrap."
+   ],
+   "files": [
+    {
+     "path": "web/components/command.tsx",
+     "note": "Shares row markup between single commands and command lists, with word-aware wrapping.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "At phone and desktop widths, copying the installation command returns the exact original string; its displayed text remains intact."
+      }
+     ]
+    },
+    {
+     "path": "web/components/inline-code.tsx",
+     "note": "Constrains inline code spans to the available line width."
+    },
+    {
+     "path": "web/components/code-block.tsx",
+     "note": "Wraps highlighted code instead of making the block scroll sideways."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "Fit the interactive panel to its box",
+   "kicker": "Responsive columns, shortened titles, and wrapped drawers",
+   "intro": [
+    "The panel demo previously laid every row out at 92 columns. A resize observer now measures both the screen and a ten-character font probe, so the column count follows the container and the loaded monospace font.",
+    "Rows shorten their subjects or titles with an ellipsis and retain their right-hand ages. Drawer lines use padding and hanging indents to keep numbered steps, actions, and finding threads readable as they wrap. Touch pointers receive taller lines."
+   ],
+   "files": [
+    {
+     "path": "web/components/inbox-demo.tsx",
+     "note": "Measures available columns and adapts rows, drawers, and touch line spacing.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "At 320, 375, 430, and 1280 pixels, the home view, request drawer, and PR drawer have no horizontal overflow. Screenshots confirm readable hanging indents and visible controls."
+      },
+      {
+       "kind": "verify",
+       "text": "The Start action reaches Ready; resizing from phone to desktop and back recomputes the column count. No browser errors occurred."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "sections",
+   "title": "Constrain homepage sections on phones",
+   "kicker": "One-column grids and text that wraps naturally",
+   "intro": [
+    "The hero explicitly uses one grid column below its desktop breakpoint, preventing intrinsic content width from widening the page. Installation rows use less horizontal padding on narrow screens.",
+    "The plan excerpt stores paragraphs on single source lines so the wrapping code block chooses its own visual line breaks instead of combining them with hard-wrapped sample text."
+   ],
+   "files": [
+    {
+     "path": "web/components/sections/hero.tsx",
+     "note": "Defines one mobile column in both hero grids.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Chrome reports document width equal to viewport width at all four tested widths, including when panel drawers are open."
+      }
+     ]
+    },
+    {
+     "path": "web/components/sections/install.tsx",
+     "note": "Reduces installation-row side padding below the small-screen breakpoint."
+    },
+    {
+     "path": "web/components/sections/create.tsx",
+     "note": "Keeps each sample-plan paragraph on one source line for responsive wrapping."
+    }
+   ]
+  }
+ ]
+}
