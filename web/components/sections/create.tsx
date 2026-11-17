@@ -4,31 +4,43 @@ import { CommandList } from "@/components/command";
 import { ArrowUpRightIcon } from "@/components/icons";
 import { Code } from "@/components/inline-code";
 import { Section } from "@/components/section";
+import { Terminal, type TermLine } from "@/components/terminal";
 import { DOCS, EXAMPLE } from "@/lib/links";
 
 const commands = [
   "project init",
-  "project create session-switcher --priority now",
-  "project status session-switcher ready",
+  "project create count-in --priority now",
+  "project status count-in ready",
 ];
 
-// The first lines of docs/projects/session-switcher/readme.md as it merged in
-// ninjudd/trip#13.
+// Part of `project list` in audiofield/field.
+const list: TermLine[] = [
+  { kind: "cmd", text: "project list" },
+  { kind: "label", text: "now:" },
+  { kind: "row", name: "arming", status: "in-progress", title: "Arming" },
+  { kind: "row", name: "instrument-knobs", status: "in-progress", title: "Instrument knobs" },
+  { kind: "row", name: "sequencer", status: "ready", title: "Sequencer" },
+  { kind: "out", text: "  …" },
+  { kind: "label", text: "completed:" },
+  { kind: "row", name: "recording", status: "completed", title: "Recording" },
+];
+
+// The first lines of docs/projects/recording/readme.md in audiofield/field.
 const plan = `---
-status: ready
-priority: now
+status: completed
 ---
 
-# Session Switcher
+**Outcome:** Shipped: chunks 1–4 (#166, #167, #169, #170) — the
+daemon's input side with crash-safe capture, takes that land in the
+project and build in place, the metronome and count-in in the engine,
+punch-out, and loop takes over the region loop. …
 
-## 1. Outcome
+# Recording
 
-The session list becomes the hub of trip rather than a special case of
-\`enter\`. Three changes, one interaction model:
-
-- **The detach key opens a chooser.** Pressing it inside an attached session
-  (\`TRIP_DETACH_KEY\`, \`^\\\` by default) detaches the *view* and shows the
-  interactive session list.`;
+**Goal:** \`field record\` — capture a live performance into a track as
+takes, through the same daemon that plays: armed, crash-safe,
+latency-placed, and committed beside its bytes the way every take
+already is.`;
 
 function DocLink({ href, children }: { href: string; children: ReactNode }) {
   return (
@@ -47,24 +59,28 @@ function DocLink({ href, children }: { href: string; children: ReactNode }) {
 export function Create() {
   return (
     <Section
-      id="create"
-      title="Create a project"
+      id="plans"
+      title="Every plan is a file in the repository"
       lead={
         <>
-          A project is a directory under <Code>docs/projects/</Code> with a lowercase{" "}
-          <Code>readme.md</Code>. The file opens with two frontmatter fields and continues as an
-          ordinary Markdown plan.
+          Under the loop, each project is a directory under <Code>docs/projects/</Code> with a
+          lowercase <Code>readme.md</Code>. The file opens with two frontmatter fields and continues
+          as an ordinary Markdown plan. You and the agents change it with the same{" "}
+          <Code>project</Code> command.
         </>
       }
     >
       <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:gap-16">
         <div className="min-w-0 space-y-5 text-[15px] leading-relaxed text-muted">
+          <CommandList commands={commands} />
           <p>
-            <Code>project init</Code> writes the convention file once per repository, and{" "}
-            <Code>project create</Code> makes the directory and the plan. <Code>project status</Code>{" "}
-            changes one frontmatter field, <Code>project done</Code> marks the project completed,
-            and <Code>project list</Code> groups what exists by priority. Add <Code>--json</Code> to
-            any of them for scripts and agents.
+            <Code>project init</Code> writes the convention once per repository, and Projector&rsquo;s
+            rules into <Code>AGENTS.md</Code>, linked as <Code>CLAUDE.md</Code>, so every agent
+            session follows them, with the plugin or without it. <Code>project create</Code> makes the
+            directory and the plan. <Code>project status</Code> changes one frontmatter field,{" "}
+            <Code>project done</Code> marks the project completed, and <Code>project list</Code>{" "}
+            groups what exists by priority. Add <Code>--json</Code> to any of them for scripts and
+            agents.
           </p>
           <p>
             Because the plan is a file in the repository, it comes with every clone, along with its
@@ -87,14 +103,24 @@ export function Create() {
           </div>
         </div>
         <div className="min-w-0 space-y-4">
-          <CommandList commands={commands} />
+          <Terminal title="audiofield/field" lines={list} />
           <CodeBlock
             lang="markdown"
-            title="docs/projects/session-switcher/readme.md · ninjudd/trip#13"
+            title="audiofield/field · docs/projects/recording/readme.md"
             code={plan}
           />
           <p className="text-sm text-muted">
-            The excerpt is the first lines of a real plan.{" "}
+            Both are from{" "}
+            <a
+              href={EXAMPLE.projects}
+              target="_blank"
+              rel="noreferrer"
+              className="underline decoration-line-strong underline-offset-4 transition-colors hover:text-fg"
+            >
+              the plans in field
+            </a>
+            , the repository the next section follows. The plan excerpt skips the rest of its outcome
+            and the start of its body.{" "}
             <a
               href={EXAMPLE.plan}
               target="_blank"

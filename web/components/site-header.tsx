@@ -3,11 +3,11 @@ import { GitHubIcon } from "./icons";
 import { Logo } from "./logo";
 
 const nav = [
-  { href: "#create", label: "How it works" },
+  { href: "#panel", label: "Inbox" },
+  { href: "#summaries", label: "Summaries" },
+  { href: "#loop", label: "How it works" },
+  { href: "#plans", label: "Plans" },
   { href: "#example", label: "Example" },
-  { href: "#agents", label: "Agents" },
-  { href: "#reviews", label: "Reviews" },
-  { href: "#site", label: "Site" },
 ];
 
 export function SiteHeader() {

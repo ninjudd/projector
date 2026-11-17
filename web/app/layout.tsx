@@ -20,9 +20,9 @@ const instrumentSerif = Instrument_Serif({
   variable: "--font-instrument-serif",
 });
 
-const title = "Projector — Project plans that live in Git";
+const title = "Projector — Agents plan, build, and review. You make the calls.";
 const description =
-  "Projector keeps each project's plan as a Markdown file in the repository, under docs/projects/, and gives developers and coding agents one CLI to update it.";
+  "Projector gives Claude Code and Codex a workflow for a whole project: agents write the plan into the repository, build it, review each other's pull requests, and fix what the reviews find, while a panel shows you what needs you.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
