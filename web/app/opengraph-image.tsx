@@ -59,9 +59,9 @@ export default async function Image() {
               You make the calls.
             </div>
           </div>
-          <div style={{ fontSize: 30, color: "#a5a094", maxWidth: 980 }}>
-            Plans live in the repository. Agents build them, review each
-            other&rsquo;s pull requests, and fix what the reviews find.
+          <div style={{ fontSize: 30, color: "#a5a094" }}>
+            You review the plan, answer what only you can, and decide what
+            merges.
           </div>
         </div>
         <div
