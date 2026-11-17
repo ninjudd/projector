@@ -20,7 +20,7 @@ const instrumentSerif = Instrument_Serif({
   variable: "--font-instrument-serif",
 });
 
-const title = "Projector — Agents plan, build, and review. You merge.";
+const title = "Projector — Agents plan, build, and review. You make the calls.";
 const description =
   "Projector gives Claude Code and Codex a workflow for a whole project: agents write the plan into the repository, build it, review each other's pull requests, and fix what the reviews find, while a panel shows you what needs you.";
 

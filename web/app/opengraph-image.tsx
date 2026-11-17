@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "Projector — agents plan, build, and review. You merge.";
+export const alt = "Projector — agents plan, build, and review. You make the calls.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -39,7 +39,7 @@ export default function Image() {
               maxWidth: 1000,
             }}
           >
-            Agents plan, build, and review. You merge.
+            Agents plan, build, and review. You make the calls.
           </div>
           <div style={{ fontSize: 30, color: "#a5a094", maxWidth: 960 }}>
             Plans live in the repository. Agents build them, review each

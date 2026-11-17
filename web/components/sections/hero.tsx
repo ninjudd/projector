@@ -57,13 +57,14 @@ export function Hero() {
           <h1 className="font-display text-6xl leading-[0.98] tracking-tight text-fg sm:text-7xl">
             Agents plan, build, and review.
             <br />
-            <em className="text-accent">You merge.</em>
+            <em className="text-accent">You make the calls.</em>
           </h1>
           <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted">
-            Projector gives Claude Code and Codex a workflow for a whole project. An agent writes
-            the plan into the repository and builds it. Another agent reviews each pull request,
-            and the first one fixes what the review finds. A panel above your prompt shows every
-            pull request and every question that needs you.
+            Projector gives Claude Code and Codex a workflow for a whole project. Agents write the
+            plan into the repository, build it, review each other&rsquo;s pull requests, and fix
+            what the reviews find. You review the plan, answer the questions only you can, and
+            decide what merges. A panel above your prompt shows every pull request and every
+            question that waits for you.
           </p>
           <div className="mt-8 max-w-xl">
             <Command text={INSTALL.script} />
