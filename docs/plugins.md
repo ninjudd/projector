@@ -1099,6 +1099,15 @@ do not install the CLI, so install it separately before running a project
 workflow. `all` installs each host CLI it finds, skips a missing host, and exits
 69 only when neither Claude Code nor Codex is installed.
 
+A host command can be on your `PATH` and still fail to start, as Codex does
+when its npm package has lost its native binary. The installer runs
+`<host> --version` before anything else. When that fails, `all` prints a
+`skipped` row with a ⚠️ marker that tells you to reinstall the host, and goes on
+to the other host and the `gh stack` extension. `./install.sh claude` and
+`./install.sh codex` exit 69 with the same message, and `status` prints a
+`host-broken` row for that host. A host that does not run counts as missing
+for `all`'s exit status.
+
 The marketplace source is the checkout's `origin` remote, so a fork installs
 from the fork. A GitHub remote becomes `owner/repo` for Claude Code and the
 HTTPS URL for Codex; any other remote URL is handed to both hosts as it is;
