@@ -937,10 +937,13 @@ The check by hand ran on 2026-11-17 and passed:
 - **Cleanup.** After the sessions closed, their presence refs were deleted,
   about 4 minutes into the watch.
 
-The check found one fault. One machine's watch daemon died once without
-logging a stop. Its outbox was empty, so nothing queued was lost, and the
-one-hour lease remains the fallback that deletes the refs of a daemon that
-dies. Cleaning up on an orderly idle exit is a possible follow-up.
+Nothing in the check failed. A watch daemon that seemed to have died was
+still running: the process check run by hand searched for
+`project watch serve`, which does not match the daemon's command line,
+`projector watch serve`, so it found nothing. The daemon later logged a
+normal stop when an upgrade replaced it. The closed sessions' presence
+refs were removed by the normal cleanup that deletes a session's
+presence once it lapses, within 5 minutes of the session closing.
 
 Review of the relay settled these details:
 
