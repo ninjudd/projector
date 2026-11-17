@@ -83,7 +83,7 @@ const states: { word: string; tone: string; italic?: boolean; body: string }[] =
     {
       word: "ready",
       tone: "text-[#2b6f9e] dark:text-[#8fc1e3]",
-      body: "It waits for its first review.",
+      body: "It waits for a review of its current head.",
     },
   ];
 
