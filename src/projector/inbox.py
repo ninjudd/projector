@@ -63,6 +63,11 @@ class InboxError(ProjectorError):
     """An item fails a check, or an answer, claim, or snooze is not allowed in its state."""
 
 
+class ChangedError(InboxError):
+    """The item's agent revised it after the person read it, so the choice they made may no longer name what
+    they read."""
+
+
 class InboxBusy(InboxError):
     """Another command held the session's lock for the whole wait, so running the command again can work."""
 
@@ -327,18 +332,24 @@ def request(session: str, subject: str, *, detail: str = "", pr: Optional[str] =
     return post(session, "request", subject, detail=detail, pr=pr, agent=agent, start=start, choices=choices)
 
 
-def check_message(text: str) -> str:
-    """A message's text: one paragraph of at most `MAX_MESSAGE_BYTES` in UTF-8, on one line, as
-    the `DISCUSS` line that carries it to the agent prints."""
+def check_message(text: str, what: str = "message") -> str:
+    """A message's text, or another of the person's paragraphs that `what` names: one paragraph of
+    at most `MAX_MESSAGE_BYTES` in UTF-8, on one line, as the line that carries it to the agent prints."""
     said = text.strip()
     if not said:
-        raise InboxError("the message is empty")
+        raise InboxError(f"the {what} is empty")
     if not is_one_line(said):
-        raise InboxError("the message must be one paragraph, with no line breaks")
+        raise InboxError(f"the {what} must be one paragraph, with no line breaks")
     size = len(said.encode("utf-8"))
     if size > MAX_MESSAGE_BYTES:
-        raise InboxError(f"the message is {size} bytes; keep it to {MAX_MESSAGE_BYTES} (4 KiB)")
+        raise InboxError(f"the {what} is {size} bytes; keep it to {MAX_MESSAGE_BYTES} (4 KiB)")
     return said
+
+
+def note_of(note: Optional[str]) -> dict:
+    """The `note` an answer or outcome records: the person's one paragraph of more context, as a message is,
+    or nothing when they wrote none."""
+    return {"note": check_message(note, "note")} if note and note.strip() else {}
 
 
 def new_message(text: str) -> dict:
@@ -500,7 +511,8 @@ def message(question: dict) -> str:
     sends it: its answer or outcome, its dismissal, that a dismissal it may have heard of was
     undone, that the person pressed start, quoting the start action they pressed it for, that the
     person does not understand it, or a message the person wrote about it. A request's
-    outcome ends with the person's text when they gave one."""
+    outcome ends with the person's text when they gave one, and an answer or outcome with their
+    note."""
     line = claimed_line(question) or owed_line(question)
     if line == "discuss":
         said = question["messages"][discussed_message(question)]["text"]
@@ -512,13 +524,14 @@ def message(question: dict) -> str:
     if question.get("restoredAt"):
         return f"RESTORED {question['ref']} {question['subject']}"
     answered = question["answer"]
+    noted = f" — note: {answered['note']}" if answered.get("note") else ""
     if answered.get("declined") or answered.get("done"):
         word = "DECLINED" if answered.get("declined") else "DONE"
         said = f" → {answered['text']}" if answered.get("text") else ""
-        return f"{word} {question['ref']} {question['subject']}{said}"
+        return f"{word} {question['ref']} {question['subject']}{said}{noted}"
     if answered.get("dismissed"):
         return f"DISMISSED {question['ref']} {question['subject']}"
-    return f"ANSWER {answer_ref(question)} {question['subject']} → {answered['text']}"
+    return f"ANSWER {answer_ref(question)} {question['subject']} → {answered['text']}{noted}"
 
 
 # Answering and delivering
@@ -536,12 +549,28 @@ def update(session: Optional[str], ref: str, change,
     return item
 
 
-def answer(session: Optional[str], ref: str, letter: Optional[str], text: Optional[str] = None) -> dict:
+def refuse_changed(item: dict, subject: Optional[str], choices: Optional[list[str]]) -> None:
+    """Refuse a choice made from an item the person read as `subject` and `choices`, when its agent has
+    revised either since, as `unclear` refuses a press on text that changed. None checks nothing."""
+    if ((subject is not None and subject != item["subject"])
+            or (choices is not None and list(choices) != list(item.get("choices") or []))):
+        raise ChangedError(f"{item['ref']} changed while you were choosing; read it and choose again")
+
+
+def answer(session: Optional[str], ref: str, letter: Optional[str], text: Optional[str] = None,
+           note: Optional[str] = None, *, subject: Optional[str] = None,
+           choices: Optional[list[str]] = None) -> dict:
+    """Answer a question with a letter, the typed answer's `text` under its last letter, and the person's
+    `note` when they add one. `subject` and `choices`, when given, are the question as the person read it,
+    and a revision since then records nothing."""
+    noted = note_of(note)
+
     def record(question: dict) -> None:
         refuse_notice(question, "takes no answer")
         refuse_request(question)
         if question.get("answer"):
             raise InboxError(f"{question['ref']} is already {resolution(question)}")
+        refuse_changed(question, subject, choices)
         last = typed_letter(question)
         if letter is None:
             raise InboxError(f"name the answer's letter, such as {question['ref']}.a")
@@ -560,7 +589,7 @@ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Option
         # The answer tells the agent the question was open, so it replaces word of a restore that
         # has not reached the agent, and any claim to deliver that word.
         clear_for_outcome(question)
-        question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
+        question["answer"] = {"letter": letter, "text": chosen, **noted, "answeredAt": now_ms()}
 
     return update(session, ref, record, is_open)
 
@@ -613,10 +642,10 @@ def dismiss(session: Optional[str], ref: str, withdrawn: bool = False) -> dict:
     return update(session, ref, lambda item: record_dismissal(item, withdrawn, {}), is_open)
 
 
-def decline(session: Optional[str], ref: str, text: Optional[str] = None) -> dict:
-    """Decline a request, with the person's one line of text when they give one: a dismissal its
-    deliverer reports as `DECLINED`."""
-    said = outcome_text(text)
+def decline(session: Optional[str], ref: str, text: Optional[str] = None, note: Optional[str] = None) -> dict:
+    """Decline a request, with the person's one line of text and their note when they give them: a
+    dismissal its deliverer reports as `DECLINED`."""
+    said = {**outcome_text(text), **note_of(note)}
 
     def record(item: dict) -> None:
         refuse_unless_request(item, "declined")
@@ -625,14 +654,18 @@ def decline(session: Optional[str], ref: str, text: Optional[str] = None) -> dic
     return update(session, ref, record, is_open)
 
 
-def done(session: Optional[str], ref: str, text: Optional[str] = None) -> dict:
-    """Mark a request done, with the person's one line of text when they give one."""
-    said = outcome_text(text)
+def done(session: Optional[str], ref: str, text: Optional[str] = None, note: Optional[str] = None, *,
+         subject: Optional[str] = None, choices: Optional[list[str]] = None) -> dict:
+    """Mark a request done, with the person's one line of text and their note when they give them.
+    `subject` and `choices`, when given, are the request as the person read it, and a revision since
+    then records nothing."""
+    said = {**outcome_text(text), **note_of(note)}
 
     def record(item: dict) -> None:
         refuse_unless_request(item, "done")
         if item.get("answer"):
             raise InboxError(f"{item['ref']} is already {resolution(item)}")
+        refuse_changed(item, subject, choices)
         # As an answer does, the outcome replaces word of a restore that has not reached the agent.
         clear_for_outcome(item)
         item["answer"] = {"done": True, **said, "answeredAt": now_ms()}

@@ -1041,6 +1041,7 @@ def add_inbox_parser(subcommands) -> None:
     answer = command("answer", "record an answer, such as 3.a")
     answer.add_argument("reference", help="the question's number and the answer's letter, such as 3.a")
     answer.add_argument("--text", help="the typed answer, for the question's last letter")
+    answer.add_argument("--note", help="more context for the agent, one paragraph of at most 4 KiB")
 
     dismiss = command("dismiss", "record that you dismissed a question, read a notice, or declined a request")
     dismiss.add_argument("reference")
@@ -1050,6 +1051,7 @@ def add_inbox_parser(subcommands) -> None:
         outcome = command(name, help_text)
         outcome.add_argument("reference", help="the request's number, such as 3")
         outcome.add_argument("--text", help="what you tell the agent, in one line")
+        outcome.add_argument("--note", help="more context for the agent, one paragraph of at most 4 KiB")
 
     start = command("start", "record that you pressed start on a request, for the start action you read")
     start.add_argument("reference", help="the request's number, such as 3")
@@ -2358,6 +2360,8 @@ def print_item(item: dict) -> None:
     for said in item.get("messages") or []:
         print(f"you: {said['text']}")
     print(item_state(item))
+    if (item.get("answer") or {}).get("note"):
+        print(f"note: {item['answer']['note']}")
 
 
 def print_choices(question: dict) -> None:
@@ -2428,7 +2432,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
             print_item(item)
     elif command in ("answer", "dismiss", "withdraw"):
         session = inbox_session(arguments, False)
-        item = (inbox.answer(session, ref, letter, arguments.text) if command == "answer"
+        item = (inbox.answer(session, ref, letter, arguments.text, arguments.note) if command == "answer"
                 else inbox.dismiss(session, ref, withdrawn=command == "withdraw"))
         wake_codex_delivery(session, item)
         done = {"answer": "answered", "dismiss": "dismissed", "withdraw": "withdrew"}[command]
@@ -2436,7 +2440,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
     elif command in ("done", "decline"):
         record = inbox.done if command == "done" else inbox.decline
         session = inbox_session(arguments, False)
-        item = record(session, ref, arguments.text)
+        item = record(session, ref, arguments.text, arguments.note)
         wake_codex_delivery(session, item)
         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
     elif command in ("start", "ready", "block", "unclear"):
