@@ -3069,7 +3069,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped, nor a failed check run of a cancelled workflow run that started at or after the cancel, as an `if: always()` job that gathers the others does, or that a newer run of the same workflow on the head tests again, by still running or by running a check of the same name rather than skipping or cancelling it. The cancel is when the first of the run's check runs that concluded `CANCELLED` ended |
 | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
 | `LABEL` | `fix` | A `clean` or `reviewing` label added or removed since the owner last saw the pull request, as `+clean` or `-reviewing` |
-| `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
+| `UNREVIEWED` | `fix`, when no session the daemon can see reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, that no live session of the operator's on another machine reviews through the relay, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head. The line says `no session on this machine`, or, while the relay is on and has polled the repository within the last hour, `no session on this machine or on your other machines that share this repository's relay`; see [What a presence carries](#what-a-presence-carries) |
 | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed; under a repository subscription, only once the pull request is ready for review |
 | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
 | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
@@ -3612,9 +3612,61 @@ rejection:
 | `relay-id-mismatch` | relay ID mismatch | A presence whose relay ID is not its ref's |
 | `recipient-mismatch` | recipient mismatch | A message whose recipient is not its ref's |
 | `message-id-mismatch` | message ID mismatch | A message whose ID is not its ref's |
-| `field-shape` | field shape | A record with a missing field or a field that is not the shape `register` or `send` gives it |
+| `field-shape` | field shape | A record with a missing field or a field that is not the shape `register` or `send` gives it, including a presence that names a review target outside its own repository |
 | `expired` | expired | A message 7 days old |
 | `collision` | ID collision | A message under the ID of a different message already delivered |
+
+### What a presence carries
+
+A presence is the session's registration, as `project agent list --json`
+prints it, with its lease and a `reviews` field. Each time the relay
+encrypts the presence, it fills `reviews` with what the session reviews in
+the repository the relay publishes the presence into, with each entry's
+`target` and `model`:
+
+- **Each `review` subscription in that repository.** The target is
+  `owner/repo` for a review of the repository, or `owner/repo#number` for
+  one pull request.
+- **Each pull request the session's review of the repository adopted.**
+  GitHub drops a review request once the login reviews, so another machine
+  cannot tell from GitHub that the review still covers a pull request it
+  adopted because the pull request requested the operator.
+- **Each pull request the session dropped** with `project watch drop`, with
+  `"excluded": true`.
+
+```json
+"reviews": [
+  {"target": "acme/app#14", "model": "claude-opus-5-5", "excluded": true},
+  {"target": "acme/app", "model": "claude-opus-5-5"},
+  {"target": "acme/app#15", "model": "claude-opus-5-5"}
+]
+```
+
+A presence never names a review target in another repository, as the
+generated summary names none, because the repository the presence is
+published into can be public while another one the session reviews is
+private. A machine rejects a presence whose `reviews` names another
+repository, as `field-shape`. The list holds at most 32 entries, exclusions
+first and then reviews of a whole repository, so a session with more never
+appears to review a pull request it dropped. When `reviews` changes, as
+when the session's review subscriptions change or its review of the
+repository adopts a pull request, the daemon publishes the presence again on
+its next poll, whether or not the summary is the generated one. A session
+registered before Projector published `reviews` gains them the same way,
+without registering again.
+
+The watch daemon reads `reviews` to decide `UNREVIEWED`. A pull request has
+a reviewer on another machine when a live presence of the operator's login,
+from a machine other than this one, names the pull request, or names its
+repository and the pull request is one a repository review covers here: the
+operator wrote it, it requests the operator's review, or a review of the
+repository on this machine adopted it before. The daemon looks
+only while this machine holds the key and the relay has polled the
+repository within the last hour, and then the `UNREVIEWED` line says `no
+session on this machine or on your other machines that share this
+repository's relay`. A reviewer on another machine takes no role here and
+changes no other event. A presence from an earlier version of Projector has
+no `reviews`, and reviews nothing.
 
 ## Change a loop's tracked file
 

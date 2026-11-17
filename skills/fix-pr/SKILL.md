@@ -577,18 +577,21 @@ role are these:
   builds on that head's full review. Any other review of an earlier head,
   and a Projector review that lists none, report nothing.
 - **`UNREVIEWED`** reports, once per head, a pull request ready for review
-  whose head is not signed off and that no session on this machine reviews.
-  The daemon sees only this machine's sessions, so a session on another
-  machine may review the pull request before it posts its start comment.
-  Tell the user once that no session on this machine reviews it, and that
-  `review-pr` or `review-repo` would, unless they review it elsewhere. Never
-  say that no session reviews it at all. It is not work: any work behind it
-  arrives as its own `FINDING`, `VERDICT`, `CONFLICT`, `CHECKS`, or `REVIEW`
-  line. A
-  draft reports nothing, because it waits on its author, and so does a pull
-  request that a session here reviews, or that a live start comment from the
-  operator or another account whose review would count shows under review
-  elsewhere; it waits for that review.
+  whose head is not signed off and that no session the daemon can see
+  reviews. The line names what it saw: `no session on this machine`, or,
+  while the relay carries the repository, `no session on this machine or on
+  your other machines that share this repository's relay`. A session on a
+  machine outside that scope may still review the pull request before it
+  posts its start comment. Tell the user once what the line says, in its
+  scope, and that `review-pr` or `review-repo` would review it, unless they
+  review it elsewhere. Never say that no session reviews it at all. It is
+  not work: any work behind it arrives as its own `FINDING`, `VERDICT`,
+  `CONFLICT`, `CHECKS`, or `REVIEW` line. A draft reports nothing, because
+  it waits on its author, and so does a pull request that a session here
+  reviews, that a session of the operator's on another machine reviews
+  through the relay, or that a live start comment from the operator or
+  another account whose review would count shows under review elsewhere; it
+  waits for that review.
 - **`LABEL`** reports that a review added or removed the `clean` or
   `reviewing` label, as `+clean` or `-reviewing`. It is not work. On
   `+clean`, tell the user that a review signed off the head. The other

@@ -25,7 +25,7 @@ import secrets
 import socket
 import uuid
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 from . import codex_watch, relay, review, watch
 from .config import MINIMUMS, Config
@@ -39,8 +39,11 @@ MESSAGE = re.compile(r"^m-[0-9a-f]{32}$")
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 # A model ID has no space or parenthesis, so the model `event_line` prints before its notice cannot read as prose.
 MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}$")
+# A review target in a presence: a repository, or one of its pull requests.
+TARGET = re.compile(rf"^({watch.REPO})(?:#([1-9][0-9]*))?$")
 MAX_SUMMARY = 120
 MAX_MODEL = 100
+MAX_REVIEWS = 32
 MAX_TEXT = 16 * 1024
 PREVIEW = 160
 MESSAGE_LIMIT = 12
@@ -364,29 +367,64 @@ def generated_summary(lines: list[watch.Subscription], repo: Optional[str]) -> O
     return text[:1].upper() + text[1:] or None
 
 
-def refresh_summary(folder: Path, lines: list[str], now: float) -> None:
-    """Make a generated summary agree with the session's subscriptions, `lines`, and mark the session's
-    presence for the relay to publish again. The caller holds the session's lock."""
+def review_targets(lines: list[watch.Subscription], repo: Optional[str], adopted: Iterable[int] = ()) -> list[dict]:
+    """What the session reviews in its own repository, for its presence: each `review` line's target and model,
+    with `excluded` on a pull request the session dropped, and each pull request in `adopted`, which a review of
+    the repository adopted, under that review's model. GitHub drops a review request once the login reviews, so
+    another machine cannot tell from GitHub alone that the review still covers such a pull request. Only that
+    repository is ever named, as in the summary. The list keeps at most `MAX_REVIEWS` entries, exclusions first,
+    then whole repositories, so the entries a cap drops can only make the session look like it reviews less."""
+    if not repo:
+        return []
+    lines = sorted((line for line in lines if line.role == "review" and line.repo.lower() == repo.lower()
+                    and shaped(line.model, MODEL_ID)),
+                   key=lambda line: (not line.excluded, line.number is not None, line.number or 0))
+    dropped = {(line.number, review.identity(line.model or "")) for line in lines if line.excluded}
+    found: list[dict] = []
+    for line in lines:
+        entry = {"target": repo if line.number is None else f"{repo}#{line.number}", "model": line.model,
+                 **({"excluded": True} if line.excluded else {})}
+        if entry not in found:
+            found.append(entry)
+    for line in lines:
+        if line.number is None and not line.excluded:
+            for number in sorted(adopted):
+                entry = {"target": f"{repo}#{number}", "model": line.model}
+                if entry not in found and (number, review.identity(line.model or "")) not in dropped:
+                    found.append(entry)
+    return found[:MAX_REVIEWS]
+
+
+def refresh_registration(folder: Path, before: list[str], after: list[str], now: float) -> None:
+    """Make a generated summary agree with the session's subscriptions, which changed from `before` to `after`,
+    and mark the session's presence for the relay to publish again when its summary or its review targets
+    changed. The caller holds the session's lock."""
     found = read_json(folder / "agent.json")
-    if not found or found.get("schema_version") != 1 or found.get("summary_auto") is not True:
+    if not found or found.get("schema_version") != 1:
         return
-    parsed = [line for line in map(watch.Subscription.parse, lines) if line is not None and not line.excluded]
-    summary = generated_summary(parsed, found.get("repo"))
-    if summary == found.get("summary"):
+    repo = found.get("repo")
+    old, current = ([line for line in map(watch.Subscription.parse, lines) if line is not None]
+                    for lines in (before, after))
+    new = dict(found)
+    if found.get("summary_auto") is True:
+        new.pop("summary", None)
+        if summary := generated_summary([line for line in current if not line.excluded], repo):
+            new["summary"] = summary
+    if new == found and review_targets(old, repo) == review_targets(current, repo):
         return
-    new = {key: value for key, value in found.items() if key != "summary"}
-    new.update({**({"summary": summary} if summary else {}), "updated_at": watch.stamp(now),
-                **({"relay": "pending"} if found.get("relay") == "published" else {})})
+    new.update({"updated_at": watch.stamp(now), **({"relay": "pending"} if found.get("relay") == "published" else {})})
     write_json(folder / "agent.json", new)
 
 
 def mark_published(root: Path, session: str, landed: Optional[str]) -> None:
     """Mark the session's presence published when the presence that landed, by its digest, says what the
-    registration says now. A summary refreshed while an older presence waited to be pushed stays pending."""
+    registration and the subscriptions say now. A summary or review target that changed while an older presence
+    waited to be pushed stays pending."""
     folder = watch.session_folder(root, session)
     with locked(folder):
         found = record(root, session)
-        if found and found.get("relay") != "published" and relay.digest(relay.presence(session, found, 0)) == landed:
+        if found and found.get("relay") != "published" \
+                and relay.digest(relay.presence(root, session, found, 0)) == landed:
             write_json(folder / "agent.json", {**found, "relay": "published"})
 
 
@@ -643,10 +681,22 @@ def well_formed(message: dict) -> bool:
             and isinstance(text, str) and bool(text.strip()) and len(text.encode("utf-8")) <= MAX_TEXT)
 
 
+def review_entry(entry: object, repo: object) -> bool:
+    """Whether an entry of a presence's `reviews` is in the shape `review_targets` gives it, naming `repo`."""
+    if not isinstance(entry, dict) or not isinstance(repo, str) or not shaped(entry.get("model"), MODEL_ID) \
+            or not isinstance(entry.get("target"), str) or (found := TARGET.fullmatch(entry["target"])) is None:
+        return False
+    return found[1].lower() == repo.lower() and entry.get("excluded") in ((None, True) if found[2] else (None,))
+
+
 def well_formed_presence(found: dict) -> bool:
     """Whether another machine's registration holds each field `list`, `send`, and `read` print, in the shape
-    `register` gives it."""
-    return (shaped(found.get("name"), NAME, optional=True) and shaped(found.get("model"), MODEL_ID, optional=True)
+    `register` gives it, and review targets only in its own repository. A presence from a version before review
+    targets has no `reviews`."""
+    reviews = found.get("reviews")
+    return ((reviews is None or isinstance(reviews, list) and len(reviews) <= MAX_REVIEWS
+             and all(review_entry(entry, found.get("repo")) for entry in reviews))
+            and shaped(found.get("name"), NAME, optional=True) and shaped(found.get("model"), MODEL_ID, optional=True)
             and found.get("host") in HOSTS
             and (found.get("summary") is None or plain_line(found["summary"], MAX_SUMMARY))
             and plain_line(found.get("machine_name"), 64) and plain_line(found.get("cwd"), 4096)

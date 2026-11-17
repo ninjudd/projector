@@ -419,6 +419,25 @@ def remote_agents(root: Path, now: float, repos: Optional[set[str]] = None) -> d
     return found
 
 
+def remote_reviews(root: Path, repo: str, login: str, now: float) -> Optional[list[list[dict]]]:
+    """The review targets of each live presence of `login` from another machine in the relay's cache for `repo`,
+    one list for each presence, or None when the relay has not polled the repository within a lease. A presence
+    from a version before review targets reviews nothing."""
+    cache = read_cache(root, repo)
+    polled = watch.seconds_of(cache["polled_at"])
+    if polled is None or now - polled >= LEASE:
+        return None
+    machine = agents.this_machine(root)
+    found = []
+    for agent in cache["agents"].values():
+        if (isinstance(agent, dict) and str(agent.get("login") or "").lower() == login.lower()
+                and agent.get("machine") != machine and isinstance(agent.get("expires_at"), (int, float))
+                and agent["expires_at"] > now):
+            reviews = agent.get("reviews") if isinstance(agent.get("reviews"), list) else []
+            found.append([entry for entry in reviews if agents.review_entry(entry, repo)])
+    return found
+
+
 # The outbox
 
 def read_outbox(path: Path) -> dict:
@@ -472,9 +491,14 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
             write_json(path, box)
 
 
-def presence(session: str, found: dict, now: float) -> dict:
+def presence(root: Path, session: str, found: dict, now: float) -> dict:
+    """The session's presence: its registration, what it reviews in the registration's repository as its
+    subscriptions and this machine's adoptions say when the presence is sealed, and its lease."""
     record = {key: value for key, value in found.items() if key not in ("relay", "ended_at", "summary_auto")}
-    return {**record, "session": session, "expires_at": now + LEASE}
+    repo = found.get("repo")
+    reviews = agents.review_targets(watch.subscriptions(watch.session_folder(root, session)), repo,
+                                    watch.read_adopted(root, repo)[0] if repo else ())
+    return {**record, "reviews": reviews, "session": session, "expires_at": now + LEASE}
 
 
 def seal(key: Key, record: dict) -> dict:
@@ -483,7 +507,7 @@ def seal(key: Key, record: dict) -> dict:
 
 def publish(root: Path, session: str, found: dict, key: Key, now: float) -> None:
     """Queue the session's sealed presence."""
-    record = presence(session, found, now)
+    record = presence(root, session, found, now)
     queue(root, found["repo"], found["cwd"], [(presence_ref(key.id, found["relay_id"]), seal(key, record),
                                                presence_meta(record))], now)
 
@@ -893,11 +917,15 @@ class Job:
             ref = presence_ref(self.key.id, relay_id)
             # A session can unregister while this job runs, so its mark is checked again here.
             if name in self.live and not agents.unregistered(watch.session_folder(self.root, name)):
-                expires = (self.cache["seen"].get(ref) or {}).get("expires_at")
+                record = presence(self.root, name, found, self.now)
+                seen = self.cache["seen"].get(ref) or {}
+                expires = seen.get("expires_at")
+                # A presence says what the subscriptions and adoptions say now, so one that changes, as when a
+                # review of the repository adopts a pull request, is pushed again without waiting for its renewal.
                 due = ref not in self.cache["remote"] or not isinstance(expires, (int, float)) \
-                    or expires - self.now < RENEW or found.get("relay") == "pending"
+                    or expires - self.now < RENEW or found.get("relay") == "pending" \
+                    or seen.get("digest") not in (None, digest(record))
                 if due and ref not in queued:
-                    record = presence(name, found, self.now)
                     self.changes.append((ref, seal(self.key, record), presence_meta(record)))
                 continue
             self.delete(ref)
