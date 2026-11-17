@@ -1,0 +1,98 @@
+{
+ "version": 1,
+ "name": "Stable agent session labels",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 506,
+  "title": "Show an unnamed agent session by the last group of its ID",
+  "head": "36736883000f99eae19e525d448af2242a7b306a",
+  "headRef": "agent-unique-short-ids",
+  "base": "0bddd09d7e5188db8fe66d58185da13ee2f8af05",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector lets agent sessions find and message one another. An unnamed session needs a display label so you can tell which session sent or received a message.",
+   "Codex uses time-ordered session IDs. Their first eight characters can match for sessions started close together. This change displays the final 12-character group instead, through one shared helper. Named sessions keep their names, and commands still address unnamed sessions by their full IDs."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Review validation",
+    "html": "<ul class=\"tight\"><li>The configured gate and exact-head CI passed.</li><li>The new label regressions exercise list output, message output, stable labels, and non-UUID IDs.</li><li>The broader focused run exposes an existing keychain test error on Python 3.15.2 and 3.12.16. The same error reproduces at the merge base.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "labels",
+   "title": "Use one stable label for unnamed sessions",
+   "kicker": "Display a random session-ID suffix wherever an agent is named",
+   "intro": [
+    "A session ID is the full value that identifies an agent conversation. The display label is shorter and does not control message routing. <code>short_id</code> takes the last UUID group, or the last 12 characters of another ID, without consulting other sessions.",
+    "The shared label logic now reaches list and registration output, message previews, read headers, send confirmations, and errors. Messages keep their full sender IDs, so stored messages need no migration."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/agents.py",
+     "note": "Centralizes suffix labels and applies them to sender displays.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 84,
+       "text": "Traced every label caller and the recipient lookup: names still win, and routing and JSON records continue to use full session IDs."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "regressions",
+   "title": "Keep display labels distinct and consistent",
+   "kicker": "Exercise the labels through the CLI and retain relay lifecycle coverage",
+   "intro": [
+    "The new tests create two Codex sessions with the same time prefix. They check that the CLI displays different labels and that a message preview agrees with the later list and read output.",
+    "The relay tests continue to check generated summaries reaching another machine. Their row filters now use the label helper so those tests stay focused on summary delivery."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_agents.py",
+     "note": "Adds CLI regressions for shared prefixes, stable message labels, and arbitrary session IDs.",
+     "checks": []
+    },
+    {
+     "path": "tests/test_relay.py",
+     "note": "Updates two relay row filters to recognize the new display labels.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The unchanged keychain fallback test starts one mock patch twice. It raises “Patch is already started” on Python 3.15.2 and 3.12.16; the merge-base reproduction confirms this predates the label change."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Explain which ID to display and which to send to",
+   "kicker": "Document the suffix label and keep full IDs as command inputs",
+   "intro": [
+    "The CLI reference explains why time-based prefixes collide and gives two distinguishable examples. The agent messaging skill describes unnamed sessions by the same suffix, while its send instructions continue to require a name or full session ID."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describes suffix labels, non-UUID fallback, and unchanged send addressing."
+    },
+    {
+     "path": "skills/message-agent/SKILL.md",
+     "note": "Updates peer discovery to describe the session-ID suffix."
+    }
+   ]
+  }
+ ]
+}
