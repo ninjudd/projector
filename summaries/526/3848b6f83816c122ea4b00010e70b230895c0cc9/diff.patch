@@ -1,0 +1,340 @@
+diff --git a/docs/projects/console/phone/readme.md b/docs/projects/console/phone/readme.md
+new file mode 100644
+index 00000000..6c8ec779
+--- /dev/null
++++ b/docs/projects/console/phone/readme.md
+@@ -0,0 +1,334 @@
++---
++status: draft
++priority: later
++---
++
++# Answer your agents from your phone
++
++A Projector iPhone app shows the console's sessions, pull requests, and
++inbox items, and lets you answer and discuss them. It needs only your
++GitHub credentials and your relay key, and it reaches your machines through
++the relay's hidden refs. A small push service, which never sees what an
++item says, wakes the phone when an agent needs you.
++
++## 1. Problem
++
++`project console` (the parent project, `console`) lets you answer and
++discuss every live session's items, but only in a terminal on the machine
++those sessions run on. When you step away, your agents wait. A question
++posted while you are out of reach stalls its session until you come back to
++a terminal.
++
++The pieces for a remote view already exist:
++
++- **The relay** carries agents' presence and messages between your
++  machines through hidden refs in a GitHub repository they share. Every
++  record is sealed with your relay key, so the repository holds only
++  ciphertext.
++- **GitHub's API** can read and write those refs, so a phone with a GitHub
++  token can reach them without Git.
++- **`project agent key join` and `key grant`** already copy the relay key
++  to a new machine without showing it.
++
++The relay is built for agents, though, not for you. It carries no inbox
++items, and by design a relay message carries none of your authority: every
++machine holds the relay key, and an agent running as you can read it.
++
++## 2. Solution
++
++The watch daemon publishes each live session's state to the relay, and the
++app reads it, draws the console's home list and panels, and writes your
++answers back as signed records. Three changes make that safe:
++
++- **The phone signs as you.** The phone holds a P-256 signing key in its
++  Secure Enclave, the chip that makes and uses the key and never lets it
++  out, not even into a backup. You register its public key on each machine
++  in a terminal. The daemon records a phone record as yours only when that key
++  signed it, so no agent can forge an answer, even one that reads the relay
++  key.
++- **The daemon publishes sessions and items.** For each live session it
++  already relays, the daemon publishes the session's open inbox items and
++  its pull request subscriptions, sealed like every relay record.
++- **The daemon imports your answers.** It fetches the phone's records,
++  checks each signature, and applies it with the same inbox functions the
++  console calls. The session's own deliverer then brings it in: the panel
++  for Claude Code, and the Codex adapter for Codex.
++- **A push service wakes the phone.** When a session posts an item, the
++  daemon seals a notification to the phone's key and asks the push service
++  to forward it. The service holds Apple's push credentials and an opaque
++  push ID for the phone, and nothing else. The phone's notification service
++  extension opens the sealed text on the device, so the service never sees
++  what the item says.
++
++The app, in `ios/`, and the push service, in `services/push/`, live in this
++repository beside the protocol they share, so one pull request changes the
++daemon, the app, and their test vectors together. Being open source, they
++let anyone read the code that holds their GitHub token and their keys, and
++run the push service themselves.
++
++### 2.1 Flow
++
++1. **Set up the phone once.**
++   1. Sign in to GitHub in the app, with GitHub's device flow. The token
++      needs read and write access to the repositories your sessions work
++      in.
++   2. Join the relay key. The app makes a temporary key pair and shows a
++      `project agent key grant …` command and a fingerprint, exactly as
++      `key join` does. You run the command on a machine that has the key,
++      check the fingerprint, and paste its one-line answer into the app.
++   3. Register with the push service. The app sends Apple's device token
++      to the service, which answers with a random push ID.
++   4. Make the phone's keys, and register them. The Secure Enclave makes
++      the P-256 signing key, which signs your answers. Using it needs Face
++      ID or the passcode, which the app asks for at most once every 5
++      minutes. The app makes an X25519 push key in the Keychain, which the
++      notification service extension can read while the phone is locked,
++      after its first unlock. The app shows both public keys and the push ID as one
++      `project agent phone add …` command with a fingerprint. You run it in
++      a terminal on each machine whose agents the phone may answer. The
++      command refuses without a terminal, as `key grant` does.
++2. **The daemon publishes.** On each relay pass, for each live session with
++   a relay presence, the daemon writes one sealed record per open inbox
++   item, and one sealed record of the session's subscriptions with their
++   roles. It deletes a record once its item resolves or its session lapses.
++3. **The daemon notifies.** For each item it publishes for the first time,
++   and each agent reply to a discussion, the daemon posts one notification
++   to the push service for each registered phone. The notification's text,
++   the session's label and the item's subject, is sealed to that phone's
++   push key. The service forwards it to Apple's push service with the
++   `mutable-content` flag, and the phone's notification service extension
++   opens it, so the lock screen shows the subject and the service never
++   sees it.
++4. **The app reads.** When you open it, and on background refresh, the app
++   lists the key's refs in each repository it knows, opens the records, and
++   asks GitHub directly for each subscribed pull request's state, checks,
++   and unresolved threads. It turns those into rows with the same rules as
++   the console, and draws the home list and each session's panel. Opening
++   a notification opens that item's drawer.
++5. **You answer.** The app writes your choice as an answer record, signed
++   with the phone's key and then sealed. It holds one action: an answer,
++   `done`, `decline`, `dismiss`, `snooze`, `restore`, `start`, `unclear`,
++   `read`, or a `discuss` message, with the item's reference and the
++   item's content digest, so an answer to an item that has since changed
++   is refused.
++6. **The daemon imports.** On its next pass, the daemon on the session's
++   machine fetches the record, checks the seal, then the signature against
++   the registered phone keys, and then that the record is fresh and was not
++   seen before. It applies the action with the inbox function the console
++   calls, deletes the ref, and republishes the item. A record that fails a
++   check is rejected and logged, as the relay logs rejections today.
++7. **The session hears it.** The session's deliverer claims the new line
++   and brings it in as a new turn, as it does for an answer from the
++   console.
++
++### 2.2 New relay records
++
++| Ref | Written by | Holds |
++| --- | --- | --- |
++| `refs/projector/items/<key-id>/<relay-id>/<ref>` | The daemon | One open inbox item, its digest, and its thread |
++| `refs/projector/subscriptions/<key-id>/<relay-id>` | The daemon | The session's pull requests and its role on each |
++| `refs/projector/answers/<key-id>/<relay-id>/<id>` | The phone | One signed action on one item, or a `discuss` message that starts a discussion |
++
++Each record keeps the relay's limits: a parentless commit whose tree holds
++one `sealed.json` of at most 32 KiB, sealed to the key's own public key.
++An answer record also carries, inside the seal:
++
++| Field | Value |
++| --- | --- |
++| `phone` | The ID of the phone key that signed it |
++| `item` | The item's reference and its digest when the phone read it |
++| `action` | The action and its argument, such as the letter or the message |
++| `at` | When the phone wrote it. The daemon rejects a record older than 7 days, as the relay does for messages |
++| `nonce` | A random ID. The daemon remembers the IDs it applied for 7 days and rejects a repeat |
++| `signature` | The phone's ECDSA P-256 signature, over SHA-256, of every field above in canonical JSON: keys sorted, no spaces, UTF-8 |
++
++### 2.3 The push service
++
++The push service is a small HTTPS service in `services/push/`, with two
++calls and no storage. It is TypeScript on Node, whose standard library has
++the HTTP/2 client that Apple's push service requires and the ES256 signing
++its tokens use, so it has no runtime dependencies at all. It deploys on its
++own, apart from the `projector.bot` site in `web/`, as a Vercel project
++whose root directory is `services/push/`. Its two calls are Vercel
++Functions on the Node runtime. The app uses this hosted instance by
++default.
++
++| Call | Sent by | Body | What the service does |
++| --- | --- | --- | --- |
++| `POST /v1/register` | The app | Apple's device token | Encrypts the token with the service's own secret key and returns the result as the push ID |
++| `POST /v1/push` | The daemon | The push ID and the sealed notification, at most 2 KiB | Decrypts the push ID to the device token and forwards the sealed text to it through Apple's push service, and answers `202`. It answers `404` for a push ID it cannot decrypt or that Apple reports as unregistered, and `429` past 60 notifications an hour for one push ID |
++
++A push ID is the device token itself, encrypted and authenticated so that
++only the service can read it and no one can forge one. So the service keeps
++no table and needs no database, and losing its host loses nothing but its
++secret key and Apple's push key, both from its environment. It stores no
++notification and logs no body. It counts each push ID's notifications in
++memory for the rate limit. Vercel runs and retires function instances as
++traffic comes and goes, so that count is a best-effort cap for each
++instance, not a shared one. Vercel's Runtime Cache can make it shared
++later, still without a database. A push ID reaches the
++daemon only inside `project agent phone add`, so knowing one is the only
++credential `POST /v1/push` asks for, and the rate limit caps what a leaked
++ID can do. `phone.push_url` in `~/.projector.toml` names the service, so
++anyone can run their own.
++
++### 2.4 Changes by repository
++
++| Where | Change |
++| --- | --- |
++| `src/projector/relay.py` | Publishes item and subscription records, and fetches, checks, and applies answer records |
++| `src/projector/phone.py` | New. Registered phones, each with its signing key, push key, and push ID, `project agent phone add`, `list`, and `remove`, and signature checks |
++| `src/projector/push.py` | New. Seals a notification to a phone's push key and posts it with `urllib.request`, off the daemon's delivery loop, with a 10-second timeout |
++| `src/projector/crypto.py` | ECDSA P-256 verification, in pure Python like the rest of the module, checked against Wycheproof's published test vectors |
++| `src/projector/console.py` | Moves the console's "record an action for a session" calls into a function the relay import shares |
++| `src/projector/permissions.py` | Asks before `project agent phone add` and `remove` in Claude Code, and leaves both to Codex's approval |
++| `tests/fixtures/relay/` | New. Sealed and signed records with their plaintexts, which the Python tests and the app's tests both check |
++| `docs/cli.md` | Describes the phone records, the commands, and what a leaked key exposes |
++| `ios/` | New. The SwiftUI app: GitHub sign-in, key join, the phone's keys, push registration, the notification service extension, ref reading and writing through GitHub's API, the seal, the row model, the home list, the panels, and background refresh. Its tests read `tests/fixtures/rows/` and `tests/fixtures/relay/` in place |
++| `services/push/` | New. The two calls as Vercel Functions on the Node runtime, Apple's push key, key ID, team ID, and the app's bundle ID, and the service's secret key, all from production-only environment variables, its tests, and a README that says how to deploy your own instance |
++| `.github/workflows/` | A workflow for `ios/` on a macOS runner and one for `services/push/`, each run only when its directory or `tests/fixtures/` changes. The `check` job keeps its current scope |
++| `tests/test_packaging.py` | Pins that neither the wheel nor either plugin ships `ios/` or `services/` |
++
++## 3. Why this design
++
++- **The phone's own key carries your authority.** The relay key is on
++  every machine, and an agent can read it there, so a record sealed with it
++  says nothing about who wrote it. A key that exists only on the phone, and
++  that you register in a terminal, keeps the rule that agents cannot answer
++  for you.
++- **The signing key lives in the Secure Enclave.** A key there can never be
++  copied off the phone, not by malware on the phone and not into a backup,
++  so a signed answer means this phone, unlocked, with your face or
++  passcode. The Secure Enclave supports only P-256, and Python's standard
++  library has no elliptic-curve signatures, so `crypto.py` gains a
++  pure-Python ECDSA P-256 verifier, as it already implements X25519 and
++  ChaCha20 itself. Verifying uses only public values, so the timing leaks
++  that make hand-written signing code dangerous do not apply, and
++  Wycheproof's test vectors pin its edge cases. Ed25519 in the Keychain
++  would be simpler to verify, but a Keychain key can be backed up and
++  restored onto another device.
++- **The push key lives in the Keychain.** The Secure Enclave cannot hold an
++  X25519 key, and the notification service extension must open a
++  notification while the phone is locked. The push key only reveals
++  notification text, never your authority, so a Keychain key readable after
++  the first unlock is enough.
++- **A lost phone is removed, not recovered.** The signing key cannot leave
++  the phone, so a new phone gets new keys. You run
++  `project agent phone remove` for the old phone and `project agent phone
++  add` for the new one on each machine.
++- **GitHub carries the records, and the push service only wakes the
++  phone.** The relay already moves records through GitHub, so a server that
++  stored items or answers would add hosting, accounts, and a second place
++  your data lives. Instant notifications need Apple's push service, which
++  only a server holding Apple's credentials can call. The push service is
++  the smallest server that can: it learns that some phone got a
++  notification, when, and from which address, but never what it says,
++  because the daemon seals the text to the phone. Without it, the app could
++  only refresh when iOS grants background time, which can be many minutes
++  apart, and a waiting agent stalls that long.
++- **The daemon imports answers, not the deliverers.** Applying an action
++  with the console's inbox functions means the phone, the console, and the
++  terminal all record the same thing, and the panel and the Codex adapter
++  deliver it unchanged.
++- **One record per item.** A session's items together can pass the relay's
++  32 KiB limit, and one record per item lets the daemon delete a resolved
++  item without rewriting the rest.
++- **An answer names the item's digest.** An agent can revise an item while
++  your answer is on its way. The digest makes the daemon refuse an answer
++  to text you never saw, as `unclear` already checks the text you read.
++- **The app and the push service are open source.** The app holds your
++  GitHub token, your relay key, and the key that answers for you, and the
++  service sees when you are notified. Users can trust them only if they can
++  read them, build the app, and run the service themselves.
++- **One repository.** The daemon, the app, and the service share one
++  protocol and one set of test vectors. Separate repositories would make
++  each protocol change a pair of pull requests that have to land in step,
++  and would copy the fixtures between them. In one repository, a change and
++  every side of it get one review, and the app's tests read the fixtures in
++  place. Swift needs macOS runners, so the app and the service get their own
++  workflows, each run only when its directory or the fixtures change, and
++  the packaging tests keep both out of everything Projector ships.
++- **The push service stores nothing.** A push ID that is the encrypted
++  device token lets the service run with no database: it can be redeployed,
++  moved, or lost without losing anyone's registration, and it holds nothing
++  worth stealing beyond its two keys.
++- **The push service deploys apart from the site.** Serving it as routes
++  of `projector.bot` would save one deploy, but the code holding Apple's
++  push key and the service's secret would then run inside the Next.js
++  process, beside every package the site depends on. No one could audit
++  that, and a compromised dependency anywhere in the site could read both
++  keys. On its own, the service is a few hundred lines with no
++  dependencies, which anyone can read whole, and it is redeployed only when
++  it changes, not with each change to the site's pages or dependencies.
++  Because it stores nothing, the separate deploy costs one small host or
++  function and two environment variables.
++- **The row model is shared again.** The app computes rows from GitHub's
++  answers, as the console computes them from the daemon's cache. The
++  fixtures in `tests/fixtures/rows/` run through the app's model too, so a
++  third copy cannot drift.
++
++## 4. Acceptance criteria
++
++| Do | Expect | Catches |
++| --- | --- | --- |
++| Post a question in a relayed session | Within one relay pass, an item record appears under the session's relay ID, sealed, and it opens to the item | Items that never reach the phone |
++| Resolve the item from the console | The item record is deleted on the next pass | Answered items that stay on the phone |
++| Write a signed answer record for item 3 | Item 3 is answered as the record says, the ref is deleted, and the session's deliverer sends `ANSWER 3.a …` | An answer that never reaches the inbox |
++| Write the same record a second time | The daemon rejects it as a repeat, and item 3 is unchanged | A replayed answer |
++| Write an answer record sealed correctly but signed with an unregistered key | Rejected and logged, and item 3 stays open | An agent that answers for you with the relay key |
++| Revise item 3, then apply an answer that names its old digest | Rejected as stale, and item 3 stays open | An answer to text you never saw |
++| Run `project agent phone add` without a terminal | Exit 69, nothing registered | An agent that registers its own key |
++| Seal and sign each fixture in `tests/fixtures/relay/` in Python and in the app | Both produce records the other opens and verifies | A seal or signature that only one side can read |
++| Run Wycheproof's ECDSA P-256 SHA-256 vectors through `crypto.py`'s verifier | Every vector marked valid verifies, and every one marked invalid is rejected | A verifier that accepts a malformed or forged signature |
++| Verify a signature the Secure Enclave made on a test device, saved in `tests/fixtures/relay/` | It verifies, and flipping any byte of the record or the signature makes it fail | A signature encoding, such as DER against raw, that Python and the phone disagree on |
++| Run each fixture in `tests/fixtures/rows/` through the app's row model | The fixture's expected rows | A third row model that drifts |
++| Post a question with a phone registered, against a stand-in push service that records every request | One `POST /v1/push` with the phone's push ID, whose body holds neither the subject nor the session's label in plain text, and the phone's push key opens it to both | A notification that leaks the item to the service, or one the phone cannot open |
++| Make the push service answer `500`, or not answer for 30 seconds | The relay pass and every session's delivery go on, and the daemon logs the failure once | A push failure that stalls the daemon |
++| Send 61 notifications to one push ID in an hour | The service answers `429` to the 61st | A leaked push ID that can flood the phone |
++
++## 5. Cost
++
++- **GitHub quota on the phone.** A refresh lists the key's refs in each
++  repository, reads each new record, and asks GraphQL for each subscribed
++  pull request. With ten sessions and thirty pull requests, measure one
++  refresh at under 50 REST calls and 5 GraphQL points, well inside the
++  5,000 requests an hour a token gets.
++- **The daemon's pushes.** Items change rarely, so publishing adds a few
++  refs to the one push each relay pass already makes.
++- **The push service.** It handles one request per new item or reply, a
++  few hundred a day for a busy user, and stores nothing. Each call is one
++  short function invocation on Vercel, so many users fit in a small plan.
++  Apple charges nothing for push, but sending it needs an Apple developer
++  account's push key.
++- **What a leaked relay key exposes.** A deleted ref's commit stays
++  readable by its SHA on GitHub. Inbox items hold more detail than presence
++  records, so a leaked key exposes every item the relay published. The
++  documentation says so, as it does for messages today.
++
++## 6. Open questions
++
++- **How the phone finds repositories.** The relay works per repository,
++  and the phone cannot list every repository that holds your refs without
++  probing each one. Options: the grant line carries the repositories the
++  granting machine relays, or the daemon publishes a roster to a home
++  repository you name. Owner: whoever takes this project.
++- **The push service's domain.** The hosted instance runs on Vercel. It
++  can use the project's default domain or a subdomain of `projector.bot`.
++  Owner: the user, when the service is first deployed.
++- **App Store distribution.** Publishing needs an Apple developer account
++  and App Review. TestFlight can come first. Owner: the user.
++- **Messages to agents.** The phone could also send relay messages to an
++  agent, as `project agent send` does. They would carry none of your
++  authority, so the first version sends only signed answers and
++  discussion. Deferred.
++
++## 7. Background
++
++The relay's design is in `src/projector/relay.py`'s module docstring and in
++`docs/cli.md` under "Message agents on other machines". Records are sealed
++with ChaCha20 and HMAC-SHA256 under a key agreed with X25519, in
++`src/projector/crypto.py`, which implements them in pure Python because the
++CLI has no runtime dependencies. Apple's CryptoKit provides X25519 and
++ChaCha20-Poly1305, but not the relay's ChaCha20-and-HMAC construction, so
++the app implements that construction itself and checks it against the
++shared fixtures.
