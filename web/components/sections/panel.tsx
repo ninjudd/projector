@@ -12,12 +12,8 @@ const kinds: { title: string; tool: string; tone: string; body: ReactNode }[] =
       tone: "text-[#5560c9] dark:text-[#b1b9f9]",
       body: (
         <>
-          A decision only you can make, with the answer the agent recommends
-          first and up to four others. Press a digit, and the panel puts the
-          question and that answer in your prompt to send or edit. Write your
-          own reply instead, and the agent answers it, then withdraws or revises
-          the question. Meanwhile it keeps building what your answer does not
-          block.
+          A decision only you can make, with the agent&rsquo;s recommendation
+          first. Press a digit to answer, or reply in your own words.
         </>
       ),
     },
@@ -27,13 +23,9 @@ const kinds: { title: string; tool: string; tone: string; body: ReactNode }[] =
       tone: "text-[#b4592a] dark:text-[rgb(255,190,140)]",
       body: (
         <>
-          Work only you can do: sign in to a service, run a command the agent
-          may not, or try a build on your phone. A request can carry a start
-          action, such as installing that build, which the agent runs only when
-          you press <strong className="font-medium text-fg">Start</strong>. The
-          option you pick, such as{" "}
-          <strong className="font-medium text-fg">Looks good</strong>, marks it
-          done, and your notes go with it.
+          Work only you can do, such as signing in or trying a build on your
+          phone. Installing that build waits until you press{" "}
+          <strong className="font-medium text-fg">Start</strong>.
         </>
       ),
     },
@@ -43,9 +35,8 @@ const kinds: { title: string; tool: string; tone: string; body: ReactNode }[] =
       tone: "text-muted",
       body: (
         <>
-          News you should not miss among everything else the agent says, such as
-          a conflict it merged away or a failure that needs you. Read it, then
-          dismiss it. Nothing goes back to the agent.
+          News you should not miss, such as a conflict an agent merged away.
+          Read it, then dismiss it.
         </>
       ),
     },
