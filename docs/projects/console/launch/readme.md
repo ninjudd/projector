@@ -51,11 +51,13 @@ chat.
 
    | Host | Command, run in the checkout |
    | --- | --- |
-   | Claude Code | `claude --bg --session-id <uuid> [--name <name>] <prompt>`, with a UUID the console generates |
-   | Codex | `codex exec -C <checkout> --json <prompt>`, in a new process group, with standard input closed and standard output written to the launch's log |
+   | Claude Code | `claude --bg --session-id <uuid> [--name <name>] -- <prompt>`, with a UUID the console generates |
+   | Codex | `codex exec -C <checkout> --json -- <prompt>`, in a new process group, with standard input closed and standard output written to the launch's log |
 
-   Codex reads more input from standard input when it is open, so the
-   console closes it. For Codex, the console reads the session's ID from
+   The `--` ends each CLI's options, so a prompt that starts with `-`, such
+   as `-v hi` or `--help`, reaches the host as the prompt rather than as an
+   option. Codex reads more input from standard input when it is open, so
+   the console closes it. For Codex, the console reads the session's ID from
    the log's first event, `{"type":"thread.started","thread_id":"…"}`.
 3. The console writes the launch record (§ 2.3), and the home list shows a
    `starting` row with the name, or the short ID, and the checkout.
@@ -135,8 +137,14 @@ deletes a `live` record once the session is no longer live, and keeps a
 - **Claude Code gets the ID up front.** `--session-id` lets the console
   know the session's ID before the session starts, so the `starting` row
   and the live session are the same row from the start.
-- **No shell.** A prompt can hold quotes, `$`, and newlines. An argument
-  list passes it through exactly.
+- **No shell, and `--` before the prompt.** A prompt can hold quotes, `$`,
+  and newlines, and it can start with `-`. An argument list passes it
+  through exactly, and `--` keeps either CLI from reading it as an option:
+  without it, `codex exec` prints its help for the prompt `--help` and
+  exits 0, and `claude` reads `-v` as `--version`. Both CLIs honor `--`, as
+  § 7.3 records. `codex exec -` could read the prompt from standard input
+  instead, but `claude --bg` documents no such form, and one rule for both
+  hosts keeps the launch code and its tests simple.
 - **The chat opens beside the console when it can.** In tmux, a split
   keeps the home list in view. Without tmux, the console has no portable
   way to open a new window, so it hands its own terminal to the chat until
@@ -146,8 +154,9 @@ deletes a `live` record once the session is no longer live, and keeps a
 
 | Do | Expect | Catches |
 | --- | --- | --- |
-| Launch a Claude Code session named `parser` with the prompt `say "hi" $HOME` | The fake `claude` gets `--bg --session-id <uuid> --name parser 'say "hi" $HOME'` as separate arguments, in the checkout | A prompt split or expanded by a shell, or a launch in the wrong directory |
-| Launch a Codex session | The fake `codex` gets `exec -C <checkout> --json <prompt>`, with standard input closed, in its own process group. The record's `session` is the `thread_id` from the log's first event | A Codex run that waits on the console's input, dies with the console, or records no ID |
+| Launch a Claude Code session named `parser` with the prompt `say "hi" $HOME` | The fake `claude` gets `--bg --session-id <uuid> --name parser -- 'say "hi" $HOME'` as separate arguments, in the checkout | A prompt split or expanded by a shell, or a launch in the wrong directory |
+| Launch a Codex session | The fake `codex` gets `exec -C <checkout> --json -- <prompt>`, with standard input closed, in its own process group. The record's `session` is the `thread_id` from the log's first event | A Codex run that waits on the console's input, dies with the console, or records no ID |
+| Launch a session of each host with the prompt `-v hi` | The fake `claude` and the fake `codex` each get `--` and then `-v hi` as their last two arguments | A prompt that the host reads as an option, which prints a version or help and starts no session |
 | Make the session register within 60 seconds | The `starting` row becomes the session's normal row, labelled with the launch's name | A launch that never joins the home list |
 | Make the fake command exit 1 with `error: not logged in` | The row shows `failed` and `error: not logged in` | A failed launch that looks as if it were still starting |
 | Let 60 seconds pass with no registration and the process still running | The row shows `failed` | A launch that waits forever |
@@ -180,6 +189,13 @@ host's command.
   attaches to the thread the daemon resumed rather than starting a second
   copy, or use `codex resume --remote` against the daemon. Owner: whoever
   takes this project.
+- **A Claude Code prompt that names a subcommand.** After `--`, Claude
+  Code's argument parser still runs a subcommand when the first operand is
+  exactly that subcommand's name, so the one-word prompt `doctor` or
+  `help` would run that subcommand and never start a session (§ 7.3).
+  Codex has no such case. Decide whether the console warns before it
+  launches such a prompt or leaves the launch to show `failed`. Owner:
+  whoever takes this project.
 - **Windows.** Deferred with the console itself, which exits there.
 
 ## 7. Background
@@ -216,3 +232,28 @@ the conversation's ID, and `--name` sets its display name.
 without a terminal. Projector's plugin runs in a background session: a
 background session's `project watch add` prints `events: mod`, so the
 panel's hooks deliver its events.
+
+### 7.3 Ending options before the prompt
+
+On 2026-11-16, with `codex-cli 0.169.0` and Claude Code 2.1.326, these
+checks parsed arguments without starting a session, and the last reads the
+parser itself:
+
+1. `codex exec -C <dir> --json --help` printed `codex exec`'s help, and
+   `codex exec -C <dir> --json -v hi` failed with
+   `error: unexpected argument '-v' found` and the tip
+   `to pass '-v' as a value, use '-- -v'`.
+2. `codex exec -C <dir> --json -- --help extra` failed with
+   `unexpected argument 'extra' found`, so `--help` filled the prompt. The
+   same held for `-- -v hi extra`, which rejected `hi`, and for
+   `-- help extra`, so a prompt after `--` never selects the `help`
+   subcommand.
+3. `claude agents --json --help` printed the subcommand's help, while
+   `claude agents --json -- --help` failed with
+   `too many arguments for 'agents'`, so Claude Code's parser took
+   `--help` as an operand.
+4. The JavaScript bundled in the `claude` executable shows that its `--bg`
+   handling removes `--bg` only before `--`, keeps `--` and the prompt for
+   the background session, and stops looking for `--name` at `--`. Its
+   parser then dispatches a subcommand whenever the first operand is that
+   subcommand's name, which § 6 leaves open.
