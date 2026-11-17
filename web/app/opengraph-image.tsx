@@ -1,10 +1,24 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { ImageResponse } from "next/og";
 
 export const alt = "Projector — agents plan, build, and review. You make the calls.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-export default function Image() {
+// The site sets its headline in Instrument Serif and everything else in Geist
+// (see app/layout.tsx). ImageResponse cannot use next/font, so it reads the
+// same faces from TTF files committed under assets/fonts.
+const font = (file: string) => readFile(join(process.cwd(), "assets/fonts", file));
+
+export default async function Image() {
+  const [serif, serifItalic, sans, sansSemiBold] = await Promise.all([
+    font("InstrumentSerif-Regular.ttf"),
+    font("InstrumentSerif-Italic.ttf"),
+    font("Geist-Regular.ttf"),
+    font("Geist-SemiBold.ttf"),
+  ]);
+
   return new ImageResponse(
     (
       <div
@@ -17,11 +31,11 @@ export default function Image() {
           padding: 72,
           background: "#100f0c",
           color: "#ece8dd",
-          fontFamily: "sans-serif",
+          fontFamily: "Geist",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-          <svg width="56" height="56" viewBox="0 0 32 32">
+        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+          <svg width="52" height="52" viewBox="0 0 32 32">
             <path d="M7 16 L29 5.5 V26.5 Z" fill="#f27c2e" />
             <circle cx="7" cy="16" r="4.5" fill="#ece8dd" />
           </svg>
@@ -29,19 +43,23 @@ export default function Image() {
             Projector
           </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
           <div
             style={{
-              fontSize: 88,
-              lineHeight: 1,
-              letterSpacing: -3,
-              fontWeight: 600,
-              maxWidth: 1000,
+              display: "flex",
+              flexDirection: "column",
+              fontFamily: "Instrument Serif",
+              fontSize: 100,
+              lineHeight: 0.98,
+              letterSpacing: -2,
             }}
           >
-            Agents plan, build, and review. You make the calls.
+            <div>Agents plan, build, and review.</div>
+            <div style={{ fontStyle: "italic", color: "#f27c2e" }}>
+              You make the calls.
+            </div>
           </div>
-          <div style={{ fontSize: 30, color: "#a5a094", maxWidth: 960 }}>
+          <div style={{ fontSize: 30, color: "#a5a094", maxWidth: 980 }}>
             Plans live in the repository. Agents build them, review each
             other&rsquo;s pull requests, and fix what the reviews find.
           </div>
@@ -59,6 +77,14 @@ export default function Image() {
         </div>
       </div>
     ),
-    { ...size },
+    {
+      ...size,
+      fonts: [
+        { name: "Instrument Serif", data: serif, weight: 400, style: "normal" },
+        { name: "Instrument Serif", data: serifItalic, weight: 400, style: "italic" },
+        { name: "Geist", data: sans, weight: 400, style: "normal" },
+        { name: "Geist", data: sansSemiBold, weight: 600, style: "normal" },
+      ],
+    },
   );
 }
