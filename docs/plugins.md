@@ -534,7 +534,9 @@ events. Taking events runs a whole poll, so `panel.background` and an
 earlier watcher's query run then too. The daemon writes its cache before its
 events, so the panel reloads its lines then as well. It skips the threads
 call when the pull request has no unresolved thread. The skills never
-depend on the panel, and Codex has no equivalent.
+depend on the panel. In Codex or a terminal, `project console` shows the
+same pull requests and items for every live session, as
+[Use the console](cli.md#use-the-console) describes.
 
 A session that started a `watch-threads.sh` or `watch-prs.sh` watcher under
 an earlier release keeps it until the session ends, and the panel lists the

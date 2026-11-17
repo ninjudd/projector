@@ -183,13 +183,15 @@ export function Panel() {
           </p>
           <p>
             The panel is part of the Claude Code plugin. In Codex or a terminal,{" "}
-            <Code>project inbox</Code> reaches the same inbox, and Codex gets
-            the same pull request events as prompts.
+            <Code>project console</Code> shows every live session&apos;s pull
+            requests and items, and answers and discussions reach each session
+            as a new turn, as they do from the panel.
           </p>
           <div className="flex flex-wrap gap-x-6 gap-y-2 pt-1">
             <DocLink href={DOCS.panel}>The panel</DocLink>
             <DocLink href={DOCS.inboxPanel}>The inbox</DocLink>
             <DocLink href={DOCS.inbox}>project inbox</DocLink>
+            <DocLink href={DOCS.console}>project console</DocLink>
           </div>
         </div>
       </div>

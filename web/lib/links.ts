@@ -9,6 +9,7 @@ export const DOCS = {
   site: `${GITHUB}/blob/main/docs/site.md`,
   panel: `${GITHUB}/blob/main/docs/plugins.md#see-your-sessions-pull-requests-in-projectors-panel`,
   inbox: `${GITHUB}/blob/main/docs/cli.md#use-the-inbox`,
+  console: `${GITHUB}/blob/main/docs/cli.md#use-the-console`,
   inboxPanel: `${GITHUB}/blob/main/docs/plugins.md#read-your-inbox-in-projectors-panel`,
   watch: `${GITHUB}/blob/main/docs/cli.md#watch-pull-requests`,
   worktree: `${GITHUB}/blob/main/docs/cli.md#find-a-branchs-worktree`,

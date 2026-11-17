@@ -355,6 +355,40 @@ Without a terminal, `project console` exits with code 69 and the message
 Without `curses`, it also exits with code 69 and points you to
 `project inbox list` and `project watch list`.
 
+Building the console settled these details:
+
+- **A key records at once.** The panel fills Claude Code's prompt, and
+  sending it records the choice. The console has no prompt, so an option,
+  Start, a request's outcome, I don't understand, Dismiss, and a snooze
+  length each record when you press them. A pull request's Dismiss still
+  asks first, as the panel's does. A request's option records `done` with
+  the option's words as its text, and a request with no options offers
+  `Done`, which records no text.
+- **`t` types an answer.** A question can carry five choices, which take
+  `1` to `5`, and `6` is I don't understand, so the typed answer takes `t`
+  rather than the next digit. A refused send keeps the text field and what
+  you typed, and shows the refusal at the bottom of the screen.
+- **A home entry takes up to three lines.** The first holds the label, the
+  host, the repository and branch, and the counts. The summary and the
+  newest open item's subject follow, each on its own line, so a narrow
+  terminal cuts neither. The counts include discussions, as the panel's
+  header does. A session that `project watch stream` delivers shows the host
+  its `agent.json` names, or `other`.
+- **The cursor closes a drawer.** Up and down move to the next row and close
+  any open drawer. A drawer opens under its row, and the screen scrolls to
+  keep the row and its drawer in view. Starting a discussion opens the new
+  item's drawer, so you see its thread.
+- **One background thread refreshes.** It wakes every quarter second, takes
+  the lock only to decide what is due and to show what it read, and reads
+  the inbox, the rows, and the threads without it. Opening a pull request's
+  drawer wakes it at once. After a key records a choice, the console reads
+  the viewed session's directory again on the spot, so the change shows
+  before the next refresh.
+- **Waking Codex reuses the CLI's helper.** After it records for a Codex
+  session, the console runs `wake_codex_delivery`, the helper the
+  recording subcommands of `project inbox` run, which starts the daemon
+  when the item owes a line.
+
 ### 2.8 Changes by file
 
 | File | Change |

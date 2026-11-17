@@ -111,6 +111,10 @@ what it did to each:
     "Bash(project inbox decline *)",
     "Bash(project inbox start *)",
     "Bash(project inbox unclear *)",
+    "Bash(project inbox discuss *)",
+    "Bash(project inbox read *)",
+    "Bash(project console)",
+    "Bash(project console *)",
     "Bash(project ios *allow-untrusted*)"
   ]
   ```
@@ -133,7 +137,9 @@ what it did to each:
   that you don't understand an item, or your choice to dismiss or put it
   off, so an agent running one could answer its own question, mark its own
   request done, consent to its own start action, or mark its own item
-  unclear.
+  unclear. `discuss` and `read` write in an item's thread as you and record
+  that you read the agent's replies, and `project console` records all of
+  these from a terminal, so they ask too.
   Projector's panel runs them itself, not through an agent's shell, so
   answering from the panel never asks. Claude Code checks ask rules before
   allow rules, so an ask rule prompts for a command that `Bash(project *)`
@@ -275,8 +281,9 @@ what it did to each:
   drive, `project review gate`, `project site build` or `serve`,
   `project ios build` or `logs`, which run the repository's build scripts or
   `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,
-  or `unclear`, which record your choice, or a command line that starts with an
-  option, so Codex's usual approval
+  `unclear`, `discuss`, or `read`, which record your choice, words, or reading,
+  `project console`, whose terminal an agent could type answers into, or a
+  command line that starts with an option, so Codex's usual approval
   decides them, in its sandbox. A command added to Projector later reaches
   Codex once Projector names it and you run `init` again. To see what the
   rules allow, run
@@ -2866,6 +2873,106 @@ one, and one with a line break. It refuses an item already answered,
 dismissed, withdrawn, or delivered too. `discuss` refuses a number together
 with `--pr` and records nothing, and it needs `--session` to write about a
 pull request or the session.
+
+## Use the console
+
+`project console` shows every live session in one terminal, and opens any one
+of them as a panel, where you answer and discuss its items and pull requests.
+It works the same for Claude Code and Codex sessions, so it is how you answer
+a Codex session, which has no panel of its own. Run it in a split or a window
+of its own:
+
+```console
+$ tmux split-window -h project console
+```
+
+The console opens on the home list, one entry per live session. A session is
+live while its deliverer renews it: Projector's panel in Claude Code, shown
+as `claude`, or the watch daemon's Codex adapter, shown as `codex`. Each
+entry shows the session's name, or its short ID when it has none, its host,
+its repository and branch, and its summary, as `project agent list` shows
+them. Then come the counts of its pull requests, review requests, and open
+items, and the subject of its newest open item. The sessions that need you
+come first:
+
+1. Sessions with an agent reply you have not read, whose entry says
+   `replied` beside the item that holds it.
+2. Then sessions with open questions and requests, the most first.
+3. Then the rest.
+
+Ties go to the session whose newest item is newest, then to the name.
+
+Press Enter on a session to open its panel. The panel lists the pull
+requests the session subscribes to, as Projector's panel does, and then its
+inbox items, newest first. Each item line shows its subject, its state words
+(`sending`, `replied`, `unclear`, and a request's `starting`, `ready`, or
+`blocked`), its pull request, and its age. Press Enter on a row to open its
+drawer:
+
+- **An item's drawer** shows the item's detail and its thread, then its
+  controls. A question offers `1` and on for its options, the first marked
+  `(recommended)`, and `t` to type an answer of your own. A request offers
+  `1: Start`, or `1: Retry` once its agent reports it blocked, when it has a
+  start action, and then its outcomes, or `Done`. Every open item offers
+  `6: I don't understand`, `7: Discuss`, `8: Dismiss`, and `9: Snooze`,
+  which asks for 15 minutes, 1 hour, 4 hours, or 1 day. A dismissed item
+  offers `8: Restore`. Opening the drawer marks the agent's replies read,
+  as `project inbox read` does.
+- **A pull request's drawer** shows the session's role, the branch, the size,
+  the checks, and the labels, then the unresolved review threads by file.
+  `7` starts a discussion about the pull request, `8` asks before it stops
+  this session watching the pull request, `o` opens the pull request on
+  GitHub, and `p` opens its Projector summary when its description links
+  one.
+
+With no drawer open, `7` starts a discussion about the session itself, so you
+can talk to a session that has no item and no pull request. Discuss and `t`
+open a one-line text field at the bottom of the screen.
+
+| Key | Effect |
+| --- | --- |
+| Up and down, or `k` and `j` | Move between rows |
+| Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
+| Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
+| Left | Returns to the home list from a panel, closing any open drawer |
+| `7` in a panel with no drawer open | Starts a discussion about the session |
+| Enter in a text field | Sends the message. Esc cancels it, and Left and Right move the cursor |
+| `q` | Quits |
+
+The console records each choice with the same functions `project inbox`
+runs, for the session on screen: an option is `project inbox answer`, `7` is
+`project inbox discuss`, and so on. So two sessions that each have an item 3
+never mix up, and a refusal, such as an answer to an item its agent just
+withdrew, shows at the bottom of the screen. The console never sends a line
+to a session itself. The session's deliverer brings each line in: Projector's
+panel in Claude Code within 5 seconds, or the Codex adapter, which the
+console wakes by starting the watch daemon when it is not running. An item
+reads `sending` until its line is delivered, and an answered item leaves the
+list 30 seconds later. A discussed item stays open, and the agent's reply
+appears in its thread.
+
+Dismissing a pull request appends the `!` lines `project watch drop` appends,
+for each role the viewed session holds on it, so another session that watches
+the same pull request keeps it. The console lists only the pull requests a
+session subscribes to. Projector's panel also lists those that an older
+`watch-prs.sh` or `watch-threads.sh` watcher tracks, which the console cannot
+see.
+
+The console reads the inbox store each second, and reloads a session's items
+only when its directory changed. It reads the pull request rows from the
+watch daemon's cache every 5 seconds, so they cost no GitHub query. An open
+pull request drawer asks GitHub for its threads when it opens and every 30
+seconds while it stays open, at about one point of your hourly GraphQL quota
+each, and asks nothing when the cache counts no unresolved thread. The console
+draws in your terminal's own colors, and draws none when `NO_COLOR` is set.
+
+Without a terminal on standard input and standard output, `project console`
+exits with code 69 and says it needs one. On a Python without the `curses`
+module, as on Windows, it exits with code 69 and points you to
+`project inbox list` and `project watch list`. The permission rules
+`project init` adds ask you before an agent runs `project console` in Claude
+Code, and leave it to Codex's usual approval, because the console records
+your answers.
 
 ## Watch pull requests
 
