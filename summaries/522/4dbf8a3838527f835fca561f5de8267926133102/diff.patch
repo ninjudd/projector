@@ -1,0 +1,807 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index feb55ebd..17e65ab6 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3406,7 +3406,7 @@ files, and the daemon's cleanup of a session lapsed for 7 days removes them:
+ | `agents/` | The lock that keeps two registrations from taking one name |
+ | `key.json` | Where `agent.key`'s private key is stored, and why when it is inline. It holds no key |
+ | `outbox/<owner>/<repo>.json` | The relay's ref changes waiting for the daemon's next push, and the checkouts that queued them |
+-| `relay/<owner>/<repo>.json` | What the relay last found in the repository: its visibility, the rejected count, the key's refs, and your other machines' agents |
++| `relay/<owner>/<repo>.json` | What the relay last found in the repository: its visibility, the rejected count and the last 20 rejections, the key's refs, and your other machines' agents |
+ 
+ ## Message agents on other machines
+ 
+@@ -3481,6 +3481,16 @@ nothing you copy between the two terminals can leak the key:
+    key 3f2a9c1d7e4b6a05 stored in the macOS Keychain; ~/.projector.toml names it as agent.key = "keychain:3f2a9c1d7e4b6a05"
+    ```
+ 
++A session that registered before the machine had a key is published as
++soon as the key arrives. Once `key init` or `key join` stores the key, it
++encrypts and queues the presence of each live session registered on this
++machine in a checkout with a GitHub `origin`, marks each `pending`, prints
++how many it queued, and starts the watch daemon if none runs, so the daemon
++pushes them within seconds. It skips a session that unregistered and one
++whose checkout has no `origin`. With `--json`, `key init` lists the
++sessions it queued as `queued`. The daemon also publishes them on its next
++job for each repository when `agent.key` changes some other way.
++
+ `join` waits at most 30 minutes for the line, and Ctrl-C stops it at any
+ point. When it stops, times out, or refuses a line, it stores nothing, and
+ the temporary key goes with the process. It refuses a line encrypted to
+@@ -3523,10 +3533,11 @@ holds up another session's events. On each pass, a job:
+ 1. Fetches the key's refs, `refs/projector/agents/<key-id>/*` and
+    `refs/projector/inbox/<key-id>/*`, with one `git fetch --prune` in a
+    checkout of the repository.
+-2. Opens at most 64 new records. It ignores a ref whose name does not match
+-   its namespace, and rejects a commit whose tree is not exactly one
+-   `sealed.json` of at most 32 KiB before it reads the blob, and a record
+-   whose JSON nests more than 8 deep before it parses it. It checks the
++2. Opens at most 64 new records. It counts a ref whose name does not match
++   its namespace as rejected but leaves it unopened on `origin`, and rejects
++   a commit whose tree is not exactly one `sealed.json` of at most 32 KiB
++   before it reads the blob, and a record whose JSON nests more than 8 deep
++   before it parses it. It checks the
+    tag before it decrypts anything, and rejects a record sealed by any other
+    key, a presence whose relay ID is not its ref's, a message whose
+    recipient is not its ref's or that is 7 days old, and a record whose
+@@ -3563,15 +3574,47 @@ internals`.
+ 
+ ```text
+ relay: on, key 3f2a9c1d7e4b6a05 (keychain)
+-relay acme/app: ok, 0 queued, 4 rejected
++relay acme/app: ok, 0 queued, 4 rejected (latest: tag mismatch, 04:37)
+ ```
+ 
+ The first line says `relay: off` and why while the key cannot be read, such
+ as from a locked keychain. The daemon reads the key once when it starts, on
+ a worker thread, again when `agent.key` changes, and after a failed read on
+ each full pass. Each repository's line gives the last job's state, the
+-changes still queued, the records rejected so far, and any error, such as a
+-push that timed out or `no recorded checkout of the repository remains`.
++changes still queued, the records rejected so far with the reason and UTC
++time of the latest, and any error, such as a push that timed out or
++`no recorded checkout of the repository remains`.
++
++A rejection can mean a forged or altered record, a record from a machine
++with another key, or a bug in the relay's own checks, so the relay records
++why. `project watch status --json` lists the last 20 rejections in each
++repository under `relay.repositories.<owner/repo>.rejections`, oldest first,
++beside the `rejected` count. Each entry holds only the `ref`, the `reason`,
++and the time `at`, and never the record, its ciphertext, its plaintext, or
++key material. The daemon also writes one line to `daemon.log` for each
++rejection:
++
++```text
++2026-11-16T04:37:02+00:00 relay acme/app: rejected refs/projector/inbox/3f2a9c1d7e4b6a05/9bf078d49df0e5ff/m-2b…: tag-mismatch, at 2026-11-16T04:37:02+00:00
++```
++
++| `reason` | Status line | The relay rejected |
++| --- | --- | --- |
++| `ref-name` | ref name | A ref under the key's namespace whose name is not a presence or message ref. The relay counts it but leaves it on `origin`, since a later version of Projector could have written it |
++| `tree-shape` | tree shape | A commit whose tree is not exactly one `sealed.json` |
++| `too-large` | too large | A `sealed.json`, or the record inside it, larger than 32 KiB |
++| `unreadable` | unreadable blob | A `sealed.json` that Git could not read |
++| `too-deep` | JSON too deep | JSON nested more than 8 deep |
++| `not-json` | not JSON | A `sealed.json`, or the record inside it, that is not JSON |
++| `not-sealed` | not a sealed record | JSON that is not a sealed record of version 1 |
++| `tag-mismatch` | tag mismatch | A record whose tag does not match: altered, or sealed to another key |
++| `other-key` | sealed by another key | A record that opens with this key but was sealed by another |
++| `relay-id-mismatch` | relay ID mismatch | A presence whose relay ID is not its ref's |
++| `recipient-mismatch` | recipient mismatch | A message whose recipient is not its ref's |
++| `message-id-mismatch` | message ID mismatch | A message whose ID is not its ref's |
++| `field-shape` | field shape | A record with a missing field or a field that is not the shape `register` or `send` gives it |
++| `expired` | expired | A message 7 days old |
++| `collision` | ID collision | A message under the ID of a different message already delivered |
+ 
+ ## Change a loop's tracked file
+ 
+diff --git a/src/projector/agents.py b/src/projector/agents.py
+index 770fad4e..efe1cb4c 100644
+--- a/src/projector/agents.py
++++ b/src/projector/agents.py
+@@ -248,6 +248,24 @@ def write_registration(root: Path, session: str, login: str, place: dict, cwd: P
+     return new, off
+ 
+ 
++def publish_waiting(root: Path, key: relay.Key, now: float) -> list[str]:
++    """Queue the presence of each live session registered on this machine in a checkout with an `origin`, sealed
++    with `key`, which `key init` or `key join` has just stored, so a session that registered before the machine had
++    a key reaches the relay without waiting for the daemon's next poll. Answers the sessions it queued."""
++    queued = []
++    for session in watch.session_names(root):
++        folder = watch.session_folder(root, session)
++        with locked(folder):
++            found = record(root, session)
++            if found is None or not found.get("repo") or not found.get("cwd") or not live(root, session, now):
++                continue
++            found = {**found, "relay": "pending"}
++            write_json(folder / "agent.json", found)
++            relay.publish(root, session, found, key, now)
++        queued.append(session)
++    return queued
++
++
+ def register_subscriber(root: Path, session: str, cwd: Path, now: float, config: Config,
+                         environ: Optional[dict] = None) -> Optional[dict]:
+     """Register a session that has just subscribed to a pull request, with no name and a summary made from its
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 7242a456..75b5ad09 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1378,7 +1378,7 @@ def confirmed(prompt: str, deadline: float, outcome: str) -> bool:
+     return terminal_line(prompt, deadline, outcome).lower() in ("y", "yes")
+ 
+ 
+-def join_key(root: Path, arguments: argparse.Namespace) -> tuple[str, str, str]:
++def join_key(root: Path, arguments: argparse.Namespace) -> tuple[relay.Key, str, str]:
+     """Make a request for the relay key, read the line `key grant` prints for it, and store the key it carries.
+     The temporary private key lives only in this function."""
+     relay.check_join(inline=arguments.inline, replace=arguments.replace)
+@@ -1439,18 +1439,25 @@ def run_agent_key(arguments: argparse.Namespace) -> int:
+     path = user_config_path()
+     if command == "join":
+         try:
+-            key_id, store, reason = join_key(root, arguments)
++            key, store, reason = join_key(root, arguments)
+         except KeyboardInterrupt:
+             print(f"\nproject: stopped, so {STORED_NOTHING}", file=sys.stderr)
+             return 130
+     else:
+-        key_id, store, reason = relay.init_key(root, inline=arguments.inline)
+-        if arguments.json_output:
+-            print(json_text({"key_id": key_id, "store": store, "reason": reason, "file": str(path)}))
+-            return 0
++        key, store, reason = relay.init_key(root, inline=arguments.inline)
++    queued = agents.publish_waiting(root, key, time.time())
++    if queued:
++        watch.ensure_daemon(root, distribution_version(), newer_release)
++    if command == "init" and arguments.json_output:
++        print(json_text({"key_id": key.id, "store": store, "reason": reason, "file": str(path),
++                         "queued": queued}))
++        return 0
+     where = (f"stored inline in {path}, mode 0600, because {reason}" if store == "inline"
+-             else f"stored in the {store}; {path} names it as agent.key = \"keychain:{key_id}\"")
+-    print(f"key {key_id} {where}")
++             else f"stored in the {store}; {path} names it as agent.key = \"keychain:{key.id}\"")
++    print(f"key {key.id} {where}")
++    if queued:
++        print(f"queued the presence of {len(queued)} registered session{'' if len(queued) == 1 else 's'} for the "
++              "relay; the watch daemon pushes it within seconds")
+     print(relay.COPY)
+     return 0
+ 
+@@ -1657,8 +1664,11 @@ def run_watch(arguments: argparse.Namespace) -> int:
+                   f"relay: off ({key['error'] or 'no agent.key'})")
+             for repo, found in report["relay"]["repositories"].items():
+                 problems = "; ".join(part for part in (found.get("error"), *found.get("errors", [])) if part)
++                latest = (found.get("rejections") or [None])[-1]
++                why = (f" (latest: {relay.REASONS.get(latest['reason'], latest['reason'])}, {latest['at'][11:16]})"
++                       if latest else "")
+                 print(f"relay {repo}: {found.get('state')}, {found.get('queued', 0)} queued, "
+-                      f"{found.get('rejected', 0)} rejected" + (f"; {problems}" if problems else ""))
++                      f"{found.get('rejected', 0)} rejected{why}" + (f"; {problems}" if problems else ""))
+             if report["codex_hooks"]:
+                 print(f"codex hooks: {report['codex_hooks']}")
+             for session, found in report["deliveries"].items():
+diff --git a/src/projector/crypto.py b/src/projector/crypto.py
+index 52e576c9..82f8b276 100644
+--- a/src/projector/crypto.py
++++ b/src/projector/crypto.py
+@@ -33,6 +33,10 @@ class CryptoError(ProjectorError):
+     """A sealed record that does not open: malformed, forged, or altered."""
+ 
+ 
++class TagMismatch(CryptoError):
++    """A sealed record whose tag does not match: forged, altered, or sealed to another key."""
++
++
+ # X25519
+ 
+ def x25519(scalar: bytes, point: bytes) -> bytes:
+@@ -192,5 +196,5 @@ def unseal(recipient_private: bytes, sealed: object) -> tuple[bytes, bytes]:
+     cipher_key, mac_key = derive(agree(recipient_private, ephemeral), agree(recipient_private, sender),
+                                  ephemeral, sender, recipient)
+     if not hmac.compare_digest(tag(mac_key, sender, ephemeral, ciphertext), given):
+-        raise CryptoError("the record's tag does not match")
++        raise TagMismatch("the record's tag does not match")
+     return sender, chacha20(cipher_key, 0, bytes(12), ciphertext)
+diff --git a/src/projector/relay.py b/src/projector/relay.py
+index 219bead6..69f61b55 100644
+--- a/src/projector/relay.py
++++ b/src/projector/relay.py
+@@ -16,8 +16,9 @@
+ 
+     key.json                       where `agent.key`'s private key is stored, and why when it is inline
+     outbox/<owner>/<repo>.json     the ref changes waiting for a push, and the checkouts that queued them
+-    relay/<owner>/<repo>.json      the repository's visibility, the rejected count, the key's refs on origin, what
+-                                   each held when it was opened, and other machines' agents
++    relay/<owner>/<repo>.json      the repository's visibility, the rejected count and the last 20 rejections, the
++                                   key's refs on origin, what each held when it was opened, and other machines'
++                                   agents
+ 
+ Refs in the repository, each a parentless commit whose tree holds one `sealed.json`:
+ 
+@@ -80,12 +81,29 @@
+ LINE_LENGTH = 318
+ LABEL_LENGTH = 20
+ CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
++# Each reason the relay rejects a record, by the code `watch status --json` reports, with the words its text prints.
++REASONS = {
++    "ref-name": "ref name", "tree-shape": "tree shape", "too-large": "too large", "unreadable": "unreadable blob",
++    "too-deep": "JSON too deep", "not-json": "not JSON", "not-sealed": "not a sealed record",
++    "tag-mismatch": "tag mismatch", "other-key": "sealed by another key", "relay-id-mismatch": "relay ID mismatch",
++    "recipient-mismatch": "recipient mismatch", "message-id-mismatch": "message ID mismatch", "expired": "expired",
++    "field-shape": "field shape", "collision": "ID collision",
++}
++KEEP_REJECTIONS = 20
+ 
+ 
+ class RelayError(ProjectorError):
+     """A relay key or a Git command that the relay cannot use."""
+ 
+ 
++class Rejected(ValueError):
++    """A record the relay refuses, and the code in `REASONS` that says why."""
++
++    def __init__(self, reason: str) -> None:
++        super().__init__(REASONS[reason])
++        self.reason = reason
++
++
+ # The key
+ 
+ class Key:
+@@ -140,11 +158,12 @@ def no_keychain(reason: str) -> RelayError:
+                       "it in ~/.projector.toml instead, where every process running as you can read it")
+ 
+ 
+-def save_key(root: Path, private: bytes, *, inline: bool, environ: Optional[dict] = None) -> tuple[str, str, str]:
++def save_key(root: Path, private: bytes, *, inline: bool, environ: Optional[dict] = None) -> tuple[Key, str, str]:
+     """Store the private key in the keychain, or inline with `inline`, and write `agent.key` to
+-    `~/.projector.toml` with mode 0600. Answers the key ID, where the key is stored, and why when that is inline.
++    `~/.projector.toml` with mode 0600. Answers the key, where it is stored, and why when that is inline.
+     Without `inline`, a keychain that cannot store the key stores nothing."""
+-    key_id = crypto.key_id(crypto.public_key(private))
++    key = Key(private, "inline" if inline else "keychain")
++    key_id = key.id
+     secret = crypto.encode(private)
+     value, store, reason = INLINE_KEY + secret, "inline", "you passed --inline"
+     if not inline:
+@@ -161,10 +180,10 @@ def save_key(root: Path, private: bytes, *, inline: bool, environ: Optional[dict
+     write_value(path, "agent.key", value)
+     root.mkdir(parents=True, exist_ok=True)
+     write_json(root / "key.json", {"schema_version": 1, "key_id": key_id, "store": store, "reason": reason})
+-    return key_id, store, reason
++    return key, store, reason
+ 
+ 
+-def init_key(root: Path, *, inline: bool, environ: Optional[dict] = None) -> tuple[str, str, str]:
++def init_key(root: Path, *, inline: bool, environ: Optional[dict] = None) -> tuple[Key, str, str]:
+     existing = configured(environ)
+     if existing:
+         raise RelayError(f"agent.key already holds key {value_id(existing)}; run `project agent key remove` "
+@@ -281,11 +300,11 @@ def check_join(*, inline: bool, replace: bool, environ: Optional[dict] = None) -
+ 
+ 
+ def join_key(root: Path, private: bytes, *, inline: bool, replace: bool,
+-             environ: Optional[dict] = None) -> tuple[str, str, str]:
++             environ: Optional[dict] = None) -> tuple[Key, str, str]:
+     """Store the key `join` accepted, and then delete the keychain item of a different key it replaced."""
+     existing = replaceable(replace, environ)
+     saved = save_key(root, private, inline=inline, environ=environ)
+-    if existing and existing.startswith(KEYCHAIN) and value_id(existing) != saved[0]:
++    if existing and existing.startswith(KEYCHAIN) and value_id(existing) != saved[0].id:
+         try:
+             keychain.delete(value_id(existing))
+         except KeychainError:
+@@ -378,7 +397,7 @@ def read_cache(root: Path, repo: str) -> dict:
+     found = read_json(repo_file(root, "relay", repo)) or {}
+     return {"schema_version": 1, "repo": found.get("repo") or repo, "polled_at": found.get("polled_at"),
+             "visibility": found.get("visibility") or "unknown", "rejected": found.get("rejected") or 0,
+-            "agents": found.get("agents") or {}, "remote": found.get("remote") or {}, "seen": found.get("seen") or {}}
++            "rejections": found.get("rejections") or [], "agents": found.get("agents") or {}, "remote": found.get("remote") or {}, "seen": found.get("seen") or {}}
+ 
+ 
+ def visibility(root: Path, repo: str) -> str:
+@@ -540,16 +559,18 @@ def shallow(data: bytes) -> bool:
+ 
+ 
+ def parse(data: bytes) -> object:
+-    """The JSON an untrusted blob holds, raising `ValueError` for any larger than `MAX_SEALED`, or that does not
++    """The JSON an untrusted blob holds, raising `Rejected` for any larger than `MAX_SEALED`, or that does not
+     parse or nests too deeply."""
+     if len(data) > MAX_SEALED:
+-        raise ValueError(f"the JSON is larger than {MAX_SEALED} bytes")
++        raise Rejected("too-large")
+     if not shallow(data):
+-        raise ValueError(f"the JSON nests more than {MAX_DEPTH} deep")
++        raise Rejected("too-deep")
+     try:
+         return json.loads(data)
+     except RecursionError:
+-        raise ValueError("the JSON nests too deeply to parse") from None
++        raise Rejected("too-deep") from None
++    except ValueError:
++        raise Rejected("not-json") from None
+ 
+ 
+ def text(data: bytes) -> str:
+@@ -620,6 +641,8 @@ def __init__(self, root: Path, repo: str, key: Optional[Key], live: set[str], no
+         self.relays = {found["relay_id"]: name for name, found in self.sessions.items()
+                        if isinstance(found.get("relay_id"), str)}
+         self.changes: list[tuple[str, Optional[dict], dict]] = []
++        # The rejections this job made, which the daemon logs.
++        self.rejections: list[dict] = []
+         self.error = ""
+         # The changes this job tried to push: those its push took, or, when it pushes nothing, those queued when
+         # it started and those it queued. A change queued after that starts the next job without a poll.
+@@ -656,7 +679,7 @@ def run(self) -> dict:
+     def result(self, state: str, error: str) -> dict:
+         items = outbox_items(self.root, self.repo)
+         return {"state": state, "error": error, "queued": len(items), "rejected": self.cache["rejected"],
+-                "visibility": self.cache["visibility"], "polled_at": self.cache["polled_at"],
++                "rejections": self.cache["rejections"], "visibility": self.cache["visibility"], "polled_at": self.cache["polled_at"],
+                 "errors": sorted({item["last_error"] for item in items if item.get("last_error")})}
+ 
+     def checkout(self) -> Optional[Path]:
+@@ -742,68 +765,92 @@ def examine(self, cwd: Path) -> None:
+             sha = self.cache["remote"][ref]
+             parsed = parse_ref(ref)
+             if parsed is None:
++                # A ref whose name is outside the namespace is kept, since a later version could have written it.
+                 seen[ref] = {"sha": sha, "kind": "ignored"}
++                self.note_rejection(ref, "ref-name")
+                 continue
+-            blob = self.sealed_blob(cwd, sha)
+-            if blob is None:
+-                self.reject(ref, sha)
+-                continue
+-            opened += 1
+-            record = self.open(cwd, blob)
+-            kind, _, relay_id = parsed
+-            if kind == "agent":
+-                self.take_presence(ref, sha, relay_id, record)
+-            else:
+-                self.take_message(ref, sha, relay_id, record)
+-
+-    def sealed_blob(self, cwd: Path, sha: str) -> Optional[str]:
+-        """The blob of a commit whose tree is exactly one `sealed.json` of at most 32 KiB, or None."""
++            try:
++                blob = self.sealed_blob(cwd, sha)
++                opened += 1
++                record = self.open(cwd, blob)
++                kind, _, relay_id = parsed
++                if kind == "agent":
++                    self.take_presence(ref, sha, relay_id, record)
++                else:
++                    self.take_message(ref, sha, relay_id, record)
++            except Rejected as rejected:
++                self.reject(ref, sha, rejected.reason)
++
++    def sealed_blob(self, cwd: Path, sha: str) -> str:
++        """The blob of a commit whose tree is exactly one `sealed.json` of at most 32 KiB."""
+         done = git(cwd, "ls-tree", "-l", sha)
+         lines = text(done.stdout).splitlines()
+         found = TREE.fullmatch(lines[0]) if done.returncode == 0 and len(lines) == 1 else None
+-        return found[1] if found and int(found[2]) <= MAX_SEALED else None
++        if found is None:
++            raise Rejected("tree-shape")
++        if int(found[2]) > MAX_SEALED:
++            raise Rejected("too-large")
++        return found[1]
+ 
+-    def open(self, cwd: Path, blob: str) -> Optional[dict]:
++    def open(self, cwd: Path, blob: str) -> dict:
+         """The record a blob holds when it opens with this machine's key and was sealed by the same key."""
+         assert self.key is not None
+         done = git(cwd, "cat-file", "blob", blob)
+-        if done.returncode != 0 or len(done.stdout) > MAX_SEALED:
+-            return None
++        if done.returncode != 0:
++            raise Rejected("unreadable")
+         try:
+             sender, plaintext = crypto.unseal(self.key.private, parse(done.stdout))
+-            record = parse(plaintext)
+-        except (crypto.CryptoError, ValueError):
+-            return None
+-        return record if sender == self.key.public and isinstance(record, dict) else None
+-
+-    def reject(self, ref: str, sha: str) -> None:
++        except crypto.TagMismatch:
++            raise Rejected("tag-mismatch") from None
++        except crypto.CryptoError:
++            raise Rejected("not-sealed") from None
++        if sender != self.key.public:
++            raise Rejected("other-key")
++        record = parse(plaintext)
++        if not isinstance(record, dict):
++            raise Rejected("field-shape")
++        return record
++
++    def reject(self, ref: str, sha: str, reason: str) -> None:
+         self.cache["seen"][ref] = {"sha": sha, "kind": "rejected"}
+-        self.cache["rejected"] += 1
++        self.note_rejection(ref, reason)
+         self.delete(ref)
+ 
+-    def take_presence(self, ref: str, sha: str, relay_id: str, record: Optional[dict]) -> None:
+-        expires = (record or {}).get("expires_at")
+-        if (record is None or record.get("relay_id") != relay_id or not isinstance(expires, (int, float))
+-                or not isinstance(record.get("session"), str) or not SESSION.fullmatch(record["session"])
+-                or not isinstance(record.get("machine"), str) or not agents.well_formed_presence(record)):
+-            self.reject(ref, sha)
+-            return
++    def note_rejection(self, ref: str, reason: str) -> None:
++        """Count a rejection, and keep its ref, reason, and time, but nothing the record holds."""
++        rejection = {"ref": ref, "reason": reason, "at": watch.stamp(self.now)}
++        self.cache["rejected"] += 1
++        self.cache["rejections"] = [*self.cache["rejections"], rejection][-KEEP_REJECTIONS:]
++        self.rejections.append(rejection)
++
++    def take_presence(self, ref: str, sha: str, relay_id: str, record: dict) -> None:
++        expires = record.get("expires_at")
++        if record.get("relay_id") != relay_id:
++            raise Rejected("relay-id-mismatch")
++        if (not isinstance(expires, (int, float)) or not isinstance(record.get("session"), str)
++                or not SESSION.fullmatch(record["session"]) or not isinstance(record.get("machine"), str)
++                or not agents.well_formed_presence(record)):
++            raise Rejected("field-shape")
+         self.cache["seen"][ref] = {"sha": sha, "kind": "agent", "expires_at": expires}
+         if record["machine"] != self.machine:
+             self.cache["agents"][relay_id] = record
+ 
+-    def take_message(self, ref: str, sha: str, relay_id: str, record: Optional[dict]) -> None:
+-        sent = watch.seconds_of((record or {}).get("sent_at"))
+-        if (record is None or record.get("to") != relay_id or record.get("id") != ref.rsplit("/", 1)[1]
+-                or sent is None or self.now - sent >= agents.KEEP or not agents.well_formed(record)):
+-            self.reject(ref, sha)
+-            return
++    def take_message(self, ref: str, sha: str, relay_id: str, record: dict) -> None:
++        sent = watch.seconds_of(record.get("sent_at"))
++        if record.get("to") != relay_id:
++            raise Rejected("recipient-mismatch")
++        if record.get("id") != ref.rsplit("/", 1)[1]:
++            raise Rejected("message-id-mismatch")
++        if sent is None or not agents.well_formed(record):
++            raise Rejected("field-shape")
++        if self.now - sent >= agents.KEEP:
++            raise Rejected("expired")
+         self.cache["seen"][ref] = {"sha": sha, "kind": "message", "to": relay_id, "sent_at": sent}
+         session = self.relays.get(relay_id)
+         if session is None or session not in self.live:
+             return
+         if agents.deliver(self.root, session, record, self.now) == "collision":
+-            self.cache["rejected"] += 1
++            self.note_rejection(ref, "collision")
+         self.delete(ref)
+ 
+     def sweep(self) -> None:
+@@ -954,10 +1001,11 @@ class Relay:
+     `agent.key` changes or after a failed read, and each repository's job and its last result."""
+ 
+     def __init__(self, root: Path, *, gh: Callable[[list[str]], watch.GhResult], wall: Callable[[], float],
+-                 environ: Optional[dict] = None) -> None:
++                 log: Callable[[str], None], environ: Optional[dict] = None) -> None:
+         self.root = root
+         self.gh = gh
+         self.wall = wall
++        self.log = log
+         self.environ = dict(os.environ) if environ is None else environ
+         self.pool = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="relay")
+         self.jobs: dict[str, tuple[Job, Future]] = {}
+@@ -972,6 +1020,9 @@ def __init__(self, root: Path, *, gh: Callable[[list[str]], watch.GhResult], wal
+         self.signature: object = ()
+         self.last_full: Optional[float] = None
+         self.fresh = False
++        # The repositories whose job owes a poll since the key was read: a repository whose job was still running
++        # then gets it as soon as that job ends, so a registration waiting for the key need not wait for a pass.
++        self.owed: dict[str, str] = {}
+         self.was_live: set[str] = set()
+ 
+     def start(self) -> None:
+@@ -995,20 +1046,23 @@ def tick(self, live: set[str], polled: bool, full_every: float) -> bool:
+             self.last_full = now
+         self.collect()
+         self.check_key(full)
+-        polled = polled or self.fresh
+-        self.fresh = False
+         records, gone = agents.relayed(self.root)
+         live = live - gone
+         lapsed = self.was_live - live
+         self.was_live = set(live)
+-        for name, repo in sorted(self.repositories(records, polled, lapsed).items()):
++        if self.fresh:
++            self.owed.update(self.repositories(records, True, lapsed))
++            self.fresh = False
++        for name, repo in sorted({**self.repositories(records, polled, lapsed), **self.owed}.items()):
+             if name in self.jobs:
+                 continue
++            owed = self.owed.pop(name, None) is not None
+             here = {session: found for session, found in records.items() if (found.get("repo") or "").lower() == name}
+             remote = read_cache(self.root, repo)["remote"]
+             lingering = {found.get("relay_id") for session, found in here.items() if session not in live}
+-            poll = polled and (any(session in live for session in here)
+-                               or any((parsed := parse_ref(ref)) and parsed[2] in lingering for ref in remote))
++            poll = (polled or owed) and (any(session in live for session in here)
++                                         or any((parsed := parse_ref(ref)) and parsed[2] in lingering
++                                                for ref in remote))
+             job = Job(self.root, repo, self.key, set(live), now, poll=poll, full=full, gh=self.gh,
+                       held=self.held())
+             self.jobs[name] = (job, self.pool.submit(job.run))
+@@ -1036,6 +1090,9 @@ def collect(self) -> None:
+             if future.done():
+                 del self.jobs[repo]
+                 self.settled[repo] = job.attempted
++                for rejection in job.rejections:
++                    self.log(f"relay {job.repo}: rejected {rejection['ref']}: {rejection['reason']}, at "
++                             f"{rejection['at']}")
+                 try:
+                     self.results[repo] = future.result()
+                 except Exception as error:
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 14924dd3..2bfdc4f1 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -824,7 +824,7 @@ def __init__(self, root: Path, *, version: str = "unknown", gh: Optional[Callabl
+         self.last_pass: Optional[float] = None
+         self.codex = codex_watch.Dispatcher(wall=wall)
+         from . import relay
+-        self.relay = relay.Relay(root, gh=self.gh, wall=wall)
++        self.relay = relay.Relay(root, gh=self.gh, wall=wall, log=self.log)
+ 
+     def log(self, message: str) -> None:
+         print(f"{stamp(self.wall())} {message}", flush=True)
+diff --git a/tests/test_relay.py b/tests/test_relay.py
+index 860ce16c..be0f706b 100644
+--- a/tests/test_relay.py
++++ b/tests/test_relay.py
+@@ -30,7 +30,7 @@
+ from unittest import mock
+ 
+ from projector import agents, cli, codex_watch as codex, config, crypto, keychain, relay, watch
+-from projector.inbox import read_json
++from projector.inbox import read_json, try_lock, unlock
+ from tests.scratch import copy_of
+ from tests.test_watch import FakeGitHub
+ 
+@@ -168,6 +168,8 @@ def __init__(self, case: "RelayCase", name: str) -> None:
+         self.work = base / "work"
+         self.env = {"HOME": str(self.home), "XDG_STATE_HOME": str(self.state)}
+         self.daemon: Optional[watch.Daemon] = None
++        # What the relay wrote to daemon.log, which `serve` makes the daemon's output.
++        self.logged: list[str] = []
+ 
+     def clone(self, path: Path) -> Path:
+         return clone(path, self.case.origin)
+@@ -218,6 +220,7 @@ def start(self) -> watch.Daemon:
+             self.daemon = watch.Daemon(self.root, version="1.0", gh=self.case.github, wall=lambda: self.case.now,
+                                        mono=lambda: self.case.now, settings=watch.Settings(),
+                                        review_root=self.case.scratch / self.name / "reviews")
++        self.daemon.relay.log = self.logged.append
+         self.daemon.start()
+         self.case.addCleanup(self.daemon.relay.close)
+         self.case.addCleanup(self.daemon.codex.close)
+@@ -622,7 +625,102 @@ def recording(cwd, *args, **options):
+         self.assertEqual((2, 3), (first, len(self.two.events(B))))
+         self.assertFalse([args for args in calls if args[:2] == ("cat-file", "blob") and args[2] in bad_blobs])
+         self.assertIn(f"refs/projector/inbox/{self.key.id}/{b}/not-a-message", self.refs())
+-        self.assertEqual(2, self.two.status()["repositories"]["acme/app"]["rejected"])
++        self.assertEqual(3, self.two.status()["repositories"]["acme/app"]["rejected"],
++                         "the bad tree, the large blob, and the ref name outside the namespace")
++
++    def rejections(self) -> list[dict]:
++        return self.two.status()["repositories"]["acme/app"]["rejections"]
++
++    def test_each_rejection_records_the_reason_the_relay_rejected_it_for(self) -> None:
++        self.pair()
++        b = self.b_relay_id()
++        a = agents.record(self.one.root, A)["relay_id"]
++        message = lambda number, **fields: self.message(f"m-{number:032x}", to=b, **fields)
++        flipped = json.loads(self.sealed(message(7)))
++        flipped["tag"] = crypto.encode(bytes(32))
++        presence = relay.presence(B, agents.record(self.two.root, B), self.now)
++        planted = {
++            f"refs/projector/inbox/{self.key.id}/{b}/not-a-message": ({"sealed.json": self.sealed(message(1))},
++                                                                       "ref-name"),
++            self.inbox(f"m-{2:032x}"): ({"sealed.json": self.sealed(message(2)), "extra.txt": b"x"}, "tree-shape"),
++            self.inbox(f"m-{3:032x}"): ({"sealed.json": self.sealed(message(3)) + b" " * (33 * 1024)}, "too-large"),
++            self.inbox(f"m-{4:032x}"): ({"sealed.json": b"[" * 100}, "too-deep"),
++            self.inbox(f"m-{5:032x}"): ({"sealed.json": b"not JSON"}, "not-json"),
++            self.inbox(f"m-{6:032x}"): ({"sealed.json": json.dumps(message(6)).encode()}, "not-sealed"),
++            self.inbox(f"m-{7:032x}"): ({"sealed.json": json.dumps(flipped).encode()}, "tag-mismatch"),
++            self.inbox(f"m-{8:032x}"): ({"sealed.json": self.sealed(message(8), bytes(range(2, 34)))}, "other-key"),
++            self.inbox(f"m-{9:032x}", a): ({"sealed.json": self.sealed(message(9))}, "recipient-mismatch"),
++            self.inbox(f"m-{11:032x}"): ({"sealed.json": self.sealed(message(10))}, "message-id-mismatch"),
++            self.inbox(f"m-{12:032x}"): ({"sealed.json": self.sealed(message(12, from_host="the user"))},
++                                         "field-shape"),
++            self.inbox(f"m-{13:032x}"): ({"sealed.json": self.sealed(message(13, sent_at=self.now - 8 * 86400))},
++                                         "expired"),
++            relay.presence_ref(self.key.id, "0" * 16): ({"sealed.json": self.sealed(presence)}, "relay-id-mismatch"),
++        }
++        for ref, (files, _) in planted.items():
++            self.plant(ref, files)
++        delivered = message(14)
++        self.plant(self.inbox(delivered["id"]), {"sealed.json": self.sealed(delivered)})
++        self.two.run_pass()
++        collided = self.inbox(delivered["id"])
++        self.plant(collided, {"sealed.json": self.sealed(message(14, text="Something else"))})
++        self.two.run_pass()
++
++        expected = {**{ref: reason for ref, (_, reason) in planted.items()}, collided: "collision"}
++        self.assertEqual(expected, {found["ref"]: found["reason"] for found in self.rejections()})
++        self.assertEqual(len(expected), self.two.status()["repositories"]["acme/app"]["rejected"])
++
++    def test_no_report_of_a_rejection_shows_the_records_ciphertext_or_plaintext(self) -> None:
++        self.pair()
++        secret = "PLANTED-SECRET-7f3a"
++        other = agents.record(self.one.root, A)["relay_id"]
++        sealed = self.sealed(self.message("m-" + "1" * 32, to=self.b_relay_id(), text=secret))
++        ref = self.inbox("m-" + "1" * 32, other)
++        self.plant(ref, {"sealed.json": sealed})
++
++        self.two.run_pass()
++        code, out, err = self.two.project("watch", "status", "--json")
++        text = self.two.project("watch", "status")[1]
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([f"relay acme/app: rejected {ref}: recipient-mismatch, at {watch.stamp(self.now)}"],
++                         self.two.logged)
++        self.assertEqual([{"ref": ref, "reason": "recipient-mismatch", "at": watch.stamp(self.now)}],
++                         json.loads(out)["relay"]["repositories"]["acme/app"]["rejections"])
++        ciphertext = json.loads(sealed)["ciphertext"]
++        for report in (out, text, *self.two.logged):
++            for content in (secret, ciphertext, ciphertext[:24], json.loads(sealed)["tag"]):
++                self.assertNotIn(content, report)
++
++    def test_the_status_keeps_only_the_last_20_rejections_and_counts_them_all(self) -> None:
++        self.pair()
++        work = self.scratch / "planter"
++        self.one.clone(work)
++        blob = git("hash-object", "-w", "--stdin", cwd=work, input=b"not JSON")
++        tree = git("mktree", cwd=work, input=f"100644 blob {blob}\tsealed.json\n".encode())
++        commit = git("-c", "commit.gpgSign=false", "commit-tree", "-m", "planted", tree, cwd=work)
++        refs = [self.inbox(f"m-{index:032x}") for index in range(25)]
++        git("push", "-q", "origin", *[f"{commit}:{ref}" for ref in refs], cwd=work)
++
++        self.two.run_pass()
++
++        self.assertEqual(refs[5:], [found["ref"] for found in self.rejections()])
++        self.assertEqual(25, self.two.status()["repositories"]["acme/app"]["rejected"])
++
++    def test_the_status_line_shows_the_count_and_the_latest_reason_and_its_time(self) -> None:
++        self.now = 1794803820.0
++        self.pair()
++        quiet = self.two.project("watch", "status")[1]
++        flipped = json.loads(self.sealed(self.message("m-" + "2" * 32, to=self.b_relay_id())))
++        flipped["tag"] = crypto.encode(bytes(32))
++        self.plant(self.inbox("m-" + "2" * 32), {"sealed.json": json.dumps(flipped).encode()})
++
++        self.two.run_pass()
++        code, out, err = self.two.project("watch", "status")
++
++        self.assertEqual(0, code, err)
++        self.assertIn("relay acme/app: ok, 0 queued, 0 rejected\n", quiet)
++        self.assertIn("relay acme/app: ok, 0 queued, 1 rejected (latest: tag mismatch, 04:37)\n", out)
+ 
+ 
+ class FakeAdvapi32:
+@@ -1082,6 +1180,119 @@ def wait_for(condition, seconds: float = 10.0) -> bool:
+     return True
+ 
+ 
++class KeyArrivalTests(RelayCase):
++    """A session that registered while machine one had no key, and the key arriving by `key init`, `key join`, or
++    an edit to `agent.key`."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.one.claude(A)
++        self.one.register(A, "--name", "parser-refactor", "--summary", "Refactoring the parser")
++        self.one.run_pass()
++        self.advance(1)
++
++    def presence(self, key_id: str, session: str = A) -> str:
++        return relay.presence_ref(key_id, agents.record(self.one.root, session)["relay_id"])
++
++    def queued(self) -> tuple[list[str], str]:
++        return [item["ref"] for item in self.one.outbox()], agents.record(self.one.root, A)["relay"]
++
++    def tick(self) -> None:
++        """One turn of the daemon's loop that is not a poll, and the relay jobs it starts."""
++        self.one.daemon.tick()
++        self.one.settle()
++
++    def hold_daemon_lock(self) -> None:
++        """Hold the lock the daemon holds, so a `project` process finds machine one's daemon running."""
++        descriptor = os.open(self.one.root / "daemon.mutex", os.O_RDWR | os.O_CREAT, 0o600)
++        self.addCleanup(os.close, descriptor)
++        self.assertTrue(try_lock(descriptor))
++        self.addCleanup(unlock, descriptor)
++
++    def test_key_init_queues_a_session_registered_before_it_and_one_daemon_tick_pushes_it(self) -> None:
++        self.on_macos()
++
++        code, out, err = self.one.project("agent", "key", "init")
++        key_id = relay.value_id(relay.configured(self.one.env))
++        queued = self.queued()
++        self.tick()
++
++        self.assertEqual(0, code, err)
++        self.assertIn("queued the presence of 1 registered session for the relay", out)
++        self.assertEqual(([self.presence(key_id)], "pending"), queued)
++        self.assertIn(self.presence(key_id), self.refs())
++        self.assertEqual("published", agents.record(self.one.root, A)["relay"])
++
++    def test_key_join_queues_a_session_registered_before_it_and_one_daemon_tick_pushes_it(self) -> None:
++        self.two.inline_key(self.private)
++        self.hold_daemon_lock()
++
++        join = Pty(self, self.one, "agent", "key", "join")
++        request = re.search(r"project agent key grant (pj1-\S+)",
++                            join.until("Paste the line it prints here: ")).group(1)
++        granted = self.two.project("agent", "key", "grant", request, stdin="y\n", terminal=True)
++        join.type(re.search(r"^  (pk1-\S+)$", granted[1], re.MULTILINE).group(1))
++        join.until("Does the other machine show the same key? [y/N] ")
++        join.type("y")
++        code, output = join.finish()
++        queued = self.queued()
++        self.tick()
++
++        self.assertEqual(0, code, output)
++        self.assertEqual(([self.presence(self.key.id)], "pending"), queued)
++        self.assertIn(self.presence(self.key.id), self.refs())
++
++    def test_key_init_queues_no_presence_for_a_session_that_unregistered(self) -> None:
++        self.one.claude(C)
++        self.one.register(C, "--name", "test-writer", "--summary", "Writing the parser's tests")
++        self.one.project("agent", "unregister", claude=A)
++
++        code, out, err = self.one.project("agent", "key", "init", "--inline")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([self.presence(relay.value_id(relay.configured(self.one.env)), C)],
++                         [item["ref"] for item in self.one.outbox()])
++
++    def test_key_init_skips_a_session_whose_checkout_has_no_origin(self) -> None:
++        elsewhere = self.scratch / "no-origin"
++        git("init", "-q", "-b", "main", str(elsewhere))
++        self.one.project("agent", "unregister", claude=A)
++        self.one.claude(C)
++        self.one.register(C, "--name", "test-writer", "--summary", "Writing the parser's tests", cwd=elsewhere)
++
++        code, out, err = self.one.project("agent", "key", "init", "--inline")
++
++        self.assertEqual(0, code, err)
++        self.assertNotIn("queued the presence", out)
++        self.assertEqual(([], "none"), ([item["ref"] for item in self.one.outbox()],
++                                        agents.record(self.one.root, C)["relay"]))
++
++    def test_a_key_read_while_a_job_runs_publishes_on_the_job_after_it_rather_than_the_next_poll(self) -> None:
++        self.one.inline_key(self.private)
++        self.one.run_pass()
++        self.tick()
++        self.assertIn(self.presence(self.key.id), self.refs())
++        self.advance(1)
++        other = relay.Key(bytes(range(2, 34)), "inline")
++        self.one.inline_key(other.private)
++        log = hook(self.one.work)
++
++        # A poll that sees the new key starts reading it, and starts a job, without the key, that deletes the old
++        # key's presence and waits in the pre-push hook.
++        self.one.daemon.wanted = True
++        self.one.daemon.tick()
++        self.assertTrue(wait_for(log.exists))
++        self.one.daemon.relay.reading[1].result(10)
++        self.advance(1)
++        self.one.daemon.tick()
++        log.with_suffix(".release").touch()
++        self.one.settle()
++        self.advance(1)
++        self.tick()
++
++        self.assertEqual([self.presence(other.id)], [ref for ref in self.refs() if ref.startswith(relay.AGENTS)])
++
++
+ class PushTests(RelayCase):
+     def presence(self, machine: Machine, session: str) -> str:
+         return relay.presence_ref(self.key.id, agents.record(machine.root, session)["relay_id"])

@@ -1,0 +1,140 @@
+{
+ "version": 1,
+ "name": "Relay publication and diagnostics",
+ "project": "agent-messages",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 522,
+  "title": "Publish waiting registrations when a relay key appears, and record why records are rejected",
+  "head": "4dbf8a3838527f835fca561f5de8267926133102",
+  "headRef": "relay-key-publish-and-reasons",
+  "base": "8edc311493dfdbc66fdb0eebc6c3743d0d16d710",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The relay lets your agent sessions find and message each other across machines through encrypted records in a shared Git repository. A session registered before its machine had a key could remain invisible until a later repository poll.",
+   "The key commands now queue waiting registrations immediately. The daemon also remembers a poll owed when a newly read key arrives during a running job, so that repository gets another job as soon as the current one ends.",
+   "Rejected records now have fixed reason codes, a count, and a bounded recent history. Status output and daemon logs expose the ref, reason, and time without copying the encrypted record or its contents."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used here",
+    "html": "<ul class=\"tight\"><li><b>Presence:</b> an encrypted registration with a lease that lets another machine list a session.</li><li><b>Outbox:</b> ref changes queued locally for the daemon to push.</li><li><b>Job:</b> one repository’s fetch, validation, renewal, and push work on a background thread.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Validation",
+    "html": "<ul class=\"tight\"><li>The configured gate and exact-head CI passed at this head.</li><li>All 248 relay, agent, watch, and crypto tests passed during the full review at <code>4290c9d</code>; this push changes only a postponed return annotation.</li><li>The annotation suggestion is fixed. No findings or suggestions remain.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "relay-core",
+   "title": "Keep key publication timely and rejection reasons bounded",
+   "kicker": "The shared relay tracks owed work and reports why validation refused a record.",
+   "intro": [
+    "A relay job runs outside the daemon’s event-delivery loop. When the daemon finishes reading a new key, it now keeps a repository on an owed-poll list until a job can start. A busy repository therefore cannot lose the refresh triggered by that key.",
+    "Record validation raises a fixed rejection reason. The job keeps at most 20 recent entries in its persistent status and passes only this job’s entries to the daemon for logging. Authentication still happens before decryption, and rejected data stays out of the reports."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/crypto.py",
+     "note": "Distinguish an authentication-tag mismatch from other malformed sealed records.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 199,
+       "text": "The new exception remains a CryptoError subclass, so existing callers still catch it; the relay can now classify authentication failures separately."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/relay.py",
+     "note": "Return the stored key to callers, retain key-triggered polls, classify rejections, and keep bounded diagnostic history.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1055,
+       "text": "The delayed-key regression holds a job in a pre-push hook and verifies that the next job publishes the new key’s presence without waiting for another poll."
+      },
+      {
+       "kind": "verify",
+       "line": 828,
+       "text": "The rejection tests verify reason codes and the 20-entry cap. A planted secret, ciphertext, and authentication tag appear in none of the status or log outputs."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "commands",
+   "title": "Queue waiting registrations when the key is stored",
+   "kicker": "Key commands reuse presence publication and the daemon renders rejection diagnostics.",
+   "intro": [
+    "A registration made without a relay key has no encrypted presence to send. After init or join stores a key, the command now scans live local registrations and queues each eligible presence through the same publication helper used by registration.",
+    "The session lock prevents unregister from racing with this scan. Commands start the daemon when work was queued, report the queued count, and expose queued session IDs in init’s JSON output. The watch status line includes the latest rejection reason and its UTC time."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/agents.py",
+     "note": "Publish live registered sessions with a recorded repository and checkout while holding each session’s lock.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 257,
+       "text": "Key-arrival tests cover init, terminal join, unregistered sessions, and registrations made without an origin; one daemon tick pushes the queued presence."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Queue presence after init or join and print concise rejection details in watch status.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1381,
+       "text": "The return annotation now matches relay.join_key: its first tuple value is relay.Key. Annotations are postponed and have no runtime consumer in this repository."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Give the relay the daemon’s existing logger so each rejected record gets one diagnostic line.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "regressions-reference",
+   "title": "Document and exercise the user-visible behavior",
+   "kicker": "Tests use isolated machines and bare repositories; the CLI reference describes the new output.",
+   "intro": [
+    "The tests model two machines with temporary homes, fake keychain tools, and a temporary bare origin. They cover key arrival while idle or busy, rejection categories, bounded history, and redaction.",
+    "The CLI reference documents immediate publication after key storage and the diagnostic fields and reason codes. Unknown ref names remain unopened on origin, while their rejection becomes visible."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_relay.py",
+     "note": "Exercise the timing and validation behavior through commands and daemon jobs.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All 248 focused tests across relay, agents, watch, and crypto passed at the full-review head; this push leaves production behavior and tests unchanged."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Describe queued registrations, the 20-entry rejection history, reason codes, and log/status output.",
+     "checks": []
+    }
+   ]
+  }
+ ]
+}
