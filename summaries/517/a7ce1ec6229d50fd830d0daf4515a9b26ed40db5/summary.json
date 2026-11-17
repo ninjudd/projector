@@ -1,0 +1,52 @@
+{
+ "version": 1,
+ "name": "Keychain test isolation",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 517,
+  "title": "Stop the keychain mock patch before starting it again",
+  "head": "a7ce1ec6229d50fd830d0daf4515a9b26ed40db5",
+  "headRef": "fix-keychain-test-patch",
+  "base": "74e8e5ea011e6ef4dda9a5d597c2534c1fe33672",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Linux keychain test checks that <code>project agent key init</code> stores its secret through standard input and leaves configuration untouched when the keychain fails. A reused mock patch made that test error on newer Python releases before it could finish those checks.",
+   "Each simulated keychain call now runs inside a fresh patch context. The missing-tool case keeps the fixture’s absent path, and the existing success and failure assertions stay in place. Production code is unchanged."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "patch-lifetime",
+   "title": "Keep each keychain scenario isolated",
+   "kicker": "A fresh patch for each simulated backend call",
+   "intro": [
+    "A mock patch temporarily replaces <code>SECRET_TOOL</code>, the path used to launch Linux’s keychain program. The fixture normally points that path at a file that does not exist, so the test can exercise a machine without the program.",
+    "The helper creates a new patch each time the fake program is needed. Its context restores the fixture’s path after success or an exception. A null context leaves that path alone for the missing-program scenario."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_relay.py",
+     "note": "The Linux backend test scopes each fake keychain invocation and preserves its storage and failure checks.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 783,
+       "text": "The merge-base test fails on Python 3.15.2 with “Patch is already started”; all 57 relay tests pass at this head on Python 3.15.2 and Python 3.12.5."
+      },
+      {
+       "kind": "verify",
+       "line": 797,
+       "text": "Fixture setup gives SECRET_TOOL an absent path. The missing mode leaves that value intact, while the fail and hang modes use fresh patch contexts; the existing outcomes assertion checks refusal and absence of saved configuration."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
