@@ -1,0 +1,69 @@
+{
+ "version": 1,
+ "name": "Relay key pairing",
+ "project": "agent-messages/pairing",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 510,
+  "title": "Plan copying the relay key between machines without showing it",
+  "head": "920d4518b90379740a468f8b180bc8ff434724e8",
+  "headRef": "plan-agent-pairing",
+  "base": "68187aee37452e9f484bba66923739ee1e03e448",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The relay, which carries messages between your machines through GitHub, uses one shared private key. Its current export command prints that key as text. This plan replaces plaintext copying with an interactive exchange that carries a public request and an encrypted response.",
+   "The new machine runs <code>project agent key join</code> and keeps a temporary private key in memory. The machine that already holds the relay key runs <code>project agent key grant</code>, confirms the request, and encrypts the relay key for that temporary public key. The new machine checks the response and asks you to compare key IDs before storing it.",
+   "This pull request adds a plan at <code>ready</code> with priority <code>now</code>; it changes no runtime code. Implementation and the final two-machine manual check remain part of the planned work."
+  ],
+  "cards": [
+   {
+    "id": "storage",
+    "title": "Storage requires an explicit choice",
+    "html": "<p>The plan also removes automatic fallback to an inline private key. Both initialization and pairing require a working operating-system keychain unless you pass <code>--inline</code>.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "pairing-plan",
+   "title": "Pair machines without copying a plaintext key",
+   "kicker": "Interactive exchange, storage rules, and acceptance criteria",
+   "intro": [
+    "The request contains a temporary public key and a machine label. The response contains the relay key encrypted to that public key. Only the waiting <code>join</code> process holds the temporary private key needed to open the response.",
+    "The plan reuses the existing authenticated encryption and keychain storage. It specifies user confirmation on both machines, rejection of malformed or inconsistent responses, refusal to overwrite a configured key without <code>--replace</code>, and a 30-minute wait limit."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Read the full ready plan against its existing CLI, relay, keychain, and cryptographic APIs. The flow, formats, component changes, and acceptance criteria settle the decisions needed to begin implementation."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/pairing/readme.md",
+     "collapsed": false,
+     "note": "Defines the join/grant pairing flow, explicit inline storage, and security-focused regressions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 91,
+       "text": "With synthetic keys, the existing seal/unseal composition round-tripped the relay key, rejected another recipient and changed ciphertext, and exposed a carried-key/sender mismatch for the planned consistency check."
+      },
+      {
+       "kind": "context",
+       "line": 143,
+       "text": "The public request fingerprint and relay key ID let you check the request and response on their originating machines. These comparisons are part of the proposed human confirmation flow."
+      },
+      {
+       "kind": "verify",
+       "line": 169,
+       "text": "Project discovery identifies agent-messages/pairing as ready/now, and project check accepts its metadata. The configured gate and exact-head CI also passed; the proposed commands themselves are not implemented by this PR."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
