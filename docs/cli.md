@@ -2944,8 +2944,10 @@ to open its drawer:
   reports whether it did, so the drawer says only that it was sent. Set
   `PROJECTOR_REMOTE=1` to treat the console as remote when it cannot tell,
   such as in a tmux server started before you connected, or
-  `PROJECTOR_REMOTE=0` to open URLs in a browser. A URL that fails to open in
-  a browser shows the same way, without the clipboard.
+  `PROJECTOR_REMOTE=0` to open URLs in a browser. Set `BROWSER` to a command
+  that opens a URL on your own machine, and a remote console uses it, showing
+  and copying the URL only when it fails. A URL that fails to open in a
+  browser on a local machine shows the same way, without the clipboard.
 
 With no drawer open, `7` sends a message about the session itself, so you can
 talk to a session that has no item and no pull request. Discuss opens a

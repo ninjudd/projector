@@ -46,8 +46,10 @@ class ConsoleCase(unittest.TestCase):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         self.scratch = Path(scratch.name)
-        # Local, so a run over SSH opens URLs as a run at the machine does.
-        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state"), "PROJECTOR_REMOTE": "0"})
+        # Local, with no `BROWSER`, so a run over SSH or with a browser helper opens URLs as a run at the machine
+        # does.
+        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state"), "PROJECTOR_REMOTE": "0",
+                                               "BROWSER": ""})
         environ.start()
         self.addCleanup(environ.stop)
         self.root = watch.state_root()
@@ -371,6 +373,25 @@ class PullRequests(ConsoleCase):
                 self.assertEqual((expected, bool(expected)),
                                  (out.getvalue(),
                                   "Sent to your clipboard where your terminal allows it" in self.screen()))
+
+    def test_a_remote_console_with_browser_set_opens_through_it_and_shows_the_url_only_when_that_fails(self) -> None:
+        # Catches a remote console that ignores `BROWSER`, which a person points at a helper that opens the URL on
+        # their own machine, or one that leaves them nothing to follow when that helper fails.
+        url = "https://github.com/acme/app/pull/12"
+        remote = {"PROJECTOR_REMOTE": "1", "BROWSER": "open-on-my-laptop", "TMUX": ""}
+        for opens, shown in ((mock.Mock(return_value=True), False), (mock.Mock(return_value=False), True),
+                             (mock.Mock(side_effect=webbrowser.Error("tunnel down")), True)):
+            with self.subTest(opens=opens):
+                self.console = console.Console(self.root, clock=self.clock, gh=self.gh, open_url=opens)
+                out = io.StringIO()
+                screen = console.Screen(FakeWindow(30, 100), self.console, FakeCurses, out)
+                self.open_pull()
+                with mock.patch.dict(os.environ, remote):
+                    self.press("o")
+                    screen.draw()
+
+                opens.assert_called_once_with(url)
+                self.assertEqual((shown, shown), (url in self.screen(), out.getvalue().startswith("\x1b]52;c;")))
 
     def test_a_local_open_that_fails_shows_the_url(self) -> None:
         # Catches a failed open, which `webbrowser.open` reports by returning False or raising, leaving the person

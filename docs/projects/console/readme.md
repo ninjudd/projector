@@ -580,8 +580,15 @@ answer's place among a question's options and in the focus ring:
   and `PROJECTOR_REMOTE=0` local, for a tmux server whose environment lost
   the SSH variables. On a local machine it opens the URL with
   `webbrowser.open`, and shows the URL as a remote console does when the
-  open returns false or raises, because nothing opened. `o` stays the key
-  for GitHub, and `g` and `G` stay Home and End, as in `less` and `vi`.
+  open returns false or raises, because nothing opened. A remote console
+  whose `BROWSER` is set calls the browser too, because `webbrowser` runs
+  that command, which can be a helper that opens the URL on your own
+  machine through an SSH tunnel. It shows and copies the URL only when that
+  open returns false or raises.
+- **`o` stays the key for GitHub.** `g` and `G` are the standard pair for
+  the top and the end, as in `less` and `vi`, so they stay Home and End,
+  and `o` keeps opening a pull request in GitHub beside `p` for its
+  Projector summary.
 - **A remote console also sends the URL to your clipboard.** It writes the
   OSC 52 sequence `ESC ] 52 ; c ; <base64 of the URL> BEL` to the terminal
   after curses has drawn the screen, outside curses, so it is never drawn as

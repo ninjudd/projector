@@ -312,6 +312,14 @@ def is_remote(environ: Optional[dict] = None) -> bool:
     return any(environ.get(name) for name in SSH_VARIABLES)
 
 
+def opens_browser(environ: Optional[dict] = None) -> bool:
+    """Whether `o` and `p` call the browser: on a local machine, and on a remote one whose `BROWSER` names a command,
+    which `webbrowser` runs, such as a helper that opens the URL on the person's own machine through an SSH tunnel.
+    A remote console without one shows the URL and sends it to the clipboard instead."""
+    environ = os.environ if environ is None else environ
+    return not is_remote(environ) or bool(environ.get("BROWSER"))
+
+
 def clipboard_sequence(text: str, environ: Optional[dict] = None) -> str:
     """The OSC 52 escape sequence that asks the terminal to put `text` on the clipboard of the machine the person sits
     at. Under tmux, which `TMUX` names, it is wrapped in tmux's passthrough, each Esc doubled, so tmux hands it on to
@@ -714,10 +722,11 @@ class Console:
         return controls
 
     def visit(self, key: str, url: str) -> None:
-        """Open `url` in a browser, or, on a remote machine or when nothing opened, show it under the action at `key`
-        for the person's terminal to make clickable. A remote machine also sends it to the person's clipboard."""
+        """Open `url` in a browser when `opens_browser` says to, and otherwise, or when nothing opened, show it under
+        the action at `key` for the person's terminal to make clickable. A remote machine also sends it to the
+        person's clipboard."""
         remote = is_remote()
-        if not remote:
+        if opens_browser():
             try:
                 if self.open_url(url) is not False:
                     return
