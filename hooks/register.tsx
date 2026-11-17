@@ -1470,6 +1470,24 @@ async function runTool(
   return { stdout: ran.stdout }
 }
 
+/**
+ * Marks a request ready or blocked through the CLI, and puts the request it
+ * prints in the panel, so its line and drawer say so before the next read of
+ * the store. `said` words the tool's result for the request's ref.
+ */
+async function report(
+  $: Engine,
+  input: Readonly<Record<string, unknown>>,
+  said: (ref: string) => string,
+): Promise<{ result: string } | { deny: string }> {
+  const session = await $.session.id()
+  const ran = await runTool($, reportArguments(input, session), 'tell the person in the conversation instead')
+  if ('deny' in ran) return ran
+  const item = itemOf(ran.stdout, session)
+  await replace($, item)
+  return { result: said(item.ref) }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -1546,27 +1564,23 @@ export const register: Register = on => {
     }
   }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
 
-  // The panel takes the request from the CLI at once, so its line and drawer
-  // say ready or blocked before the next read of the store.
-  for (const [tool, said] of [
-    [READY_TOOL, 'ready'],
-    [BLOCK_TOOL, 'blocked'],
-  ] as const) {
-    on('tool.call', { tool }, async ($, e) => {
-      const session = await $.session.id()
-      const args = reportArguments(said === 'ready' ? { number: e.number } : { number: e.number, reason: e.reason ?? '' }, session)
-      const ran = await runTool($, args, 'tell the person in the conversation instead')
-      if ('deny' in ran) return ran
-      const item = itemOf(ran.stdout, session)
-      await replace($, item)
-      return {
-        result:
-          said === 'ready'
-            ? `Marked ${item.ref} ready. Projector’s panel tells the person they can begin; its outcome arrives as a message that starts DONE ${item.ref} or DECLINED ${item.ref}.`
-            : `Marked ${item.ref} blocked. Projector’s panel shows the person your reason; when they press retry, a new message that starts STARTED ${item.ref} arrives.`,
-      }
-    }).catch(() => ({ deny: `Projector could not mark the request ${said}; tell the person in the conversation instead` }))
-  }
+  on('tool.call', { tool: READY_TOOL }, ($, e) =>
+    report(
+      $,
+      { number: e.number },
+      ref =>
+        `Marked ${ref} ready. Projector’s panel tells the person they can begin; its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`,
+    ),
+  ).catch(() => ({ deny: 'Projector could not mark the request ready; tell the person in the conversation instead' }))
+
+  on('tool.call', { tool: BLOCK_TOOL }, ($, e) =>
+    report(
+      $,
+      { number: e.number, reason: e.reason ?? '' },
+      ref =>
+        `Marked ${ref} blocked. Projector’s panel shows the person your reason; when they press retry, a new message that starts STARTED ${ref} arrives.`,
+    ),
+  ).catch(() => ({ deny: 'Projector could not mark the request blocked; tell the person in the conversation instead' }))
 
   // The panel takes the withdrawn item from the CLI at once, so it leaves the
   // panel before the next read of the store.
