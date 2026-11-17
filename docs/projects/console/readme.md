@@ -263,6 +263,7 @@ $ project console
 | Up and down, or `k` and `j` | Move between rows |
 | Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
 | Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
+| Left | Returns to the home list from a session's panel, closing any open drawer. In a text field, it moves the cursor instead |
 | Enter in a text field | Sends the message. Esc cancels it |
 | `q` | Quits |
 
