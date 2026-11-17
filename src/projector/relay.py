@@ -378,6 +378,19 @@ def digest(record: dict) -> str:
     return hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
+def forget(root: Path, found: dict, now: float) -> int:
+    """Queue the deletion of every ref under the relay ID of the registration `found` that origin holds, as the
+    cache last recorded it, or that waits in the outbox. Answers how many refs on origin it queued for deletion."""
+    repo, relay_id = found.get("repo"), found.get("relay_id")
+    if not repo or not relay_id:
+        return 0
+    remote = read_cache(root, repo)["remote"]
+    refs = {ref for ref in [*remote, *(item["ref"] for item in outbox_items(root, repo))]
+            if (parsed := parse_ref(ref)) and parsed[2] == relay_id}
+    queue(root, repo, found.get("cwd"), [(ref, None, {}) for ref in sorted(refs)], now, remote)
+    return sum(1 for item in outbox_items(root, repo) if item["ref"] in refs and item["sealed"] is None)
+
+
 def queue_message(root: Path, repo: str, cwd: str, key: Key, message: dict, now: float) -> None:
     meta = {"kind": "message", "to": message["to"], "sent_at": watch.seconds_of(message["sent_at"])}
     queue(root, repo, cwd, [(inbox_ref(key.id, message["to"], message["id"]), seal(key, message), meta)], now)
@@ -490,15 +503,17 @@ class Job:
         self.key = key
         # The key agent.key names, which a locked keychain can keep the daemon from reading.
         self.held = key.id if key else held
-        self.live = live
+        found, gone = agents.relayed(root)
+        # A session that unregistered is no longer live to the relay, so its refs are deleted as a lapsed one's.
+        self.live = live - gone
         self.now = now
         self.poll = poll
         self.full = full
         self.gh = gh
         self.cache = read_cache(root, repo)
         self.machine = agents.this_machine(root)
-        self.sessions = {name: found for name, found in agents.records(root).items()
-                         if (found.get("repo") or "").lower() == repo.lower()}
+        self.sessions = {name: record for name, record in found.items()
+                         if (record.get("repo") or "").lower() == repo.lower()}
         self.relays = {found["relay_id"]: name for name, found in self.sessions.items()
                        if isinstance(found.get("relay_id"), str)}
         self.changes: list[tuple[str, Optional[dict], dict]] = []
@@ -878,9 +893,10 @@ class Relay:
         self.check_key(full)
         polled = polled or self.fresh
         self.fresh = False
+        records, gone = agents.relayed(self.root)
+        live = live - gone
         lapsed = self.was_live - live
         self.was_live = set(live)
-        records = agents.records(self.root)
         for name, repo in sorted(self.repositories(records, polled, lapsed).items()):
             if name in self.jobs:
                 continue

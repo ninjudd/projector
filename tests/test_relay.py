@@ -1121,6 +1121,37 @@ class LifecycleTests(RelayCase):
         self.assertEqual([], self.a_refs())
         self.assertEqual([], self.one.events(A))
 
+    def test_unregistering_queues_its_refs_deletion_without_pushing_and_refuses_what_arrives_after(self) -> None:
+        self.pair()
+        presence = relay.presence_ref(self.key.id, agents.record(self.one.root, A)["relay_id"])
+        before = self.refs()
+
+        code, out, err = self.one.project("agent", "unregister", claude=A)
+        after = self.refs()
+        queued = [(item["ref"], item["sealed"]) for item in self.one.outbox()]
+        self.message_to_a()
+        self.one.run_pass()
+
+        self.assertEqual((0, "unregistered parser-refactor; relay: 1 ref queued for deletion\n"), (code, out), err)
+        self.assertEqual(before, after)
+        self.assertEqual([(presence, None)], queued)
+        self.assertEqual([], [ref for ref in self.refs() if presence.rsplit("/", 1)[1] in ref])
+        self.assertEqual([], self.one.events(A))
+
+    def test_another_machine_drops_an_unregistered_agent_after_its_next_poll(self) -> None:
+        self.pair()
+        self.one.project("agent", "unregister", claude=A)
+        self.one.run_pass()
+        listed = self.two.project("agent", "list", claude=B)[1]
+
+        self.two.run_pass()
+
+        code, _, err = self.two.send(B, "parser-refactor", "Still there?")
+        self.assertIn("parser-refactor\tclaude", listed)
+        self.assertNotIn("parser-refactor", self.two.project("agent", "list", claude=B)[1])
+        self.assertEqual(65, code)
+        self.assertIn("no registered session is named parser-refactor", err)
+
     def test_an_expired_lease_is_swept_by_another_machine_holding_the_key(self) -> None:
         self.pair()
         self.message_to_a()
