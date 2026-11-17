@@ -16,8 +16,9 @@ Files under the watch state root:
 
     key.json                       where `agent.key`'s private key is stored, and why when it is inline
     outbox/<owner>/<repo>.json     the ref changes waiting for a push, and the checkouts that queued them
-    relay/<owner>/<repo>.json      the repository's visibility, the rejected count, the key's refs on origin, what
-                                   each held when it was opened, and other machines' agents
+    relay/<owner>/<repo>.json      the repository's visibility, the rejected count and the last 20 rejections, the
+                                   key's refs on origin, what each held when it was opened, and other machines'
+                                   agents
 
 Refs in the repository, each a parentless commit whose tree holds one `sealed.json`:
 
@@ -80,10 +81,27 @@ REQUEST = re.compile(r"pj1-([a-z0-9-]{0,20})-([A-Za-z0-9_-]{43})")
 LINE_LENGTH = 318
 LABEL_LENGTH = 20
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+# Each reason the relay rejects a record, by the code `watch status --json` reports, with the words its text prints.
+REASONS = {
+    "ref-name": "ref name", "tree-shape": "tree shape", "too-large": "too large", "unreadable": "unreadable blob",
+    "too-deep": "JSON too deep", "not-json": "not JSON", "not-sealed": "not a sealed record",
+    "tag-mismatch": "tag mismatch", "other-key": "sealed by another key", "relay-id-mismatch": "relay ID mismatch",
+    "recipient-mismatch": "recipient mismatch", "message-id-mismatch": "message ID mismatch", "expired": "expired",
+    "field-shape": "field shape", "collision": "ID collision",
+}
+KEEP_REJECTIONS = 20
 
 
 class RelayError(ProjectorError):
     """A relay key or a Git command that the relay cannot use."""
+
+
+class Rejected(ValueError):
+    """A record the relay refuses, and the code in `REASONS` that says why."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(REASONS[reason])
+        self.reason = reason
 
 
 # The key
@@ -140,11 +158,12 @@ def no_keychain(reason: str) -> RelayError:
                       "it in ~/.projector.toml instead, where every process running as you can read it")
 
 
-def save_key(root: Path, private: bytes, *, inline: bool, environ: Optional[dict] = None) -> tuple[str, str, str]:
+def save_key(root: Path, private: bytes, *, inline: bool, environ: Optional[dict] = None) -> tuple[Key, str, str]:
     """Store the private key in the keychain, or inline with `inline`, and write `agent.key` to
-    `~/.projector.toml` with mode 0600. Answers the key ID, where the key is stored, and why when that is inline.
+    `~/.projector.toml` with mode 0600. Answers the key, where it is stored, and why when that is inline.
     Without `inline`, a keychain that cannot store the key stores nothing."""
-    key_id = crypto.key_id(crypto.public_key(private))
+    key = Key(private, "inline" if inline else "keychain")
+    key_id = key.id
     secret = crypto.encode(private)
     value, store, reason = INLINE_KEY + secret, "inline", "you passed --inline"
     if not inline:
@@ -161,10 +180,10 @@ def save_key(root: Path, private: bytes, *, inline: bool, environ: Optional[dict
     write_value(path, "agent.key", value)
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "key.json", {"schema_version": 1, "key_id": key_id, "store": store, "reason": reason})
-    return key_id, store, reason
+    return key, store, reason
 
 
-def init_key(root: Path, *, inline: bool, environ: Optional[dict] = None) -> tuple[str, str, str]:
+def init_key(root: Path, *, inline: bool, environ: Optional[dict] = None) -> tuple[Key, str, str]:
     existing = configured(environ)
     if existing:
         raise RelayError(f"agent.key already holds key {value_id(existing)}; run `project agent key remove` "
@@ -281,11 +300,11 @@ def check_join(*, inline: bool, replace: bool, environ: Optional[dict] = None) -
 
 
 def join_key(root: Path, private: bytes, *, inline: bool, replace: bool,
-             environ: Optional[dict] = None) -> tuple[str, str, str]:
+             environ: Optional[dict] = None) -> tuple[Key, str, str]:
     """Store the key `join` accepted, and then delete the keychain item of a different key it replaced."""
     existing = replaceable(replace, environ)
     saved = save_key(root, private, inline=inline, environ=environ)
-    if existing and existing.startswith(KEYCHAIN) and value_id(existing) != saved[0]:
+    if existing and existing.startswith(KEYCHAIN) and value_id(existing) != saved[0].id:
         try:
             keychain.delete(value_id(existing))
         except KeychainError:
@@ -378,7 +397,7 @@ def read_cache(root: Path, repo: str) -> dict:
     found = read_json(repo_file(root, "relay", repo)) or {}
     return {"schema_version": 1, "repo": found.get("repo") or repo, "polled_at": found.get("polled_at"),
             "visibility": found.get("visibility") or "unknown", "rejected": found.get("rejected") or 0,
-            "agents": found.get("agents") or {}, "remote": found.get("remote") or {}, "seen": found.get("seen") or {}}
+            "rejections": found.get("rejections") or [], "agents": found.get("agents") or {}, "remote": found.get("remote") or {}, "seen": found.get("seen") or {}}
 
 
 def visibility(root: Path, repo: str) -> str:
@@ -540,16 +559,18 @@ def shallow(data: bytes) -> bool:
 
 
 def parse(data: bytes) -> object:
-    """The JSON an untrusted blob holds, raising `ValueError` for any larger than `MAX_SEALED`, or that does not
+    """The JSON an untrusted blob holds, raising `Rejected` for any larger than `MAX_SEALED`, or that does not
     parse or nests too deeply."""
     if len(data) > MAX_SEALED:
-        raise ValueError(f"the JSON is larger than {MAX_SEALED} bytes")
+        raise Rejected("too-large")
     if not shallow(data):
-        raise ValueError(f"the JSON nests more than {MAX_DEPTH} deep")
+        raise Rejected("too-deep")
     try:
         return json.loads(data)
     except RecursionError:
-        raise ValueError("the JSON nests too deeply to parse") from None
+        raise Rejected("too-deep") from None
+    except ValueError:
+        raise Rejected("not-json") from None
 
 
 def text(data: bytes) -> str:
@@ -620,6 +641,8 @@ class Job:
         self.relays = {found["relay_id"]: name for name, found in self.sessions.items()
                        if isinstance(found.get("relay_id"), str)}
         self.changes: list[tuple[str, Optional[dict], dict]] = []
+        # The rejections this job made, which the daemon logs.
+        self.rejections: list[dict] = []
         self.error = ""
         # The changes this job tried to push: those its push took, or, when it pushes nothing, those queued when
         # it started and those it queued. A change queued after that starts the next job without a poll.
@@ -656,7 +679,7 @@ class Job:
     def result(self, state: str, error: str) -> dict:
         items = outbox_items(self.root, self.repo)
         return {"state": state, "error": error, "queued": len(items), "rejected": self.cache["rejected"],
-                "visibility": self.cache["visibility"], "polled_at": self.cache["polled_at"],
+                "rejections": self.cache["rejections"], "visibility": self.cache["visibility"], "polled_at": self.cache["polled_at"],
                 "errors": sorted({item["last_error"] for item in items if item.get("last_error")})}
 
     def checkout(self) -> Optional[Path]:
@@ -742,68 +765,92 @@ class Job:
             sha = self.cache["remote"][ref]
             parsed = parse_ref(ref)
             if parsed is None:
+                # A ref whose name is outside the namespace is kept, since a later version could have written it.
                 seen[ref] = {"sha": sha, "kind": "ignored"}
+                self.note_rejection(ref, "ref-name")
                 continue
-            blob = self.sealed_blob(cwd, sha)
-            if blob is None:
-                self.reject(ref, sha)
-                continue
-            opened += 1
-            record = self.open(cwd, blob)
-            kind, _, relay_id = parsed
-            if kind == "agent":
-                self.take_presence(ref, sha, relay_id, record)
-            else:
-                self.take_message(ref, sha, relay_id, record)
+            try:
+                blob = self.sealed_blob(cwd, sha)
+                opened += 1
+                record = self.open(cwd, blob)
+                kind, _, relay_id = parsed
+                if kind == "agent":
+                    self.take_presence(ref, sha, relay_id, record)
+                else:
+                    self.take_message(ref, sha, relay_id, record)
+            except Rejected as rejected:
+                self.reject(ref, sha, rejected.reason)
 
-    def sealed_blob(self, cwd: Path, sha: str) -> Optional[str]:
-        """The blob of a commit whose tree is exactly one `sealed.json` of at most 32 KiB, or None."""
+    def sealed_blob(self, cwd: Path, sha: str) -> str:
+        """The blob of a commit whose tree is exactly one `sealed.json` of at most 32 KiB."""
         done = git(cwd, "ls-tree", "-l", sha)
         lines = text(done.stdout).splitlines()
         found = TREE.fullmatch(lines[0]) if done.returncode == 0 and len(lines) == 1 else None
-        return found[1] if found and int(found[2]) <= MAX_SEALED else None
+        if found is None:
+            raise Rejected("tree-shape")
+        if int(found[2]) > MAX_SEALED:
+            raise Rejected("too-large")
+        return found[1]
 
-    def open(self, cwd: Path, blob: str) -> Optional[dict]:
+    def open(self, cwd: Path, blob: str) -> dict:
         """The record a blob holds when it opens with this machine's key and was sealed by the same key."""
         assert self.key is not None
         done = git(cwd, "cat-file", "blob", blob)
-        if done.returncode != 0 or len(done.stdout) > MAX_SEALED:
-            return None
+        if done.returncode != 0:
+            raise Rejected("unreadable")
         try:
             sender, plaintext = crypto.unseal(self.key.private, parse(done.stdout))
-            record = parse(plaintext)
-        except (crypto.CryptoError, ValueError):
-            return None
-        return record if sender == self.key.public and isinstance(record, dict) else None
+        except crypto.TagMismatch:
+            raise Rejected("tag-mismatch") from None
+        except crypto.CryptoError:
+            raise Rejected("not-sealed") from None
+        if sender != self.key.public:
+            raise Rejected("other-key")
+        record = parse(plaintext)
+        if not isinstance(record, dict):
+            raise Rejected("field-shape")
+        return record
 
-    def reject(self, ref: str, sha: str) -> None:
+    def reject(self, ref: str, sha: str, reason: str) -> None:
         self.cache["seen"][ref] = {"sha": sha, "kind": "rejected"}
-        self.cache["rejected"] += 1
+        self.note_rejection(ref, reason)
         self.delete(ref)
 
-    def take_presence(self, ref: str, sha: str, relay_id: str, record: Optional[dict]) -> None:
-        expires = (record or {}).get("expires_at")
-        if (record is None or record.get("relay_id") != relay_id or not isinstance(expires, (int, float))
-                or not isinstance(record.get("session"), str) or not SESSION.fullmatch(record["session"])
-                or not isinstance(record.get("machine"), str) or not agents.well_formed_presence(record)):
-            self.reject(ref, sha)
-            return
+    def note_rejection(self, ref: str, reason: str) -> None:
+        """Count a rejection, and keep its ref, reason, and time, but nothing the record holds."""
+        rejection = {"ref": ref, "reason": reason, "at": watch.stamp(self.now)}
+        self.cache["rejected"] += 1
+        self.cache["rejections"] = [*self.cache["rejections"], rejection][-KEEP_REJECTIONS:]
+        self.rejections.append(rejection)
+
+    def take_presence(self, ref: str, sha: str, relay_id: str, record: dict) -> None:
+        expires = record.get("expires_at")
+        if record.get("relay_id") != relay_id:
+            raise Rejected("relay-id-mismatch")
+        if (not isinstance(expires, (int, float)) or not isinstance(record.get("session"), str)
+                or not SESSION.fullmatch(record["session"]) or not isinstance(record.get("machine"), str)
+                or not agents.well_formed_presence(record)):
+            raise Rejected("field-shape")
         self.cache["seen"][ref] = {"sha": sha, "kind": "agent", "expires_at": expires}
         if record["machine"] != self.machine:
             self.cache["agents"][relay_id] = record
 
-    def take_message(self, ref: str, sha: str, relay_id: str, record: Optional[dict]) -> None:
-        sent = watch.seconds_of((record or {}).get("sent_at"))
-        if (record is None or record.get("to") != relay_id or record.get("id") != ref.rsplit("/", 1)[1]
-                or sent is None or self.now - sent >= agents.KEEP or not agents.well_formed(record)):
-            self.reject(ref, sha)
-            return
+    def take_message(self, ref: str, sha: str, relay_id: str, record: dict) -> None:
+        sent = watch.seconds_of(record.get("sent_at"))
+        if record.get("to") != relay_id:
+            raise Rejected("recipient-mismatch")
+        if record.get("id") != ref.rsplit("/", 1)[1]:
+            raise Rejected("message-id-mismatch")
+        if sent is None or not agents.well_formed(record):
+            raise Rejected("field-shape")
+        if self.now - sent >= agents.KEEP:
+            raise Rejected("expired")
         self.cache["seen"][ref] = {"sha": sha, "kind": "message", "to": relay_id, "sent_at": sent}
         session = self.relays.get(relay_id)
         if session is None or session not in self.live:
             return
         if agents.deliver(self.root, session, record, self.now) == "collision":
-            self.cache["rejected"] += 1
+            self.note_rejection(ref, "collision")
         self.delete(ref)
 
     def sweep(self) -> None:
@@ -954,10 +1001,11 @@ class Relay:
     `agent.key` changes or after a failed read, and each repository's job and its last result."""
 
     def __init__(self, root: Path, *, gh: Callable[[list[str]], watch.GhResult], wall: Callable[[], float],
-                 environ: Optional[dict] = None) -> None:
+                 log: Callable[[str], None], environ: Optional[dict] = None) -> None:
         self.root = root
         self.gh = gh
         self.wall = wall
+        self.log = log
         self.environ = dict(os.environ) if environ is None else environ
         self.pool = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="relay")
         self.jobs: dict[str, tuple[Job, Future]] = {}
@@ -972,6 +1020,9 @@ class Relay:
         self.signature: object = ()
         self.last_full: Optional[float] = None
         self.fresh = False
+        # The repositories whose job owes a poll since the key was read: a repository whose job was still running
+        # then gets it as soon as that job ends, so a registration waiting for the key need not wait for a pass.
+        self.owed: dict[str, str] = {}
         self.was_live: set[str] = set()
 
     def start(self) -> None:
@@ -995,20 +1046,23 @@ class Relay:
             self.last_full = now
         self.collect()
         self.check_key(full)
-        polled = polled or self.fresh
-        self.fresh = False
         records, gone = agents.relayed(self.root)
         live = live - gone
         lapsed = self.was_live - live
         self.was_live = set(live)
-        for name, repo in sorted(self.repositories(records, polled, lapsed).items()):
+        if self.fresh:
+            self.owed.update(self.repositories(records, True, lapsed))
+            self.fresh = False
+        for name, repo in sorted({**self.repositories(records, polled, lapsed), **self.owed}.items()):
             if name in self.jobs:
                 continue
+            owed = self.owed.pop(name, None) is not None
             here = {session: found for session, found in records.items() if (found.get("repo") or "").lower() == name}
             remote = read_cache(self.root, repo)["remote"]
             lingering = {found.get("relay_id") for session, found in here.items() if session not in live}
-            poll = polled and (any(session in live for session in here)
-                               or any((parsed := parse_ref(ref)) and parsed[2] in lingering for ref in remote))
+            poll = (polled or owed) and (any(session in live for session in here)
+                                         or any((parsed := parse_ref(ref)) and parsed[2] in lingering
+                                                for ref in remote))
             job = Job(self.root, repo, self.key, set(live), now, poll=poll, full=full, gh=self.gh,
                       held=self.held())
             self.jobs[name] = (job, self.pool.submit(job.run))
@@ -1036,6 +1090,9 @@ class Relay:
             if future.done():
                 del self.jobs[repo]
                 self.settled[repo] = job.attempted
+                for rejection in job.rejections:
+                    self.log(f"relay {job.repo}: rejected {rejection['ref']}: {rejection['reason']}, at "
+                             f"{rejection['at']}")
                 try:
                     self.results[repo] = future.result()
                 except Exception as error:

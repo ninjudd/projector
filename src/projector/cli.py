@@ -1378,7 +1378,7 @@ def confirmed(prompt: str, deadline: float, outcome: str) -> bool:
     return terminal_line(prompt, deadline, outcome).lower() in ("y", "yes")
 
 
-def join_key(root: Path, arguments: argparse.Namespace) -> tuple[str, str, str]:
+def join_key(root: Path, arguments: argparse.Namespace) -> tuple[relay.Key, str, str]:
     """Make a request for the relay key, read the line `key grant` prints for it, and store the key it carries.
     The temporary private key lives only in this function."""
     relay.check_join(inline=arguments.inline, replace=arguments.replace)
@@ -1439,18 +1439,25 @@ def run_agent_key(arguments: argparse.Namespace) -> int:
     path = user_config_path()
     if command == "join":
         try:
-            key_id, store, reason = join_key(root, arguments)
+            key, store, reason = join_key(root, arguments)
         except KeyboardInterrupt:
             print(f"\nproject: stopped, so {STORED_NOTHING}", file=sys.stderr)
             return 130
     else:
-        key_id, store, reason = relay.init_key(root, inline=arguments.inline)
-        if arguments.json_output:
-            print(json_text({"key_id": key_id, "store": store, "reason": reason, "file": str(path)}))
-            return 0
+        key, store, reason = relay.init_key(root, inline=arguments.inline)
+    queued = agents.publish_waiting(root, key, time.time())
+    if queued:
+        watch.ensure_daemon(root, distribution_version(), newer_release)
+    if command == "init" and arguments.json_output:
+        print(json_text({"key_id": key.id, "store": store, "reason": reason, "file": str(path),
+                         "queued": queued}))
+        return 0
     where = (f"stored inline in {path}, mode 0600, because {reason}" if store == "inline"
-             else f"stored in the {store}; {path} names it as agent.key = \"keychain:{key_id}\"")
-    print(f"key {key_id} {where}")
+             else f"stored in the {store}; {path} names it as agent.key = \"keychain:{key.id}\"")
+    print(f"key {key.id} {where}")
+    if queued:
+        print(f"queued the presence of {len(queued)} registered session{'' if len(queued) == 1 else 's'} for the "
+              "relay; the watch daemon pushes it within seconds")
     print(relay.COPY)
     return 0
 
@@ -1657,8 +1664,11 @@ def run_watch(arguments: argparse.Namespace) -> int:
                   f"relay: off ({key['error'] or 'no agent.key'})")
             for repo, found in report["relay"]["repositories"].items():
                 problems = "; ".join(part for part in (found.get("error"), *found.get("errors", [])) if part)
+                latest = (found.get("rejections") or [None])[-1]
+                why = (f" (latest: {relay.REASONS.get(latest['reason'], latest['reason'])}, {latest['at'][11:16]})"
+                       if latest else "")
                 print(f"relay {repo}: {found.get('state')}, {found.get('queued', 0)} queued, "
-                      f"{found.get('rejected', 0)} rejected" + (f"; {problems}" if problems else ""))
+                      f"{found.get('rejected', 0)} rejected{why}" + (f"; {problems}" if problems else ""))
             if report["codex_hooks"]:
                 print(f"codex hooks: {report['codex_hooks']}")
             for session, found in report["deliveries"].items():

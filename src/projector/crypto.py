@@ -33,6 +33,10 @@ class CryptoError(ProjectorError):
     """A sealed record that does not open: malformed, forged, or altered."""
 
 
+class TagMismatch(CryptoError):
+    """A sealed record whose tag does not match: forged, altered, or sealed to another key."""
+
+
 # X25519
 
 def x25519(scalar: bytes, point: bytes) -> bytes:
@@ -192,5 +196,5 @@ def unseal(recipient_private: bytes, sealed: object) -> tuple[bytes, bytes]:
     cipher_key, mac_key = derive(agree(recipient_private, ephemeral), agree(recipient_private, sender),
                                  ephemeral, sender, recipient)
     if not hmac.compare_digest(tag(mac_key, sender, ephemeral, ciphertext), given):
-        raise CryptoError("the record's tag does not match")
+        raise TagMismatch("the record's tag does not match")
     return sender, chacha20(cipher_key, 0, bytes(12), ciphertext)

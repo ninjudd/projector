@@ -30,7 +30,7 @@ from typing import Optional
 from unittest import mock
 
 from projector import agents, cli, codex_watch as codex, config, crypto, keychain, relay, watch
-from projector.inbox import read_json
+from projector.inbox import read_json, try_lock, unlock
 from tests.scratch import copy_of
 from tests.test_watch import FakeGitHub
 
@@ -168,6 +168,8 @@ class Machine:
         self.work = base / "work"
         self.env = {"HOME": str(self.home), "XDG_STATE_HOME": str(self.state)}
         self.daemon: Optional[watch.Daemon] = None
+        # What the relay wrote to daemon.log, which `serve` makes the daemon's output.
+        self.logged: list[str] = []
 
     def clone(self, path: Path) -> Path:
         return clone(path, self.case.origin)
@@ -218,6 +220,7 @@ class Machine:
             self.daemon = watch.Daemon(self.root, version="1.0", gh=self.case.github, wall=lambda: self.case.now,
                                        mono=lambda: self.case.now, settings=watch.Settings(),
                                        review_root=self.case.scratch / self.name / "reviews")
+        self.daemon.relay.log = self.logged.append
         self.daemon.start()
         self.case.addCleanup(self.daemon.relay.close)
         self.case.addCleanup(self.daemon.codex.close)
@@ -622,7 +625,102 @@ class CheckTests(RelayCase):
         self.assertEqual((2, 3), (first, len(self.two.events(B))))
         self.assertFalse([args for args in calls if args[:2] == ("cat-file", "blob") and args[2] in bad_blobs])
         self.assertIn(f"refs/projector/inbox/{self.key.id}/{b}/not-a-message", self.refs())
-        self.assertEqual(2, self.two.status()["repositories"]["acme/app"]["rejected"])
+        self.assertEqual(3, self.two.status()["repositories"]["acme/app"]["rejected"],
+                         "the bad tree, the large blob, and the ref name outside the namespace")
+
+    def rejections(self) -> list[dict]:
+        return self.two.status()["repositories"]["acme/app"]["rejections"]
+
+    def test_each_rejection_records_the_reason_the_relay_rejected_it_for(self) -> None:
+        self.pair()
+        b = self.b_relay_id()
+        a = agents.record(self.one.root, A)["relay_id"]
+        message = lambda number, **fields: self.message(f"m-{number:032x}", to=b, **fields)
+        flipped = json.loads(self.sealed(message(7)))
+        flipped["tag"] = crypto.encode(bytes(32))
+        presence = relay.presence(B, agents.record(self.two.root, B), self.now)
+        planted = {
+            f"refs/projector/inbox/{self.key.id}/{b}/not-a-message": ({"sealed.json": self.sealed(message(1))},
+                                                                       "ref-name"),
+            self.inbox(f"m-{2:032x}"): ({"sealed.json": self.sealed(message(2)), "extra.txt": b"x"}, "tree-shape"),
+            self.inbox(f"m-{3:032x}"): ({"sealed.json": self.sealed(message(3)) + b" " * (33 * 1024)}, "too-large"),
+            self.inbox(f"m-{4:032x}"): ({"sealed.json": b"[" * 100}, "too-deep"),
+            self.inbox(f"m-{5:032x}"): ({"sealed.json": b"not JSON"}, "not-json"),
+            self.inbox(f"m-{6:032x}"): ({"sealed.json": json.dumps(message(6)).encode()}, "not-sealed"),
+            self.inbox(f"m-{7:032x}"): ({"sealed.json": json.dumps(flipped).encode()}, "tag-mismatch"),
+            self.inbox(f"m-{8:032x}"): ({"sealed.json": self.sealed(message(8), bytes(range(2, 34)))}, "other-key"),
+            self.inbox(f"m-{9:032x}", a): ({"sealed.json": self.sealed(message(9))}, "recipient-mismatch"),
+            self.inbox(f"m-{11:032x}"): ({"sealed.json": self.sealed(message(10))}, "message-id-mismatch"),
+            self.inbox(f"m-{12:032x}"): ({"sealed.json": self.sealed(message(12, from_host="the user"))},
+                                         "field-shape"),
+            self.inbox(f"m-{13:032x}"): ({"sealed.json": self.sealed(message(13, sent_at=self.now - 8 * 86400))},
+                                         "expired"),
+            relay.presence_ref(self.key.id, "0" * 16): ({"sealed.json": self.sealed(presence)}, "relay-id-mismatch"),
+        }
+        for ref, (files, _) in planted.items():
+            self.plant(ref, files)
+        delivered = message(14)
+        self.plant(self.inbox(delivered["id"]), {"sealed.json": self.sealed(delivered)})
+        self.two.run_pass()
+        collided = self.inbox(delivered["id"])
+        self.plant(collided, {"sealed.json": self.sealed(message(14, text="Something else"))})
+        self.two.run_pass()
+
+        expected = {**{ref: reason for ref, (_, reason) in planted.items()}, collided: "collision"}
+        self.assertEqual(expected, {found["ref"]: found["reason"] for found in self.rejections()})
+        self.assertEqual(len(expected), self.two.status()["repositories"]["acme/app"]["rejected"])
+
+    def test_no_report_of_a_rejection_shows_the_records_ciphertext_or_plaintext(self) -> None:
+        self.pair()
+        secret = "PLANTED-SECRET-7f3a"
+        other = agents.record(self.one.root, A)["relay_id"]
+        sealed = self.sealed(self.message("m-" + "1" * 32, to=self.b_relay_id(), text=secret))
+        ref = self.inbox("m-" + "1" * 32, other)
+        self.plant(ref, {"sealed.json": sealed})
+
+        self.two.run_pass()
+        code, out, err = self.two.project("watch", "status", "--json")
+        text = self.two.project("watch", "status")[1]
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([f"relay acme/app: rejected {ref}: recipient-mismatch, at {watch.stamp(self.now)}"],
+                         self.two.logged)
+        self.assertEqual([{"ref": ref, "reason": "recipient-mismatch", "at": watch.stamp(self.now)}],
+                         json.loads(out)["relay"]["repositories"]["acme/app"]["rejections"])
+        ciphertext = json.loads(sealed)["ciphertext"]
+        for report in (out, text, *self.two.logged):
+            for content in (secret, ciphertext, ciphertext[:24], json.loads(sealed)["tag"]):
+                self.assertNotIn(content, report)
+
+    def test_the_status_keeps_only_the_last_20_rejections_and_counts_them_all(self) -> None:
+        self.pair()
+        work = self.scratch / "planter"
+        self.one.clone(work)
+        blob = git("hash-object", "-w", "--stdin", cwd=work, input=b"not JSON")
+        tree = git("mktree", cwd=work, input=f"100644 blob {blob}\tsealed.json\n".encode())
+        commit = git("-c", "commit.gpgSign=false", "commit-tree", "-m", "planted", tree, cwd=work)
+        refs = [self.inbox(f"m-{index:032x}") for index in range(25)]
+        git("push", "-q", "origin", *[f"{commit}:{ref}" for ref in refs], cwd=work)
+
+        self.two.run_pass()
+
+        self.assertEqual(refs[5:], [found["ref"] for found in self.rejections()])
+        self.assertEqual(25, self.two.status()["repositories"]["acme/app"]["rejected"])
+
+    def test_the_status_line_shows_the_count_and_the_latest_reason_and_its_time(self) -> None:
+        self.now = 1794803820.0
+        self.pair()
+        quiet = self.two.project("watch", "status")[1]
+        flipped = json.loads(self.sealed(self.message("m-" + "2" * 32, to=self.b_relay_id())))
+        flipped["tag"] = crypto.encode(bytes(32))
+        self.plant(self.inbox("m-" + "2" * 32), {"sealed.json": json.dumps(flipped).encode()})
+
+        self.two.run_pass()
+        code, out, err = self.two.project("watch", "status")
+
+        self.assertEqual(0, code, err)
+        self.assertIn("relay acme/app: ok, 0 queued, 0 rejected\n", quiet)
+        self.assertIn("relay acme/app: ok, 0 queued, 1 rejected (latest: tag mismatch, 04:37)\n", out)
 
 
 class FakeAdvapi32:
@@ -1080,6 +1178,119 @@ def wait_for(condition, seconds: float = 10.0) -> bool:
             return False
         time.sleep(0.02)
     return True
+
+
+class KeyArrivalTests(RelayCase):
+    """A session that registered while machine one had no key, and the key arriving by `key init`, `key join`, or
+    an edit to `agent.key`."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.one.claude(A)
+        self.one.register(A, "--name", "parser-refactor", "--summary", "Refactoring the parser")
+        self.one.run_pass()
+        self.advance(1)
+
+    def presence(self, key_id: str, session: str = A) -> str:
+        return relay.presence_ref(key_id, agents.record(self.one.root, session)["relay_id"])
+
+    def queued(self) -> tuple[list[str], str]:
+        return [item["ref"] for item in self.one.outbox()], agents.record(self.one.root, A)["relay"]
+
+    def tick(self) -> None:
+        """One turn of the daemon's loop that is not a poll, and the relay jobs it starts."""
+        self.one.daemon.tick()
+        self.one.settle()
+
+    def hold_daemon_lock(self) -> None:
+        """Hold the lock the daemon holds, so a `project` process finds machine one's daemon running."""
+        descriptor = os.open(self.one.root / "daemon.mutex", os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, descriptor)
+        self.assertTrue(try_lock(descriptor))
+        self.addCleanup(unlock, descriptor)
+
+    def test_key_init_queues_a_session_registered_before_it_and_one_daemon_tick_pushes_it(self) -> None:
+        self.on_macos()
+
+        code, out, err = self.one.project("agent", "key", "init")
+        key_id = relay.value_id(relay.configured(self.one.env))
+        queued = self.queued()
+        self.tick()
+
+        self.assertEqual(0, code, err)
+        self.assertIn("queued the presence of 1 registered session for the relay", out)
+        self.assertEqual(([self.presence(key_id)], "pending"), queued)
+        self.assertIn(self.presence(key_id), self.refs())
+        self.assertEqual("published", agents.record(self.one.root, A)["relay"])
+
+    def test_key_join_queues_a_session_registered_before_it_and_one_daemon_tick_pushes_it(self) -> None:
+        self.two.inline_key(self.private)
+        self.hold_daemon_lock()
+
+        join = Pty(self, self.one, "agent", "key", "join")
+        request = re.search(r"project agent key grant (pj1-\S+)",
+                            join.until("Paste the line it prints here: ")).group(1)
+        granted = self.two.project("agent", "key", "grant", request, stdin="y\n", terminal=True)
+        join.type(re.search(r"^  (pk1-\S+)$", granted[1], re.MULTILINE).group(1))
+        join.until("Does the other machine show the same key? [y/N] ")
+        join.type("y")
+        code, output = join.finish()
+        queued = self.queued()
+        self.tick()
+
+        self.assertEqual(0, code, output)
+        self.assertEqual(([self.presence(self.key.id)], "pending"), queued)
+        self.assertIn(self.presence(self.key.id), self.refs())
+
+    def test_key_init_queues_no_presence_for_a_session_that_unregistered(self) -> None:
+        self.one.claude(C)
+        self.one.register(C, "--name", "test-writer", "--summary", "Writing the parser's tests")
+        self.one.project("agent", "unregister", claude=A)
+
+        code, out, err = self.one.project("agent", "key", "init", "--inline")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([self.presence(relay.value_id(relay.configured(self.one.env)), C)],
+                         [item["ref"] for item in self.one.outbox()])
+
+    def test_key_init_skips_a_session_whose_checkout_has_no_origin(self) -> None:
+        elsewhere = self.scratch / "no-origin"
+        git("init", "-q", "-b", "main", str(elsewhere))
+        self.one.project("agent", "unregister", claude=A)
+        self.one.claude(C)
+        self.one.register(C, "--name", "test-writer", "--summary", "Writing the parser's tests", cwd=elsewhere)
+
+        code, out, err = self.one.project("agent", "key", "init", "--inline")
+
+        self.assertEqual(0, code, err)
+        self.assertNotIn("queued the presence", out)
+        self.assertEqual(([], "none"), ([item["ref"] for item in self.one.outbox()],
+                                        agents.record(self.one.root, C)["relay"]))
+
+    def test_a_key_read_while_a_job_runs_publishes_on_the_job_after_it_rather_than_the_next_poll(self) -> None:
+        self.one.inline_key(self.private)
+        self.one.run_pass()
+        self.tick()
+        self.assertIn(self.presence(self.key.id), self.refs())
+        self.advance(1)
+        other = relay.Key(bytes(range(2, 34)), "inline")
+        self.one.inline_key(other.private)
+        log = hook(self.one.work)
+
+        # A poll that sees the new key starts reading it, and starts a job, without the key, that deletes the old
+        # key's presence and waits in the pre-push hook.
+        self.one.daemon.wanted = True
+        self.one.daemon.tick()
+        self.assertTrue(wait_for(log.exists))
+        self.one.daemon.relay.reading[1].result(10)
+        self.advance(1)
+        self.one.daemon.tick()
+        log.with_suffix(".release").touch()
+        self.one.settle()
+        self.advance(1)
+        self.tick()
+
+        self.assertEqual([self.presence(other.id)], [ref for ref in self.refs() if ref.startswith(relay.AGENTS)])
 
 
 class PushTests(RelayCase):

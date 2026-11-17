@@ -824,7 +824,7 @@ class Daemon:
         self.last_pass: Optional[float] = None
         self.codex = codex_watch.Dispatcher(wall=wall)
         from . import relay
-        self.relay = relay.Relay(root, gh=self.gh, wall=wall)
+        self.relay = relay.Relay(root, gh=self.gh, wall=wall, log=self.log)
 
     def log(self, message: str) -> None:
         print(f"{stamp(self.wall())} {message}", flush=True)
