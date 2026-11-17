@@ -663,6 +663,22 @@ else:
         self.tick()
         self.assertIn("CLOSED Acme/App#15", self.sent()[2])
 
+    def test_two_messages_reach_the_session_in_order_and_settle_once_codex_takes_each(self):
+        # Catches an adapter that settles a DISCUSS line as the item's answer, or marks the wrong entry delivered.
+        inbox.discuss("session-A", "1", "Why decline?")
+        inbox.discuss("session-A", "1", "What does the budget cost?")
+        self.tick()
+        self.acknowledge()
+        self.tick()
+        self.acknowledge()
+        self.tick()
+        self.assertEqual(2, len(self.sent()))
+        self.assertIn("DISCUSS 1 Decline the finding? → Why decline?", self.sent()[0])
+        self.assertIn("DISCUSS 1 Decline the finding? → What does the budget cost?", self.sent()[1])
+        item = self.item()
+        self.assertEqual((None, None, [True, True]),
+                         (item.get("answer"), item.get("deliveredAt"), ["deliveredAt" in said for said in item["thread"]]))
+
     def test_recording_an_answer_starts_the_daemon_for_a_codex_session(self):
         # Catches an answer that waits for the session's next hook while the daemon is down.
         with mock.patch.object(watch, "ensure_daemon") as ensure, mock.patch("sys.stdout", io.StringIO()):

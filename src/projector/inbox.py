@@ -8,8 +8,10 @@ person presses start, and the agent then marks it ready or blocked. The person c
 understand an open item of any kind, which goes back to the agent as `UNCLEAR`. The agent that
 posted an open item can withdraw it, which dismisses it and sends nothing back, and can revise its
 text in place. An item the person dismissed, declined, or snoozed can be restored, which reopens
-it in place. Each session numbers its items 1, 2, 3, and on, in one count across every kind. Its
-items are JSON files in their own directory, one per item and named by its number, with
+it in place. A discussion is an item the person starts, about a pull request or about the session
+itself, and every item can carry a thread: the person's messages, each of which goes back to the
+agent as `DISCUSS`, and the agent's replies, which the person reads where the item is shown. Each
+session numbers its items 1, 2, 3, and on, in one count across every kind. Its items are JSON files in their own directory, one per item and named by its number, with
 `count.json` holding the last number given. Every write happens under the directory's lock, an
 operating-system lock on its `.lock` file, and lands by renaming a temporary file into place, so
 two writers never lose each other's change and a reader never sees half a file.
@@ -34,7 +36,10 @@ MAX_SUBJECT = 120
 MAX_OPTIONS = 4
 SNOOZE_MINUTES = 60
 MAX_SNOOZE_MINUTES = 24 * 60
-KINDS = ("question", "notice", "request")
+KINDS = ("question", "notice", "request", "discussion")
+# The kinds that take no answer, so their dismissal sends the agent nothing.
+UNANSWERED_KINDS = ("notice", "discussion")
+MAX_MESSAGE_BYTES = 4096
 KEEP_DELIVERED = 100
 CLAIM_EXPIRES_MS = 60_000
 LOCK_WAIT_SECONDS = 5.0
@@ -42,6 +47,9 @@ LOCK_WAIT_SECONDS = 5.0
 # the same name. A claimed one may already wait in the session's queue as a prompt that nothing
 # can recall, so it keeps its claim when an answer, outcome, or dismissal lands.
 OPEN_LINES = ("started", "unclear")
+# The lines whose claim an answer, outcome, or dismissal leaves in place: the open lines, and a
+# message of the person's, whose words the agent is owed whatever becomes of the item.
+HELD_LINES = (*OPEN_LINES, "discuss")
 
 SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 PULL = re.compile(r"^(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>[1-9][0-9]*)$")
@@ -233,7 +241,8 @@ def check(question: str, recommend: str, options: list[str], pr: Optional[str]) 
 
 
 def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str], agent: Optional[str],
-         choices: Optional[list[str]] = None, start: Optional[str] = None) -> dict:
+         choices: Optional[list[str]] = None, start: Optional[str] = None,
+         thread: Optional[list[dict]] = None) -> dict:
     """Number and record an item that passed its checks; returns it. Every kind shares the
     session's one count, which only grows, so a number names one item for the whole session,
     even after pruning deletes the item that held the largest."""
@@ -254,6 +263,8 @@ def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str
             record["choices"] = choices
         if start is not None:
             record["start"] = start.strip()
+        if thread is not None:
+            record["thread"] = thread
         if agent:
             record["agentId"] = agent
         # The count lands first: a write that stops between the two then skips a
@@ -314,6 +325,33 @@ def request(session: str, subject: str, *, detail: str = "", pr: Optional[str] =
     return post(session, "request", subject, detail=detail, pr=pr, agent=agent, start=start, choices=choices)
 
 
+def check_message(text: str) -> str:
+    """The thread entry's text: one paragraph of at most `MAX_MESSAGE_BYTES` in UTF-8, on one line, as
+    the `DISCUSS` line that carries it to the agent prints."""
+    said = text.strip()
+    if not said:
+        raise InboxError("the message is empty")
+    if not is_one_line(said):
+        raise InboxError("the message must be one paragraph, with no line breaks")
+    size = len(said.encode("utf-8"))
+    if size > MAX_MESSAGE_BYTES:
+        raise InboxError(f"the message is {size} bytes; keep it to {MAX_MESSAGE_BYTES} (4 KiB)")
+    return said
+
+
+def thread_entry(author: str, text: str) -> dict:
+    return {"from": author, "text": check_message(text), "at": now_ms()}
+
+
+def start_discussion(session: str, text: str, *, pr: Optional[str] = None) -> dict:
+    """Number and record a discussion the person starts about pull request `pr`, or about the
+    session itself without one, with their message as its thread's first entry; returns it."""
+    first = thread_entry("person", text)
+    subject = f"About {pr}" if pr is not None else "About this session"
+    check_subject("discussion", subject, pr)
+    return post(session, "discussion", subject, detail="", pr=pr, agent=None, thread=[first])
+
+
 # Finding an item
 
 def parse_reference(text: str) -> tuple[str, Optional[str]]:
@@ -370,9 +408,14 @@ def is_request(item: dict) -> bool:
     return item.get("kind") == "request"
 
 
+def takes_no_answer(item: dict) -> bool:
+    return item.get("kind") in UNANSWERED_KINDS
+
+
 def refuse_notice(item: dict, action: str) -> None:
-    if is_notice(item):
-        raise InboxError(f"{item['ref']} is a notice, which {action}; dismiss it with `project inbox dismiss`")
+    if takes_no_answer(item):
+        raise InboxError(f"{item['ref']} is a {item['kind']}, which {action}; dismiss it with "
+                         "`project inbox dismiss`")
 
 
 def refuse_request(item: dict) -> None:
@@ -408,11 +451,20 @@ def resolution(item: dict) -> str:
     return "done" if answered.get("done") else f"answered, as {answer_ref(item)}"
 
 
+def owed_entry(item: dict) -> Optional[int]:
+    """The index of the oldest of the person's thread entries not yet delivered, if any."""
+    for index, said in enumerate(item.get("thread") or []):
+        if said.get("from") == "person" and not said.get("deliveredAt"):
+            return index
+    return None
+
+
 def owed_line(item: dict) -> Optional[str]:
     """The line an item owes its agent next, if any: `answer` for an answer, outcome, or dismissal
     not yet delivered, `restored` for word that a dismissal it may have heard of was undone,
-    `started` for an open request's start not yet delivered, or `unclear` for word not yet
-    delivered that the person does not understand an open item."""
+    `started` for an open request's start not yet delivered, `unclear` for word not yet
+    delivered that the person does not understand an open item, or `discuss` for a message of the
+    person's in its thread not yet delivered."""
     if item.get("answer") and not item.get("deliveredAt"):
         return "answer"
     if item.get("restoredAt"):
@@ -421,7 +473,7 @@ def owed_line(item: dict) -> Optional[str]:
         recorded = item.get(line)
         if not item.get("answer") and recorded and not recorded.get("deliveredAt"):
             return line
-    return None
+    return "discuss" if owed_entry(item) is not None else None
 
 
 def claimed_line(item: dict) -> Optional[str]:
@@ -431,13 +483,23 @@ def claimed_line(item: dict) -> Optional[str]:
     return (claimed.get("line") or owed_line(item)) if claimed else None
 
 
+def discussed_entry(item: dict) -> Optional[int]:
+    """The index of the thread entry a `DISCUSS` line carries: the one its claim recorded, or else
+    the oldest the item owes."""
+    claimed = item.get("claim") or {}
+    return claimed.get("entry") if claimed.get("line") == "discuss" else owed_entry(item)
+
+
 def message(question: dict) -> str:
     """The line that tells the agent what became of its item, as `watch` prints it and the panel
     sends it: its answer or outcome, its dismissal, that a dismissal it may have heard of was
-    undone, that the person pressed start, quoting the start action they pressed it for, or that
-    the person does not understand it. A request's outcome ends with the person's text when they
-    gave one."""
+    undone, that the person pressed start, quoting the start action they pressed it for, that the
+    person does not understand it, or a message the person wrote in its thread. A request's
+    outcome ends with the person's text when they gave one."""
     line = claimed_line(question) or owed_line(question)
+    if line == "discuss":
+        said = question["thread"][discussed_entry(question)]["text"]
+        return f"DISCUSS {question['ref']} {question['subject']} → {said}"
     if line == "started":
         return f"STARTED {question['ref']} {question['subject']} → {question['started']['action']}"
     if line == "unclear":
@@ -509,9 +571,10 @@ def clear_for_outcome(item: dict) -> tuple[bool, bool]:
     """Clear what an answer, outcome, or dismissal replaces, and say whether word of a restore was
     owed and whether a claim was dropped. It clears a snooze, word of a restore, the claim to deliver
     either, a request's start that no deliverer has claimed, and the person's word that they do not
-    understand the item, which they no longer need answered. A claimed `STARTED` or `UNCLEAR` keeps
-    its claim, as `OPEN_LINES` says, and the new line is owed once `settle` finishes it."""
-    pending = claimed_line(item) if claimed_line(item) in OPEN_LINES else None
+    understand the item, which they no longer need answered. A claimed `STARTED`, `UNCLEAR`, or
+    `DISCUSS` keeps its claim, as `HELD_LINES` says, and the new line is owed once `settle`
+    finishes it."""
+    pending = claimed_line(item) if claimed_line(item) in HELD_LINES else None
     item.pop("snoozedUntil", None)
     item.pop("snoozedAt", None)
     restored = item.pop("restoredAt", None) is not None
@@ -531,13 +594,13 @@ def record_dismissal(item: dict, withdrawn: bool, said: dict) -> None:
     restored, claimed = clear_for_outcome(item)
     declined = {"declined": True, **said} if is_request(item) and not withdrawn else {}
     item["answer"] = {"dismissed": True, **declined, "answeredAt": now, **({"withdrawn": True} if withdrawn else {})}
-    if withdrawn or is_notice(item) or (restored and not claimed):
+    if withdrawn or takes_no_answer(item) or (restored and not claimed):
         item["deliveredAt"] = now
 
 
 def dismiss(session: Optional[str], ref: str, withdrawn: bool = False) -> dict:
     """Dismiss an item. A dismissed question or request waits for its deliverer to tell the agent; a
-    dismissed notice has nothing to send, so it is delivered at once. Dismissing a request declines
+    dismissed notice or discussion has nothing to send, so it is delivered at once. Dismissing a request declines
     it, with no text. A `withdrawn` item, which the agent that posted it took back, is delivered at
     once too, because that agent already knows. So is an item dismissed again before any deliverer
     claimed the `RESTORED` line its restore owes, because the last line its agent heard said
@@ -607,6 +670,9 @@ def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, 
     def record(item: dict) -> None:
         if item.get("answer"):
             raise InboxError(f"{item['ref']} is already {resolution(item)}")
+        if item["kind"] == "discussion":
+            raise InboxError(f"{item['ref']} is a discussion, whose subject names what it is about; answer it with "
+                             "`project inbox reply`")
         if is_notice(item):
             if any(part is not None for part in (question, recommend, options, request, start)):
                 raise InboxError(f"{item['ref']} is a notice; revise its text with --notice and --detail")
@@ -690,7 +756,8 @@ def restore(session: Optional[str], ref: str) -> dict:
     its snooze. A dismissed item loses its dismissal and what its delivery recorded, and keeps
     everything else. When the agent may have heard `DISMISSED`, because the line was delivered or
     claimed for delivery, the item records `restoredAt`, and its deliverer sends `RESTORED`;
-    otherwise the restore cancels the line, and nothing goes out."""
+    otherwise the restore cancels the line, and nothing goes out. A claimed `DISCUSS` line keeps its
+    claim."""
     def record(item: dict) -> None:
         answered = item.get("answer")
         if not answered:
@@ -705,10 +772,16 @@ def restore(session: Optional[str], ref: str) -> dict:
         if not answered.get("dismissed"):
             raise InboxError(f"{item['ref']} is already {resolution(item)}, and only a dismissed or snoozed item "
                              "can be restored")
-        if not is_notice(item) and (item.get("deliveredAt") or item.get("claim")):
+        # A claimed `DISCUSS` line carries the person's words, not the dismissal, so it says nothing
+        # of whether the agent heard `DISMISSED`.
+        held = item.get("claim") if claimed_line(item) == "discuss" else None
+        heard = item.get("deliveredAt") or (item.get("claim") and held is None)
+        if not takes_no_answer(item) and heard:
             item["restoredAt"] = now_ms()
         for key in ("answer", "deliveredAt", "claim"):
             item.pop(key, None)
+        if held is not None:
+            item["claim"] = held
         # The agent heard the request declined and may have undone what it prepared, so a restored
         # request waits for a new press of start. Likewise a word that the person did not
         # understand the item was settled by the dismissal, so only a new press says it again.
@@ -769,6 +842,46 @@ def block(session: Optional[str], ref: str, reason: str) -> dict:
     return report(session, ref, "blocked", reason)
 
 
+# Threads
+
+def add_entry(session: Optional[str], ref: str, author: str, text: str) -> dict:
+    """Append a message to an open item's thread: the person's, which its deliverer sends the agent
+    as `DISCUSS`, or the agent's, which the person reads where the item is shown."""
+    said = thread_entry(author, text)
+
+    def record(item: dict) -> None:
+        if item.get("answer"):
+            unseen = "" if author == "person" else (", so the person no longer sees its thread; answer in the "
+                                                    "conversation instead")
+            raise InboxError(f"{item['ref']} is already {resolution(item)}{unseen}")
+        item.setdefault("thread", []).append(said)
+
+    return update(session, ref, record, is_open)
+
+
+def discuss(session: Optional[str], ref: str, text: str) -> dict:
+    return add_entry(session, ref, "person", text)
+
+
+def reply(session: Optional[str], ref: str, text: str) -> dict:
+    return add_entry(session, ref, "agent", text)
+
+
+def has_unread_reply(item: dict) -> bool:
+    return any(said.get("from") == "agent" and not said.get("readAt") for said in item.get("thread") or [])
+
+
+def mark_read(session: Optional[str], ref: str) -> dict:
+    """Mark the agent's replies in an item's thread read, as opening the item's drawer does."""
+    def record(item: dict) -> None:
+        now = now_ms()
+        for said in item.get("thread") or []:
+            if said.get("from") == "agent" and not said.get("readAt"):
+                said["readAt"] = now
+
+    return update(session, ref, record)
+
+
 def snoozed_until(item: dict) -> Optional[int]:
     """When a snoozed item returns, while that time is still ahead."""
     until = item.get("snoozedUntil")
@@ -783,12 +896,13 @@ def live_claim(question: dict) -> Optional[dict]:
 
 
 def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict:
-    """Claim the line an item owes for delivery, recording which line it is, or renew a claim by its
-    token; returns the item. A claimed `STARTED` or `UNCLEAR` renews even once the item is resolved,
-    since its line still waits in the session's queue."""
+    """Claim the line an item owes for delivery, recording which line it is, and for `DISCUSS` which
+    thread entry, or renew a claim by its token; returns the item. A claimed `STARTED`, `UNCLEAR`,
+    or `DISCUSS` renews even once the item is resolved, since its line still waits in the session's
+    queue."""
     def take(question: dict) -> None:
         line = owed_line(question)
-        if line is None and not (renew is not None and claimed_line(question) in OPEN_LINES):
+        if line is None and not (renew is not None and claimed_line(question) in HELD_LINES):
             refuse_notice(question, "has nothing to deliver")
             if question.get("deliveredAt"):
                 raise InboxError(f"{answer_ref(question)} is already delivered")
@@ -800,7 +914,8 @@ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict
             return
         if live_claim(question):
             raise InboxError(f"{answer_ref(question)} is already claimed for delivery")
-        question["claim"] = {"token": secrets.token_hex(8), "renewedAt": now_ms(), "line": line}
+        question["claim"] = {"token": secrets.token_hex(8), "renewedAt": now_ms(), "line": line,
+                             **({"entry": owed_entry(question)} if line == "discuss" else {})}
 
     return update(session, ref, take)
 
@@ -808,17 +923,28 @@ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict
 def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dict:
     """Mark a claimed line delivered, or undo what it reported when its delivery failed: a question
     reopens, a request's start is removed, so the person presses start again, and so is word that
-    the person does not understand an item, so they press I don't understand again. A claimed
-    `RESTORED` line is done either way: the panel does not retry it, and the item's answer or next
-    dismissal still reaches the agent. An outcome recorded while a `STARTED` or `UNCLEAR` was
-    claimed is owed once that line settles."""
+    the person does not understand an item, so they press I don't understand again, and so is a
+    message of the person's in its thread, so they say it again. A claimed `RESTORED` line is done
+    either way: the panel does not retry it, and the item's answer or next dismissal still reaches
+    the agent. An outcome recorded while a `STARTED`, `UNCLEAR`, or `DISCUSS` was claimed is owed
+    once that line settles."""
     def finish(question: dict) -> None:
         line = claimed_line(question)
-        if line not in OPEN_LINES and question.get("deliveredAt"):
+        if line not in HELD_LINES and question.get("deliveredAt"):
             raise InboxError(f"{answer_ref(question)} is already delivered")
         if (question.get("claim") or {}).get("token") != token:
             raise InboxError(f"{question['ref']} is not claimed with that token")
+        index = discussed_entry(question)
         del question["claim"]
+        if line == "discuss":
+            thread = question["thread"]
+            if delivered:
+                thread[index]["deliveredAt"] = now_ms()
+            else:
+                del thread[index]
+            if not thread:
+                del question["thread"]
+            return
         if line in OPEN_LINES:
             if delivered:
                 question[line]["deliveredAt"] = now_ms()
@@ -836,7 +962,7 @@ def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dic
 
 
 def prune(folder: Path) -> None:
-    delivered = [item for item in load_items(folder) if item.get("deliveredAt")]
+    delivered = [item for item in load_items(folder) if item.get("deliveredAt") and not owes_a_line(item)]
     delivered.sort(key=lambda item: item["deliveredAt"], reverse=True)
     for item in delivered[KEEP_DELIVERED:]:
         with contextlib.suppress(FileNotFoundError):
@@ -845,8 +971,8 @@ def prune(folder: Path) -> None:
 
 def owes_a_line(item: dict) -> bool:
     """Whether the item's agent is owed a line: an answer, outcome, or dismissal not yet delivered,
-    word that a dismissal it may have heard of was undone, a request's start, or word that the
-    person does not understand the item."""
+    word that a dismissal it may have heard of was undone, a request's start, word that the person
+    does not understand the item, or a message of the person's in its thread."""
     return owed_line(item) is not None
 
 
