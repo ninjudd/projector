@@ -817,7 +817,7 @@ test('a panel.background the panel does not take leaves the color to the theme, 
   await ui.unmount()
 })
 
-test('a row’s notes name every other status that applies, and an open drawer spells its row’s holds out', async ($, on) => {
+test('a row’s notes name every other status that applies, and read the same with its drawer open', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\no/r#22\no/r#23\no/r#24\n' })
@@ -869,35 +869,13 @@ test('a row’s notes name every other status that applies, and an open drawer s
     ],
   })
 
-  // An open drawer spells its row's holds out, the one its word names as well, and leaves the other rows short.
-  await ui.press({ key: 'pr:o/r#21' })
-  await clock.settle()
-  expect(await notesOf('Signed-off change failing its checks')).toEqual([
-    ['checks failing', 'error'],
-    ' · ',
-    ['clean', 'success'],
-  ])
-  expect(await notesOf('Change held back')).toEqual([['changes', 'warning'], ' · ', ['findings', 'warning']])
-  await ui.press({ key: 'pr:o/r#10' })
-  await clock.settle()
-  // The row counts no threads, open or closed; the drawer counts each file's.
-  expect(await notesOf('Change held back')).toEqual([['changes requested', 'warning'], ' · ', ['findings', 'warning']])
-  expect(await notesOf('Signed-off change failing its checks')).toEqual([['clean', 'success']])
-  await ui.press({ key: 'pr:o/r#11' })
-  await clock.settle()
-  // Findings are this row's word, and have nothing more to say spelled out, so the open row does not repeat them.
-  expect(await notesOf('Approved change')).toEqual([['approved', 'success']])
-
-  // An open drawer spells passing checks out too.
-  await ui.press({ key: 'pr:o/r#24' })
-  await clock.settle()
-  expect(await notesOf('Approved change whose checks pass')).toEqual([
-    ['approved', 'success'],
-    ' · ',
-    ['checks passing', 'success'],
-    ' · ',
-    ['cancelled', 'subtle'],
-  ])
+  // Opening a drawer changes nothing on any row: every row reads as it did closed, its own included.
+  const closed = await allNotes()
+  for (const key of ['o/r#21', 'o/r#10', 'o/r#11', 'o/r#12', 'o/r#24']) {
+    await ui.press({ key: `pr:${key}` })
+    await clock.settle()
+    expect(await allNotes()).toEqual(closed)
+  }
 
   // A head whose only run was cancelled is ready, not failing, though its gathering job failed after the cancel,
   // and its drawer says its checks were cancelled, muted.
