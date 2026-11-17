@@ -1,0 +1,1885 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 64924b1d..05fa05ca 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -151,7 +151,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 29 -->
++<!-- projector:begin 31 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -265,10 +265,14 @@ post it again unless they ask. When they reply to a question or a request
+ instead, answer what they asked. Then withdraw the item with the `withdraw`
+ tool if the reply settles it, revise it with the `revise` tool if the reply
+ shows it was unclear or the choice or the work has changed, or leave it open
+-while it still needs them. When a message that starts `UNCLEAR` arrives, the
+-person did not understand that item, so revise it with the `revise` tool to
+-explain it more simply or to add the context they lack, keeping its number,
+-rather than posting it again. Each time the person writes to you, also look
++while it still needs them. When a message that starts `DISCUSS` arrives, the
++person wrote to you about that item from outside the conversation. Answer
++it in the conversation, where they read your reply, then withdraw, revise,
++or leave the item open, as for a reply. A `DISCUSS` about a pull request or
++about the session needs no inbox action. When a message that starts
++`UNCLEAR` arrives, the person did not understand that item, so revise it
++with the `revise` tool to explain it more simply or to add the context they
++lack, keeping its number, rather than posting it again. Each time the person writes to you, also look
+ over the other items you posted that are still open, and withdraw any that
+ no longer need them, such as news that has gone stale. When the person says
+ they dismissed or declined an item by mistake, restore it with the `restore`
+diff --git a/docs/cli.md b/docs/cli.md
+index dea3023b..75235950 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2530,13 +2530,13 @@ your prompt. The agent then withdraws the question if the reply settles it,
+ revises it if the reply shows it was unclear, or leaves it open while it still
+ needs you.
+ 
+-`answer`, `dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear`
+-record your choice, so the permission rules `project init` adds ask you
+-before an agent runs one, in Claude Code, and leave them to Codex's usual
+-approval. Otherwise an agent could answer its own question, mark its own
+-request done, press start for you, or say for you that you don't
+-understand its item. Projector's
+-panel runs them itself, so answering there never asks. `restore` takes no
++`answer`, `dismiss`, `snooze`, `done`, `decline`, `start`, `unclear`, and
++`discuss` record your choice or your words, so the permission rules
++`project init` adds ask you before an agent runs one, in Claude Code, and
++leave them to Codex's usual approval. Otherwise an agent could answer its
++own question, mark its own request done, press start for you, say for you
++that you don't understand its item, or send itself a message as you.
++Projector's panel runs them itself, so answering there never asks. `restore` takes no
+ choice from you, so an agent runs it without asking, in either host, when
+ you say a dismissal was a mistake.
+ 
+@@ -2561,17 +2561,18 @@ RESTORED 2 Run project init to add the publish rule?
+ `watch --once` makes one pass and exits. A Codex session needs no watcher:
+ the watch daemon claims each line its inbox owes and sends it with the
+ session's pull request events, as [Codex delivery](#deliver-events-to-codex)
+-describes. Recording an answer, outcome, dismissal, start, restore, or
+-`unclear` for a Codex session starts the daemon when it is not running. A
++describes. Recording an answer, outcome, dismissal, start, restore,
++`unclear`, or `discuss` for a Codex session starts the daemon when it is not
++running. A
+ view that delivers answers itself, such as Projector's panel in Claude Code,
+ uses the steps `watch` takes:
+ 
+ | Command | What it does |
+ | --- | --- |
+-| `claim <number>` | Claims an answer, word of a restore, or an `UNCLEAR` line for delivery and prints a token and the text to send; exits 65 when it is already claimed or delivered |
++| `claim <number>` | Claims an answer, word of a restore, or an `UNCLEAR` or `DISCUSS` line for delivery and prints a token and the text to send; exits 65 when it is already claimed or delivered |
+ | `claim <number> --renew <token>` | Keeps that claim live while its delivery is pending |
+-| `delivered <number> --claim <token>` | Marks the claimed answer or `UNCLEAR` line delivered |
+-| `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again, or, for an `UNCLEAR` line, takes back the item's `unclear` mark, so you say it again |
++| `delivered <number> --claim <token>` | Marks the claimed answer, `UNCLEAR` line, or `DISCUSS` line delivered |
++| `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again, or, for an `UNCLEAR` line, takes back the item's `unclear` mark, so you say it again, or, for a `DISCUSS` line, takes back your message, so you send it again |
+ 
+ A claimed `RESTORED` line is done after either `delivered` or `reopen`: no
+ deliverer sends it again, and the question stays open. A restore, or an
+@@ -2811,6 +2812,61 @@ nothing when it refuses. A number no session holds exits 66. In Claude
+ Code, the agent revises an item with Projector's `revise` tool, and the
+ panel redraws it at once.
+ 
++### Send the agent a message
++
++To talk an item over outside the session's conversation, such as from a
++terminal, send the agent a message about it with `discuss`:
++
++```console
++$ project inbox discuss 3 --text "Which hosts does the reviewer mean?" --session "$SESSION"
++discussed 3
++$ project inbox watch --once --session "$SESSION"
++DISCUSS 3 Decline the finding about the retry budget? → Which hosts does the reviewer mean?
++```
++
++The item's deliverer sends the agent a line that starts `DISCUSS 3` with
++the item's line, an arrow, and your message. The agent answers in its own
++conversation, and nothing comes back to the item, which stays open. Each
++message waits behind any line the item already owes, its answer or outcome,
++`RESTORED`, `STARTED`, or `UNCLEAR`, and an item's messages go out one at a
++time, oldest first. A message reaches the agent even when you dismiss the
++item before it goes out. When the line cannot be delivered, the message is
++taken back, so you send it again. `show` prints each message you sent after
++`you:`.
++
++To write about something that has no item, leave out the number. `discuss`
++then posts an item of kind `message` that holds your message, and prints its
++number. With `--pr`, the message is about that pull request, and its line is
++`About owner/repo#number`. Without `--pr`, it is about the session itself,
++and its line is `About this session`:
++
++```console
++$ project inbox discuss --pr acme/app#337 --text "Why the second retry loop?" --session "$SESSION"
++7
++$ project inbox discuss --text "Pause after this pull request." --session "$SESSION"
++8
++$ project inbox watch --once --session "$SESSION"
++DISCUSS 7 About acme/app#337 → Why the second retry loop?
++DISCUSS 8 About this session → Pause after this pull request.
++$ project inbox list --all --session "$SESSION"
++7	message	delivered 7	About acme/app#337
++8	message	delivered 8	About this session
++```
++
++A `message` item asks nothing of you. It shows `open` until its message is
++delivered, and then it is resolved and leaves `list`, as a delivered answer
++does. `answer`, `done`, `decline`, `start`, `revise`, and `unclear` refuse
++one with exit code 65. Dismissing one sends the agent nothing, as
++dismissing a notice does, and its message still goes out. `restore` refuses
++one that has no message left to send.
++
++Each message is one paragraph of at most 4 KiB in UTF-8, with no line
++breaks. `discuss` refuses, with exit code 65, an empty message, a longer
++one, and one with a line break. It refuses an item already answered,
++dismissed, withdrawn, or delivered too. `discuss` refuses a number together
++with `--pr` and records nothing, and it needs `--session` to write about a
++pull request or the session.
++
+ ## Watch pull requests
+ 
+ `project watch` subscribes an agent session to the pull requests it fixes and
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 60853337..54029464 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -632,9 +632,11 @@ was unclear, or you send **I don't understand** for it, the agent rewrites
+ it in place with the `revise` tool, `mcp__projector__revise`, keeping its
+ number. When you tell it you dismissed, declined, or snoozed an item by
+ mistake, the agent brings the item back under its number with the `restore`
+-tool, `mcp__projector__restore`, rather than asking again. An agent that
+-runs `project inbox ask`, `tell`, `request`, `withdraw`, `revise`, or
+-`restore` from the shell reaches the same inbox, as
++tool, `mcp__projector__restore`, rather than asking again. When a message
++that starts `DISCUSS` brings it your words about an item, a pull request, or
++the session, the agent answers in the conversation. An agent that runs
++`project inbox ask`, `tell`, `request`, `withdraw`, `revise`, or `restore`
++from the shell reaches the same inbox, as
+ [Use the inbox](cli.md#use-the-inbox) describes.
+ 
+ The items are a list below the pull requests, newest first, each line
+@@ -648,7 +650,8 @@ Code's themes give no key a pastel apart from the question's color, so the
+ panel picks the request's color by theme, as it picks its background. An
+ open notice's line is drawn in the theme's mid gray, `inactive`, apart from
+ the `subtle` of a resolved or snoozed item, so you can tell which items want
+-an answer, which want work, and which want a read. Each line ends with the
++an answer, which want work, and which want a read. A message you send with
++`project inbox discuss` is drawn like a notice. Each line ends with the
+ pull request the item is about, as the panel labels it, and how long ago it
+ was posted. An item about a pull request the panel does not list names it
+ as the agent wrote it, such as `Acme/App#12`. The
+@@ -836,6 +839,21 @@ notice's drawer; the notice stays in the panel until you dismiss it.
+ **Dismiss** clears the notice once you have read it and closes its
+ drawer, and nothing goes back to the agent.
+ 
++You can also send the agent a message from outside the conversation, such
++as from a terminal, with `project inbox discuss`, which
++[Send the agent a message](cli.md#send-the-agent-a-message) describes. The
++panel delivers each message as a line that starts `DISCUSS`, one at a time
++and oldest first, after any line the item already owes. The item's line
++reads `sending` until the message is delivered, and its drawer shows each
++message you sent after `you:`, below the detail. The agent answers in the
++conversation. When a message cannot reach the agent, the panel takes it
++back and says why, so you send it again. A message about a pull request or
++about the session is an item of its own, of kind `message`. Its drawer
++shows your message, then **Discuss**, **Dismiss**, and **Snooze**, and it
++leaves the panel 30 seconds after its message is delivered. Dismissing it
++sends the agent nothing more. In the panel, **Discuss** still puts the
++quoted item in the prompt, so you talk it over in the conversation.
++
+ A request's drawer shows its steps, then the options its agent gave, on `1`
+ and on, in the options' place, then **I don't understand**, **Discuss**,
+ **Dismiss**, and **Snooze**. A test's
+diff --git a/docs/projects/console/readme.md b/docs/projects/console/readme.md
+index e25e2f07..5d13988d 100644
+--- a/docs/projects/console/readme.md
++++ b/docs/projects/console/readme.md
+@@ -46,11 +46,12 @@ Three changes, built together. First, the watch daemon's Codex adapter
+ becomes the deliverer of inbox lines for Codex sessions. It claims each
+ line a Codex session is owed and sends it in the same `codex queue` batch
+ as that session's watch events. It marks the line delivered when Codex
+-acknowledges the batch. Second, each inbox item gets a thread, so you can
+-discuss it without the session's chat: your messages reach the agent as
+-`DISCUSS` lines, and the agent answers into the thread with
+-`project inbox reply`. Discussing a pull request starts a new item of kind
+-`discussion` with the same thread. Third, `project console` is a curses
++acknowledges the batch. Second, you can send the agent a message about an
++item, a pull request, or the session without typing into the session's
++chat: `project inbox discuss` records it, it reaches the agent as a
++`DISCUSS` line, and the agent answers in its own conversation. A message
++about a pull request or the session is an item of a new kind, `message`.
++Third, `project console` is a curses
+ TUI that you run in a split or a second window. It opens on a list of every
+ live session, sorted by what needs you. Enter opens that session's panel,
+ where you answer, discuss, and dismiss for that one session. The console
+@@ -76,8 +77,8 @@ for both hosts and never sends anything to a session itself.
+    and the console shows that session's panel: its pull requests (§ 2.4)
+    and its inbox items (§ 2.5).
+ 4. You open an item's drawer and press an option, or type a message with
+-   Discuss. Or, with no drawer open, you press `7` and type a message to
+-   start a discussion about the session itself (§ 2.6). The console records
++   Discuss. Or, with no drawer open, you press `7` and type a message
++   about the session itself (§ 2.6). The console records
+    it with the functions in
+    `src/projector/inbox.py`, passing the session you are viewing: `answer`,
+    `done`, `decline`, `unclear`, `start`, `dismiss`, `snooze`, `restore`,
+@@ -98,7 +99,10 @@ for both hosts and never sends anything to a session itself.
+      sends it, as § 2.2 describes.
+ 7. The item shows `sending` until its line is delivered. An answered item
+    leaves the list 30 seconds later, as it does in the panel. A discussed
+-   item stays open, and the agent's reply appears in its thread.
++   item stays open, and a `message` item leaves the list 30 seconds after
++   its message is delivered. The agent answers in its own conversation,
++   which you read in the session's own window, such as the split below the
++   console, or in the console's view of that conversation.
+ 
+ ### 2.2 Delivering inbox lines to Codex
+ 
+@@ -155,17 +159,13 @@ and its summary from `agent.json`, then the counts the panel's header
+ shows (pull requests, review requests, questions, requests, and notices),
+ then the subject of its newest open item. A session with no open item and
+ no pull request still gets a row, so you can open its panel and press `7`
+-to start a discussion about the session (§ 2.5).
++to send a message about the session (§ 2.5).
+ 
+ Sessions are sorted by what needs you:
+ 
+-1. Sessions with an agent reply you have not read.
+-2. Then sessions with an open question or request, most of them first.
+-3. Then sessions with only notices or pull requests.
+-4. Ties go to the session whose newest item is newest, then to the label.
+-
+-The row of a session with an unread reply shows `replied` beside the
+-subject of the item that carries it.
++1. Sessions with an open question or request, most of them first.
++2. Then sessions with only notices or pull requests.
++3. Ties go to the session whose newest item is newest, then to the label.
+ 
+ ### 2.4 A session's panel: pull requests
+ 
+@@ -194,7 +194,7 @@ thread. The drawer's actions are these:
+ 
+ | Key | Action |
+ | --- | --- |
+-| `7` | Discuss: opens a text field, and starts a `discussion` item about this pull request in this session (§ 2.6) |
++| `7` | Discuss: opens a text field, and sends your message about this pull request to this session as a `message` item (§ 2.6) |
+ | `8` | Dismiss, after a confirmation. The console runs `project watch drop <owner>/<repo>#<n> --role <role> --session <s>` for each role this session holds |
+ | `o` | Opens the pull request in a browser with `webbrowser.open` |
+ | `p` | Opens its projector.bot summary, when the description carries one |
+@@ -202,75 +202,115 @@ thread. The drawer's actions are these:
+ ### 2.5 A session's panel: inbox items
+ 
+ Each item line shows the subject, the state words the panel shows
+-(`sending`, `unclear`, `starting`, `ready`, `blocked`, and the new
+-`replied`), the pull request, and the age. The item drawer shows the detail
+-as wrapped text, then the item's thread, then the panel's controls:
++(`sending`, `unclear`, `starting`, `ready`, and `blocked`), the pull
++request, and the age. The item drawer shows the detail as wrapped text, then
++each message you sent about the item after `you:`, then the panel's
++controls:
+ 
+ | Kind | Controls |
+ | --- | --- |
+ | Question | `1`… for the options, the first marked `(recommended)`. The last option, `type an answer`, opens a one-line text field |
+ | Request | `1: Start` or `Retry` when the item has a start action, then the choices, or `Done` |
+-| Discussion | No options. It stays open until you dismiss it or the agent withdraws it |
++| Message | No options and no `I don't understand`. It leaves the list 30 seconds after its message is delivered |
+ | Any open item | `6: I don't understand`, `7: Discuss`, `8: Dismiss` or `Restore`, and `9: Snooze`, whose options are 15 minutes, 1 hour, 4 hours, and 1 day |
+ 
+-Opening a drawer marks the agent's replies in its thread read.
+-
+-With no drawer open, `7` opens a text field and starts a `discussion` item
+-about the session itself (§ 2.6), whichever row the cursor is on. It works
+-in a panel with no rows, such as an idle session's or a new one's. To
+-discuss a particular item or pull request, open its drawer and press `7`
+-there.
++With no drawer open, `7` opens a text field and sends a message about the
++session itself (§ 2.6), whichever row the cursor is on. It works in a panel
++with no rows, such as an idle session's or a new one's. To write about a
++particular item or pull request, open its drawer and press `7` there.
+ 
+-### 2.6 Threads
++### 2.6 Discussing an item, a pull request, or the session
+ 
+-An item's thread holds the messages you and the agent exchange about it.
+-Each entry is one paragraph of up to 4 KiB, which keeps a `DISCUSS` line
+-well inside the adapter's batch limit.
++A message is one way: it carries your words to the agent, and the agent
++answers in its own conversation, never into the inbox. An item keeps the
++messages you sent about it in `messages`:
+ 
+ | Item field | Value |
+ | --- | --- |
+-| `thread` | A list of entries, oldest first. Absent until the first message |
+-| `thread[].from` | `person` or `agent` |
+-| `thread[].text` | The message |
+-| `thread[].at` | When it was recorded, in milliseconds |
+-| `thread[].deliveredAt` | Set on a `person` entry when its line is delivered |
+-| `thread[].readAt` | Set on an `agent` entry when you open the item's drawer, in the console or in the panel |
+-
+-A `discussion` item is an item of a new kind that you start, about a pull
+-request or about the session itself. It has a thread whose first entry is
+-your message, and it takes the next number in the session's count, like any
+-other item. Its subject says what it is about:
++| `messages` | A list of your messages, oldest first. Absent until the first |
++| `messages[].text` | The message, one paragraph of at most 4 KiB in UTF-8 |
++| `messages[].at` | When it was recorded, in milliseconds |
++| `messages[].deliveredAt` | Set when its `DISCUSS` line is delivered |
++
++A `message` item is an item of a new kind that holds one message of yours
++about a pull request or about the session itself. It asks nothing of you,
++and it takes the next number in the session's count, like any other item.
++Its subject says what it is about:
+ 
+ | About | `pr` | `subject` |
+ | --- | --- | --- |
+ | A pull request | `<owner>/<repo>#<n>` | `About <owner>/<repo>#<n>` |
+ | The session | Absent | `About this session` |
+ 
+-The commands:
++The commands, which you run through the console or a terminal:
+ 
+-| Command | Who runs it | What it does |
+-| --- | --- | --- |
+-| `project inbox discuss <number> --text <words> --session <s>` | You, through the console or a terminal | Adds a `person` entry to an open item's thread |
+-| `project inbox discuss --pr <owner>/<repo>#<n> --text <words> --session <s>` | You | Starts a `discussion` item about that pull request, and prints its number |
+-| `project inbox discuss --text <words> --session <s>` | You | Starts a `discussion` item about the session itself, and prints its number |
+-| `project inbox reply <number> --text <words> --session <s>` | The agent | Adds an `agent` entry to the thread. It needs no delivery, because you read it in the console or the panel |
+-
+-Each undelivered `person` entry owes a line, after the lines the item
+-already owes in this order: `answer`, `restored`, `started`, and `unclear`.
+-An item has one claim at a time, so its entries are delivered one at a
+-time, oldest first. The line is
++| Command | What it does |
++| --- | --- |
++| `project inbox discuss <number> --text <words> --session <s>` | Adds your message to an open item's `messages` |
++| `project inbox discuss --pr <owner>/<repo>#<n> --text <words> --session <s>` | Posts a `message` item about that pull request, and prints its number |
++| `project inbox discuss --text <words> --session <s>` | Posts a `message` item about the session itself, and prints its number |
++
++Each undelivered message owes a line, after the lines the item already owes
++in this order: `answer`, `restored`, `started`, and `unclear`. An item has
++one claim at a time, so its messages are delivered one at a time, oldest
++first. The line is
+ `DISCUSS 3 Decline the finding about the retry budget? → <words>`, or
+-`DISCUSS 5 About this session → <words>` for a discussion about the
+-session. `discuss` refuses a number together with `--pr`.
+-
+-The agent treats a `DISCUSS` line as a reply to the item. It answers with
+-`project inbox reply`, or with the panel's new `reply` tool in Claude Code.
+-Then it withdraws the item if the discussion settles it, revises it if the
+-discussion changed the choice, or leaves it open. It answers in its chat as
+-well, because you may be reading either one. `src/projector/templates/agents-block.md`
+-and `skills/work/SKILL.md` say so beside their instructions for `ANSWER`
+-lines. In the panel, `7: Discuss` still fills Claude Code's prompt, and
+-the drawer shows the item's thread.
++`DISCUSS 5 About this session → <words>` for a message about the session.
++`discuss` refuses a number together with `--pr`.
++
++The agent treats a `DISCUSS` line about an item as a reply to it. It
++answers in its conversation, then withdraws the item if the message settles
++it, revises it if the message changed the choice, or leaves it open. A
++`DISCUSS` line about a pull request or the session needs no inbox action.
++`src/projector/templates/agents-block.md` and `skills/work/SKILL.md` say so
++beside their instructions for `ANSWER` lines. In the panel, `7: Discuss`
++still fills Claude Code's prompt.
++
++Building the messages settled these details:
++
++- **The claim names its message.** A `DISCUSS` claim records
++  `line: discuss` and the index of the message it carries in `entry`, so
++  `message` and `settle` act on that message even when another arrives
++  meanwhile. `settle(delivered=True)` sets the message's `deliveredAt`.
++  `settle(delivered=False)` removes the message, as a failed `UNCLEAR` is
++  taken back, and drops `messages` once it is empty, so you say it again.
++  The panel's toast for it reads "your message about … did not reach its
++  agent; send it again".
++- **Your words are owed whatever becomes of the item.** A message stays
++  owed after you answer, dismiss, or withdraw the item, so a message sent
++  just before a dismissal still arrives. Its claim survives an answer, an
++  outcome, a dismissal, and a restore, as a claimed `STARTED` or `UNCLEAR`
++  does, and the answer's line follows once it settles. Pruning keeps a
++  delivered item that still owes a line.
++- **A `message` item resolves itself.** Once it has no message left to
++  send, `settle` resolves it: as `{"delivered": true}` when one of its
++  messages was delivered, or as dismissed when the last was taken back, so
++  no open item is left with nothing to send. Either way it gets
++  `deliveredAt`, so it leaves `list` and, 30 seconds later, the panel, as a
++  delivered answer does. `list` shows it as `delivered <n>`.
++- **A `message` item takes nothing from you.** `answer` refuses it as a
++  kind that takes no answer, `revise` refuses it because its subject names
++  what it is about, `unclear` refuses it because the words are your own,
++  and `done`, `decline`, and `start` refuse it as they refuse any kind but a
++  request. Its dismissal is delivered at once and sends nothing, and a
++  restore sends no `RESTORED`. `restore` refuses one with no message left
++  to send. `snooze` and `withdraw` work on it.
++- **A message is one line.** "One paragraph" means no line break, so a
++  `DISCUSS` line stays one line for `watch`, and the 4 KiB limit counts
++  UTF-8 bytes. `check_message` enforces it, for reuse by other text you
++  send.
++- **What shows it.** `show` prints each message as a `you:` line. The
++  panel draws a `message` item in the notice's `inactive` color, counts it
++  in the header as `message`, and reads `sending` on a line while it owes a
++  message. `discuss` records your words, so it joins `ASK` and `ASKED` and
++  stays out of `CODEX_ALLOW`. The template in `agents-block.md` moves to
++  version 31.
++- **Threads were built and dropped.** A first version gave each item a
++  thread the agent answered into with `project inbox reply` or a `reply`
++  tool, read with `project inbox read`, and marked `replied` until you
++  opened the drawer. You chose the one-way message instead, as § 3
++  explains, so `reply`, `read`, `readAt`, `replied`, and the `discussion`
++  kind were removed before the layer merged.
+ 
+ ### 2.7 Running the console
+ 
+@@ -284,7 +324,7 @@ $ project console
+ | Up and down, or `k` and `j` | Move between rows |
+ | Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
+ | Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
+-| `7` in a panel with no drawer open | Starts a discussion about the session (§ 2.5) |
++| `7` in a panel with no drawer open | Sends a message about the session (§ 2.5) |
+ | Left | Returns to the home list from a session's panel, closing any open drawer. In a text field, it moves the cursor instead |
+ | Enter in a text field | Sends the message. Esc cancels it |
+ | `q` | Quits |
+@@ -306,19 +346,19 @@ Without `curses`, it also exits with code 69 and points you to
+ | File | Change |
+ | --- | --- |
+ | `src/projector/codex_watch.py` | Claims, renews, batches, and settles inbox lines (§ 2.2). Adds the inbox key to `eligible`, sends an oversized event alone, counts owed lines in `has_work`, keeps inbox events out of `drain`, and rewords `message` and the hook context |
+-| `src/projector/inbox.py` | Adds `thread`, the `discussion` kind, `discuss`, `reply`, and marking replies read. `owed_line`, `message`, and `settle` handle `DISCUSS` lines |
++| `src/projector/inbox.py` | Adds `messages`, the `message` kind, `discuss`, and `send`. `owed_line`, `message`, and `settle` handle `DISCUSS` lines, and `settle` resolves a `message` item with nothing left to send |
+ | `src/projector/rows.py` | New. Turns subscriptions and the cache into rows, and queries and parses threads |
+ | `src/projector/console.py` | New. Holds the session set, the model of what is on screen, key handling, and the curses drawing, kept separate so tests drive the model without a terminal |
+-| `src/projector/cli.py` | Adds `project console`, `project inbox discuss`, and `project inbox reply`. The inbox recording subcommands run `ensure_daemon` for a Codex session |
+-| `src/projector/permissions.py` | Adds `Bash(project console)`, `Bash(project console *)`, and `Bash(project inbox discuss *)` to `ASK` and `ASKED`. Adds `reply` to the inbox subcommands in `CODEX_ALLOW`. Leaves `console` and `discuss` to Codex's approval, and updates the docstring and the `CODEX_RULES` header |
+-| `hooks/inbox.ts`, `hooks/register.tsx` | `needsDelivery` counts undelivered `person` entries. The drawer shows the thread and marks replies read. The item list draws `discussion` items and `replied`. Registers the `reply` tool |
+-| `src/projector/templates/agents-block.md`, `skills/work/SKILL.md` | Describe `DISCUSS` lines and `reply`. `skills/work/SKILL.md` also tells a session not to run `project inbox watch` when its session-start context says Projector delivers its events |
++| `src/projector/cli.py` | Adds `project console` and `project inbox discuss`. `show` prints your messages. The inbox recording subcommands run `ensure_daemon` for a Codex session |
++| `src/projector/permissions.py` | Adds `Bash(project console)`, `Bash(project console *)`, and `Bash(project inbox discuss *)` to `ASK` and `ASKED`. Leaves `console` and `discuss` to Codex's approval, and updates the docstring and the `CODEX_RULES` header |
++| `hooks/inbox.ts`, `hooks/register.tsx` | `needsDelivery` counts undelivered messages. The drawer shows your messages, and the item list draws `message` items like notices, without `I don't understand` |
++| `src/projector/templates/agents-block.md`, `skills/work/SKILL.md` | Describe `DISCUSS` lines. `skills/work/SKILL.md` also tells a session not to run `project inbox watch` when its session-start context says Projector delivers its events |
+ | `tests/fixtures/rows/` | New. Each case is a set of input files plus the rows they must produce |
+ | `hooks/rows.test.ts` | New. Runs the panel's row model over `tests/fixtures/rows/` |
+ | `tests/test_console.py`, `tests/test_rows.py` | New |
+ | `tests/test_codex_watch.py`, `tests/test_inbox.py`, `tests/test_permissions.py`, `hooks/inbox.test.ts`, `hooks/panel.test.tsx` | New cases (§ 4) |
+-| `docs/cli.md` | A new "Use the console" section. "Use the inbox" describes threads, `discuss`, `reply`, the Codex adapter's delivery, and the permission rules |
+-| `docs/plugins.md` | Describes the thread in the drawer and the `reply` tool, and says that `project console` covers Codex and terminals, where it said Codex has no equivalent |
++| `docs/cli.md` | A new "Use the console" section. "Use the inbox" describes `discuss`, the `message` kind, the Codex adapter's delivery, and the permission rules |
++| `docs/plugins.md` | Describes your messages in the drawer and the `message` kind, and says that `project console` covers Codex and terminals, where it said Codex has no equivalent |
+ | `web/components/sections/panel.tsx` | Names `project console` for Codex and terminals |
+ 
+ ## 3. Why this design
+@@ -338,16 +378,22 @@ Without `curses`, it also exits with code 69 and points you to
+   question, which is right when a person must answer again. A queue
+   failure is the adapter's problem, not the person's, so the adapter keeps
+   the claim and retries.
+-- **The thread lives on the item.** In Claude Code, Discuss works because
+-  your words and the agent's reply both happen in the chat. In the console,
+-  the agent's reply would land in a chat you are not reading. So the agent
+-  answers into the item, where you are looking. Agent messages to the
+-  session, through `project agent send`, were rejected: they carry none of
+-  the person's authority, and your words must.
+-- **`discuss` is a recording command, and `reply` is not.** `discuss`
+-  speaks for you, so it gets the permission rules `answer` has, and an
+-  agent cannot put words in your mouth. `reply` speaks for the agent, so
+-  agents run it freely.
++- **The agent answers in its own chat, and the inbox stays a list of
++  decisions.** In Claude Code, Discuss works because your words and the
++  agent's reply both happen in the chat. From the console, your message
++  reaches that same chat as a `DISCUSS` turn, and the agent answers there.
++  You read the answer in the session's own window, such as the split below
++  the console, or in the console's collapsible view of the session's
++  conversation. A thread on each item, which the agent answered into with
++  `project inbox reply`, was built first and dropped once the console could
++  show each session's conversation: it put a second copy of that
++  conversation in the inbox, which stays a list of what needs you. Agent
++  messages to
++  the session, through `project agent send`, were rejected too: they carry
++  none of the person's authority, and your words must.
++- **`discuss` is a recording command.** It speaks for you, so it gets the
++  permission rules `answer` has, and an agent cannot put words in your
++  mouth.
+ - **The home list is per session.** You chose a list of sessions over one
+   combined view. Each session's panel then scopes every action to that
+   session: Dismiss drops a pull request only from the session you are
+@@ -391,13 +437,14 @@ Without `curses`, it also exits with code 69 and points you to
+ | Disconnect the session with an inbox event queued | `events` holds no inbox line, and `inbox.undelivered` returns the item after 60 seconds | Inbox lines drained into a file whose reader never settles them |
+ | Record an answer whose text is 9 KiB | It goes out alone, and the watch event queued behind it goes out in the next batch | An oversized line that wedges the queue |
+ | Record an answer for a Codex session while the daemon is stopped | The daemon is running when the command exits | An answer that waits for the session's next hook |
+-| Discuss item 3 twice, then let the Codex adapter and, separately, the panel deliver | Two `DISCUSS 3` lines, in the order you sent them, each delivered once, and item 3 still open | Entries delivered out of order or twice, or a discussion that closes the item |
+-| Have the agent run `project inbox reply 3 --text …` | The home list sorts that session first and shows `replied`. Opening the drawer shows the reply and clears `replied` | A reply nobody sees, or one that stays unread after you read it |
+-| Open the panel of a session with no item and no pull request, press `7`, and send `hello` | A `discussion` item with no `pr` and the subject `About this session`, and the session's deliverer sends `DISCUSS <n> About this session → hello` | An empty session that you can open but cannot talk to |
+-| Run `project inbox discuss --text hello --session <s>`, then the same with `3 --pr acme/app#12` | The first prints the new item's number. The second exits with an error and records nothing | A session discussion missing from the CLI, or an ambiguous call that picks one target |
+-| Discuss a pull request that two sessions hold, from the second session's panel | A `discussion` item about it in the second session only, with your words as the first entry | A discussion started in the wrong session |
++| Discuss item 3 twice, then let the Codex adapter and, separately, the panel deliver | Two `DISCUSS 3` lines, in the order you sent them, each delivered once, and item 3 still open | Messages delivered out of order or twice, or a message that closes the item |
++| Open the panel of a session with no item and no pull request, press `7`, and send `hello` | A `message` item with no `pr` and the subject `About this session`, and the session's deliverer sends `DISCUSS <n> About this session → hello` | An empty session that you can open but cannot talk to |
++| Let the deliverer send that `DISCUSS` line | The item is resolved as delivered and leaves `project inbox list` and, 30 seconds later, the panel | A `message` item that stays open after the agent heard it |
++| Run `answer`, `revise`, `done`, `decline`, `start`, and `unclear` on a `message` item | Each exits 65 and records nothing | A message handled as a question, which would take an answer or owe the agent a line |
++| Run `project inbox discuss --text hello --session <s>`, then the same with `3 --pr acme/app#12` | The first prints the new item's number. The second exits with an error and records nothing | A message about the session missing from the CLI, or an ambiguous call that picks one target |
++| Discuss a pull request that two sessions hold, from the second session's panel | A `message` item about it in the second session only, holding your words | A message sent to the wrong session |
+ | Start the console with one Claude Code session renewed by `mod`, one Codex session, and one session whose `session.json` is 10 minutes old | Home rows for the first two, each labelled with its host. None for the third | A session set that includes dead sessions, or one that misses a host |
+-| On the home list, give one session an unread reply and another two open questions | The session with the reply comes first | A sort that ignores replies |
++| On the home list, give one session one open question and another two | The session with two comes first | A sort that ignores what needs you |
+ | Two sessions each own an item 3. In the second session's panel, press option `a` | Only that session's item 3 is answered | A recording call made with the wrong session |
+ | Answer from the console for a Claude Code session | The panel delivers it. `hooks/panel.test.tsx` already covers an answer recorded outside the panel | Covered by the existing test |
+ | Answer or discuss from the console | The item has no `claim` and no `deliveredAt` | A console that delivers, racing the session's deliverer |
+@@ -405,7 +452,7 @@ Without `curses`, it also exits with code 69 and points you to
+ | Open a drawer for a pull request with two unresolved threads, and wait 65 seconds | Three thread queries. With no unresolved thread, none | A thread query on every tick, or a drawer that never refreshes |
+ | Dismiss a pull request in one session's panel when another session also holds it | `watch drop` runs for the viewed session's roles only, and the other session keeps it | A dismiss that reaches beyond the viewed session |
+ | Run `project console </dev/null` | Exit 69 with the terminal message | A console that starts without a terminal |
+-| Decide `project console`, `project inbox discuss`, and `project inbox reply` in each host | `console` and `discuss` ask in Claude Code and are left to Codex's approval. `reply` runs freely in both | An agent allowed to drive the console or speak for you, or one blocked from replying |
++| Decide `project console` and `project inbox discuss` in each host | Both ask in Claude Code and are left to Codex's approval | An agent allowed to drive the console or speak for you |
+ 
+ ## 5. Cost
+ 
+@@ -431,9 +478,9 @@ The four pull requests merge in this order. Each one works on its own.
+ 1. Codex delivery (§ 2.2), with the `ensure_daemon` call, the
+    `skills/work` change, and its tests. After it merges,
+    `project inbox answer` in a terminal reaches a Codex session.
+-2. Threads (§ 2.6): `discuss`, `reply`, the `discussion` kind, the
+-   panel's thread and `reply` tool, and the agent instructions. After it
+-   merges, `project inbox discuss` in a terminal works with both hosts.
++2. Messages (§ 2.6): `discuss`, the `message` kind, the panel's drawer
++   lines, and the agent instructions. After it merges,
++   `project inbox discuss` in a terminal works with both hosts.
+ 3. `rows.py`, the shared fixtures, and `hooks/rows.test.ts`.
+ 4. `project console`, its permission rules, and the documentation.
+ 
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index c081f1fc..01d69fee 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -40,7 +40,7 @@ import {
+   wokeBetween,
+   type Proposal,
+ } from './inbox'
+-import type { Item, Notice, Question, Request } from './types'
++import type { Item, MessageItem, Notice, Question, Request } from './types'
+ 
+ const NOW = Date.UTC(2026, 9, 12, 12, 0)
+ 
+@@ -978,4 +978,27 @@ test('the main loop is told which subagent posted an item it receives UNCLEAR fo
+     `UNCLEAR 3 Test the gutters${note('agent-1')}`,
+   )
+   expect(forMainLoop('UNCLEAR 2 Force-pushed #7', notice(), [])).toBe('UNCLEAR 2 Force-pushed #7')
++  // A message of yours is a message, not the answer the subagent asked for.
++  expect(forMainLoop('DISCUSS 1 Decline the finding? → Why?', question({ agentId: 'gone' }), [])).toBe(
++    `DISCUSS 1 Decline the finding? → Why?${note('gone')}`,
++  )
++})
++
++test('a message you sent waits for a deliverer until DISCUSS is delivered, whatever became of its item', () => {
++  const said = { text: 'Why decline?', at: NOW - 1_000 }
++  const dismissed = { dismissed: true as const, answeredAt: NOW }
++  const about: MessageItem = { ...notice(), kind: 'message', subject: 'About this session', pr: null }
++  for (const item of [
++    question({ messages: [said] }),
++    notice({ messages: [said], answer: dismissed, deliveredAt: NOW }),
++    { ...about, messages: [said] },
++  ]) {
++    expect(needsDelivery(item, NOW)).toBe(true)
++    const claim = { token: 't', renewedAt: NOW - 5_000, line: 'discuss' as const, entry: 0 }
++    expect(needsDelivery({ ...item, claim }, NOW)).toBe(false)
++    expect(needsDelivery({ ...item, messages: [{ ...said, deliveredAt: NOW }] }, NOW)).toBe(false)
++  }
++  // A message item owes nothing but its messages: it has no answer to send.
++  const delivered = { delivered: true as const, answeredAt: NOW }
++  expect(needsDelivery({ ...about, answer: delivered, messages: [{ ...said, deliveredAt: NOW }] }, NOW)).toBe(false)
+ })
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index a846846c..ac4f6ecc 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -47,15 +47,25 @@ export const isStarting = (request: Request) =>
+ const isUnclearOwed = (item: Item) =>
+   item.answer === undefined && item.unclear !== undefined && item.unclear.deliveredAt === undefined
+ 
++/** Whether an item's answer or outcome goes back to its agent: a question's or a request's. */
++export const isAnswerable = (item: Item): item is Answerable => item.kind === 'question' || item.kind === 'request'
++
++/**
++ * Whether a message you sent about an item waits for `DISCUSS` to reach the
++ * agent, whatever became of the item since, as the CLI owes it.
++ */
++export const owesMessage = (item: Item) => item.messages?.some(said => said.deliveredAt === undefined) === true
++
+ /**
+  * Whether an item's line waits for a deliverer: a question's answer or a
+  * request's outcome recorded and undelivered, word of a restore, a request's
+- * start, or word that you don't understand an open item of any kind, and
+- * claimed by none that is live.
++ * start, word that you don't understand an open item of any kind, or a
++ * message you sent about it, and claimed by none that is live.
+  */
+ export const needsDelivery = (item: Item, time: number): boolean =>
+   (isUnclearOwed(item) ||
+-    (item.kind !== 'notice' &&
++    owesMessage(item) ||
++    (isAnswerable(item) &&
+       (item.restoredAt !== undefined ||
+         (item.answer !== undefined && item.deliveredAt === undefined) ||
+         (item.kind === 'request' && isStarting(item))))) &&
+@@ -156,7 +166,7 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
+ export function readPrompt(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Read {
+   const byAge = (one: Item, other: Item) => one.postedAt - other.postedAt
+   const open = items
+-    .filter((item): item is Answerable => item.kind !== 'notice' && item.answer === undefined)
++    .filter((item): item is Answerable => isAnswerable(item) && item.answer === undefined)
+     .sort(byAge)
+   const markable = items.filter(item => item.answer === undefined && item.unclear === undefined).sort(byAge)
+   const quotes = [...new Set([...items.map(quoteOf), ...proposed.map(one => one.quote)])]
+@@ -300,7 +310,7 @@ export function liveAgent(item: Item, agents: readonly AgentInfo[]): string | un
+  */
+ export function forMainLoop(text: string, item: Item, agents: readonly AgentInfo[]): string {
+   if (item.agentId === undefined) return text
+-  if (text.startsWith('UNCLEAR ') || item.kind === 'notice') {
++  if (text.startsWith('UNCLEAR ') || text.startsWith('DISCUSS ') || !isAnswerable(item)) {
+     return `${text}\n\nThe subagent ${whoAsked(item, agents)} posted this, and the message could not reach it; send it this message, or revise the item yourself.`
+   }
+   const { posted, result } = wording(item)
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index a6e419bb..bad92d4e 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -1,7 +1,7 @@
+ import type { AgentInfo, ConfigRow, FsEntry, On, PromptEditInput, PromptEditResult } from 'claude-code'
+ import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testing'
+ 
+-import type { Notice, Question, Request } from './types'
++import type { Message, MessageItem, Notice, Question, Request } from './types'
+ 
+ const HOME = '/home/ada'
+ const REVIEW = `${HOME}/loops/review/tracked`
+@@ -1857,7 +1857,8 @@ const TICK = 5_000
+ type HeldQuestion = Omit<Question, 'session'>
+ type HeldNotice = Omit<Notice, 'session'>
+ type HeldRequest = Omit<Request, 'session'>
+-type Held = HeldQuestion | HeldNotice | HeldRequest
++type HeldMessage = Omit<MessageItem, 'session'>
++type Held = HeldQuestion | HeldNotice | HeldRequest | HeldMessage
+ type Clock = ReturnType<typeof mock.clock>
+ 
+ const HOUR = 3_600_000
+@@ -1897,6 +1898,22 @@ const requested = (fields: Partial<HeldRequest> = {}): HeldRequest => ({
+   ...fields,
+ })
+ 
++/** A message you sent about a pull request or the session, as `project inbox discuss` without a number posts it. */
++const messageItem = (fields: Partial<HeldMessage> = {}): HeldMessage => ({
++  ref: '4',
++  kind: 'message',
++  number: 4,
++  pr: null,
++  postedAt: NOW - 10_000,
++  subject: 'About this session',
++  detail: '',
++  messages: [{ text: 'Why the retry?', at: NOW - 10_000 }],
++  ...fields,
++})
++
++/** A message you sent about an item, not yet delivered. */
++const yours = (text: string, at = NOW - 1_000): Message => ({ text, at })
++
+ /** A held item when it is a request, so a test reads a request's own fields. */
+ const heldRequest = (item: Held | undefined): HeldRequest | undefined => (item?.kind === 'request' ? item : undefined)
+ 
+@@ -1948,14 +1965,18 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+   /** An item without `unclear` and without a claim on its `UNCLEAR` line, as a revision leaves it. */
+   const unmarked = <T extends Held>(item: T): T =>
+     without(item, 'unclear', ...(item.claim?.line === 'unclear' ? ['claim'] : []))
++  /** The index of the oldest message you sent not yet delivered, as the CLI owes it; -1 for none. */
++  const owedMessage = (item: Held) => item.messages?.findIndex(said => said.deliveredAt === undefined) ?? -1
+   const textOf = (item: Held) => {
+     const { answer, ref, subject } = item
+-    // A notice owes no line but `UNCLEAR`.
++    if (item.claim?.line === 'discuss') return `DISCUSS ${ref} ${subject} → ${item.messages?.[item.claim.entry ?? 0]?.text ?? ''}`
++    // A notice owes no other line but `UNCLEAR`.
+     if (item.claim?.line === 'unclear' || item.kind === 'notice') return `UNCLEAR ${ref} ${subject}`
+     if (item.kind === 'request' && item.claim?.line === 'started') {
+       return `STARTED ${ref} ${subject} → ${item.started?.action ?? ''}`
+     }
+-    if (item.restoredAt !== undefined) return `RESTORED ${ref} ${subject}`
++    // A message item owes nothing but `DISCUSS`.
++    if (item.kind !== 'message' && item.restoredAt !== undefined) return `RESTORED ${ref} ${subject}`
+     if (answer !== undefined && 'letter' in answer) return `ANSWER ${ref}.${answer.letter} ${subject} → ${answer.text}`
+     if (answer !== undefined && ('done' in answer || 'declined' in answer)) {
+       const said = answer.text === undefined ? '' : ` → ${answer.text}`
+@@ -2047,19 +2068,28 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       }
+       if (!('dismissed' in item.answer)) return failed(65, `${ref} is already answered`)
+       const restored = without(item, 'answer', 'deliveredAt', 'claim')
+-      if (restored.kind !== 'notice' && (item.deliveredAt !== undefined || 'claim' in item)) {
++      const isAnswerable = restored.kind === 'question' || restored.kind === 'request'
++      if (isAnswerable && (item.deliveredAt !== undefined || 'claim' in item)) {
+         return printed(put({ ...restored, restoredAt: time }))
+       }
+       return printed(put(restored))
+     }
+     // Dismissing or answering an item drops word of a restore not yet claimed, as the CLI does, and word that you
+-    // don't understand it unless a deliverer holds that word.
++    // don't understand it unless a deliverer holds that word. A claimed message of yours keeps its claim too.
+     const isUnclearClaimed = item.claim?.line === 'unclear'
+-    const awake = without(item, 'snoozedUntil', 'snoozedAt', 'restoredAt', ...(isUnclearClaimed ? [] : ['claim', 'unclear']))
++    const isHeld = isUnclearClaimed || item.claim?.line === 'discuss'
++    const awake = without(
++      item,
++      'snoozedUntil',
++      'snoozedAt',
++      'restoredAt',
++      ...(isHeld ? [] : ['claim']),
++      ...(isUnclearClaimed ? [] : ['unclear']),
++    )
+     const isUnsaid = 'restoredAt' in item && !('claim' in item)
+     if (command === 'dismiss') {
+       const answer = { dismissed: true as const, answeredAt: time }
+-      const isDelivered = awake.kind === 'notice' || isUnsaid
++      const isDelivered = awake.kind === 'notice' || awake.kind === 'message' || isUnsaid
+       const declined = awake.kind === 'request' ? { declined: true as const } : {}
+       const recorded = { ...awake, answer: { ...answer, ...declined } } as Held
+       return printed(put(isDelivered ? { ...recorded, deliveredAt: time } : recorded))
+@@ -2110,29 +2140,49 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       }
+       return printed(put({ ...item, unclear: { at: time } }))
+     }
+-    // An item owes its answer, outcome, `RESTORED`, or `STARTED` before its `UNCLEAR`, and a notice owes only `UNCLEAR`.
++    // An item owes its answer, outcome, `RESTORED`, or `STARTED` before its `UNCLEAR`, and that before a message of
++    // yours, `DISCUSS`. A notice owes only `UNCLEAR` and `DISCUSS`, and a message item only `DISCUSS`.
+     if (command === 'claim') {
+       const isOwed =
+-        item.kind !== 'notice' && (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined))
++        (item.kind === 'question' || item.kind === 'request') &&
++        (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined))
+       const renew = flag(args, 'renew')
+-      if (!isOwed && !owesStart(item) && !owesUnclear(item) && renew === undefined) return failed(65, 'nothing to deliver')
++      const isNothing = !isOwed && !owesStart(item) && !owesUnclear(item) && owedMessage(item) === -1
++      if (isNothing && renew === undefined) return failed(65, 'nothing to deliver')
+       if (renew !== undefined) {
+         if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
+         put({ ...item, claim: { ...item.claim, renewedAt: time } })
+         return ran('')
+       }
+       if (item.claim !== undefined && time - item.claim.renewedAt < 60_000) return failed(65, 'already claimed')
+-      const line =
+-        item.kind === 'notice' || !isOwed
+-          ? owesStart(item)
+-            ? 'started'
+-            : 'unclear'
+-          : item.restoredAt !== undefined && item.answer === undefined
+-            ? 'restored'
+-            : 'answer'
+-      const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line } } as Held
++      const line = isOwed
++        ? item.restoredAt !== undefined && item.answer === undefined
++          ? 'restored'
++          : 'answer'
++        : owesStart(item)
++          ? 'started'
++          : owesUnclear(item)
++            ? 'unclear'
++            : 'discuss'
++      const entry = line === 'discuss' ? { entry: owedMessage(item) } : {}
++      const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line, ...entry } } as Held
+       return printed(put(claimed), { token: claimed.claim?.token, text: textOf(claimed) })
+     }
++    // A message of yours is marked delivered, or taken back when it failed. A message item with none left to
++    // send is resolved, as delivered when one of its messages was.
++    if ((command === 'delivered' || command === 'reopen') && item.claim?.line === 'discuss') {
++      if (item.claim.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
++      const at = item.claim.entry ?? 0
++      const messages = (item.messages ?? []).flatMap((said, index) =>
++        index !== at ? [said] : command === 'delivered' ? [{ ...said, deliveredAt: time }] : [],
++      )
++      const settled = messages.length === 0 ? without(item, 'claim', 'messages') : { ...without(item, 'claim'), messages }
++      if (settled.kind !== 'message' || settled.answer !== undefined || owedMessage(settled) !== -1) {
++        return printed(put(settled))
++      }
++      const answer = messages.length === 0 ? { dismissed: true as const, answeredAt: time } : { delivered: true as const, answeredAt: time }
++      return printed(put({ ...settled, answer, deliveredAt: time }))
++    }
+     // Word that you don't understand an item is marked delivered, or taken back when it failed.
+     if ((command === 'delivered' || command === 'reopen') && item.claim?.line === 'unclear') {
+       if (item.claim.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
+@@ -2150,7 +2200,9 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+         put({ ...unmarked(item), subject: flag(args, 'notice') ?? item.subject, detail: flag(args, 'detail') ?? item.detail }),
+       )
+     }
+-    if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
++    if (item.kind === 'notice' || item.kind === 'message') {
++      return failed(65, `${ref} is a ${item.kind}; dismiss it with \`project inbox dismiss\``)
++    }
+     if (command === 'revise' && item.kind === 'request') {
+       // A revised request returns to open, as the CLI resets it.
+       const start = flag(args, 'start') ?? item.start
+@@ -5353,6 +5405,113 @@ test('an open item’s line draws its title with no rule after it', async ($, on
+   await desktop.unmount()
+ })
+ 
++/** The messages you sent that an open drawer shows, in order. */
++async function messagesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
++  return (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(text => /^(you|agent): \S/.test(text))
++}
++
++test('messages discussed from a terminal reach the agent as DISCUSS, each once and in order, and the item stays open', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const messages = [yours('Why decline?', NOW - 2_000), yours('What does the budget cost?')]
++  const session = questionWorld(on, clock, [held({ messages })])
++  await startSession($, clock, false)
++  for (let tick = 0; tick < 3; tick += 1) {
++    await clock.advance(TICK)
++    await clock.settle()
++  }
++
++  expect(session.submitted.map(one => one.text)).toEqual([
++    'DISCUSS 1 Decline the finding? → Why decline?',
++    'DISCUSS 1 Decline the finding? → What does the budget cost?',
++  ])
++  const item = session.store.store.get('1')
++  expect([item?.answer, item?.messages?.map(said => said.deliveredAt !== undefined)]).toEqual([undefined, [true, true]])
++})
++
++test('a message that cannot be delivered is taken back, and the panel says to send it again', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held({ messages: [yours('Why decline?')] })], { drop: 'a hook refused it' })
++  await startSession($, clock)
++  await clock.advance(TICK)
++  await clock.settle()
++
++  expect(session.toasts).toEqual([
++    'projector: your message about "Decline the finding?" did not reach its agent (a hook refused it); send it again',
++  ])
++  expect(session.store.store.get('1')?.messages).toBeUndefined()
++})
++
++/** A claim another deliverer holds on an item's `DISCUSS` line, which lapses a minute after `NOW`. */
++const elsewhere = (entry: number) => ({ token: 'elsewhere', renewedAt: NOW, line: 'discuss' as const, entry })
++
++/** Moves the clock past the claim `elsewhere` holds, and through the tick that claims the line itself. */
++async function outlast(clock: Clock): Promise<void> {
++  await clock.advance(60_000 + TICK)
++  await clock.settle()
++}
++
++test('an item’s line reads `sending` until your message is delivered, and its drawer shows what you sent', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const messages = [{ ...yours('Why decline?', NOW - 3_000), deliveredAt: NOW - 2_000 }, yours('Which hosts?')]
++  const session = questionWorld(on, clock, [held({ messages, claim: elsewhere(1) })])
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  expect(await ui.find({ type: 'Text', text: 'sending' })).toBeDefined()
++  expect(await messagesOf(ui)).toEqual([])
++
++  await ui.press({ key: 'item:1' })
++  expect(await messagesOf(ui)).toEqual(['you: Why decline?', 'you: Which hosts?'])
++  await outlast(clock)
++  expect(session.submitted.map(one => one.text)).toEqual(['DISCUSS 1 Decline the finding? → Which hosts?'])
++  expect(await ui.find({ type: 'Text', text: 'sending' })).toBeUndefined()
++  expect(await messagesOf(ui)).toEqual(['you: Why decline?', 'you: Which hosts?'])
++  // Nothing comes back to the item: the agent answers in its conversation.
++  expect(session.project().filter(command => /^inbox (read|reply)/.test(command))).toEqual([])
++  await ui.unmount()
++})
++
++test('a message about the session is counted and drawn like a notice, takes no I don’t understand, and leaves once delivered', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held(), messageItem({ claim: elsewhere(0) })])
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question · 1 message  \d+s$/)
++  expect((await ui.find({ type: 'Text', text: 'About this session' }))?.props.color).toBe('inactive')
++
++  await ui.press({ key: 'item:4' })
++  expect(await messagesOf(ui)).toEqual(['you: Why the retry?'])
++  expect((await ui.findAll({ type: 'Button' })).filter(button => /^(answer|outcome|start):4/.test(button.key ?? ''))).toEqual([])
++  expect(await actionLinesOf(ui)).toEqual(['discuss:4 7 Discuss', 'dismiss:4 8 Dismiss', 'snooze:4 9 Snooze'])
++  await outlast(clock)
++  expect(session.submitted.map(one => one.text)).toEqual(['DISCUSS 4 About this session → Why the retry?'])
++  expect(session.store.store.get('4')?.answer).toEqual({ delivered: true, answeredAt: expect.any(Number) })
++
++  await clock.advance(30_000 + TICK)
++  await clock.settle()
++  expect(await ui.find({ type: 'Text', text: 'About this session' })).toBeUndefined()
++  await ui.unmount()
++})
++
++test('dismissing a message about the session sends the agent nothing but the message itself', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [messageItem({ claim: elsewhere(0) })])
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'item:4' })
++  await ui.press({ key: 'dismiss:4' })
++  await outlast(clock)
++  await outlast(clock)
++  expect(session.project().filter(command => /^inbox dismiss/.test(command))).toEqual(['inbox dismiss 4 --session s1 --json'])
++  expect(session.submitted.map(one => one.text)).toEqual(['DISCUSS 4 About this session → Why the retry?'])
++  expect(session.store.store.get('4')?.answer).toEqual({ dismissed: true, answeredAt: expect.any(Number) })
++  await ui.unmount()
++})
++
+ // The daemon's files: the session's subscriptions, each pull request's cached
+ // result, and the events the mod delivers.
+ 
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index af18f73a..304ee772 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -5,6 +5,7 @@ import type {
+   Checks,
+   Item,
+   LoopKind,
++  MessageItem,
+   Notice,
+   PullRequest,
+   Question,
+@@ -42,12 +43,14 @@ import {
+   BLOCK_SCHEMA,
+   choicesOf,
+   forMainLoop,
++  isAnswerable,
+   isShownAt,
+   isSnoozedAt,
+   letterAt,
+   liveAgent,
+   mayBeUnclear,
+   needsDelivery,
++  owesMessage,
+   proposalOf,
+   quoteOf,
+   READY_DESCRIPTION,
+@@ -207,7 +210,7 @@ const REQUEST_COLORS: Record<string, string> = {
+ const OTHER_REQUEST_COLOR = 'rgb(255,190,140)'
+ 
+ /** The kinds of item, in the order the header counts them. */
+-const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice']
++const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice', 'message']
+ 
+ /** The sections of pull requests, in their order: your own, then the review requests. */
+ const PR_SECTIONS = ['pr', 'review'] as const satisfies readonly Section[]
+@@ -233,6 +236,7 @@ const kindColors = (requestColor: string): Record<Item['kind'], string> => ({
+   question: QUESTION_COLOR,
+   notice: NOTICE_COLOR,
+   request: requestColor,
++  message: NOTICE_COLOR,
+ })
+ 
+ /**
+@@ -801,7 +805,11 @@ async function closeLeftDrawer($: Engine, time: number): Promise<void> {
+  * An item as the CLI prints it, without the session the panel adds. Each kind
+  * is its own `Omit`, because one over the union would merge their `kind`s.
+  */
+-type Printed = Omit<Question, 'session'> | Omit<Notice, 'session'> | Omit<Request, 'session'>
++type Printed =
++  | Omit<Question, 'session'>
++  | Omit<Notice, 'session'>
++  | Omit<Request, 'session'>
++  | Omit<MessageItem, 'session'>
+ 
+ /** The item a CLI command printed with `--json`, in the session it belongs to. */
+ const itemOf = (stdout: string, session: string): Item => ({
+@@ -876,7 +884,7 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
+     // subject. A restore's line is not sent again, and its item stays open. A
+     // start that did not reach its agent is taken back, so start returns, and
+     // so is word that you don't understand an item, so I don't understand
+-    // returns.
++    // returns, and a message you sent about it, so you send it again.
+     const item = (await read($, items)).find(one => one.ref === ref && one.session === session)
+     const quoted = item === undefined ? undefined : quoteOf(item)
+     const why = reason ? ` (${reason})` : ''
+@@ -887,6 +895,8 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
+           ? `projector: the start of ${quoted ?? 'a request'} did not reach its agent${why}; press start again`
+           : text.startsWith('UNCLEAR ')
+           ? `projector: word that you don't understand ${quoted ?? 'an item'} did not reach its agent${why}; press I don't understand again`
++          : text.startsWith('DISCUSS ')
++          ? `projector: your message about ${quoted ?? 'an item'} did not reach its agent${why}; send it again`
+           : item?.kind === 'request'
+           ? `projector: the outcome of ${quoted ?? 'a request'} did not reach its agent${why}; mark it done or declined again`
+           : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
+@@ -1622,8 +1632,8 @@ export const register: Register = on => {
+     const { ref } = item
+     return {
+       result:
+-        item.kind === 'notice'
+-          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it.${whenUnclear('notice', ref)} Nothing else comes back to you.`
++        !isAnswerable(item)
++          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it.${item.kind === 'notice' ? whenUnclear('notice', ref) : ''} Nothing else comes back to you.`
+           : item.kind === 'request'
+             ? `Restored ${ref}. It is open in Projector’s panel again. An agent that already heard DECLINED ${ref} hears RESTORED ${ref} first.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
+             : `Restored ${ref}. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
+@@ -1697,7 +1707,7 @@ export const register: Register = on => {
+     const { answers, outcomes, replies, unclears } = readPrompt(e.text, mine, isYours ? proposed : [])
+     // An open question or request is done only when the prompt resolves or
+     // replies to it, so a quote two of them share closes one drawer, not both.
+-    const isOpenAnswerable = (item: Item) => item.kind !== 'notice' && item.answer === undefined
++    const isOpenAnswerable = (item: Item) => isAnswerable(item) && item.answer === undefined
+     const done = new Set([
+       ...mine.filter(item => !isOpenAnswerable(item) && e.text.includes(quoteOf(item))).map(item => item.ref),
+       ...answers.map(one => one.question.ref),
+@@ -2225,7 +2235,7 @@ export const register: Register = on => {
+       // say what you don't follow before you send it. A question's choices
+       // and a request's, after any Start or Retry, end at `5`, leaving it `6`.
+       // An item stored before that cap can hold a choice on `6`, so there it
+-      // takes no digit.
++      // takes no digit. A message is your own words, so it offers none.
+       const choiceDigits =
+         item.kind === 'question'
+           ? item.choices.length
+@@ -2233,7 +2243,7 @@ export const register: Register = on => {
+             ? (startOf(item) === undefined ? 0 : 1) + choicesOf(item).length
+             : 0
+       const unclear: Line[] =
+-        isOpen && item.unclear === undefined
++        isOpen && item.unclear === undefined && item.kind !== 'message'
+           ? [
+               {
+                 name: 'unclear',
+@@ -2252,7 +2262,7 @@ export const register: Register = on => {
+           label: 'Discuss',
+           hotkey: '7',
+           onPress: () => {
+-            if (item.kind !== 'notice') propose(item, '')
++            if (isAnswerable(item)) propose(item, '')
+             fill(`${quoteOf(item)}\n\n`)
+           },
+         },
+@@ -2322,7 +2332,8 @@ export const register: Register = on => {
+               ? `outcome:${ref}.${letterAt(0)}`
+               : `start:${ref}`
+             : `discuss:${ref}`
+-      const isSending = !isOpen && item.deliveredAt === undefined
++      const messages = item.messages ?? []
++      const isSending = (!isOpen && item.deliveredAt === undefined) || owesMessage(item)
+       const isUnclear = isOpen && item.unclear !== undefined
+       const stage = item.kind === 'request' && isOpen ? stageOf(item) : undefined
+ 
+@@ -2386,6 +2397,15 @@ export const register: Register = on => {
+                   above. */}
+               {item.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
+               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
++              {/* The messages you sent about the item follow, oldest first.
++                  The agent answers them in its conversation. */}
++              {messages.length > 0 && <Text key={`before-messages:${ref}`}> </Text>}
++              {messages.map((said, at) => (
++                <Text key={`said:${ref}.${at}`}>
++                  <Text color="subtle">you: </Text>
++                  {said.text}
++                </Text>
++              ))}
+               {item.kind === 'question' && !isChoosingLength && drawAnswers(item)}
+               {item.kind === 'request' && !isChoosingLength && drawOutcomes(item)}
+               <Text key={`before-buttons:${ref}`}> </Text>
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 29da1faf..150ee8d6 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -90,6 +90,9 @@ export type Outcome =
+   | { dismissed: true; declined: true; text?: string; answeredAt: number }
+   | Dismissal
+ 
++/** A message you sent the agent about an item, which reaches it as `DISCUSS` and has `deliveredAt` once it did. */
++export type Message = { text: string; at: number; deliveredAt?: number }
++
+ /** What every item has, as `project inbox list --json` gives it, with the session whose store holds it. */
+ export type Posted = {
+   /** The item's number in its session, as a string such as `"3"`: what the CLI prints and takes. */
+@@ -116,9 +119,18 @@ export type Posted = {
+   unclear?: { at: number; deliveredAt?: number }
+   /**
+    * A deliverer's hold on the line the item owes its agent: `line` says
+-   * which, the answer or outcome, `RESTORED`, `STARTED`, or `UNCLEAR`.
++   * which, the answer or outcome, `RESTORED`, `STARTED`, `UNCLEAR`, or
++   * `DISCUSS`.
+    */
+-  claim?: { token: string; renewedAt: number; line?: 'answer' | 'restored' | 'started' | 'unclear' }
++  claim?: {
++    token: string
++    renewedAt: number
++    line?: 'answer' | 'restored' | 'started' | 'unclear' | 'discuss'
++    /** The message a `DISCUSS` claim delivers, by its index in `messages`. */
++    entry?: number
++  }
++  /** The messages you sent the agent about the item, oldest first; absent until the first. */
++  messages?: Message[]
+   deliveredAt?: number
+   session: string
+ }
+@@ -158,7 +170,18 @@ export type Request = Posted & {
+   restoredAt?: number
+ }
+ 
+-export type Item = Question | Notice | Request
++/**
++ * A message you sent about a pull request or about the session itself. It
++ * asks nothing of you, and dismissing it delivers it at once. It is resolved
++ * as `delivered` once its message reached the agent, or as dismissed when the
++ * message was taken back.
++ */
++export type MessageItem = Posted & {
++  kind: 'message'
++  answer?: Dismissal | { delivered: true; answeredAt: number }
++}
++
++export type Item = Question | Notice | Request | MessageItem
+ 
+ /** An item whose answer or outcome goes back to the agent that posted it. */
+ export type Answerable = Question | Request
+diff --git a/skills/work/SKILL.md b/skills/work/SKILL.md
+index 3db6a32f..6f5954ce 100644
+--- a/skills/work/SKILL.md
++++ b/skills/work/SKILL.md
+@@ -92,7 +92,10 @@ block. When an answer arrives, as a line that starts `ANSWER`, `DONE`, or
+ `DECLINED`, act on it before you go on, including undoing what you built on
+ a recommendation the user did not pick. When a reply in their own words
+ settles an item, withdraw it, and when a line that starts `UNCLEAR` arrives,
+-revise the item to explain it better.
++revise the item to explain it better. A line that starts `DISCUSS` carries
++the user's words about an item. Answer it in the conversation, then
++withdraw the item, revise it, or leave it open, as for a reply. A `DISCUSS`
++about a pull request or the session needs no inbox action.
+ 
+ ## Hand each pull request to review
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index bf98f0f1..37d9725c 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -989,7 +989,7 @@ def seconds(text: str) -> float:
+ 
+ def add_inbox_parser(subcommands) -> None:
+     parser = subcommands.add_parser("inbox", help="put a question, a notice, or a request in the person's inbox, "
+-                                                   "and answer, dismiss, snooze, restore, and deliver it")
++                                                   "and answer, discuss, dismiss, snooze, restore, and deliver it")
+     commands = parser.add_subparsers(dest="inbox_command", required=True)
+ 
+     def command(name: str, help_text: str) -> argparse.ArgumentParser:
+@@ -1068,6 +1068,13 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     unclear.add_argument("--subject", help="the item's line as you read it, which must match the item's")
+     unclear.add_argument("--detail", help="the item's detail as you read it, which must match the item's")
+ 
++    discuss = command("discuss", "send the agent your message about an open item, or about a pull request or the "
++                                 "session as a message item, whose number it prints")
++    discuss.add_argument("reference", nargs="?",
++                         help="the item's number, such as 3; leave it out to write about a pull request or the session")
++    discuss.add_argument("--text", required=True, help="your message, one paragraph of at most 4 KiB")
++    discuss.add_argument("--pr", help="write about this pull request, as owner/repo#number")
++
+     withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
+     withdraw.add_argument("reference")
+ 
+@@ -2346,6 +2353,8 @@ def print_item(item: dict) -> None:
+         print(f"start: {item['start']}")
+     if (item.get("progress") or {}).get("reason"):
+         print(f"blocked: {item['progress']['reason']}")
++    for said in item.get("messages") or []:
++        print(f"you: {said['text']}")
+     print(item_state(item))
+ 
+ 
+@@ -2428,6 +2437,15 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+             item = inbox.block(session, ref, arguments.reason)
+         wake_codex_delivery(session, item)
+         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
++    elif command == "discuss":
++        if ref is not None and arguments.pr is not None:
++            raise inbox.InboxError("`discuss` takes an item's number, to write about that item, or --pr, to write "
++                                   "about a pull request, not both")
++        session = inbox_session(arguments, ref is None)
++        item = (inbox.discuss(session, ref, arguments.text) if ref is not None
++                else inbox.send(session, arguments.text, pr=arguments.pr))
++        wake_codex_delivery(session, item)
++        print(json_text({"item": item}) if json_output else f"discussed {ref}" if ref is not None else item["ref"])
+     elif command == "revise":
+         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+         options = [] if arguments.no_options else arguments.option
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index 530c1e3e..9f008385 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -8,11 +8,15 @@
+ understand an open item of any kind, which goes back to the agent as `UNCLEAR`. The agent that
+ posted an open item can withdraw it, which dismisses it and sends nothing back, and can revise its
+ text in place. An item the person dismissed, declined, or snoozed can be restored, which reopens
+-it in place. Each session numbers its items 1, 2, 3, and on, in one count across every kind. Its
+-items are JSON files in their own directory, one per item and named by its number, with
+-`count.json` holding the last number given. Every write happens under the directory's lock, an
+-operating-system lock on its `.lock` file, and lands by renaming a temporary file into place, so
+-two writers never lose each other's change and a reader never sees half a file.
++it in place. The person can send the agent a message about any open item, which goes back to the
++agent as `DISCUSS`, and the agent answers in its own conversation. A message about a pull request
++or about the session itself is an item of its own, of kind `message`, which asks nothing of the
++person and is resolved once its message is delivered. Each session numbers its items 1, 2, 3, and
++on, in one count across every kind. Its items are JSON files in their own directory, one per item
++and named by its number, with `count.json` holding the last number given. Every write happens
++under the directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a
++temporary file into place, so two writers never lose each other's change and a reader never sees
++half a file.
+ """
+ 
+ from __future__ import annotations
+@@ -34,7 +38,10 @@
+ MAX_OPTIONS = 4
+ SNOOZE_MINUTES = 60
+ MAX_SNOOZE_MINUTES = 24 * 60
+-KINDS = ("question", "notice", "request")
++KINDS = ("question", "notice", "request", "message")
++# The kinds that take no answer, so their dismissal sends the agent nothing.
++UNANSWERED_KINDS = ("notice", "message")
++MAX_MESSAGE_BYTES = 4096
+ KEEP_DELIVERED = 100
+ CLAIM_EXPIRES_MS = 60_000
+ LOCK_WAIT_SECONDS = 5.0
+@@ -42,6 +49,9 @@
+ # the same name. A claimed one may already wait in the session's queue as a prompt that nothing
+ # can recall, so it keeps its claim when an answer, outcome, or dismissal lands.
+ OPEN_LINES = ("started", "unclear")
++# The lines whose claim an answer, outcome, or dismissal leaves in place: the open lines, and a
++# message of the person's, whose words the agent is owed whatever becomes of the item.
++HELD_LINES = (*OPEN_LINES, "discuss")
+ 
+ SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+ PULL = re.compile(r"^(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>[1-9][0-9]*)$")
+@@ -233,7 +243,8 @@ def check(question: str, recommend: str, options: list[str], pr: Optional[str])
+ 
+ 
+ def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str], agent: Optional[str],
+-         choices: Optional[list[str]] = None, start: Optional[str] = None) -> dict:
++         choices: Optional[list[str]] = None, start: Optional[str] = None,
++         messages: Optional[list[dict]] = None) -> dict:
+     """Number and record an item that passed its checks; returns it. Every kind shares the
+     session's one count, which only grows, so a number names one item for the whole session,
+     even after pruning deletes the item that held the largest."""
+@@ -254,6 +265,8 @@ def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str
+             record["choices"] = choices
+         if start is not None:
+             record["start"] = start.strip()
++        if messages is not None:
++            record["messages"] = messages
+         if agent:
+             record["agentId"] = agent
+         # The count lands first: a write that stops between the two then skips a
+@@ -314,6 +327,33 @@ def request(session: str, subject: str, *, detail: str = "", pr: Optional[str] =
+     return post(session, "request", subject, detail=detail, pr=pr, agent=agent, start=start, choices=choices)
+ 
+ 
++def check_message(text: str) -> str:
++    """A message's text: one paragraph of at most `MAX_MESSAGE_BYTES` in UTF-8, on one line, as
++    the `DISCUSS` line that carries it to the agent prints."""
++    said = text.strip()
++    if not said:
++        raise InboxError("the message is empty")
++    if not is_one_line(said):
++        raise InboxError("the message must be one paragraph, with no line breaks")
++    size = len(said.encode("utf-8"))
++    if size > MAX_MESSAGE_BYTES:
++        raise InboxError(f"the message is {size} bytes; keep it to {MAX_MESSAGE_BYTES} (4 KiB)")
++    return said
++
++
++def new_message(text: str) -> dict:
++    return {"text": check_message(text), "at": now_ms()}
++
++
++def send(session: str, text: str, *, pr: Optional[str] = None) -> dict:
++    """Number and record a message the person sends the agent about pull request `pr`, or about the
++    session itself without one, as an item of kind `message` that holds it; returns it."""
++    said = new_message(text)
++    subject = f"About {pr}" if pr is not None else "About this session"
++    check_subject("message", subject, pr)
++    return post(session, "message", subject, detail="", pr=pr, agent=None, messages=[said])
++
++
+ # Finding an item
+ 
+ def parse_reference(text: str) -> tuple[str, Optional[str]]:
+@@ -370,9 +410,14 @@ def is_request(item: dict) -> bool:
+     return item.get("kind") == "request"
+ 
+ 
++def takes_no_answer(item: dict) -> bool:
++    return item.get("kind") in UNANSWERED_KINDS
++
++
+ def refuse_notice(item: dict, action: str) -> None:
+-    if is_notice(item):
+-        raise InboxError(f"{item['ref']} is a notice, which {action}; dismiss it with `project inbox dismiss`")
++    if takes_no_answer(item):
++        raise InboxError(f"{item['ref']} is a {item['kind']}, which {action}; dismiss it with "
++                         "`project inbox dismiss`")
+ 
+ 
+ def refuse_request(item: dict) -> None:
+@@ -396,9 +441,12 @@ def answer_ref(item: dict) -> str:
+ 
+ 
+ def resolution(item: dict) -> str:
+-    """How a resolved item was resolved, as a refusal names it: `withdrawn`, `declined`,
+-    `dismissed`, `done`, or `answered, as 3.a`."""
++    """How a resolved item was resolved, as a refusal names it: `delivered`, for a `message` item
++    whose message reached the agent, `withdrawn`, `declined`, `dismissed`, `done`, or
++    `answered, as 3.a`."""
+     answered = item["answer"]
++    if answered.get("delivered"):
++        return "delivered"
+     if answered.get("withdrawn"):
+         return "withdrawn"
+     if answered.get("declined"):
+@@ -408,11 +456,20 @@ def resolution(item: dict) -> str:
+     return "done" if answered.get("done") else f"answered, as {answer_ref(item)}"
+ 
+ 
++def owed_message(item: dict) -> Optional[int]:
++    """The index of the oldest of the person's messages not yet delivered, if any."""
++    for index, said in enumerate(item.get("messages") or []):
++        if not said.get("deliveredAt"):
++            return index
++    return None
++
++
+ def owed_line(item: dict) -> Optional[str]:
+     """The line an item owes its agent next, if any: `answer` for an answer, outcome, or dismissal
+     not yet delivered, `restored` for word that a dismissal it may have heard of was undone,
+-    `started` for an open request's start not yet delivered, or `unclear` for word not yet
+-    delivered that the person does not understand an open item."""
++    `started` for an open request's start not yet delivered, `unclear` for word not yet
++    delivered that the person does not understand an open item, or `discuss` for a message of the
++    person's about it not yet delivered."""
+     if item.get("answer") and not item.get("deliveredAt"):
+         return "answer"
+     if item.get("restoredAt"):
+@@ -421,7 +478,7 @@ def owed_line(item: dict) -> Optional[str]:
+         recorded = item.get(line)
+         if not item.get("answer") and recorded and not recorded.get("deliveredAt"):
+             return line
+-    return None
++    return "discuss" if owed_message(item) is not None else None
+ 
+ 
+ def claimed_line(item: dict) -> Optional[str]:
+@@ -431,13 +488,23 @@ def claimed_line(item: dict) -> Optional[str]:
+     return (claimed.get("line") or owed_line(item)) if claimed else None
+ 
+ 
++def discussed_message(item: dict) -> Optional[int]:
++    """The index of the message a `DISCUSS` line carries: the one its claim recorded, or else the
++    oldest the item owes."""
++    claimed = item.get("claim") or {}
++    return claimed.get("entry") if claimed.get("line") == "discuss" else owed_message(item)
++
++
+ def message(question: dict) -> str:
+     """The line that tells the agent what became of its item, as `watch` prints it and the panel
+     sends it: its answer or outcome, its dismissal, that a dismissal it may have heard of was
+-    undone, that the person pressed start, quoting the start action they pressed it for, or that
+-    the person does not understand it. A request's outcome ends with the person's text when they
+-    gave one."""
++    undone, that the person pressed start, quoting the start action they pressed it for, that the
++    person does not understand it, or a message the person wrote about it. A request's
++    outcome ends with the person's text when they gave one."""
+     line = claimed_line(question) or owed_line(question)
++    if line == "discuss":
++        said = question["messages"][discussed_message(question)]["text"]
++        return f"DISCUSS {question['ref']} {question['subject']} → {said}"
+     if line == "started":
+         return f"STARTED {question['ref']} {question['subject']} → {question['started']['action']}"
+     if line == "unclear":
+@@ -509,9 +576,10 @@ def clear_for_outcome(item: dict) -> tuple[bool, bool]:
+     """Clear what an answer, outcome, or dismissal replaces, and say whether word of a restore was
+     owed and whether a claim was dropped. It clears a snooze, word of a restore, the claim to deliver
+     either, a request's start that no deliverer has claimed, and the person's word that they do not
+-    understand the item, which they no longer need answered. A claimed `STARTED` or `UNCLEAR` keeps
+-    its claim, as `OPEN_LINES` says, and the new line is owed once `settle` finishes it."""
+-    pending = claimed_line(item) if claimed_line(item) in OPEN_LINES else None
++    understand the item, which they no longer need answered. A claimed `STARTED`, `UNCLEAR`, or
++    `DISCUSS` keeps its claim, as `HELD_LINES` says, and the new line is owed once `settle`
++    finishes it."""
++    pending = claimed_line(item) if claimed_line(item) in HELD_LINES else None
+     item.pop("snoozedUntil", None)
+     item.pop("snoozedAt", None)
+     restored = item.pop("restoredAt", None) is not None
+@@ -531,17 +599,17 @@ def record_dismissal(item: dict, withdrawn: bool, said: dict) -> None:
+     restored, claimed = clear_for_outcome(item)
+     declined = {"declined": True, **said} if is_request(item) and not withdrawn else {}
+     item["answer"] = {"dismissed": True, **declined, "answeredAt": now, **({"withdrawn": True} if withdrawn else {})}
+-    if withdrawn or is_notice(item) or (restored and not claimed):
++    if withdrawn or takes_no_answer(item) or (restored and not claimed):
+         item["deliveredAt"] = now
+ 
+ 
+ def dismiss(session: Optional[str], ref: str, withdrawn: bool = False) -> dict:
+     """Dismiss an item. A dismissed question or request waits for its deliverer to tell the agent; a
+-    dismissed notice has nothing to send, so it is delivered at once. Dismissing a request declines
+-    it, with no text. A `withdrawn` item, which the agent that posted it took back, is delivered at
+-    once too, because that agent already knows. So is an item dismissed again before any deliverer
+-    claimed the `RESTORED` line its restore owes, because the last line its agent heard said
+-    `DISMISSED` or `DECLINED`."""
++    dismissed notice or message has nothing to send, so it is delivered at once. Dismissing a
++    request declines it, with no text. A `withdrawn` item, which the agent that posted it took back,
++    is delivered at once too, because that agent already knows. So is an item dismissed again before
++    any deliverer claimed the `RESTORED` line its restore owes, because the last line its agent heard
++    said `DISMISSED` or `DECLINED`."""
+     return update(session, ref, lambda item: record_dismissal(item, withdrawn, {}), is_open)
+ 
+ 
+@@ -607,6 +675,8 @@ def revise(session: Optional[str], ref: str, *, question: Optional[str] = None,
+     def record(item: dict) -> None:
+         if item.get("answer"):
+             raise InboxError(f"{item['ref']} is already {resolution(item)}")
++        if item["kind"] == "message":
++            raise InboxError(f"{item['ref']} is a message, whose subject names what it is about")
+         if is_notice(item):
+             if any(part is not None for part in (question, recommend, options, request, start)):
+                 raise InboxError(f"{item['ref']} is a notice; revise its text with --notice and --detail")
+@@ -659,6 +729,8 @@ def unclear(session: Optional[str], ref: str, subject: Optional[str] = None, det
+     def record(item: dict) -> None:
+         if item.get("answer"):
+             raise InboxError(f"{item['ref']} is already {resolution(item)}")
++        if item["kind"] == "message":
++            raise InboxError(f"{item['ref']} is your own message, so its agent has nothing to explain")
+         if item.get("unclear"):
+             raise InboxError(f"{item['ref']} is already marked unclear; its agent revises it next")
+         if subject is not None and subject.strip() != item["subject"]:
+@@ -690,7 +762,8 @@ def restore(session: Optional[str], ref: str) -> dict:
+     its snooze. A dismissed item loses its dismissal and what its delivery recorded, and keeps
+     everything else. When the agent may have heard `DISMISSED`, because the line was delivered or
+     claimed for delivery, the item records `restoredAt`, and its deliverer sends `RESTORED`;
+-    otherwise the restore cancels the line, and nothing goes out."""
++    otherwise the restore cancels the line, and nothing goes out. A claimed `DISCUSS` line keeps its
++    claim."""
+     def record(item: dict) -> None:
+         answered = item.get("answer")
+         if not answered:
+@@ -705,10 +778,19 @@ def record(item: dict) -> None:
+         if not answered.get("dismissed"):
+             raise InboxError(f"{item['ref']} is already {resolution(item)}, and only a dismissed or snoozed item "
+                              "can be restored")
+-        if not is_notice(item) and (item.get("deliveredAt") or item.get("claim")):
++        if item["kind"] == "message" and owed_message(item) is None:
++            raise InboxError(f"{item['ref']} is a message already delivered or taken back, so it has nothing left "
++                             "to send")
++        # A claimed `DISCUSS` line carries the person's words, not the dismissal, so it says nothing
++        # of whether the agent heard `DISMISSED`.
++        held = item.get("claim") if claimed_line(item) == "discuss" else None
++        heard = item.get("deliveredAt") or (item.get("claim") and held is None)
++        if not takes_no_answer(item) and heard:
+             item["restoredAt"] = now_ms()
+         for key in ("answer", "deliveredAt", "claim"):
+             item.pop(key, None)
++        if held is not None:
++            item["claim"] = held
+         # The agent heard the request declined and may have undone what it prepared, so a restored
+         # request waits for a new press of start. Likewise a word that the person did not
+         # understand the item was settled by the dismissal, so only a new press says it again.
+@@ -769,6 +851,21 @@ def block(session: Optional[str], ref: str, reason: str) -> dict:
+     return report(session, ref, "blocked", reason)
+ 
+ 
++# Messages
++
++def discuss(session: Optional[str], ref: str, text: str) -> dict:
++    """Add a message of the person's to an open item, for its deliverer to send the agent as
++    `DISCUSS`. The agent answers in its own conversation, so nothing comes back to the item."""
++    said = new_message(text)
++
++    def record(item: dict) -> None:
++        if item.get("answer"):
++            raise InboxError(f"{item['ref']} is already {resolution(item)}")
++        item.setdefault("messages", []).append(said)
++
++    return update(session, ref, record, is_open)
++
++
+ def snoozed_until(item: dict) -> Optional[int]:
+     """When a snoozed item returns, while that time is still ahead."""
+     until = item.get("snoozedUntil")
+@@ -783,12 +880,13 @@ def live_claim(question: dict) -> Optional[dict]:
+ 
+ 
+ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict:
+-    """Claim the line an item owes for delivery, recording which line it is, or renew a claim by its
+-    token; returns the item. A claimed `STARTED` or `UNCLEAR` renews even once the item is resolved,
+-    since its line still waits in the session's queue."""
++    """Claim the line an item owes for delivery, recording which line it is, and for `DISCUSS` which
++    message, or renew a claim by its token; returns the item. A claimed `STARTED`, `UNCLEAR`,
++    or `DISCUSS` renews even once the item is resolved, since its line still waits in the session's
++    queue."""
+     def take(question: dict) -> None:
+         line = owed_line(question)
+-        if line is None and not (renew is not None and claimed_line(question) in OPEN_LINES):
++        if line is None and not (renew is not None and claimed_line(question) in HELD_LINES):
+             refuse_notice(question, "has nothing to deliver")
+             if question.get("deliveredAt"):
+                 raise InboxError(f"{answer_ref(question)} is already delivered")
+@@ -800,7 +898,8 @@ def take(question: dict) -> None:
+             return
+         if live_claim(question):
+             raise InboxError(f"{answer_ref(question)} is already claimed for delivery")
+-        question["claim"] = {"token": secrets.token_hex(8), "renewedAt": now_ms(), "line": line}
++        question["claim"] = {"token": secrets.token_hex(8), "renewedAt": now_ms(), "line": line,
++                             **({"entry": owed_message(question)} if line == "discuss" else {})}
+ 
+     return update(session, ref, take)
+ 
+@@ -808,17 +907,35 @@ def take(question: dict) -> None:
+ def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dict:
+     """Mark a claimed line delivered, or undo what it reported when its delivery failed: a question
+     reopens, a request's start is removed, so the person presses start again, and so is word that
+-    the person does not understand an item, so they press I don't understand again. A claimed
+-    `RESTORED` line is done either way: the panel does not retry it, and the item's answer or next
+-    dismissal still reaches the agent. An outcome recorded while a `STARTED` or `UNCLEAR` was
+-    claimed is owed once that line settles."""
++    the person does not understand an item, so they press I don't understand again, and so is a
++    message of the person's, so they say it again. A claimed `RESTORED` line is done either way:
++    the panel does not retry it, and the item's answer or next dismissal still reaches the agent.
++    An outcome recorded while a `STARTED`, `UNCLEAR`, or `DISCUSS` was claimed is owed once that
++    line settles. A `message` item with no message left to send is resolved: delivered when one
++    of its messages was, or else dismissed, since nothing of it reached the agent."""
+     def finish(question: dict) -> None:
+         line = claimed_line(question)
+-        if line not in OPEN_LINES and question.get("deliveredAt"):
++        if line not in HELD_LINES and question.get("deliveredAt"):
+             raise InboxError(f"{answer_ref(question)} is already delivered")
+         if (question.get("claim") or {}).get("token") != token:
+             raise InboxError(f"{question['ref']} is not claimed with that token")
++        index = discussed_message(question)
+         del question["claim"]
++        if line == "discuss":
++            messages = question["messages"]
++            if delivered:
++                messages[index]["deliveredAt"] = now_ms()
++            else:
++                del messages[index]
++            if not messages:
++                del question["messages"]
++            if question["kind"] == "message" and not question.get("answer") and owed_message(question) is None:
++                said = "delivered" if question.get("messages") else "dismissed"
++                question["answer"] = {said: True, "answeredAt": now_ms()}
++                question["deliveredAt"] = question["answer"]["answeredAt"]
++                question.pop("snoozedUntil", None)
++                question.pop("snoozedAt", None)
++            return
+         if line in OPEN_LINES:
+             if delivered:
+                 question[line]["deliveredAt"] = now_ms()
+@@ -836,7 +953,7 @@ def finish(question: dict) -> None:
+ 
+ 
+ def prune(folder: Path) -> None:
+-    delivered = [item for item in load_items(folder) if item.get("deliveredAt")]
++    delivered = [item for item in load_items(folder) if item.get("deliveredAt") and not owes_a_line(item)]
+     delivered.sort(key=lambda item: item["deliveredAt"], reverse=True)
+     for item in delivered[KEEP_DELIVERED:]:
+         with contextlib.suppress(FileNotFoundError):
+@@ -845,8 +962,8 @@ def prune(folder: Path) -> None:
+ 
+ def owes_a_line(item: dict) -> bool:
+     """Whether the item's agent is owed a line: an answer, outcome, or dismissal not yet delivered,
+-    word that a dismissal it may have heard of was undone, a request's start, or word that the
+-    person does not understand the item."""
++    word that a dismissal it may have heard of was undone, a request's start, word that the person
++    does not understand the item, or a message of the person's about it."""
+     return owed_line(item) is not None
+ 
+ 
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index ec8991e8..867aa1be 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -31,7 +31,10 @@
+ consent to a request's start action, their word that they don't understand an
+ item, or their choice to dismiss or put it off, so an agent running one could
+ answer its own question, mark its own request done, consent to its own start
+-action, or mark its own item unclear. Projector's panel runs those commands
++action, or mark its own item unclear. `project inbox discuss` records the
++person's message to the agent, which reaches it with the person's authority,
++so it asks too: an agent running it could put words in the person's mouth.
++Projector's panel runs those commands
+ itself, not through an agent's shell, so the person answering from the panel is
+ never asked. `project inbox restore` needs no ask rule: it reopens an item the
+ person dismissed or snoozed, which takes no choice from them, and an agent
+@@ -81,7 +84,8 @@
+ program: `create` and `edit`, whose editor an agent could drive,
+ `review gate`, `site build` and `serve`, and `ios build` and `logs`, which run
+ the repository's build scripts or `sudo`. They leave out `inbox answer`,
+-`dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear` too. A new
++`dismiss`, `snooze`, `done`, `decline`, `start`, `unclear`, and `discuss`
++too. A new
+ command reaches Codex once it is added here and `init` rewrites the file.
+ 
+ Both hosts check each command of a chain such as `a && b` on its own and
+@@ -113,7 +117,7 @@
+        "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
+        "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
+        "Bash(project inbox decline *)", "Bash(project inbox start *)",
+-       "Bash(project inbox unclear *)", "Bash(project ios *allow-untrusted*)")
++       "Bash(project inbox unclear *)", "Bash(project inbox discuss *)", "Bash(project ios *allow-untrusted*)")
+ # The narrower rules Projector wrote before `Bash(project *)` covered them,
+ # which `init` removes from `permissions.allow`.
+ SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
+@@ -124,7 +128,7 @@
+ 
+ ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
+          "`--prepare` or `--allow-prepare`, `project ios build --allow-untrusted`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
+-         "`decline`, `start`, and `unclear`")
++         "`decline`, `start`, `unclear`, and `discuss`")
+ COMMANDS = "every `project` command but the few that reach outside Projector's own state"
+ 
+ # Each pattern Codex may run without asking, and outside its sandbox, with the
+@@ -141,7 +145,7 @@
+     (["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore",
+                            "revise", "show", "tell", "watch", "withdraw"]],
+      "Posts, revises, reads, withdraws, restores, or delivers an inbox item, or reports on a request's start, "
+-     "but never records the person's answer to one."),
++     "but never records the person's answer to one or their words."),
+     (["project", "ios", ["cleanup", "crashes", "devices", "install"]],
+      "Lists paired iOS devices, installs a kept build, copies crash reports, or removes project ios's worktree "
+      "and builds, but never builds or reads a device's log."),
+@@ -181,7 +185,8 @@
+     "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
+     "# the command line names, `project ios build` and `logs`, which run the repository's build scripts or\n"
+     "# `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
+-    "# and `unclear`, which record the person's choice, and a command line that starts with an option.\n"
++    "# `unclear`, and `discuss`, which record the person's choice or words, and a command line that\n"
++    "# starts with an option.\n"
+     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
+               f'    justification = "{justification}",\n)\n'
+               for pattern, justification in CODEX_ALLOW)
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 9927bec5..809e7261 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 29 -->
++<!-- projector:begin 31 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -138,10 +138,14 @@ post it again unless they ask. When they reply to a question or a request
+ instead, answer what they asked. Then withdraw the item with the `withdraw`
+ tool if the reply settles it, revise it with the `revise` tool if the reply
+ shows it was unclear or the choice or the work has changed, or leave it open
+-while it still needs them. When a message that starts `UNCLEAR` arrives, the
+-person did not understand that item, so revise it with the `revise` tool to
+-explain it more simply or to add the context they lack, keeping its number,
+-rather than posting it again. Each time the person writes to you, also look
++while it still needs them. When a message that starts `DISCUSS` arrives, the
++person wrote to you about that item from outside the conversation. Answer
++it in the conversation, where they read your reply, then withdraw, revise,
++or leave the item open, as for a reply. A `DISCUSS` about a pull request or
++about the session needs no inbox action. When a message that starts
++`UNCLEAR` arrives, the person did not understand that item, so revise it
++with the `revise` tool to explain it more simply or to add the context they
++lack, keeping its number, rather than posting it again. Each time the person writes to you, also look
+ over the other items you posted that are still open, and withdraw any that
+ no longer need them, such as news that has gone stale. When the person says
+ they dismissed or declined an item by mistake, restore it with the `restore`
+diff --git a/tests/test_codex_watch.py b/tests/test_codex_watch.py
+index 2b1bf416..00bf634f 100644
+--- a/tests/test_codex_watch.py
++++ b/tests/test_codex_watch.py
+@@ -663,6 +663,22 @@ def test_an_answer_longer_than_a_batch_goes_out_alone(self):
+         self.tick()
+         self.assertIn("CLOSED Acme/App#15", self.sent()[2])
+ 
++    def test_two_messages_reach_the_session_in_order_and_settle_once_codex_takes_each(self):
++        # Catches an adapter that settles a DISCUSS line as the item's answer, or marks the wrong message delivered.
++        inbox.discuss("session-A", "1", "Why decline?")
++        inbox.discuss("session-A", "1", "What does the budget cost?")
++        self.tick()
++        self.acknowledge()
++        self.tick()
++        self.acknowledge()
++        self.tick()
++        self.assertEqual(2, len(self.sent()))
++        self.assertIn("DISCUSS 1 Decline the finding? → Why decline?", self.sent()[0])
++        self.assertIn("DISCUSS 1 Decline the finding? → What does the budget cost?", self.sent()[1])
++        item = self.item()
++        delivered = ["deliveredAt" in said for said in item["messages"]]
++        self.assertEqual((None, None, [True, True]), (item.get("answer"), item.get("deliveredAt"), delivered))
++
+     def test_recording_an_answer_starts_the_daemon_for_a_codex_session(self):
+         # Catches an answer that waits for the session's next hook while the daemon is down.
+         with mock.patch.object(watch, "ensure_daemon") as ensure, mock.patch("sys.stdout", io.StringIO()):
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index 1cfc7193..bd9c94af 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -1438,5 +1438,139 @@ def test_a_dismissal_while_a_notices_unclear_is_claimed_lets_that_line_settle(se
+         self.assertEqual(0, self.press()[0])
+ 
+ 
++class MessageTests(InboxCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget")
++
++    def cli(self, *args: str) -> tuple[int, str, str]:
++        return self.run_cli(*args, "--session", "s1")
++
++    def discuss(self, *args: str) -> str:
++        code, out, err = self.cli("discuss", *args)
++        self.assertEqual(0, code, err)
++        return out.strip()
++
++    def watch(self) -> str:
++        return self.cli("watch", "--once")[1]
++
++    def claim(self, ref: str = "1") -> str:
++        code, out, err = self.cli("claim", ref, "--json")
++        self.assertEqual(0, code, err)
++        return json.loads(out)["token"]
++
++    def test_a_message_waits_behind_the_lines_its_item_already_owes(self) -> None:
++        # Catches an owed-line order that puts DISCUSS ahead of an answer, a start, or UNCLEAR.
++        self.run_cli("request", "Test the gutters", "--start", "Install it", "--session", "s1")
++        self.run_cli("tell", "Force-pushed #12", "--session", "s1")
++        for ref in ("1", "2", "3"):
++            self.discuss(ref, "--text", f"About {ref}")
++        self.cli("answer", "1.a")
++        self.cli("start", "2", "--action", "Install it")
++        self.cli("unclear", "3")
++        self.assertEqual(["ANSWER 1.a Decline it? → Decline it", "STARTED 2 Test the gutters → Install it",
++                          "UNCLEAR 3 Force-pushed #12"], self.watch().splitlines())
++        self.assertEqual(["DISCUSS 1 Decline it? → About 1", "DISCUSS 2 Test the gutters → About 2",
++                          "DISCUSS 3 Force-pushed #12 → About 3"], self.watch().splitlines())
++
++    def test_two_messages_reach_the_agent_in_order_once_each_and_leave_the_item_open(self) -> None:
++        # Catches messages delivered newest first, one delivered twice, or a message that closes its item.
++        self.assertEqual("discussed 1", self.discuss("1", "--text", "Why decline?"))
++        self.discuss("1", "--text", "What does the budget cost?")
++        self.assertEqual("DISCUSS 1 Decline it? → Why decline?\n", self.watch())
++        self.assertEqual("DISCUSS 1 Decline it? → What does the budget cost?\n", self.watch())
++        self.assertEqual("", self.watch())
++        item = self.item(1)
++        self.assertEqual([{"text", "at", "deliveredAt"}] * 2, [set(said) for said in item["messages"]])
++        self.assertEqual((None, None, "open"), (item.get("answer"), item.get("claim"), cli.item_state(item)))
++        self.assertIn("\nyou: Why decline?\nyou: What does the budget cost?\nopen\n", self.cli("show", "1")[1])
++
++    def test_a_message_whose_delivery_failed_is_taken_back_so_you_say_it_again(self) -> None:
++        # Catches a reopen that marks the message delivered, drops a later one, or reopens the item's answer.
++        self.discuss("1", "--text", "Why decline?")
++        self.discuss("1", "--text", "What does the budget cost?")
++        self.assertEqual(0, self.cli("reopen", "1", "--claim", self.claim())[0])
++        self.assertEqual(["What does the budget cost?"], [said["text"] for said in self.item(1)["messages"]])
++        self.assertEqual(0, self.cli("reopen", "1", "--claim", self.claim())[0])
++        self.assertEqual({"ref", "kind", "number", "pr", "postedAt", "subject", "detail", "choices"},
++                         set(self.item(1)))
++        self.assertEqual("", self.watch())
++
++    def test_a_message_claimed_before_an_answer_keeps_its_claim_and_the_answer_follows_it(self) -> None:
++        # Catches an answer that drops the claim of a DISCUSS line already on its way, so it is sent again.
++        self.discuss("1", "--text", "Why decline?")
++        token = self.claim()
++        self.cli("answer", "1.b")
++        self.assertEqual("", self.watch())
++        self.assertEqual(0, self.cli("claim", "1", "--renew", token)[0])
++        self.assertEqual(0, self.cli("delivered", "1", "--claim", token)[0])
++        self.assertEqual("ANSWER 1.b Decline it? → Add a budget\n", self.watch())
++        self.assertEqual("", self.watch())
++
++    def test_discuss_without_a_number_sends_a_message_and_refuses_a_number_with_a_pull_request(self) -> None:
++        # Catches a message about the session missing from the CLI, or a call naming both targets that picks one.
++        self.assertEqual("2", self.discuss("--text", "hello"))
++        self.assertEqual("3", self.discuss("--pr", "acme/app#12", "--text", "Why the retry?"))
++        self.assertEqual([("message", None, "About this session", ["hello"]),
++                          ("message", "acme/app#12", "About acme/app#12", ["Why the retry?"])],
++                         [(self.item(ref)["kind"], self.item(ref)["pr"], self.item(ref)["subject"],
++                           [said["text"] for said in self.item(ref)["messages"]]) for ref in (2, 3)])
++        before = (self.item(3), (self.folder() / "count.json").read_text())
++        code, out, err = self.cli("discuss", "3", "--pr", "acme/app#12", "--text", "more")
++        self.assertEqual((65, ""), (code, out))
++        self.assertIn("not both", err)
++        self.assertEqual(before, (self.item(3), (self.folder() / "count.json").read_text()))
++        self.assertEqual(["DISCUSS 2 About this session → hello", "DISCUSS 3 About acme/app#12 → Why the retry?"],
++                         self.watch().splitlines())
++
++    def test_a_message_item_takes_nothing_from_you_and_is_resolved_once_its_message_is_delivered(self) -> None:
++        # Catches a message handled as a question, which would take an answer, or one that stays open
++        # in the list after the agent heard it.
++        self.discuss("--text", "hello")
++        for args in (["answer", "2.a"], ["revise", "2", "--detail", "x"], ["done", "2"], ["decline", "2"],
++                     ["start", "2", "--action", "Install it"], ["unclear", "2"]):
++            with self.subTest(command=args[0]):
++                self.assertEqual(65, self.cli(*args)[0])
++        self.assertEqual("2\tmessage\topen\tAbout this session", self.cli("list")[1].splitlines()[-1])
++        self.assertEqual("DISCUSS 2 About this session → hello\n", self.watch())
++        self.assertEqual(("", "delivered 2"), (self.watch(), cli.item_state(self.item(2))))
++        self.assertEqual("1\tquestion\topen\tDecline it?\n", self.cli("list")[1])
++        code, _, err = self.cli("discuss", "2", "--text", "more")
++        self.assertEqual(65, code)
++        self.assertIn("2 is already delivered", err)
++        self.assertEqual(65, self.cli("restore", "2")[0])
++
++    def test_a_message_sent_before_a_dismissal_still_reaches_the_agent_and_the_dismissal_sends_nothing(self) -> None:
++        # Catches a dismissal that silently drops the person's words before any deliverer sent them,
++        # or a restore that reopens an item with nothing left to send.
++        self.discuss("--text", "hello")
++        self.cli("dismiss", "2")
++        self.assertEqual("DISCUSS 2 About this session → hello\n", self.watch())
++        self.assertEqual("", self.watch())
++        code, _, err = self.cli("restore", "2")
++        self.assertEqual(65, code)
++        self.assertIn("nothing left to send", err)
++
++    def test_a_message_item_whose_message_failed_is_resolved_rather_than_left_open_and_empty(self) -> None:
++        # Catches a taken-back message that leaves an item open with nothing to send, which no
++        # deliverer would ever resolve.
++        self.discuss("--text", "hello")
++        self.assertEqual(0, self.cli("reopen", "2", "--claim", self.claim("2"))[0])
++        item = self.item(2)
++        self.assertEqual((None, "dismissed"), (item.get("messages"), cli.item_state(item)))
++        self.assertEqual(("", "1\tquestion\topen\tDecline it?\n"), (self.watch(), self.cli("list")[1]))
++        self.assertEqual(65, self.cli("restore", "2")[0])
++
++    def test_a_message_is_one_paragraph_of_at_most_4_kib(self) -> None:
++        # Catches a limit counted in characters rather than UTF-8 bytes, or a line break that splits a DISCUSS line.
++        self.assertEqual("discussed 1", self.discuss("1", "--text", "a" * 4096))
++        for text in ("é" * 2049, "a" * 4097, "one\ntwo", " "):
++            with self.subTest(text=text[:8]):
++                self.assertEqual(65, self.cli("discuss", "1", "--text", text)[0])
++                self.assertEqual(65, self.cli("discuss", "--text", text)[0])
++        self.assertEqual(1, len(self.item(1)["messages"]))
++        self.assertEqual({"last": 1}, json.loads((self.folder() / "count.json").read_text()))
++
++
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 45532afc..31669bfb 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -41,6 +41,8 @@
+     27: "65a4a24ad3c4d3c407c9a1a83bcab815918a5b8beb9980c88b599ba97a515528",
+     28: "ca55b66def7e6f4af758a4fb0edf229ec16fd30ec4793bfa991cb543175b141b",
+     29: "f057c2028f62fb27b2846b4d73a522dd0bb97b0190945fcbb73bf0a9c51dfb67",
++    30: "abc1ff1385e9c85377ab06d716d1118ce504637845d02a9249b3eba2faf13d57",
++    31: "1f15d5b03db14f17ad4d09f2e1de72e4799ca19a057a2466f5f884f5c3ad25da",
+ }
+ 
+ 
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index d810ee73..c7251a2e 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -54,6 +54,8 @@
+     ("project inbox unclear 3 --subject 'Pushed the fix' --detail '' --session s1", "ask", "none"),
+     ("project inbox ready 3 --session s1", "allow", "allow"),
+     ("project inbox block 3 --reason 'Unlock the phone' --session s1", "allow", "allow"),
++    ("project inbox discuss 3 --text 'Why decline it?' --session s1", "ask", "none"),
++    ("project inbox discuss --pr acme/app#12 --text hello --session s1", "ask", "none"),
+     ("project list --json", "allow", "allow"),
+     ("project config get review.username", "allow", "allow"),
+     ("project config list", "allow", "allow"),
+@@ -117,7 +119,8 @@
+ # What the Codex rules leave to Codex's usual approval: each command with the
+ # subcommands left out, or None where the whole command is.
+ CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "agent": {"key"},
+-                  "config": {"set", "unset"}, "inbox": {"answer", "decline", "dismiss", "done", "snooze", "start", "unclear"},
++                  "config": {"set", "unset"},
++                  "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},
+                   "review": {"gate"},
+                   "site": {"build", "serve"}, "ios": {"build", "logs"}}
+ 

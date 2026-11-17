@@ -1,0 +1,162 @@
+{
+ "version": 1,
+ "name": "Console agent messages",
+ "project": "console",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 527,
+  "title": "Let a person send the agent a message about an item, a pull request, or the session",
+  "head": "748b0b8430cfe972f3acacc6f7cf537c61379dbe",
+  "headRef": "console/threads",
+  "base": "24312f718cbd4ffc283aebc9e949c3829c5e7c9e",
+  "baseRef": "console/codex-delivery",
+  "basePr": 524
+ },
+ "overview": {
+  "summary": [
+   "Projector’s inbox holds the questions, notices, and requests an agent posts for you. This layer lets you send the agent a message about one of those items, a pull request, or the session without typing into its chat.",
+   "Messages travel one way. Your words reach the owning session as <code>DISCUSS</code> lines; the agent answers in its own conversation. An item keeps the messages you sent about it, while a standalone <code>message</code> item resolves itself once its pending messages finish.",
+   "The inbox remains a list of what needs you rather than a second conversation. The terminal console and its session-conversation view belong to later layers. This layer supplies storage, commands, panel display, and permission rules."
+  ],
+  "cards": [
+   {
+    "id": "delivery",
+    "title": "One message is in flight per item",
+    "html": "A <b>claim</b> holds one line for one deliverer. A <code>DISCUSS</code> claim records the message index, so a later message cannot change which one is settled. Answers and existing lifecycle lines are sent before unclaimed messages."
+   },
+   {
+    "id": "validation",
+    "title": "Full review of the revised design",
+    "html": "Gate and exact-head CI passed, including 243 hook tests, plus 217 focused Python tests. Removing standalone message auto-resolution makes its lifecycle test fail. No new findings or suggestions remain."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "storage",
+   "title": "Record and deliver your messages",
+   "kicker": "Keep message order and resolve standalone sends",
+   "intro": [
+    "You can attach messages to an open inbox item, or send a standalone message about a pull request or the session. Each message is one paragraph of at most 4 KiB in UTF-8. The existing item store provides locked, atomic writes.",
+    "A deliverer claims the oldest owed message, sends its <code>DISCUSS</code> line, and settles that message by index. Messages stay owed after an answer or dismissal. A standalone message item resolves after its last message is delivered or taken back, so it leaves no empty open item."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Adds one-way messages, the message item kind, entry-specific delivery, and standalone-item resolution.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused tests passed for ordered delivery, held claims, failed delivery, dismissal survival, command refusals, and byte limits. Omitting automatic resolution makes the standalone message lifecycle test fail."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Exposes discuss for all three targets, prints sent messages, and wakes Codex delivery."
+    },
+    {
+     "path": "tests/test_inbox.py"
+    },
+    {
+     "path": "tests/test_codex_watch.py"
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "Show sent messages without duplicating chat",
+   "kicker": "Keep replies in the agent’s conversation",
+   "intro": [
+    "Claude Code’s panel lists standalone message items and shows the messages you sent under <code>you:</code> in each drawer. A line reads <code>sending</code> while it owes a message. Delivery uses the panel’s existing claims and prompt submission.",
+    "A message item asks nothing of you, so it has no answer choices or clarification control and leaves the panel after delivery. Agent reply tools and unread-reply tracking are absent: the agent answers in its conversation."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "All 243 hook tests passed, covering ordered discussion delivery, failed sends, sending status, message display and controls, and delivered-item departure."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Defines sent-message records and the message item union member."
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Recognizes owed messages while keeping answers scoped to questions and requests."
+    },
+    {
+     "path": "hooks/register.tsx",
+     "note": "Displays your messages, message-item controls, and pending delivery; no reply/read machinery remains."
+    },
+    {
+     "path": "hooks/inbox.test.ts"
+    },
+    {
+     "path": "hooks/panel.test.tsx"
+    }
+   ]
+  },
+  {
+   "id": "authority",
+   "title": "Preserve the person’s authority",
+   "kicker": "Discussion commands speak as you",
+   "intro": [
+    "Writing a discussion message speaks as you. It therefore requires the same approval boundary as answering an item, so an agent cannot put words in your mouth.",
+    "The shared instructions tell an agent to answer <code>DISCUSS</code> in its conversation, then revise, withdraw, or leave an existing item open as appropriate. A message about a pull request or the session needs no inbox action."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Permission, packaging, and instruction tests passed for the discuss approval decision, removed reply/read commands, and template version 31."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Asks before discuss and carries no reply/read permission surface."
+    },
+    {
+     "path": "tests/test_permissions.py"
+    },
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Updates the shared instructions for conversation replies and advances the template version."
+    },
+    {
+     "path": "AGENTS.md"
+    },
+    {
+     "path": "skills/work/SKILL.md",
+     "note": "Tells unattended agents how to respond to discussion lines."
+    },
+    {
+     "path": "tests/test_instructions.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Document the one-way contract",
+   "kicker": "Keep commands, panel behavior, and the active plan aligned",
+   "intro": [
+    "The CLI reference explains the three discussion targets, message limits, delivery order, and failure behavior. The plugin guide describes the panel’s sent-message display.",
+    "The active console plan now keeps replies in the session conversation and records why per-item threads were rejected. Later layers build the multi-session console and conversation view; this layer provides the messaging foundation."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/projects/console/readme.md"
+    }
+   ]
+  }
+ ]
+}
