@@ -1017,10 +1017,14 @@ const reading = new Set<string>()
 
 /**
  * Marks read the agent's replies in the thread of the item whose drawer is
- * open, since the drawer shows them: as it opens, and as a reply arrives
- * while it stays open.
+ * open, since the drawer shows them: as it opens, as a reply arrives while it
+ * stays open, and as the panel shows again with it open. A hidden panel
+ * keeps its drawer open but shows nothing, so a reply that arrives while the
+ * panel is hidden stays unread, and its line reads `replied`, until the
+ * panel shows again.
  */
 async function readReplies($: Engine): Promise<void> {
+  if (!(await read($, isShown))) return
   const opened = await read($, drawer)
   const item = (await read($, items)).find(one => `item:${one.ref}` === opened)
   if (item === undefined || !hasUnreadReply(item) || reading.has(item.ref)) return
@@ -1272,7 +1276,9 @@ async function tick($: Engine): Promise<void> {
 /**
  * Shows the panel and loads it, from a timer so no hook waits on GitHub. The
  * panel's clock moves on before it shows, so an item whose snooze ended while
- * it was hidden is drawn at once rather than after GitHub answers.
+ * it was hidden is drawn at once rather than after GitHub answers. A drawer
+ * left open while the panel was hidden shows again, so the replies in its
+ * thread are marked read as it does.
  */
 function show($: Engine): void {
   $.clock.after(1, () => {
@@ -1280,6 +1286,7 @@ function show($: Engine): void {
       .now()
       .then(time => update($, now, () => time))
       .then(() => update($, isShown, () => true))
+      .then(() => readReplies($).catch(() => undefined))
       .then(() => refresh($, true))
   })
 }

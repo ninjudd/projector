@@ -847,7 +847,9 @@ outside the conversation: yours, which you add from a terminal with
 tool. The drawer shows the thread below the detail, oldest first, each
 message after `you:` or `agent:`. An item whose thread holds a reply you
 have not read ends its line with `replied`, in the theme's `suggestion`
-blue, and opening its drawer marks the reply read, so the mark goes. The
+blue, and opening its drawer marks the reply read, so the mark goes. A
+drawer stays open while you hide the panel, but a reply that arrives then
+stays unread until the panel shows that drawer again. The
 panel delivers each
 message of yours as a line that starts `DISCUSS`, one at a time and oldest
 first, after any line the item already owes, and the line reads `sending`

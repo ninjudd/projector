@@ -307,9 +307,11 @@ Building the threads settled these details:
   `replied`, and `show` prints the thread as `you:` and `agent:` lines. The
   panel draws a discussion in the theme's `text` color and `replied` in
   `suggestion`. A line reads `sending` while it owes a message. The panel
-  runs `read` when a drawer opens on an item with an unread reply, and on
-  each inbox check while that drawer stays open. The `reply` tool registers
-  after `restore`. The template in `agents-block.md` moves to version 30.
+  runs `read` when a drawer opens on an item with an unread reply, on each
+  inbox check while that drawer stays open and the panel is shown, and when
+  `/projector` shows the panel again with that drawer open. A hidden panel
+  runs no `read`, so a reply that arrives while it is hidden keeps
+  `replied`. The `reply` tool registers after `restore`. The template in `agents-block.md` moves to version 30.
 
 ### 2.7 Running the console
 

@@ -5470,6 +5470,39 @@ test('a reply reads `replied` until its item’s drawer opens, which shows the t
   await ui.unmount()
 })
 
+test('a reply that arrives while the panel is hidden stays unread until the panel shows its open drawer again', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const thread: ThreadEntry[] = [{ from: 'person', text: 'Why decline?', at: NOW - 3_000, deliveredAt: NOW - 2_000 }]
+  const session = questionWorld(on, clock, [held({ thread })])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:1' })
+  await clock.advance(TICK)
+  await clock.settle()
+  await ui.unmount()
+
+  // `/projector` hides the panel and leaves the drawer open for when it shows again.
+  await $.command.run(COMMAND)
+  await $.tool.call({ tool: 'mcp__projector__reply', number: 1, text: 'The cap bounds retries.' })
+  for (let tick = 0; tick < 3; tick += 1) {
+    await clock.advance(TICK)
+    await clock.settle()
+  }
+  const reads = () => session.project().filter(command => command.startsWith('inbox read'))
+  expect(reads()).toEqual([])
+  expect(session.store.store.get('1')?.thread?.map(said => said.readAt)).toEqual([undefined, undefined])
+
+  await $.command.run(COMMAND)
+  await clock.advance(1)
+  await clock.settle()
+  const shown = await $.ui.mount(PANEL)
+  expect(await threadOf(shown)).toEqual(['you: Why decline?', 'agent: The cap bounds retries.'])
+  expect(reads()).toEqual(['inbox read 1 --session s1 --json'])
+  expect(await shown.find({ type: 'Text', text: 'replied' })).toBeUndefined()
+  await shown.unmount()
+})
+
 test('the reply tool puts the agent’s reply in the item’s thread, and refuses what the CLI refuses', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
