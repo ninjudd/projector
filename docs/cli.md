@@ -3145,8 +3145,7 @@ registered sessions, sends one a message, and the watch daemon's delivery
 wakes the recipient with one `PEER MESSAGE` line, as it delivers a pull
 request event. On one machine this needs no setup. Across machines it needs
 a key, as [Message agents on other machines](#message-agents-on-other-machines)
-describes. The `message-agent` skill tells an agent how to use these
-commands.
+describes. The `message` skill tells an agent how to use these commands.
 
 Each command acts for the session that `--session` names, then
 `PROJECTOR_SESSION`, then `CLAUDE_CODE_SESSION_ID`, as the `project watch`

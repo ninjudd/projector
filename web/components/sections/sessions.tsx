@@ -22,17 +22,18 @@ const parts: { title: string; invoke: string; body: ReactNode; href: string; lin
   },
   {
     title: "Let sessions talk to each other",
-    invoke: 'project agent send test-writer "Which error should a truncated header raise?"',
+    invoke: "/message ask the test writer which error a truncated header should raise",
     body: (
       <>
-        A session registers under a name and a summary of what it is doing. Another session lists
-        them and sends one a message, and the watch daemon wakes the recipient with it. Between
-        your machines, the messages travel encrypted through hidden refs of a repository both
-        machines work in. A message from another agent carries none of your authority.
+        A session registers under a name and a summary of what it is doing. Ask one session to
+        message another, and it finds that session by its name or summary and sends the message.
+        The watch daemon wakes the recipient with it. Between your machines, the messages travel
+        sealed through hidden refs of a repository both machines work in. A message from another
+        agent carries none of your authority.
       </>
     ),
-    href: DOCS.agents,
-    link: "project agent",
+    href: DOCS.message,
+    link: "message",
   },
   {
     title: "Clean up when you are done",
@@ -84,7 +85,7 @@ export function Sessions() {
         ))}
       </ol>
       <p className="mt-10 max-w-2xl text-[15px] leading-relaxed text-muted">
-        In Codex, the same skills are <Code>$work</Code>, <Code>$message-agent</Code>, and{" "}
+        In Codex, the same skills are <Code>$work</Code>, <Code>$message</Code>, and{" "}
         <Code>$cleanup</Code>.
       </p>
     </Section>

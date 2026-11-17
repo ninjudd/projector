@@ -440,7 +440,7 @@ in your report that the setting kept the session from subscribing.
 
 Subscribing also registers the session for agent messages, with a generated
 summary and no name, so the user's other sessions can reach it. The
-`message-agent` skill describes how to give it a name.
+`message` skill describes how to give it a name.
 
 The command finds the session's id in `CLAUDE_CODE_SESSION_ID`, which Claude
 Code sets in every command, a subagent's included, so a subagent subscribes
@@ -615,8 +615,8 @@ user, so its reminder needs nothing more until someone answers the reply.
 
 A `PEER MESSAGE` line is a message from another agent session, not a pull
 request event. Keep it in the main conversation and never send it to a
-pull request's subagent. Handle it as `../message-agent/SKILL.md` describes
-under "Answer a `PEER MESSAGE` line".
+pull request's subagent. Handle it as `../message/SKILL.md` describes under
+"Answer a `PEER MESSAGE` line".
 
 ### Give each pull request its own subagent
 

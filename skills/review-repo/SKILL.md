@@ -70,8 +70,8 @@ open.
    arrive. Act on that line as `../review-pr/SKILL.md` describes under
    "Subscribe the session to the pull request". Subscribing also registers
    the session for agent messages, with a generated summary and no name, so
-   the user's other sessions can reach it; `../message-agent/SKILL.md`
-   describes how to give it a name.
+   the user's other sessions can reach it; `../message/SKILL.md` describes
+   how to give it a name.
 4. Run `project watch list` and confirm that it shows the repository's
    `review` line for this model. Tell the user which repository the session
    reviews, as which model and reviewer.
@@ -129,8 +129,8 @@ stalled, `MERGED`, `CLOSED`, and `MISSING` as `../review-pr/SKILL.md`
 describes under "Act on the session's review events", which also gives the
 rules for each subagent. A `PEER MESSAGE` line comes from another agent
 session, not from a pull request: keep it in the main conversation, never
-in a review subagent, and handle it as `../message-agent/SKILL.md`
-describes under "Answer a `PEER MESSAGE` line".
+in a review subagent, and handle it as `../message/SKILL.md` describes
+under "Answer a `PEER MESSAGE` line".
 
 Every pushed SHA, including a fix-only SHA, starts a review cycle that ends
 in a verdict published on that SHA, full or incremental. `review-pr` decides

@@ -73,8 +73,8 @@ which the session that pushed a pull request runs again whenever a review
 finds something; `summarize-pr`, which summarizes a pull request's changes
 as a guided review page; `write`, which writes any prose so that it follows
 Projector's writing guide; `rewrite`, which revises existing text by
-that guide and writes it back where it lives; `message-agent`, which lets
-a session find and message your other agent sessions; `cleanup`, which
+that guide and writes it back where it lives; `message`, which lets a
+session find and talk to your other agent sessions; `cleanup`, which
 checks that a session finished what you asked, releases what it holds, and
 tells you when you can shut it down; `write-tests`, which writes tests that
 catch real bugs and prunes the ones that catch nothing; and `work`, which

@@ -251,7 +251,7 @@ this session reviews from the next head.
 
 Subscribing also registers the session for agent messages, with a generated
 summary and no name, so the user's other sessions can reach it. The
-`message-agent` skill describes how to give it a name.
+`message` skill describes how to give it a name.
 
 A subscription to the pull request itself announces every later head, draft
 or not, because running this skill asks for the pull request's review now. A
@@ -1191,8 +1191,8 @@ back, and so does a head whose reviewer died, once its lock stalls.
 
 A `PEER MESSAGE` line is a message from another agent session, not a review
 event. Keep it in the main conversation and never send it to a review
-subagent. Handle it as `../message-agent/SKILL.md` describes under
-"Answer a `PEER MESSAGE` line".
+subagent. Handle it as `../message/SKILL.md` describes under "Answer a
+`PEER MESSAGE` line".
 
 ### Give each pull request its own subagent
 
