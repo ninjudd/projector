@@ -25,7 +25,7 @@ export async function CodeBlock({
         </figcaption>
       ) : null}
       <div
-        className="overflow-x-auto p-4 font-mono text-[13px] leading-6 [&_pre]:m-0"
+        className="p-4 font-mono text-[13px] leading-6 [&_pre]:m-0 [&_pre]:whitespace-pre-wrap [&_pre]:break-words"
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </figure>

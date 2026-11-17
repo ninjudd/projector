@@ -1,12 +1,22 @@
 "use client";
 
-import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 
 // A working drawing of Projector's panel in Claude Code, in its dark theme.
 // Its rows, drawers, digits, and colors follow docs/plugins.md, so a click
 // here does what a click does in the real panel, up to the prompt it fills.
 
-const WIDTH = 92;
+// The panel lays out at the columns its box holds, as the real one does in
+// a terminal of that width, so a phone shows every row without scrolling.
+const MAX_WIDTH = 92;
+const MIN_WIDTH = 30;
 
 const color = {
   fg: "text-[#e8e6e3]",
@@ -38,6 +48,8 @@ type Item = {
   subject: string;
   pr: string;
   age: string;
+  // Paragraphs that wrap to the panel's width. Leading spaces indent one,
+  // and a numbered step hangs under its number.
   detail: string[];
   options: string[];
   start?: string;
@@ -51,9 +63,7 @@ const ITEMS: Item[] = [
     pr: "#344",
     age: "5m",
     detail: [
-      "The review asks the cache to expire after an hour. The cache",
-      "already reloads when the config file's timestamp changes, which",
-      "covers the stale read the finding names.",
+      "The review asks the cache to expire after an hour. The cache already reloads when the config file's timestamp changes, which covers the stale read the finding names.",
     ],
     options: [
       "Decline it: the file's timestamp already invalidates the cache",
@@ -67,9 +77,7 @@ const ITEMS: Item[] = [
     pr: "#347",
     age: "9m",
     detail: [
-      "#347 moves the settings screen into a sheet and also renames the",
-      "keys it stores. The rename touches every reader of the settings,",
-      "so a reviewer would hold two unrelated changes at once.",
+      "#347 moves the settings screen into a sheet and also renames the keys it stores. The rename touches every reader of the settings, so a reviewer would hold two unrelated changes at once.",
     ],
     options: [
       "Split it: move the screen first, rename the keys after",
@@ -85,8 +93,7 @@ const ITEMS: Item[] = [
     detail: [
       "1. Export the largest project you have.",
       "   The share sheet should appear within a second.",
-      "2. Watch the progress bar. It should move steadily, not jump",
-      "   from empty to full at the end.",
+      "2. Watch the progress bar. It should move steadily, not jump from empty to full at the end.",
     ],
     options: ["Looks good", "Some feedback"],
     start: "Install #345's build of the app on your iPhone and open it",
@@ -98,8 +105,7 @@ const ITEMS: Item[] = [
     pr: "#347",
     age: "14m",
     detail: [
-      "#347 edits .github/workflows/ci.yml, and GitHub refuses that push",
-      "without the workflow scope, which only you can grant.",
+      "#347 edits .github/workflows/ci.yml, and GitHub refuses that push without the workflow scope, which only you can grant.",
       "",
       "1. Run gh auth refresh -h github.com -s workflow",
       "2. Approve the scope in the browser window it opens.",
@@ -113,9 +119,7 @@ const ITEMS: Item[] = [
     pr: "#344",
     age: "3m",
     detail: [
-      "main moved the config loader into its own module. The merge",
-      "keeps that move and points the cache at the new loader.",
-      "Tests pass.",
+      "main moved the config loader into its own module. The merge keeps that move and points the cache at the new loader. Tests pass.",
     ],
     options: [],
   },
@@ -126,8 +130,7 @@ const ITEMS: Item[] = [
     pr: "#341",
     age: "22m",
     detail: [
-      "The review of the head found nothing, so #341 carries the clean",
-      "label. Its two earlier findings were fixed in 9c2e41a.",
+      "The review of the head found nothing, so #341 carries the clean label. Its two earlier findings were fixed in 9c2e41a.",
     ],
     options: [],
   },
@@ -295,6 +298,16 @@ function spaces(count: number): string {
   return " ".repeat(Math.max(1, count));
 }
 
+function fit(text: string, room: number): string {
+  return text.length <= room ? text : `${text.slice(0, Math.max(0, room - 1))}…`;
+}
+
+// A drawer line that starts at column `indent` and, when it wraps, carries
+// on at `indent + hang`.
+function hanging(indent: number, hang = 0): CSSProperties {
+  return { paddingLeft: `${String(indent + hang)}ch`, textIndent: `-${String(hang)}ch` };
+}
+
 function Action({
   digit,
   label,
@@ -336,6 +349,35 @@ export function InboxDemo() {
   const [openFiles, setOpenFiles] = useState<string[]>(["src/config/cache.ts"]);
   const [start, setStart] = useState<StartState>("none");
   const [prompt, setPrompt] = useState("");
+  const [width, setWidth] = useState(MAX_WIDTH);
+  const screen = useRef<HTMLDivElement>(null);
+  const column = useRef<HTMLSpanElement>(null);
+
+  // Count the columns the screen holds. The probe is ten columns wide, so it
+  // also reports when the monospace font finishes loading.
+  useEffect(() => {
+    const box = screen.current;
+    const probe = column.current;
+    if (!box || !probe) return;
+    const observer = new ResizeObserver(() => {
+      const style = getComputedStyle(box);
+      const room =
+        box.clientWidth -
+        parseFloat(style.paddingLeft) -
+        parseFloat(style.paddingRight);
+      const ch = probe.getBoundingClientRect().width / 10;
+      if (ch > 0) {
+        setWidth(
+          Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.floor(room / ch))),
+        );
+      }
+    });
+    observer.observe(box);
+    observer.observe(probe);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   // A started request reads starting until the agent has installed the
   // build, then ready.
@@ -406,6 +448,7 @@ export function InboxDemo() {
   ]
     .filter(Boolean)
     .join(" · ");
+  const summary = fit(header, width - 12 - 1 - 4);
 
   function itemOptions(item: Item): Press[] {
     if (states[item.id] !== "open") return [];
@@ -612,7 +655,8 @@ export function InboxDemo() {
   }
 
   function itemLine(item: Item) {
-    const left = `   - ${item.subject}`;
+    const room = width - 5 - tailLength(item) - 1;
+    const left = `   - ${fit(item.subject, room)}`;
     const struck = states[item.id] === "dismissed";
     return (
       <button
@@ -626,7 +670,7 @@ export function InboxDemo() {
         <Seg tone={itemTone(item)} className={struck ? "line-through" : ""}>
           {left}
         </Seg>
-        {spaces(WIDTH - left.length - tailLength(item))}
+        {spaces(width - left.length - tailLength(item))}
         {tail(item)}
       </button>
     );
@@ -634,7 +678,9 @@ export function InboxDemo() {
 
   function prRow(row: Row) {
     const author = row.author ? `${row.author} ` : "";
-    const left = `   ${row.number} ${row.state} ${author}${row.title}`;
+    const prefix = `   ${row.number} ${row.state} ${author}`;
+    const title = fit(row.title, width - prefix.length - row.age.length - 1);
+    const left = `${prefix}${title}`;
     const isOpen = open?.type === "pr" && open.number === row.number;
     return (
       <div key={row.number}>
@@ -656,8 +702,8 @@ export function InboxDemo() {
             {row.state}
           </Seg>{" "}
           {author ? <Seg tone="inactive">{author}</Seg> : null}
-          <Seg>{row.title}</Seg>
-          {spaces(WIDTH - left.length - row.age.length)}
+          <Seg>{title}</Seg>
+          {spaces(width - left.length - row.age.length)}
           <Seg tone="subtle">{row.age}</Seg>
         </button>
         {isOpen ? prDrawer(row) : null}
@@ -666,11 +712,9 @@ export function InboxDemo() {
   }
 
   function prDrawer(row: Row) {
-    const pad = "        ";
     return (
       <div>
-        <span className="block">
-          {pad}
+        <span className="block" style={hanging(8)}>
           <Seg tone={row.role === "fixer" ? "fixer" : "accent"}>
             {row.role}
           </Seg>{" "}
@@ -684,8 +728,7 @@ export function InboxDemo() {
             </span>
           ))}
         </span>
-        <span className="block">
-          {pad}
+        <span className="block" style={hanging(8)}>
           {prActions(row).map((press, position) => (
             <span key={press.label}>
               {position > 0 ? "  " : ""}
@@ -697,8 +740,7 @@ export function InboxDemo() {
             </span>
           ))}
         </span>
-        <span className="block">
-          {pad}
+        <span className="block" style={hanging(8)}>
           <Seg className="underline decoration-white/30 underline-offset-2">
             open in github
           </Seg>
@@ -722,8 +764,8 @@ export function InboxDemo() {
                   );
                 }}
                 className={lineButton}
+                style={hanging(8)}
               >
-                {pad}
                 {shown ? "-" : "+"} {group.file}{" "}
                 <Seg tone="yellow">
                   {n} finding{n === 1 ? "" : "s"}
@@ -731,9 +773,11 @@ export function InboxDemo() {
               </button>
               {shown
                 ? group.threads.map((thread) => (
-                    <span key={thread.line} className="block">
-                      {pad}
-                      {"  "}
+                    <span
+                      key={thread.line}
+                      className="block"
+                      style={hanging(10)}
+                    >
                       {thread.line} · {thread.who} · {thread.text}
                     </span>
                   ))
@@ -762,25 +806,31 @@ export function InboxDemo() {
           onClick={close}
           aria-label={`Close the drawer of ${item.subject}`}
           className={lineButton}
+          style={hanging(3, 3)}
         >
-          {"   "}
           <Seg tone="accent">0</Seg>
           <Seg tone={itemTone(item)}>: {item.subject}</Seg>
-          {spaces(WIDTH - 6 - item.subject.length - tailLength(item))}
+          {spaces(width - 6 - item.subject.length - tailLength(item))}
           {tail(item)}
         </button>
         <span className="block"> </span>
-        {item.detail.map((line, index) => (
-          <span key={index} className="block">
-            {"      "}
-            {line || " "}
-          </span>
-        ))}
+        {item.detail.map((line, index) => {
+          const text = line.trimStart();
+          const step = /^\d+\. /.test(text) ? 3 : 0;
+          return (
+            <span
+              key={index}
+              className="block max-w-[72ch]"
+              style={hanging(6 + line.length - text.length, step)}
+            >
+              {text || " "}
+            </span>
+          );
+        })}
         {item.start ? (
           <>
             <span className="block"> </span>
-            <span className="block">
-              {"      "}
+            <span className="block max-w-[72ch]" style={hanging(6)}>
               <Seg tone={start === "ready" ? "green" : "fg"}>{label}</Seg>{" "}
               {item.start}
             </span>
@@ -789,13 +839,18 @@ export function InboxDemo() {
         {state === "dismissed" && item.kind === "request" ? (
           <>
             <span className="block"> </span>
-            <span className="block">{"      "}Declined</span>
+            <span className="block" style={hanging(6)}>
+              Declined
+            </span>
           </>
         ) : null}
         {options.length > 0 ? <span className="block"> </span> : null}
         {options.map((option) => (
-          <span key={option.digit + option.label} className="block">
-            {"      "}
+          <span
+            key={option.digit + option.label}
+            className="block"
+            style={hanging(6, 3)}
+          >
             <Action
               digit={option.digit}
               label={option.label}
@@ -803,7 +858,6 @@ export function InboxDemo() {
             />
             {option.recommended ? (
               <span className="block">
-                {"      "}
                 <Seg tone="inactive">(recommended)</Seg>
               </span>
             ) : null}
@@ -811,8 +865,7 @@ export function InboxDemo() {
         ))}
         <span className="block"> </span>
         {actions.map((line, index) => (
-          <span key={index} className="block">
-            {"      "}
+          <span key={index} className="block" style={hanging(6)}>
             {line.map((press, position) => (
               <span key={press.label}>
                 {position > 0 ? "  " : ""}
@@ -838,8 +891,8 @@ export function InboxDemo() {
         onKeyDown={onKeyDown}
         className="overflow-hidden rounded-xl border border-line-strong bg-[#141414] text-[#e8e6e3] focus-visible:outline-2 focus-visible:outline-accent"
       >
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-2 font-mono text-xs text-[#8d877a]">
-          <span>Claude Code · Projector&rsquo;s panel</span>
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-2 font-mono text-xs text-[#8d877a]">
+          <span className="truncate">Claude Code · Projector&rsquo;s panel</span>
           <button
             type="button"
             onClick={reset}
@@ -848,16 +901,24 @@ export function InboxDemo() {
             Reset
           </button>
         </div>
-        <div className="overflow-x-auto whitespace-pre p-4 font-mono text-[12px] leading-[1.3] sm:px-5">
-          <div className="w-max min-w-full">
+        <div
+          ref={screen}
+          className="relative overflow-x-auto whitespace-pre-wrap p-4 font-mono text-[12px] leading-[1.3] pointer-coarse:leading-[1.7] sm:px-5"
+        >
+          <span
+            ref={column}
+            aria-hidden="true"
+            className="invisible absolute w-[10ch]"
+          />
+          <div className="min-w-full" style={{ width: `${String(width)}ch` }}>
             {openItem ? (
               itemDrawer(openItem)
             ) : (
               <>
                 <span className="block">
                   <Seg tone="subtle">{"  /projector"}</Seg>
-                  {spaces(WIDTH - 12 - header.length - 4)}
-                  <Seg tone="subtle">{header} 12s</Seg>
+                  {spaces(width - 12 - summary.length - 4)}
+                  <Seg tone="subtle">{summary} 12s</Seg>
                 </span>
                 {yours.map(prRow)}
                 {theirs.length > 0 ? <span className="block"> </span> : null}
@@ -867,7 +928,7 @@ export function InboxDemo() {
               </>
             )}
             <span className="block">
-              <Seg tone="subtle">{"ctrl+x tab to focus".padStart(WIDTH)}</Seg>
+              <Seg tone="subtle">{"ctrl+x tab to focus".padStart(width)}</Seg>
             </span>
           </div>
         </div>
