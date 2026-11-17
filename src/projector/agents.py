@@ -39,8 +39,11 @@ MESSAGE = re.compile(r"^m-[0-9a-f]{32}$")
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 # A model ID has no space or parenthesis, so the model `event_line` prints before its notice cannot read as prose.
 MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}$")
+# A review target in a presence: a repository, or one of its pull requests.
+TARGET = re.compile(rf"^({watch.REPO})(?:#([1-9][0-9]*))?$")
 MAX_SUMMARY = 120
 MAX_MODEL = 100
+MAX_REVIEWS = 32
 MAX_TEXT = 16 * 1024
 PREVIEW = 160
 MESSAGE_LIMIT = 12
@@ -235,6 +238,7 @@ def write_registration(root: Path, session: str, login: str, place: dict, cwd: P
                 kept.pop("summary_auto", None)
             new = {
                 "schema_version": 1, "login": login, **kept, **given,
+                "reviews": review_targets(watch.subscriptions(folder), place.get("repo")),
                 "host": host_of(root, session, now, environ), "machine": this_machine(root),
                 "machine_name": socket.gethostname().split(".")[0] or "unknown", "cwd": str(cwd), **place,
                 "relay_id": old.get("relay_id") or secrets.token_hex(8),
@@ -364,19 +368,41 @@ def generated_summary(lines: list[watch.Subscription], repo: Optional[str]) -> O
     return text[:1].upper() + text[1:] or None
 
 
-def refresh_summary(folder: Path, lines: list[str], now: float) -> None:
-    """Make a generated summary agree with the session's subscriptions, `lines`, and mark the session's
-    presence for the relay to publish again. The caller holds the session's lock."""
+def review_targets(lines: list[watch.Subscription], repo: Optional[str]) -> list[dict]:
+    """What the session reviews in its own repository, for its presence: each `review` line's target and model,
+    with `excluded` on a pull request the session dropped. Only that repository is ever named, as in the summary.
+    The list keeps at most `MAX_REVIEWS` entries, exclusions first, then whole repositories, so the entries a cap
+    drops can only make the session look like it reviews less."""
+    if not repo:
+        return []
+    found: list[dict] = []
+    for line in sorted((line for line in lines if line.role == "review" and line.repo.lower() == repo.lower()
+                        and shaped(line.model, MODEL_ID)),
+                       key=lambda line: (not line.excluded, line.number is not None, line.number or 0)):
+        entry = {"target": repo if line.number is None else f"{repo}#{line.number}", "model": line.model,
+                 **({"excluded": True} if line.excluded else {})}
+        if entry not in found:
+            found.append(entry)
+    return found[:MAX_REVIEWS]
+
+
+def refresh_registration(folder: Path, lines: list[str], now: float) -> None:
+    """Make the registration's review targets, and its summary while that is the generated one, agree with the
+    session's subscriptions, `lines`, and mark the session's presence for the relay to publish again. The caller
+    holds the session's lock."""
     found = read_json(folder / "agent.json")
-    if not found or found.get("schema_version") != 1 or found.get("summary_auto") is not True:
+    if not found or found.get("schema_version") != 1:
         return
-    parsed = [line for line in map(watch.Subscription.parse, lines) if line is not None and not line.excluded]
-    summary = generated_summary(parsed, found.get("repo"))
-    if summary == found.get("summary"):
+    parsed = [line for line in map(watch.Subscription.parse, lines) if line is not None]
+    changes: dict = {"reviews": review_targets(parsed, found.get("repo"))}
+    if found.get("summary_auto") is True:
+        changes["summary"] = generated_summary([line for line in parsed if not line.excluded], found.get("repo"))
+    if all(found.get(key) == value for key, value in changes.items()):
         return
-    new = {key: value for key, value in found.items() if key != "summary"}
-    new.update({**({"summary": summary} if summary else {}), "updated_at": watch.stamp(now),
-                **({"relay": "pending"} if found.get("relay") == "published" else {})})
+    new = {**found, **changes, "updated_at": watch.stamp(now),
+           **({"relay": "pending"} if found.get("relay") == "published" else {})}
+    if new.get("summary") is None:
+        new.pop("summary", None)
     write_json(folder / "agent.json", new)
 
 
@@ -643,10 +669,22 @@ def well_formed(message: dict) -> bool:
             and isinstance(text, str) and bool(text.strip()) and len(text.encode("utf-8")) <= MAX_TEXT)
 
 
+def review_entry(entry: object, repo: object) -> bool:
+    """Whether an entry of a presence's `reviews` is in the shape `review_targets` gives it, naming `repo`."""
+    if not isinstance(entry, dict) or not isinstance(repo, str) or not shaped(entry.get("model"), MODEL_ID) \
+            or not isinstance(entry.get("target"), str) or (found := TARGET.fullmatch(entry["target"])) is None:
+        return False
+    return found[1].lower() == repo.lower() and entry.get("excluded") in ((None, True) if found[2] else (None,))
+
+
 def well_formed_presence(found: dict) -> bool:
     """Whether another machine's registration holds each field `list`, `send`, and `read` print, in the shape
-    `register` gives it."""
-    return (shaped(found.get("name"), NAME, optional=True) and shaped(found.get("model"), MODEL_ID, optional=True)
+    `register` gives it, and review targets only in its own repository. A presence from a version before review
+    targets has no `reviews`."""
+    reviews = found.get("reviews")
+    return ((reviews is None or isinstance(reviews, list) and len(reviews) <= MAX_REVIEWS
+             and all(review_entry(entry, found.get("repo")) for entry in reviews))
+            and shaped(found.get("name"), NAME, optional=True) and shaped(found.get("model"), MODEL_ID, optional=True)
             and found.get("host") in HOSTS
             and (found.get("summary") is None or plain_line(found["summary"], MAX_SUMMARY))
             and plain_line(found.get("machine_name"), 64) and plain_line(found.get("cwd"), 4096)

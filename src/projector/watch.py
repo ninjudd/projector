@@ -301,7 +301,7 @@ def edit_subscriptions(folder: Path, edit: Callable[[list[str]], list[str]]) -> 
         if after != before:
             write_text(folder / "subscriptions", "".join(f"{line}\n" for line in after))
             with contextlib.suppress(OSError):
-                agents.refresh_summary(folder, after, time.time())
+                agents.refresh_registration(folder, after, time.time())
 
 
 def parse_target(text: str) -> tuple[str, Optional[int]]:
@@ -1109,6 +1109,9 @@ class Pass:
         self.lock_lists: dict[tuple[str, int], list] = {}
         self.stalled_roles: set[tuple[tuple[str, int], str]] = set()
         self.stall_keys: dict[tuple[tuple[str, int], str], list] = {}
+        # By repository, what `adopt` found, and the review targets of the operator's sessions on other machines.
+        self.covering: dict[str, Optional[set[int]]] = {}
+        self.remote: dict[str, Optional[list[list[dict]]]] = {}
 
     def tell(self, session: str, *lines: str) -> None:
         self.outbox.setdefault(session, []).extend(lines)
@@ -1124,6 +1127,7 @@ class Pass:
                 self.lose_repository(spelling, lines)
             else:
                 adopted[repo] = numbers
+        self.covering.update(adopted)
         roles, spellings = self.claims(lines, adopted)
         fixed = {pull for pull, name in roles if name == "fix"}
         results = {}
@@ -1533,23 +1537,26 @@ class Pass:
             kept[key] = last
 
         head = pr.get("headRefOid") or ""
-        # This machine sees only its own sessions, so a review running elsewhere shows only as its live start
-        # comment, and the event says nothing about a machine it cannot see. Anyone can comment on a public
-        # repository, so only an account whose review would count can hold the event back. Held back, the head
-        # keeps its key, so it is still announced only once. A draft waits on its author, not on a review.
+        # This machine sees its own sessions, and, through the relay, the review targets of the operator's sessions
+        # on other machines. A review running anywhere else shows only as its live start comment, and the event
+        # says nothing about a machine it cannot see. Anyone can comment on a public repository, so only an account
+        # whose review would count can hold the event back. Held back, the head keeps its key, so it is still
+        # announced only once. A draft waits on its author, not on a review.
         unreviewed = f"unreviewed:{number}:{head}"
         if not pr.get("isDraft") and not reviewers \
                 and not head_sign_off(pr, head, self.daemon.operator or "", visibility)["signed_off"]:
             starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
                       for comment, _ in self.live_starts(pr, head)]
-            if review.counted_reviews(starts, self.daemon.operator or "", visibility):
+            if review.counted_reviews(starts, self.daemon.operator or "", visibility) \
+                    or self.reviewed_remotely(repo, number):
                 if unreviewed in announced:
                     kept[unreviewed] = announced[unreviewed]
             else:
+                scope = "this machine" if self.remote_reviews(repo) is None else \
+                    "this machine or on your other machines that share this repository's relay"
                 standing(unreviewed,
                          f"UNREVIEWED {ref} head={head[:8]}: ready for review, its head is not signed off, and no "
-                         f"session on this machine reviews it — tell the user that no session on this machine "
-                         f"reviews {ref}",
+                         f"session on {scope} reviews it — tell the user that no session on {scope} reviews {ref}",
                          None)
         conflict = f"conflict:{number}:{head}"
         mergeable = pr.get("mergeable") or "UNKNOWN"
@@ -1612,6 +1619,39 @@ class Pass:
                 kept.setdefault(key, last)
         self.states[session].data["fix"][label] = kept
         return lines + self.route_labels(session, label, ref, pr, head)
+
+    def remote_reviews(self, repo: str) -> Optional[list[list[dict]]]:
+        """The review targets of the operator's live sessions on other machines that share the repository's relay,
+        one list for each session, or None when the relay is not on for the repository."""
+        name = repo.lower()
+        if name not in self.remote:
+            from . import relay
+            self.remote[name] = None if self.daemon.relay.key is None or not self.daemon.operator else \
+                relay.remote_reviews(self.root, repo, self.daemon.operator, self.now)
+        return self.remote[name]
+
+    def reviewed_remotely(self, repo: str, number: int) -> bool:
+        """Whether a session on another machine reviews the pull request: by its number, or by a review of the
+        repository that covers it as `adopt` decides for this machine's sessions, unless the session dropped the
+        pull request from that model's review."""
+        pull = f"{repo}#{number}".lower()
+        for entries in self.remote_reviews(repo) or []:
+            dropped = {review.identity(entry["model"]) for entry in entries
+                       if entry.get("excluded") and entry["target"].lower() == pull}
+            for entry in entries:
+                if entry.get("excluded") or review.identity(entry["model"]) in dropped:
+                    continue
+                target = entry["target"].lower()
+                if target == pull or target == repo.lower() and number in self.covered(repo):
+                    return True
+        return False
+
+    def covered(self, repo: str) -> set[int]:
+        """The pull requests a review of the repository covers, which `adopt` reads once a pass."""
+        name = repo.lower()
+        if name not in self.covering:
+            self.covering[name] = self.adopt(repo)
+        return self.covering[name] or set()
 
     def route_labels(self, session: str, label: str, ref: str, pr: dict, head: str) -> list[str]:
         """A LABEL line for each review label added or removed since the owner last saw the pull request. The

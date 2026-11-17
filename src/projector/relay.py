@@ -419,6 +419,25 @@ def remote_agents(root: Path, now: float, repos: Optional[set[str]] = None) -> d
     return found
 
 
+def remote_reviews(root: Path, repo: str, login: str, now: float) -> Optional[list[list[dict]]]:
+    """The review targets of each live presence of `login` from another machine in the relay's cache for `repo`,
+    one list for each presence, or None when the relay has not polled the repository within a lease. A presence
+    from a version before review targets reviews nothing."""
+    cache = read_cache(root, repo)
+    polled = watch.seconds_of(cache["polled_at"])
+    if polled is None or now - polled >= LEASE:
+        return None
+    machine = agents.this_machine(root)
+    found = []
+    for agent in cache["agents"].values():
+        if (isinstance(agent, dict) and str(agent.get("login") or "").lower() == login.lower()
+                and agent.get("machine") != machine and isinstance(agent.get("expires_at"), (int, float))
+                and agent["expires_at"] > now):
+            reviews = agent.get("reviews") if isinstance(agent.get("reviews"), list) else []
+            found.append([entry for entry in reviews if agents.review_entry(entry, repo)])
+    return found
+
+
 # The outbox
 
 def read_outbox(path: Path) -> dict:

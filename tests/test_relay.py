@@ -37,6 +37,7 @@ from tests.test_watch import FakeGitHub
 A = "a1b2c3d4-0000-4000-8000-00000000000a"
 B = "b5e6f7a8-0000-4000-8000-00000000000b"
 C = "c9d0e1f2-0000-4000-8000-00000000000c"
+D = "d1e2f3a4-0000-4000-8000-00000000000d"
 URL = "git@github.com:acme/app.git"
 LOGIN = "octocat"
 EMAIL = "octocat@private.example"
@@ -1814,6 +1815,126 @@ class LifecycleTests(RelayCase):
         self.assertEqual(1, len(kept))
         self.assertEqual(1, len(self.two.events(B)))
         self.assertEqual([], [ref for ref in self.refs() if ref.startswith(relay.INBOX)])
+
+
+RELAYED_UNREVIEWED = ("UNREVIEWED acme/app#{number} head=aaaaaaaa: ready for review, its head is not signed off, and "
+                      "no session on this machine or on your other machines that share this repository's relay "
+                      "reviews it — tell the user that no session on this machine or on your other machines that "
+                      "share this repository's relay reviews acme/app#{number}")
+
+
+class RemoteReviewerTests(RelayCase):
+    """B on machine two reviews, and C on machine one fixes and hears UNREVIEWED for what no session reviews."""
+
+    def review_on_two(self, *targets: str, command: str = "add", session: str = B) -> None:
+        """Change the review subscriptions of a session on two, B by default, then let two publish its presence and
+        one fetch it."""
+        reviewer = ["--reviewer", LOGIN] if command == "add" else []
+        self.two.claude(session)
+        for target in targets:
+            code, _, err = self.two.project("watch", command, target, "--role", "review", "--model", "gpt-5.5",
+                                            *reviewer, claude=session)
+            self.assertEqual(0, code, err)
+        self.two.run_pass()
+        self.one.run_pass()
+
+    def fix_on_one(self, *numbers: int) -> list[str]:
+        """Subscribe C to fix each pull request, run one pass, and answer the UNREVIEWED lines C hears."""
+        self.one.claude(C)
+        for number in numbers:
+            code, _, err = self.one.project("watch", "add", f"acme/app#{number}", claude=C)
+            self.assertEqual(0, code, err)
+        self.one.run_pass()
+        return [line for line in self.one.events(C) if line.startswith("UNREVIEWED")]
+
+    def b_reviews(self) -> Optional[list]:
+        """What machine one's relay cache says B reviews, or None when it holds no presence of B."""
+        found = relay.read_cache(self.one.root, "acme/app")["agents"].get(self.b_relay_id())
+        return None if found is None else found.get("reviews")
+
+    def test_a_review_of_the_repository_on_another_machine_holds_back_unreviewed_for_what_it_covers(self) -> None:
+        self.pair()
+        self.github.pull_request(12, author=LOGIN)
+        self.github.pull_request(13, author="teammate")
+        self.review_on_two("acme/app")
+
+        heard = self.fix_on_one(12, 13)
+
+        self.assertEqual([RELAYED_UNREVIEWED.format(number=13)], heard,
+                         "#13 is neither the operator's nor requests them, so a review of acme/app does not cover it")
+
+    def test_a_review_of_one_pull_request_by_a_session_its_subscription_registered_holds_back_only_that_one(
+            self) -> None:
+        self.pair()
+        for number in (12, 13):
+            self.github.pull_request(number, author=LOGIN)
+        self.review_on_two("acme/app#12", session=D)
+
+        heard = self.fix_on_one(12, 13)
+
+        self.assertEqual([RELAYED_UNREVIEWED.format(number=13)], heard)
+
+    def test_a_presence_never_names_a_review_target_in_another_repository(self) -> None:
+        self.pair()
+        self.github.repository("other/secret", visibility="PRIVATE")
+        self.github.pull_request(12, author=LOGIN)
+        self.github.pull_request(4, repo="other/secret", author=LOGIN)
+
+        self.review_on_two("acme/app#12", "other/secret#4", "other/secret")
+        sealed = json.loads(git("show", f"{relay.presence_ref(self.key.id, self.b_relay_id())}:sealed.json",
+                                cwd=self.origin))
+        plaintext = crypto.unseal(self.private, sealed)[1].decode()
+
+        self.assertNotIn("other/secret", plaintext)
+        self.assertEqual([{"target": "acme/app#12", "model": "gpt-5.5"}], self.b_reviews())
+
+    def test_changing_a_review_subscription_republishes_a_presence_whose_summary_the_session_wrote(self) -> None:
+        self.pair()
+        self.github.pull_request(12, author=LOGIN)
+
+        self.review_on_two("acme/app#12")
+        added = self.b_reviews()
+        self.review_on_two("acme/app#12", command="remove")
+
+        self.assertEqual([{"target": "acme/app#12", "model": "gpt-5.5"}], added)
+        self.assertEqual([], self.b_reviews())
+
+    def test_a_presence_from_a_version_before_review_targets_is_kept_and_reviews_nothing(self) -> None:
+        self.pair()
+        self.github.pull_request(12, author=LOGIN)
+        relay_id = "d" * 16
+        older = {key: value for key, value in relay.presence(D, agents.record(self.two.root, B), self.now).items()
+                 if key != "reviews"}
+        older.update(relay_id=relay_id, name="older-peer")
+        self.plant(relay.presence_ref(self.key.id, relay_id),
+                   {"sealed.json": json.dumps(crypto.seal(self.private, self.key.public,
+                                                          json.dumps(older).encode())).encode()})
+        self.one.run_pass()
+
+        heard = self.fix_on_one(12)
+
+        self.assertEqual(0, self.one.status()["repositories"]["acme/app"]["rejected"])
+        self.assertIn("older-peer", self.one.project("agent", "list", claude=A)[1])
+        self.assertEqual([RELAYED_UNREVIEWED.format(number=12)], heard)
+
+
+class PresenceSizeTests(unittest.TestCase):
+    def test_a_presence_with_every_field_at_its_longest_and_more_reviews_than_the_cap_fits_the_relays_limit(
+            self) -> None:
+        repo = f"{'o' * 39}/{'r' * 216}"
+        lines = [watch.Subscription(repo, None, "review", "m" * 100, "octocat")] + [
+            watch.Subscription(repo, 10 ** 9 + index, "review", f"{'m' * 99}{index % 10}", "octocat",
+                               excluded=index % 2 == 0) for index in range(agents.MAX_REVIEWS * 2)]
+        found = {"schema_version": 1, "login": "l" * 39, "name": "n" * 32, "summary": "s" * agents.MAX_SUMMARY,
+                 "model": "m" * 100, "host": "claude", "machine": A, "machine_name": "h" * 64, "cwd": "c" * 4096,
+                 "repo": repo, "branch": "b" * 256, "relay_id": "0" * 16, "registered_at": watch.stamp(0),
+                 "updated_at": watch.stamp(0), "reviews": agents.review_targets(lines, repo)}
+
+        record = relay.presence(A, found, 0)
+        sealed = json.dumps(relay.seal(relay.Key(bytes(range(1, 33)), "inline"), record), sort_keys=True)
+
+        self.assertTrue(agents.well_formed_presence(record))
+        self.assertLessEqual(len(sealed.encode()), relay.MAX_SEALED)
 
 
 class KeychainDaemonTests(RelayCase):

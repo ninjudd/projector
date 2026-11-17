@@ -30,8 +30,8 @@ from typing import Optional
 from unittest import mock
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from projector import cli, review, watch
-from projector.inbox import read_json, try_lock, unlock
+from projector import agents, cli, relay, review, watch
+from projector.inbox import read_json, try_lock, unlock, write_json
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -477,7 +477,7 @@ def new_head(number: int, ref: str, old: str, new: str, session: str) -> str:
             f"{review_action(number, session)}")
 
 
-NO_REVIEWER = ", and no session on this machine reviews it"
+RELAYED = " or on your other machines that share this repository's relay"
 
 
 def label(change: str, number: int = 1, head: str = SHA_A) -> str:
@@ -485,9 +485,10 @@ def label(change: str, number: int = 1, head: str = SHA_A) -> str:
     return f"LABEL acme/app#{number} {change} head={head[:8]}: {meaning}"
 
 
-def unreviewed(number: int, head: str = SHA_A) -> str:
-    return (f"UNREVIEWED acme/app#{number} head={head[:8]}: ready for review, its head is not signed off{NO_REVIEWER} "
-            f"— tell the user that no session on this machine reviews acme/app#{number}")
+def unreviewed(number: int, head: str = SHA_A, relayed: bool = False) -> str:
+    scope = f"this machine{RELAYED if relayed else ''}"
+    return (f"UNREVIEWED acme/app#{number} head={head[:8]}: ready for review, its head is not signed off, and no "
+            f"session on {scope} reviews it — tell the user that no session on {scope} reviews acme/app#{number}")
 
 
 class FixRoleTests(WatchCase):
@@ -607,6 +608,69 @@ class FixRoleTests(WatchCase):
         events = self.cycle()
 
         self.assertEqual([new_pr(1, "feature", "fixer")], events["fixer"])
+
+    def relay_cache(self, *presences: dict, polled: Optional[float] = None, key: bool = True) -> None:
+        """Turn the relay on, unless `key` is false, with its cache of acme/app polled at `polled`, now by default,
+        holding `presences`, as a relay job caches other machines' agents."""
+        self.daemon.relay.key = relay.Key(bytes(range(1, 33)), "inline") if key else None
+        path = relay.repo_file(self.root, "relay", "acme/app")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_json(path, {"repo": "acme/app", "polled_at": watch.stamp(self.clock.wall() if polled is None else polled),
+                          "agents": {f"{index:016x}": found for index, found in enumerate(presences)}})
+
+    def presence(self, *targets: str, login: str = "operator", machine: str = "0b8e6a52-0000-4000-8000-000000000002",
+                 expires: Optional[float] = None, excluded: tuple[str, ...] = ()) -> dict:
+        """A presence from another machine, live unless `expires` says otherwise, whose session reviews `targets`
+        and dropped `excluded`."""
+        return {"session": "b5e6f7a8-0000-4000-8000-00000000000b", "login": login, "machine": machine,
+                "repo": "acme/app", "expires_at": self.clock.wall() + 3600 if expires is None else expires,
+                "reviews": [*({"target": target, "model": MODEL, "excluded": True} for target in excluded),
+                            *({"target": target, "model": MODEL} for target in targets)]}
+
+    def test_unreviewed_names_the_other_machines_only_while_the_relay_holds_the_key_and_polls_the_repository(
+            self) -> None:
+        for number in (1, 2, 3):
+            self.github.pull_request(number, draft=False)
+        self.relay_cache()
+        self.fixer("acme/app#1 fix")
+        polled = self.cycle()["fixer"]
+        self.relay_cache(polled=self.clock.wall() - relay.LEASE)
+        self.fixer("acme/app#2 fix")
+        stale = self.cycle()["fixer"]
+        self.relay_cache(key=False)
+        self.fixer("acme/app#3 fix")
+        off = self.cycle()["fixer"]
+
+        self.assertEqual([unreviewed(1, relayed=True)], polled)
+        self.assertEqual([unreviewed(2)], stale, "a cache a lease old says nothing about the other machines")
+        self.assertEqual([unreviewed(3)], off)
+
+    def test_only_a_live_presence_of_the_operator_from_another_machine_holds_back_unreviewed(self) -> None:
+        self.github.pull_request(1, draft=False)
+        self.github.pull_request(2, draft=False)
+        self.fixer("acme/app#1 fix", "acme/app#2 fix")
+        self.relay_cache(self.presence("acme/app#1", expires=self.clock.wall() - 1),
+                         self.presence("acme/app#1", login="teammate"),
+                         self.presence("acme/app#1", machine=agents.this_machine(self.root)),
+                         self.presence("acme/app#2"))
+
+        events = self.cycle()
+
+        self.assertEqual([unreviewed(1, relayed=True)], events["fixer"])
+
+    def test_a_remote_review_of_the_repository_covers_only_what_the_operator_wrote_or_is_asked_to_review(
+            self) -> None:
+        self.github.pull_request(1, draft=False)
+        self.github.pull_request(2, draft=False, author="teammate")
+        self.github.pull_request(3, draft=False, author="teammate", requested=["operator"])
+        self.github.pull_request(4, draft=False)
+        self.relay_cache(self.presence("acme/app", excluded=("acme/app#4",)))
+        self.fixer("acme/app#1 fix", "acme/app#2 fix", "acme/app#3 fix", "acme/app#4 fix")
+
+        events = self.cycle()
+
+        self.assertEqual([unreviewed(2, relayed=True), unreviewed(4, relayed=True)], events["fixer"],
+                         "#2 neither is the operator's nor requests them, and the remote session dropped #4")
 
     def test_reports_each_review_label_added_or_removed_after_the_first_look(self) -> None:
         self.github.pull_request(1, labels=["clean", "bug"])
