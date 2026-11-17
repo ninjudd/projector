@@ -493,9 +493,11 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
 
 def presence(root: Path, session: str, found: dict, now: float) -> dict:
     """The session's presence: its registration, what it reviews in the registration's repository as its
-    subscriptions say when the presence is sealed, and its lease, so each renewal carries the current targets."""
+    subscriptions and this machine's adoptions say when the presence is sealed, and its lease."""
     record = {key: value for key, value in found.items() if key not in ("relay", "ended_at", "summary_auto")}
-    reviews = agents.review_targets(watch.subscriptions(watch.session_folder(root, session)), found.get("repo"))
+    repo = found.get("repo")
+    reviews = agents.review_targets(watch.subscriptions(watch.session_folder(root, session)), repo,
+                                    watch.read_adopted(root, repo)[0] if repo else ())
     return {**record, "reviews": reviews, "session": session, "expires_at": now + LEASE}
 
 
@@ -915,11 +917,15 @@ class Job:
             ref = presence_ref(self.key.id, relay_id)
             # A session can unregister while this job runs, so its mark is checked again here.
             if name in self.live and not agents.unregistered(watch.session_folder(self.root, name)):
-                expires = (self.cache["seen"].get(ref) or {}).get("expires_at")
+                record = presence(self.root, name, found, self.now)
+                seen = self.cache["seen"].get(ref) or {}
+                expires = seen.get("expires_at")
+                # A presence says what the subscriptions and adoptions say now, so one that changes, as when a
+                # review of the repository adopts a pull request, is pushed again without waiting for its renewal.
                 due = ref not in self.cache["remote"] or not isinstance(expires, (int, float)) \
-                    or expires - self.now < RENEW or found.get("relay") == "pending"
+                    or expires - self.now < RENEW or found.get("relay") == "pending" \
+                    or seen.get("digest") not in (None, digest(record))
                 if due and ref not in queued:
-                    record = presence(self.root, name, found, self.now)
                     self.changes.append((ref, seal(self.key, record), presence_meta(record)))
                 continue
             self.delete(ref)

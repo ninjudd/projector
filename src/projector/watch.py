@@ -165,6 +165,14 @@ def cache_dir(root: Path, repo: str) -> Path:
     return root / "cache" / repo.lower()
 
 
+def read_adopted(root: Path, repo: str) -> tuple[set[int], set[int]]:
+    """The pull requests this machine's reviews of the repository adopted, and those it saw close."""
+    record = read_json(cache_dir(root, repo) / "adopted.json") or {}
+    numbers, closed = ({number for number in record.get(key) or [] if isinstance(number, int)}
+                       for key in ("numbers", "closed"))
+    return numbers, closed
+
+
 def pull_cache(root: Path, repo: str, number: int) -> Path:
     return cache_dir(root, repo) / "pulls" / f"{number}.json"
 
@@ -1187,9 +1195,7 @@ class Pass:
 
         GitHub drops a review request once the login reviews, so a pull request stays adopted after."""
         folder = cache_dir(self.root, repo)
-        record = read_json(folder / "adopted.json") or {}
-        adopted = {number for number in record.get("numbers") or [] if isinstance(number, int)}
-        closed = {number for number in record.get("closed") or [] if isinstance(number, int)}
+        adopted, closed = read_adopted(self.root, repo)
         operator = (self.daemon.operator or "").lower()
         if not operator:
             return adopted

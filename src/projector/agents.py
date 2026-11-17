@@ -25,7 +25,7 @@ import secrets
 import socket
 import uuid
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 from . import codex_watch, relay, review, watch
 from .config import MINIMUMS, Config
@@ -367,21 +367,31 @@ def generated_summary(lines: list[watch.Subscription], repo: Optional[str]) -> O
     return text[:1].upper() + text[1:] or None
 
 
-def review_targets(lines: list[watch.Subscription], repo: Optional[str]) -> list[dict]:
+def review_targets(lines: list[watch.Subscription], repo: Optional[str], adopted: Iterable[int] = ()) -> list[dict]:
     """What the session reviews in its own repository, for its presence: each `review` line's target and model,
-    with `excluded` on a pull request the session dropped. Only that repository is ever named, as in the summary.
-    The list keeps at most `MAX_REVIEWS` entries, exclusions first, then whole repositories, so the entries a cap
-    drops can only make the session look like it reviews less."""
+    with `excluded` on a pull request the session dropped, and each pull request in `adopted`, which a review of
+    the repository adopted, under that review's model. GitHub drops a review request once the login reviews, so
+    another machine cannot tell from GitHub alone that the review still covers such a pull request. Only that
+    repository is ever named, as in the summary. The list keeps at most `MAX_REVIEWS` entries, exclusions first,
+    then whole repositories, so the entries a cap drops can only make the session look like it reviews less."""
     if not repo:
         return []
+    lines = sorted((line for line in lines if line.role == "review" and line.repo.lower() == repo.lower()
+                    and shaped(line.model, MODEL_ID)),
+                   key=lambda line: (not line.excluded, line.number is not None, line.number or 0))
+    dropped = {(line.number, review.identity(line.model or "")) for line in lines if line.excluded}
     found: list[dict] = []
-    for line in sorted((line for line in lines if line.role == "review" and line.repo.lower() == repo.lower()
-                        and shaped(line.model, MODEL_ID)),
-                       key=lambda line: (not line.excluded, line.number is not None, line.number or 0)):
+    for line in lines:
         entry = {"target": repo if line.number is None else f"{repo}#{line.number}", "model": line.model,
                  **({"excluded": True} if line.excluded else {})}
         if entry not in found:
             found.append(entry)
+    for line in lines:
+        if line.number is None and not line.excluded:
+            for number in sorted(adopted):
+                entry = {"target": f"{repo}#{number}", "model": line.model}
+                if entry not in found and (number, review.identity(line.model or "")) not in dropped:
+                    found.append(entry)
     return found[:MAX_REVIEWS]
 
 

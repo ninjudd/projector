@@ -1864,6 +1864,22 @@ class RemoteReviewerTests(RelayCase):
         self.assertEqual([RELAYED_UNREVIEWED.format(number=13)], heard,
                          "#13 is neither the operator's nor requests them, so a review of acme/app does not cover it")
 
+    def test_a_pull_request_a_remote_review_of_the_repository_adopted_stays_covered_once_its_request_clears(
+            self) -> None:
+        self.pair()
+        self.github.pull_request(14, author="teammate")
+        self.review_on_two("acme/app")
+        # The teammate asks the operator for a review, so two's review of acme/app adopts #14 on its next pass.
+        self.github.pull_request(14, author="teammate", requested=[LOGIN])
+        self.two.run_pass()
+        self.one.run_pass()
+        # Two's review clears the request, and only two's record of the adoption says it still reviews #14.
+        self.github.pull_request(14, author="teammate")
+
+        heard = self.fix_on_one(14)
+
+        self.assertEqual([], heard)
+
     def test_a_review_of_one_pull_request_by_a_session_its_subscription_registered_holds_back_only_that_one(
             self) -> None:
         self.pair()
@@ -1889,7 +1905,8 @@ class RemoteReviewerTests(RelayCase):
         self.assertNotIn("other/secret", plaintext)
         self.assertEqual([{"target": "acme/app#12", "model": "gpt-5.5"}], self.b_reviews())
 
-    def test_a_registration_an_older_version_wrote_publishes_its_review_targets_on_its_next_renewal(self) -> None:
+    def test_a_registration_an_older_version_wrote_publishes_its_review_targets_without_registering_again(
+            self) -> None:
         self.pair()
         self.github.repository("acme/app")
         folder = watch.session_folder(self.two.root, B)
@@ -1898,17 +1915,10 @@ class RemoteReviewerTests(RelayCase):
         found = agents.record(self.two.root, B)
         found.pop("reviews", None)
         write_json(folder / "agent.json", found)
-        self.two.run_pass()
-        self.one.run_pass()
-        before = self.b_reviews()
 
-        self.advance(relay.RENEW + 60)
-        self.one.claude(A)
-        self.two.claude(B)
         self.two.run_pass()
         self.one.run_pass()
 
-        self.assertEqual([], before or [], "nothing republishes the presence before its renewal is due")
         self.assertEqual([{"target": "acme/app", "model": "gpt-5.5"}], self.b_reviews())
 
     def test_changing_a_review_subscription_republishes_a_presence_whose_summary_the_session_wrote(self) -> None:

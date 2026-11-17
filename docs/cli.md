@@ -3619,18 +3619,26 @@ rejection:
 ### What a presence carries
 
 A presence is the session's registration, as `project agent list --json`
-prints it, with its lease and a `reviews` field. The relay fills `reviews`
-from the session's subscriptions each time it encrypts the presence, with
-what the session reviews in the repository the relay publishes the presence
-into: one entry for each `review` subscription in that repository, with its
-`target` and `model`. The target is `owner/repo` for a review of the repository, or
-`owner/repo#number` for one pull request. A pull request the session
-dropped with `project watch drop` has `"excluded": true`:
+prints it, with its lease and a `reviews` field. Each time the relay
+encrypts the presence, it fills `reviews` with what the session reviews in
+the repository the relay publishes the presence into, with each entry's
+`target` and `model`:
+
+- **Each `review` subscription in that repository.** The target is
+  `owner/repo` for a review of the repository, or `owner/repo#number` for
+  one pull request.
+- **Each pull request the session's review of the repository adopted.**
+  GitHub drops a review request once the login reviews, so another machine
+  cannot tell from GitHub that the review still covers a pull request it
+  adopted because the pull request requested the operator.
+- **Each pull request the session dropped** with `project watch drop`, with
+  `"excluded": true`.
 
 ```json
 "reviews": [
   {"target": "acme/app#14", "model": "claude-opus-5-5", "excluded": true},
-  {"target": "acme/app", "model": "claude-opus-5-5"}
+  {"target": "acme/app", "model": "claude-opus-5-5"},
+  {"target": "acme/app#15", "model": "claude-opus-5-5"}
 ]
 ```
 
@@ -3640,17 +3648,19 @@ published into can be public while another one the session reviews is
 private. A machine rejects a presence whose `reviews` names another
 repository, as `field-shape`. The list holds at most 32 entries, exclusions
 first and then reviews of a whole repository, so a session with more never
-appears to review a pull request it dropped. A change to the session's
-review subscriptions makes the daemon publish the presence again on its next
-poll, whether or not the summary is the generated one, and each 30-minute
-renewal carries the subscriptions as they are then, so a session registered
-before Projector published `reviews` gains them by its next renewal.
+appears to review a pull request it dropped. When `reviews` changes, as
+when the session's review subscriptions change or its review of the
+repository adopts a pull request, the daemon publishes the presence again on
+its next poll, whether or not the summary is the generated one. A session
+registered before Projector published `reviews` gains them the same way,
+without registering again.
 
 The watch daemon reads `reviews` to decide `UNREVIEWED`. A pull request has
 a reviewer on another machine when a live presence of the operator's login,
 from a machine other than this one, names the pull request, or names its
 repository and the pull request is one a repository review covers here: the
-operator wrote it, or it requests the operator's review. The daemon looks
+operator wrote it, it requests the operator's review, or a review of the
+repository on this machine adopted it before. The daemon looks
 only while this machine holds the key and the relay has polled the
 repository within the last hour, and then the `UNREVIEWED` line says `no
 session on this machine or on your other machines that share this
