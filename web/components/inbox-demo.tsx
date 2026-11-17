@@ -736,20 +736,18 @@ export function InboxDemo() {
           : "Ready:";
     return (
       <div>
-        <span className="block">
+        <button
+          type="button"
+          onClick={close}
+          aria-label={`Close the drawer of ${item.subject}`}
+          className={lineButton}
+        >
           {"   "}
-          <button
-            type="button"
-            onClick={close}
-            aria-label="Close the drawer"
-            className="hover:bg-[#e8e6e3] focus-visible:outline-none"
-          >
-            <Seg tone="accent">0</Seg>
-          </button>
+          <Seg tone="accent">0</Seg>
           <Seg tone={itemTone(item)}>: {item.subject}</Seg>
           {spaces(WIDTH - 5 - item.subject.length - tailLength(item))}
           {tail(item)}
-        </span>
+        </button>
         <span className="block"> </span>
         {item.detail.map((line, index) => (
           <span key={index} className="block">
