@@ -1,0 +1,47 @@
+{
+ "version": 1,
+ "name": "Relay encryption wording",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 511,
+  "title": "Say encrypted rather than sealed where readers meet the relay",
+  "head": "d8148c4fb792804b126156bd42cdaa57d33f3414",
+  "headRef": "say-encrypted",
+  "base": "2f3d11a27f96ec4a422b2503dd69ebdef421c1f5",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector sends messages between your machines through hidden Git refs in a repository they share. This change replaces “sealed” with “encrypted” in the README and website, then explains that only your machines can read or write the messages. The CLI reference keeps the technical description of encryption and authentication."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "relay-copy",
+   "title": "Explain who can read and write messages",
+   "kicker": "The same relay guarantee in the README and website",
+   "intro": [
+    "“Encrypted” gives readers a familiar description of how messages travel between machines. Both entry points also state who can read or create valid messages, while preserving the warning that messages from another agent carry none of your authority."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Compared both descriptions with the CLI reference and the relay code: records are encrypted to the shared key, and the reader rejects records whose authenticated sender is not that same key."
+    }
+   ],
+   "files": [
+    {
+     "path": "README.md",
+     "collapsed": false,
+     "note": "The setup paragraph explains encryption after the existing key-copy steps."
+    },
+    {
+     "path": "web/components/sections/sessions.tsx",
+     "note": "The sessions card uses the same wording and keeps its existing message-skill link."
+    }
+   ]
+  }
+ ]
+}
