@@ -848,7 +848,7 @@ export function InboxDemo() {
             Reset
           </button>
         </div>
-        <div className="overflow-x-auto whitespace-pre p-4 font-mono text-[12px] leading-6 sm:px-5">
+        <div className="overflow-x-auto whitespace-pre p-4 font-mono text-[12px] leading-[1.3] sm:px-5">
           <div className="w-max min-w-full">
             {openItem ? (
               itemDrawer(openItem)
@@ -872,7 +872,7 @@ export function InboxDemo() {
           </div>
         </div>
       </div>
-      <div className="rounded-xl border border-line-strong bg-[#141414] px-4 py-3 font-mono text-[12.5px] leading-6 text-[#e8e6e3] sm:px-5">
+      <div className="rounded-xl border border-line-strong bg-[#141414] px-4 py-3 font-mono text-[12.5px] leading-[1.35] text-[#e8e6e3] sm:px-5">
         <div className="flex gap-2">
           <span className="select-none text-[#8d877a]">&gt;</span>
           <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
@@ -884,7 +884,7 @@ export function InboxDemo() {
                 you to send.
               </span>
             )}
-            <span className="ml-px inline-block h-4 w-2 translate-y-0.5 animate-pulse bg-[#e8e6e3]/70" />
+            <span className="ml-px inline-block h-[1.1em] w-2 align-middle animate-pulse bg-[#e8e6e3]/70" />
           </span>
         </div>
       </div>
