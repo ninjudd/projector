@@ -40,9 +40,10 @@ The watch daemon publishes each live session's state to the relay, and the
 app reads it, draws the console's home list and panels, and writes your
 answers back as signed records. Three changes make that safe:
 
-- **The phone signs as you.** The phone holds a signing key of its own that
-  never leaves it. You register its public key on each machine in a
-  terminal. The daemon records a phone record as yours only when that key
+- **The phone signs as you.** The phone holds a P-256 signing key in its
+  Secure Enclave, the chip that makes and uses the key and never lets it
+  out, not even into a backup. You register its public key on each machine
+  in a terminal. The daemon records a phone record as yours only when that key
   signed it, so no agent can forge an answer, even one that reads the relay
   key.
 - **The daemon publishes sessions and items.** For each live session it
@@ -77,9 +78,12 @@ run the push service themselves.
       check the fingerprint, and paste its one-line answer into the app.
    3. Register with the push service. The app sends Apple's device token
       to the service, which answers with a random push ID.
-   4. Make the phone's keys, and register them. The phone makes a signing
-      key, which signs your answers, and an X25519 push key, which opens
-      notifications. The app shows both public keys and the push ID as one
+   4. Make the phone's keys, and register them. The Secure Enclave makes
+      the P-256 signing key, which signs your answers. Using it needs Face
+      ID or the passcode, which the app asks for at most once every 5
+      minutes. The app makes an X25519 push key in the Keychain, which the
+      notification service extension can read while the phone is locked,
+      after its first unlock. The app shows both public keys and the push ID as one
       `project agent phone add …` command with a fingerprint. You run it in
       a terminal on each machine whose agents the phone may answer. The
       command refuses without a terminal, as `key grant` does.
@@ -136,7 +140,7 @@ An answer record also carries, inside the seal:
 | `action` | The action and its argument, such as the letter or the message |
 | `at` | When the phone wrote it. The daemon rejects a record older than 7 days, as the relay does for messages |
 | `nonce` | A random ID. The daemon remembers the IDs it applied for 7 days and rejects a repeat |
-| `signature` | The phone key's signature over every field above |
+| `signature` | The phone's ECDSA P-256 signature, over SHA-256, of every field above in canonical JSON: keys sorted, no spaces, UTF-8 |
 
 ### 2.3 The push service
 
@@ -169,7 +173,7 @@ anyone can run their own.
 | `src/projector/relay.py` | Publishes item and subscription records, and fetches, checks, and applies answer records |
 | `src/projector/phone.py` | New. Registered phones, each with its signing key, push key, and push ID, `project agent phone add`, `list`, and `remove`, and signature checks |
 | `src/projector/push.py` | New. Seals a notification to a phone's push key and posts it with `urllib.request`, off the daemon's delivery loop, with a 10-second timeout |
-| `src/projector/crypto.py` | The signature check, in pure Python like the rest of the module (§ 6) |
+| `src/projector/crypto.py` | ECDSA P-256 verification, in pure Python like the rest of the module, checked against Wycheproof's published test vectors |
 | `src/projector/console.py` | Moves the console's "record an action for a session" calls into a function the relay import shares |
 | `src/projector/permissions.py` | Asks before `project agent phone add` and `remove` in Claude Code, and leaves both to Codex's approval |
 | `tests/fixtures/relay/` | New. Sealed and signed records with their plaintexts, which the Python tests and the app's tests both check |
@@ -186,6 +190,26 @@ anyone can run their own.
   says nothing about who wrote it. A key that exists only on the phone, and
   that you register in a terminal, keeps the rule that agents cannot answer
   for you.
+- **The signing key lives in the Secure Enclave.** A key there can never be
+  copied off the phone, not by malware on the phone and not into a backup,
+  so a signed answer means this phone, unlocked, with your face or
+  passcode. The Secure Enclave supports only P-256, and Python's standard
+  library has no elliptic-curve signatures, so `crypto.py` gains a
+  pure-Python ECDSA P-256 verifier, as it already implements X25519 and
+  ChaCha20 itself. Verifying uses only public values, so the timing leaks
+  that make hand-written signing code dangerous do not apply, and
+  Wycheproof's test vectors pin its edge cases. Ed25519 in the Keychain
+  would be simpler to verify, but a Keychain key can be backed up and
+  restored onto another device.
+- **The push key lives in the Keychain.** The Secure Enclave cannot hold an
+  X25519 key, and the notification service extension must open a
+  notification while the phone is locked. The push key only reveals
+  notification text, never your authority, so a Keychain key readable after
+  the first unlock is enough.
+- **A lost phone is removed, not recovered.** The signing key cannot leave
+  the phone, so a new phone gets new keys. You run
+  `project agent phone remove` for the old phone and `project agent phone
+  add` for the new one on each machine.
 - **GitHub carries the records, and the push service only wakes the
   phone.** The relay already moves records through GitHub, so a server that
   stored items or answers would add hosting, accounts, and a second place
@@ -249,6 +273,8 @@ anyone can run their own.
 | Revise item 3, then apply an answer that names its old digest | Rejected as stale, and item 3 stays open | An answer to text you never saw |
 | Run `project agent phone add` without a terminal | Exit 69, nothing registered | An agent that registers its own key |
 | Seal and sign each fixture in `tests/fixtures/relay/` in Python and in the app | Both produce records the other opens and verifies | A seal or signature that only one side can read |
+| Run Wycheproof's ECDSA P-256 SHA-256 vectors through `crypto.py`'s verifier | Every vector marked valid verifies, and every one marked invalid is rejected | A verifier that accepts a malformed or forged signature |
+| Verify a signature the Secure Enclave made on a test device, saved in `tests/fixtures/relay/` | It verifies, and flipping any byte of the record or the signature makes it fail | A signature encoding, such as DER against raw, that Python and the phone disagree on |
 | Run each fixture in `tests/fixtures/rows/` through the app's row model | The fixture's expected rows | A third row model that drifts |
 | Post a question with a phone registered, against a stand-in push service that records every request | One `POST /v1/push` with the phone's push ID, whose body holds neither the subject nor the session's label in plain text, and the phone's push key opens it to both | A notification that leaks the item to the service, or one the phone cannot open |
 | Make the push service answer `500`, or not answer for 30 seconds | The relay pass and every session's delivery go on, and the daemon logs the failure once | A push failure that stalls the daemon |
@@ -274,12 +300,6 @@ anyone can run their own.
 
 ## 6. Open questions
 
-- **Which signature scheme.** The iPhone's Secure Enclave keeps a key that
-  can never be copied off the device, but it supports only P-256 ECDSA.
-  Python's standard library has no P-256, so the daemon's check would need
-  a pure-Python implementation, as `crypto.py` already implements X25519
-  and ChaCha20. Ed25519 in the Keychain is simpler to verify but can be
-  backed up. Decide before the plan is `ready`. Owner: the user.
 - **How the phone finds repositories.** The relay works per repository,
   and the phone cannot list every repository that holds your refs without
   probing each one. Options: the grant line carries the repositories the
