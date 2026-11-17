@@ -18,7 +18,7 @@ const steps: { title: string; invoke: string; body: ReactNode }[] = [
     ),
   },
   {
-    title: "Build it",
+    title: "Implement it",
     invoke: "/implement count-in",
     body: (
       <>
