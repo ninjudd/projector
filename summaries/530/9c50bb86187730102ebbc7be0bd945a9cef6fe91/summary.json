@@ -1,0 +1,122 @@
+{
+ "version": 1,
+ "name": "Multi-session terminal console",
+ "project": "console",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 530,
+  "title": "Add project console, a terminal list of every live session that answers and discusses its items and pull requests",
+  "head": "9c50bb86187730102ebbc7be0bd945a9cef6fe91",
+  "headRef": "console/tui",
+  "base": "14309e9c099e6775107f659536903f8b1e949cbd",
+  "baseRef": "console/rows",
+  "basePr": 528
+ },
+ "overview": {
+  "summary": [
+   "Projector keeps pull request subscriptions and inbox items for each agent session. This layer adds <code>project console</code>, a terminal interface that lists every live session and lets you open one session at a time to answer, discuss, dismiss, or snooze its work.",
+   "The console records choices in the existing inbox store. Each session’s existing deliverer sends them into its conversation, so the terminal does not claim or deliver answers itself. It reads pull request rows from the watch daemon’s local cache and fetches review threads only for an open pull request drawer."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "What the console shows",
+    "html": "<ul><li><b>Session:</b> one Claude Code or Codex conversation with live delivery.</li><li><b>Inbox item:</b> a question, request, notice, or discussion stored for that session.</li><li><b>Drawer:</b> the expanded details, replies, and actions below a selected row.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Review result",
+    "html": "The configured gate, exact-head CI, metadata checks, and 421 focused tests passed. A temporary terminal rendering reproduction found one issue: an expanded drawer taller than the terminal cannot scroll to its remaining content."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "console",
+   "title": "Browse and act on live sessions",
+   "kicker": "A Python model and curses screen drive the terminal interface.",
+   "intro": [
+    "The home list gathers live sessions from the inbox and watch stores and orders those with unread replies or open questions first. Opening a session shows its pull request rows and inbox items, with expanded drawers for details, discussion, and actions.",
+    "The model keeps each action tied to the viewed session, including when two sessions have the same item number. A background thread refreshes local state and open review threads; the terminal thread handles keys and draws the current state."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "The new console model, actions, refresh loop, text input, and curses renderer.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "421 focused tests passed, including session-specific recording, leaving delivery to the session, home ordering, discussion creation, and thread-query cadence."
+      },
+      {
+       "kind": "flag",
+       "line": 892,
+       "text": "A drawer with 40 detail lines in a 24-row terminal stays pinned to its first line. Later replies and controls never become visible: Page Down is unmapped and Down closes the drawer. Add scrolling that keeps the drawer open."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "Exercises the model against temporary inbox and watch state, plus nonterminal and missing-curses exits."
+    }
+   ]
+  },
+  {
+   "id": "entry",
+   "title": "Expose the command with answer permissions",
+   "kicker": "The command uses existing recording and wake-up paths.",
+   "intro": [
+    "<code>project console</code> starts only with a terminal and Python’s curses module. Its recording actions use the inbox functions already called by <code>project inbox</code>; recording for Codex reuses the helper that wakes its delivery daemon.",
+    "The permission policy treats the console as a way to record the person’s answers. Claude Code asks before an agent starts it, and Codex’s automatic allow list leaves the command to normal approval."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Registers the console command, validates terminal support, and passes the existing Codex wake helper."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds console ask rules and documents its omission from automatic Codex permission."
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Checks that the new command asks in Claude Code and remains outside Codex’s allow rules."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Document the terminal workflow and project outcome",
+   "kicker": "CLI guidance, website links, and the completed project record.",
+   "intro": [
+    "The CLI guide explains the home list, panel drawers, key bindings, recording behavior, refresh cadence, and terminal requirements. Plugin and website copy point terminal and Codex users to the new console.",
+    "The console plan records the implementation decisions and marks the four-layer project completed. Its outcome reports a real pseudo-terminal smoke check and a CPU measurement; this review checked the code and metadata rather than rerunning that reported cost measurement."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the console, its controls, delivery behavior, and permission policy."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Points terminal and Codex users to the console."
+    },
+    {
+     "path": "docs/projects/console/readme.md",
+     "note": "Records implementation decisions, completion, acceptance coverage, and reported cost measurement."
+    },
+    {
+     "path": "web/components/sections/panel.tsx",
+     "note": "Names the console as the terminal counterpart of the panel."
+    },
+    {
+     "path": "web/lib/links.ts",
+     "note": "Links the website to the console section in the CLI guide."
+    }
+   ]
+  }
+ ]
+}
