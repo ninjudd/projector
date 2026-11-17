@@ -11,6 +11,10 @@
   "license": "MIT",
   "keywords": ["projects", "planning", "git", "agents", "code-review"],
   "skills": "./skills/",
+  "hooks": {
+    "description": "Projector's Codex hooks ship in the projector-hooks plugin. This empty set stops Codex from reading hooks/hooks.json, which is Claude Code's hooks module.",
+    "hooks": {}
+  },
   "interface": {
     "displayName": "Projector",
     "shortDescription": "Plan, implement, and review Git projects",
