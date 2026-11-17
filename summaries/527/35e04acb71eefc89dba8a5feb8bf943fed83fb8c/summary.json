@@ -1,0 +1,163 @@
+{
+ "version": 1,
+ "name": "Console inbox discussions",
+ "project": "console",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 527,
+  "title": "Give inbox items a thread, so a person can discuss an item without the session's chat",
+  "head": "35e04acb71eefc89dba8a5feb8bf943fed83fb8c",
+  "headRef": "console/threads",
+  "base": "24312f718cbd4ffc283aebc9e949c3829c5e7c9e",
+  "baseRef": "console/codex-delivery",
+  "basePr": 524
+ },
+ "overview": {
+  "summary": [
+   "Projector’s inbox holds the questions, notices, and requests an agent posts for you. This layer adds a thread to each item so you can discuss it from another terminal, and read the agent’s answer where you asked.",
+   "Your messages reach the owning session as <code>DISCUSS</code> lines. The agent records its replies on the item; those replies need no delivery back to the agent. You can also start a discussion about a pull request or the whole session without an existing item.",
+   "The terminal console itself belongs to a later stack layer. This layer supplies the storage, command-line operations, Claude Code drawer, and permission rules it needs."
+  ],
+  "cards": [
+   {
+    "id": "delivery",
+    "title": "Delivery keeps one message in flight",
+    "html": "A <b>claim</b> holds one line for one deliverer. Discussion claims also name the thread entry, so a later message cannot change which entry is settled. Answers and existing lifecycle lines are sent before unclaimed thread messages."
+   },
+   {
+    "id": "review",
+    "title": "Review outcome",
+    "html": "Gate and exact-head CI passed, as did 217 focused Python tests and all 246 hook tests. The hidden-panel finding is fixed: replies remain unread while hidden and are marked read when their drawer is shown. Removing the visibility guard makes the new regression fail."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "storage",
+   "title": "Store and deliver discussion threads",
+   "kicker": "One item owns its conversation and delivery state",
+   "intro": [
+    "An inbox thread is a sequence of messages from you and the agent. Your messages owe delivery to the session; agent replies remain on the item until you read them. A discussion item starts that conversation when there is no question or request yet.",
+    "The command-line operations use the existing locked item store. Claims record the entry index, and settlement marks that message delivered or removes it after a refused delivery. Messages remain owed after their item is answered or dismissed."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Adds discussion items, bounded messages, reply/read state, and entry-specific claim settlement.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused inbox tests passed for ordered delivery, held claims across answers, failure removal, dismissal survival, and the UTF-8 byte limit."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Exposes discuss, reply, and read, prints thread messages, and wakes Codex delivery for new discussion lines."
+    },
+    {
+     "path": "tests/test_inbox.py"
+    },
+    {
+     "path": "tests/test_codex_watch.py"
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "Show replies in the Claude Code panel",
+   "kicker": "Display the thread and route messages through the existing deliverer",
+   "intro": [
+    "Claude Code’s panel shows each thread in its item drawer and offers a reply tool to the agent. A reply stays marked <code>replied</code> until the panel records that you read it.",
+    "The existing panel deliverer now recognizes discussion lines, including messages attached to items that were dismissed. A failed send tells you to send the message again."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Extends the item union with discussions, thread entries, and entry-specific claims."
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Recognizes owed discussion messages and unread replies, and defines the reply tool."
+    },
+    {
+     "path": "hooks/register.tsx",
+     "note": "Renders threads and unread status, records reads, and serves the reply tool.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1027,
+       "text": "The hide/reply/show regression passes at this head and fails when the visibility guard is removed. Hidden replies retain unread state; showing the panel marks the visible drawer read."
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.test.ts"
+    },
+    {
+     "path": "hooks/panel.test.tsx"
+    }
+   ]
+  },
+  {
+   "id": "authority",
+   "title": "Keep the person’s words separate from the agent’s",
+   "kicker": "Permission rules protect discussion authorship and read state",
+   "intro": [
+    "Writing a discussion message speaks as you, and marking a reply read records what you saw. Both operations therefore require the same approval boundary as answering an item. The agent’s reply speaks only as the agent and can run freely.",
+    "The shared agent instructions tell agents to answer discussion lines both in the item’s thread and in the conversation, then decide whether the item still needs you."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Permission and instruction tests passed, including the new ask/allow decisions and template version."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Asks for discuss/read and permits agent replies."
+    },
+    {
+     "path": "tests/test_permissions.py"
+    },
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Adds the shared response instructions and advances the template version."
+    },
+    {
+     "path": "AGENTS.md"
+    },
+    {
+     "path": "skills/work/SKILL.md",
+     "note": "Tells an unattended agent how to answer a discussion."
+    },
+    {
+     "path": "tests/test_instructions.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Explain the new commands and drawer behavior",
+   "kicker": "Document the thread contract and settled implementation decisions",
+   "intro": [
+    "The CLI reference explains the new item kind, message limit, delivery ordering, and command failures. The plugin guide describes the thread and unread indicator, while the active console plan records the decisions this layer settles."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/projects/console/readme.md"
+    }
+   ]
+  }
+ ]
+}
