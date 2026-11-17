@@ -388,6 +388,10 @@ export function InboxDemo() {
       : undefined;
   const yours = YOURS.filter((row) => !dismissedRows.includes(row.number));
   const theirs = THEIRS.filter((row) => !dismissedRows.includes(row.number));
+  const openRow =
+    open?.type === "pr"
+      ? [...yours, ...theirs].find((row) => row.number === open.number)
+      : undefined;
   const count = (kind: Kind) =>
     ITEMS.filter((item) => item.kind === kind && states[item.id] === "open")
       .length;
@@ -517,14 +521,59 @@ export function InboxDemo() {
     ];
   }
 
+  function prActions(row: Row): Press[] {
+    if (confirmDismiss) {
+      return [
+        {
+          digit: "8",
+          label: "Yes, dismiss it",
+          onPress: () => {
+            setDismissedRows((current) => [...current, row.number]);
+            close();
+          },
+        },
+        {
+          digit: "9",
+          label: "No, keep it",
+          onPress: () => {
+            setConfirmDismiss(false);
+          },
+        },
+      ];
+    }
+    return [
+      {
+        digit: "7",
+        label: "Discuss",
+        onPress: () => {
+          setPrompt(`${row.number} `);
+        },
+      },
+      {
+        digit: "8",
+        label: "Dismiss",
+        onPress: () => {
+          setConfirmDismiss(true);
+        },
+      },
+    ];
+  }
+
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (!openItem || event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.key === "0") {
-      close();
-      event.preventDefault();
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    let presses: Press[];
+    if (openItem) {
+      if (event.key === "0") {
+        close();
+        event.preventDefault();
+        return;
+      }
+      presses = [...itemOptions(openItem), ...itemActions(openItem).flat()];
+    } else if (openRow) {
+      presses = prActions(openRow);
+    } else {
       return;
     }
-    const presses = [...itemOptions(openItem), ...itemActions(openItem).flat()];
     const match = presses.find((press) => press.digit === event.key);
     if (match) {
       match.onPress();
@@ -637,44 +686,16 @@ export function InboxDemo() {
         </span>
         <span className="block">
           {pad}
-          {confirmDismiss ? (
-            <>
+          {prActions(row).map((press, position) => (
+            <span key={press.label}>
+              {position > 0 ? "  " : ""}
               <Action
-                digit="8"
-                label="Yes, dismiss it"
-                onPress={() => {
-                  setDismissedRows((current) => [...current, row.number]);
-                  close();
-                }}
+                digit={press.digit}
+                label={press.label}
+                onPress={press.onPress}
               />
-              {"  "}
-              <Action
-                digit="9"
-                label="No, keep it"
-                onPress={() => {
-                  setConfirmDismiss(false);
-                }}
-              />
-            </>
-          ) : (
-            <>
-              <Action
-                digit="7"
-                label="Discuss"
-                onPress={() => {
-                  setPrompt(`${row.number} `);
-                }}
-              />
-              {"  "}
-              <Action
-                digit="8"
-                label="Dismiss"
-                onPress={() => {
-                  setConfirmDismiss(true);
-                }}
-              />
-            </>
-          )}
+            </span>
+          ))}
         </span>
         <span className="block">
           {pad}
