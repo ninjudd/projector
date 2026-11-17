@@ -848,7 +848,7 @@ reads, which are these:
 | `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
 | `agent.message_limit` | whole number | `12` | `project agent send` and `reply`, from the checkout the sending session works in, as the most messages one session sends to one other session in a rolling hour; at least `1` |
 | `agent.auto_register` | boolean | `true` | `project watch add` and the Codex hooks, from the checkout the session works in, to register a session that subscribes to a pull request for agent messages, with a generated summary; `false` subscribes it without registering it, as [Registered when it subscribes](#registered-when-it-subscribes) describes. A session that ran `project agent unregister` is never registered this way, whatever the setting says |
-| `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or the inline fallback, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key import`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
+| `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or, with `--inline`, the key itself, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key join`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
 | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
 | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
 | `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to |
@@ -3423,32 +3423,76 @@ The key is an X25519 key pair. Make it once, on one machine:
 ```console
 $ project agent key init
 key 3f2a9c1d7e4b6a05 stored in the macOS Keychain; ~/.projector.toml names it as agent.key = "keychain:3f2a9c1d7e4b6a05"
-To copy the key to another machine, run `project agent key export` here in a terminal, then run `project agent key import` there in a terminal and paste the line it printed.
+To give another machine this key, run `project agent key join` there in a terminal.
 ```
 
 `key init` stores the private key in the macOS Keychain, Windows Credential
 Manager, or Linux `secret-tool`, and writes only its ID to
-`~/.projector.toml` as `agent.key`. Where no keychain answers, as on
-headless Linux, or with `--inline`, it writes the key itself, as
-`agent.key = "x25519:<base64>"`, and says why. Either way it sets the file's
-mode to `0600`. It refuses when `agent.key` is already set; run
-`key remove` first to make a new key, which no message sealed to the old
-key can be opened with.
+`~/.projector.toml` as `agent.key`. It sets the file's mode to `0600`. It
+refuses when `agent.key` is already set; run `key remove` first to make a
+new key, which no message sealed to the old key can be opened with.
 
-Copy the key to each of your other machines from a terminal. `key export`
-prints it as one `agent.key` line, and `key import` reads that line from
-standard input, so the key never sits in a command line or your shell
-history:
+Where no keychain answers, as on headless Linux, `key init` stores nothing
+and names the keychain's error. Pass `--inline` to write the key itself
+into `~/.projector.toml` instead, as `agent.key = "x25519:<base64>"`, where
+every process running as you can read it. `key join` takes `--inline` too.
 
-```sh
-project agent key export        # on the first machine
-project agent key import        # on the other machine; paste the line
-```
+Copy the key to each of your other machines with `key join` and
+`key grant`, both in a terminal. Nothing either one prints is secret, so
+nothing you copy between the two terminals can leak the key:
+
+1. On the new machine, run `project agent key join`. It makes a temporary
+   key pair that lives only in its own memory, and prints a command to run
+   on a machine that has the key, with a fingerprint:
+
+   ```console
+   $ project agent key join
+   On a machine that has the relay key, run this in a terminal:
+
+     project agent key grant pj1-laptop-Zx8k2Q...Qm9w
+
+   Request fingerprint: K7Q-4MD-9XP
+   Paste the line it prints here:
+   ```
+
+2. Paste that command into a terminal on a machine that has the key.
+   `key grant` shows the request's machine and fingerprint; check that the
+   fingerprint is the one `join` printed. On `y`, it encrypts the key to the
+   request's temporary public key and prints one line:
+
+   ```console
+   $ project agent key grant pj1-laptop-Zx8k2Q...Qm9w
+   Request from laptop, fingerprint K7Q-4MD-9XP.
+   Encrypt key 3f2a9c1d7e4b6a05 to it? [y/N] y
+   Paste this line into the waiting `project agent key join`:
+
+     pk1-eyJ2IjoxLCJzZW5kZXIiOi...
+
+   Key 3f2a9c1d7e4b6a05
+   ```
+
+3. Paste the line into the waiting `join`. It opens the line with the
+   temporary private key, checks that the key the line carries is the key
+   that encrypted it, and asks you to confirm the key ID that `grant`
+   printed. On `y`, it stores the key as `key init` does:
+
+   ```console
+   Key 3f2a9c1d7e4b6a05. Does the other machine show the same key? [y/N] y
+   key 3f2a9c1d7e4b6a05 stored in the macOS Keychain; ~/.projector.toml names it as agent.key = "keychain:3f2a9c1d7e4b6a05"
+   ```
+
+`join` waits at most 30 minutes for the line, and Ctrl-C stops it at any
+point. When it stops, times out, or refuses a line, it stores nothing, and
+the temporary key goes with the process. It refuses a line encrypted to
+another request, a line changed on the way, and any text other than a line
+`key grant` prints. It refuses when `agent.key` is already set, unless you
+pass `--replace`, which deletes the old key's keychain item once the new
+key is stored.
 
 Both commands refuse unless standard input and output are a terminal,
-because an agent's command output lands in its transcript. `key import`
-stores the key as `key init` does, takes `--inline`, and refuses to replace a
-different key unless you pass `--replace`.
+because an agent's command output lands in its transcript. `grant` encrypts
+the key to any request it is given, so run it only for a request you made
+with `join` and whose fingerprint matches.
 
 | Command | What it does |
 | --- | --- |
@@ -3459,7 +3503,7 @@ Projector reads `agent.key` only from `~/.projector.toml`. A checkout's
 `.projector.toml` that sets it is ignored with a warning, so a repository
 cannot plant a key its author knows. Projector refuses an inline key in a
 file other accounts can read or change, and names the `chmod` that fixes it.
-`project config set agent.key` refuses and names `key import`. Every other
+`project config set agent.key` refuses and names `key join`. Every other
 command shows an inline key as `<redacted, key ID <id>>`, including
 `config list` and `config get agent`, which print the table that holds it.
 A `keychain:<id>` value holds no secret and prints as it is.

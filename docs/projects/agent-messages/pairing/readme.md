@@ -1,5 +1,5 @@
 ---
-status: ready
+status: completed
 priority: now
 ---
 
@@ -75,7 +75,7 @@ back to an inline key unless you pass `--inline`.
    ```console
    $ project agent key grant pj1-laptop-Zx8k2Q...Qm9w
    Request from laptop, fingerprint K7Q-4MD-9XP.
-   Seal key 3f2a9c1d7e4b6a05 to it? [y/N] y
+   Encrypt key 3f2a9c1d7e4b6a05 to it? [y/N] y
    Paste this line into the waiting `project agent key join`:
 
      pk1-eyJ2IjoxLCJzZW5kZXIiOi...
@@ -212,3 +212,68 @@ It touches no daemon path and no relay pass.
   the sender's public key with the plaintext after checking the tag. A
   record sealed by the relay key to the temporary public key therefore
   proves to `join` that its sealer held the key it carries.
+
+## 7. Implementation notes
+
+Building the commands settled these details, which § 2 left open or which
+changed in the building:
+
+- **Words a person reads say "encrypt".** `grant` asks `Encrypt key <id>
+  to it? [y/N]` rather than "Seal", and its errors, `join`'s errors, the
+  `message` skill, and the README say "encrypted". Code identifiers, the
+  record format, and the relay section of `docs/cli.md` keep "sealed",
+  which that section defines.
+- **One reader serves every answer.** `join` and `grant` read each line
+  from standard input's file descriptor, a byte at a time, on a daemon
+  thread, while the command waits on it with a deadline. Nothing after the
+  line is consumed, a read that never returns cannot keep the process
+  alive, and reading stops and refuses a line once it passes 4,096 bytes.
+  `grant`'s question has the same 30-minute limit as `join`'s wait.
+- **Exit codes.** A refusal exits 65, as other relay errors do. Ctrl-C in
+  `join` prints `stopped, so nothing was stored` and exits 130. Running
+  either command without a terminal exits 69, and `key export` or
+  `key import` exits 2, the usage-error status, with a message that names
+  `key join`. Both old names stay as hidden subcommands so the message can
+  name the replacement whatever arguments follow them.
+- **`join` checks the keychain twice.** Before it prints a request, it asks
+  `keychain.usable()`, a new function in `src/projector/keychain.py`, whether
+  the keychain's tool or library is there. A keychain that is present but
+  refuses the store, such as a locked Secret Service, is found only when
+  `join` stores the key, and then `join` stores nothing and names
+  `--inline`, as `init` does.
+- **`--replace` stores before it deletes.** `join --replace` stores the new
+  key first and only then deletes the old key's keychain item, so a store
+  that fails leaves the old key in place. `join` refuses any `agent.key`
+  without `--replace`, even one holding the same key.
+- **The machine label falls back to `machine`** when the host name has no
+  letter, digit, or hyphen left after it is reduced.
+- **`join` takes no `--json`.** It is interactive, and the old `import`'s
+  JSON output has no caller.
+
+## 8. Outcome
+
+Shipped. `project agent key join` and `project agent key grant` replace
+`key export` and `key import`, which are now usage errors that name
+`key join`, and `key init` and `key join` store a key inline only with
+`--inline`. § 7 records where the commands differ in detail from § 2.
+
+Each criterion in § 4 is a test in `PairingTests` in `tests/test_relay.py`,
+and each was seen to fail with the fault it names introduced:
+
+| Criterion | Test |
+| --- | --- |
+| Round trip | `test_join_and_grant_copy_the_key_through_two_terminals_into_the_new_machines_keychain`, with `join` on a pseudo-terminal |
+| Every byte and argument | `test_no_byte_join_or_grant_writes_and_no_argument_of_a_process_they_start_holds_the_key`, which records every process `join` and `grant` start |
+| Lines for another request, altered, or of another kind | `test_a_line_for_another_request_altered_or_of_another_kind_is_refused_and_stores_nothing` |
+| Another key, denied | `test_a_line_another_key_encrypted_to_the_request_is_not_stored_when_its_key_id_is_denied` |
+| Sender is not the key carried | `test_a_line_whose_key_did_not_encrypt_it_is_refused_before_the_question` |
+| `grant` without a yes | `test_grant_prints_no_line_unless_the_answer_is_yes`, with `test_grant_refuses_a_request_of_another_kind_version_or_length` for the request's format |
+| No terminal | `test_join_and_grant_refuse_without_a_terminal_on_standard_input_and_output` |
+| Ctrl-C and timeout | `test_join_stores_nothing_and_writes_no_file_when_interrupted_or_out_of_time`, with `join` on a pseudo-terminal |
+| `--replace` | `test_join_replaces_a_key_this_machine_holds_only_with_replace` |
+| No keychain, with and without `--inline` | `test_init_and_join_store_the_key_inline_only_with_inline_when_no_keychain_answers`, with `KeyTests.test_the_linux_backend_stores_through_standard_input_and_init_stores_nothing_when_it_cannot` for a keychain that fails or hangs |
+| `key export`, `key import`, and `config set agent.key` | `test_the_old_ways_to_copy_or_set_the_key_are_refused_and_name_key_join` |
+
+Pairing a second machine by hand and confirming that messages flow is a
+check only the user can run after the merge, on two of their own machines.
+Record its result here once it runs.

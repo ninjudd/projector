@@ -9,10 +9,12 @@ import importlib.metadata as metadata
 import io
 import json
 import os
+import queue
 import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -23,7 +25,8 @@ from typing import NamedTuple, Optional
 from urllib.parse import urlparse
 from urllib.request import Request, url2pathname, urlopen
 
-from . import agents, codex_watch, inbox, instructions, ios, loop, permissions, relay, review, site, summary, watch
+from . import (agents, codex_watch, crypto, inbox, instructions, ios, loop, permissions, relay, review, site, summary,
+               watch)
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
@@ -1285,6 +1288,13 @@ def add_watch_parser(subcommands) -> None:
     command("stop", "ask the watch daemon to exit", session=False)
 
 
+REMOVED_KEY_COMMANDS = ("export", "import")
+JOIN_TIMEOUT = 30 * 60.0
+# A line `key grant` prints is 318 characters, so a longer paste is something else.
+MAX_PASTE = 4096
+STORED_NOTHING = "nothing was stored"
+
+
 def add_agent_parser(subcommands) -> None:
     parser = subcommands.add_parser("agent", help="register the session under a name and a summary, list your "
                                                    "registered sessions, and message them")
@@ -1318,31 +1328,101 @@ def add_agent_parser(subcommands) -> None:
 
     key = commands.add_parser("key", help="make, show, copy, and remove the key that lets the relay carry "
                                           "messages between your machines")
-    keys = key.add_subparsers(dest="key_command", required=True)
+    keys = key.add_subparsers(dest="key_command", required=True, metavar="{init,show,join,grant,remove}")
     init = keys.add_parser("init", help="make the relay's key and store it in the OS keychain, or inline in "
-                                        f"~/{CONFIG_NAME} where there is none")
+                                        f"~/{CONFIG_NAME} with --inline")
     init.add_argument("--inline", action="store_true", help=f"store the key inline in ~/{CONFIG_NAME}")
     add_output(init)
     add_output(keys.add_parser("show", help="print the key's ID, its public key, and where it is stored"))
-    keys.add_parser("export", help="print the key as an agent.key line to copy to another machine; terminal only")
-    imported = keys.add_parser("import", help="read an agent.key line from standard input and store the key; "
-                                              "terminal only")
-    imported.add_argument("--inline", action="store_true", help=f"store the key inline in ~/{CONFIG_NAME}")
-    imported.add_argument("--replace", action="store_true", help="replace a different key this machine holds")
-    add_output(imported)
+    join = keys.add_parser("join", help="copy the key from another of your machines, which runs the command this "
+                                        "prints; terminal only")
+    join.add_argument("--inline", action="store_true", help=f"store the key inline in ~/{CONFIG_NAME}")
+    join.add_argument("--replace", action="store_true", help="replace the key this machine holds")
+    grant = keys.add_parser("grant", help="encrypt this machine's key to a request `key join` printed on another "
+                                          "machine; terminal only")
+    grant.add_argument("request", help="the pj1- request `key join` printed")
     keys.add_parser("remove", help="delete agent.key and its keychain item, which turns the relay off here")
+    for removed in REMOVED_KEY_COMMANDS:
+        # No help, so help lists none of them; a prefix no argument starts with takes any arguments they had.
+        keys.add_parser(removed, add_help=False, prefix_chars="\0").add_argument("ignored", nargs="*")
+
+
+def terminal_line(prompt: str, deadline: float, outcome: str) -> str:
+    """A line typed at the terminal by `deadline`, of at most `MAX_PASTE` bytes, or an error that ends with
+    `outcome`, such as "nothing was stored". A thread reads standard input's file descriptor a byte at a time, so a
+    read that never returns cannot hold the process, and no byte after the line is consumed."""
+    print(prompt, end="", flush=True)
+    stream = sys.stdin.fileno()
+    lines: queue.Queue = queue.Queue()
+
+    def read() -> None:
+        data = bytearray()
+        try:
+            while len(data) <= MAX_PASTE and (byte := os.read(stream, 1)) not in (b"", b"\n"):
+                data += byte
+        except OSError:
+            pass
+        lines.put(bytes(data))
+
+    threading.Thread(target=read, name="terminal", daemon=True).start()
+    try:
+        data = lines.get(timeout=max(0.0, deadline - time.monotonic()))
+    except queue.Empty:
+        raise relay.RelayError(f"nothing was entered within {JOIN_TIMEOUT / 60:g} minutes, so {outcome}") from None
+    if len(data) > MAX_PASTE:
+        raise relay.RelayError(f"the line is longer than {MAX_PASTE} bytes, so {outcome}")
+    return data.decode("utf-8", "replace").strip()
+
+
+def confirmed(prompt: str, deadline: float, outcome: str) -> bool:
+    return terminal_line(prompt, deadline, outcome).lower() in ("y", "yes")
+
+
+def join_key(root: Path, arguments: argparse.Namespace) -> tuple[str, str, str]:
+    """Make a request for the relay key, read the line `key grant` prints for it, and store the key it carries.
+    The temporary private key lives only in this function."""
+    relay.check_join(inline=arguments.inline, replace=arguments.replace)
+    deadline = time.monotonic() + JOIN_TIMEOUT
+    private = crypto.new_private_key()
+    request = relay.make_request(private, socket.gethostname())
+    print(f"On a machine that has the relay key, run this in a terminal:\n\n  project agent key grant {request}\n\n"
+          f"Request fingerprint: {relay.fingerprint(crypto.public_key(private))}")
+    key = relay.accept_line(private, terminal_line("Paste the line it prints here: ", deadline, STORED_NOTHING))
+    key_id = crypto.key_id(crypto.public_key(key))
+    if not confirmed(f"Key {key_id}. Does the other machine show the same key? [y/N] ", deadline,
+                     STORED_NOTHING):
+        raise relay.RelayError(f"key {key_id} was not confirmed, so {STORED_NOTHING}")
+    return relay.join_key(root, key, inline=arguments.inline, replace=arguments.replace)
+
+
+def grant_key(request: str) -> int:
+    label, public = relay.parse_request(request)
+    value = relay.configured()
+    if not value:
+        raise relay.RelayError("this machine holds no relay key to grant; run `project agent key grant` on a "
+                               "machine whose `project agent key show` prints one")
+    print(f"Request from {label}, fingerprint {relay.fingerprint(public)}.")
+    outcome = "nothing was encrypted"
+    if not confirmed(f"Encrypt key {relay.value_id(value)} to it? [y/N] ", time.monotonic() + JOIN_TIMEOUT, outcome):
+        raise relay.RelayError(f"not confirmed, so {outcome}")
+    key = relay.read_key(value)
+    print(f"Paste this line into the waiting `project agent key join`:\n\n  {relay.grant_line(key, public)}\n\n"
+          f"Key {key.id}")
+    return 0
 
 
 def run_agent_key(arguments: argparse.Namespace) -> int:
     root = watch.state_root()
     command = arguments.key_command
-    if command in ("export", "import") and not (sys.stdin.isatty() and sys.stdout.isatty()):
-        raise EnvironmentError(f"`project agent key {command}` handles the key itself, so it runs only with a "
-                               "terminal on standard input and output, where no agent's transcript records it; run "
+    if command in REMOVED_KEY_COMMANDS:
+        raise UsageError(f"`project agent key {command}` is gone, because the key it copied showed on the screen; "
+                         "run `project agent key join` in a terminal on the machine that needs the key")
+    if command in ("join", "grant") and not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise EnvironmentError(f"`project agent key {command}` handles the key, so it runs only with a terminal on "
+                               "standard input and output, where no agent can run it; run "
                                f"`project agent key {command}` yourself in a terminal")
-    if command == "export":
-        print(relay.export_line())
-        return 0
+    if command == "grant":
+        return grant_key(arguments.request)
     if command == "show":
         shown = relay.show_key()
         if arguments.json_output:
@@ -1356,16 +1436,18 @@ def run_agent_key(arguments: argparse.Namespace) -> int:
         print(f"removed key {removed} from {user_config_path()}; {found}. The relay is off on this machine, and "
               "the watch daemon deletes this machine's agents' refs on its next pass")
         return 0
-    if command == "init":
-        key_id, store, reason = relay.init_key(root, inline=arguments.inline)
-    else:
-        print("Paste the agent.key line that `project agent key export` printed:", file=sys.stderr, flush=True)
-        key_id, store, reason = relay.import_key(root, sys.stdin.readline(), inline=arguments.inline,
-                                                 replace=arguments.replace)
     path = user_config_path()
-    if arguments.json_output:
-        print(json_text({"key_id": key_id, "store": store, "reason": reason, "file": str(path)}))
-        return 0
+    if command == "join":
+        try:
+            key_id, store, reason = join_key(root, arguments)
+        except KeyboardInterrupt:
+            print(f"\nproject: stopped, so {STORED_NOTHING}", file=sys.stderr)
+            return 130
+    else:
+        key_id, store, reason = relay.init_key(root, inline=arguments.inline)
+        if arguments.json_output:
+            print(json_text({"key_id": key_id, "store": store, "reason": reason, "file": str(path)}))
+            return 0
     where = (f"stored inline in {path}, mode 0600, because {reason}" if store == "inline"
              else f"stored in the {store}; {path} names it as agent.key = \"keychain:{key_id}\"")
     print(f"key {key_id} {where}")
@@ -1761,8 +1843,8 @@ def report_override(arguments: argparse.Namespace, change: Change) -> None:
 def change_config(arguments: argparse.Namespace) -> int:
     if arguments.config_command == "set" and arguments.key in SECRETS:
         raise UsageError(f"{arguments.key} holds the relay's private key, which a command line would show; run "
-                         "`project agent key import` in a terminal to set it, or `project agent key init` to make "
-                         "a key")
+                         "`project agent key join` in a terminal to copy a key from another machine, or "
+                         "`project agent key init` to make one")
     path = config_file(arguments)
     if arguments.config_command == "set":
         change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value))
