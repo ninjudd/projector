@@ -1,0 +1,89 @@
+{
+ "version": 1,
+ "name": "Link preview typography",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 512,
+  "title": "Set projector.bot's link preview in the site's own fonts",
+  "head": "8d60e02093728d64c4f019d7d7812c88af3719c3",
+  "headRef": "og-image-display-font",
+  "base": "e7ceafdac83e0b25805277288c34b98ae2fc4953",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Open Graph card, the image chat and social apps show for a link, now uses the website’s own fonts. Its headline uses Instrument Serif with an orange italic second line, while the wordmark, subtitle, and footer use Geist.",
+   "The four font files are read during the production build. The image remains a static 1200 × 630 PNG. Two subtitle lines identify the framework and explain the decisions you keep control of."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Typography and gate checks",
+    "html": "<p>Production build, web type-checking, lint, and visual inspection passed for the unchanged renderer and font inputs. The license’s trailing space is fixed, and the base-wide whitespace check now passes.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "preview",
+   "title": "Render the preview in the site’s fonts",
+   "kicker": "Local font faces and the Open Graph card",
+   "intro": [
+    "The website loads its display font through <code>next/font</code>. The Open Graph renderer takes font bytes separately, so this change supplies local TrueType files for regular and italic Instrument Serif and regular and semibold Geist.",
+    "The headline is split into two lines. The second uses the same orange italic treatment as the homepage. Two supporting lines identify the framework and describe the decisions you make. The build prerenders the card; visitors receive the resulting PNG."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "web/app/opengraph-image.tsx",
+     "note": "The four reads run together, and the font options explicitly associate each face with its weight and style.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Built the production route and inspected its 1200 × 630 PNG: the first headline stays on one line, the second is orange italic, and the supporting text and footer are fully visible."
+      }
+     ]
+    },
+    {
+     "path": "web/assets/fonts/Geist-OFL.txt",
+     "collapsed": true,
+     "note": "The Geist font license accompanies both redistributed font faces.",
+     "checks": []
+    },
+    {
+     "path": "web/assets/fonts/Geist-Regular.ttf",
+     "collapsed": true,
+     "checks": []
+    },
+    {
+     "path": "web/assets/fonts/Geist-SemiBold.ttf",
+     "collapsed": true,
+     "checks": []
+    },
+    {
+     "path": "web/assets/fonts/InstrumentSerif-Italic.ttf",
+     "collapsed": true,
+     "checks": []
+    },
+    {
+     "path": "web/assets/fonts/InstrumentSerif-OFL.txt",
+     "collapsed": true,
+     "note": "The Instrument Serif license accompanies its regular and italic faces.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 21,
+       "text": "Verified the fix removes only the trailing space without changing the license wording; git diff --check now passes against the merge base."
+      }
+     ]
+    },
+    {
+     "path": "web/assets/fonts/InstrumentSerif-Regular.ttf",
+     "collapsed": true,
+     "checks": []
+    }
+   ]
+  }
+ ]
+}
