@@ -9,6 +9,7 @@ export const DOCS = {
   site: `${GITHUB}/blob/main/docs/site.md`,
   panel: `${GITHUB}/blob/main/docs/plugins.md#see-your-sessions-pull-requests-in-projectors-panel`,
   inbox: `${GITHUB}/blob/main/docs/cli.md#use-the-inbox`,
+  inboxPanel: `${GITHUB}/blob/main/docs/plugins.md#read-your-inbox-in-projectors-panel`,
   watch: `${GITHUB}/blob/main/docs/cli.md#watch-pull-requests`,
   agents: `${GITHUB}/blob/main/docs/cli.md#message-other-agents`,
   worktree: `${GITHUB}/blob/main/docs/cli.md#find-a-branchs-worktree`,
@@ -17,6 +18,7 @@ export const DOCS = {
   work: `${GITHUB}/blob/main/skills/work/SKILL.md`,
   cleanup: `${GITHUB}/blob/main/skills/cleanup/SKILL.md`,
   reviewPr: `${GITHUB}/blob/main/skills/review-pr/SKILL.md`,
+  summarizePr: `${GITHUB}/blob/main/skills/summarize-pr/SKILL.md`,
   writing: `${GITHUB}/blob/main/skills/writing.md`,
   testing: `${GITHUB}/blob/main/skills/testing.md`,
   convention: `${GITHUB}/blob/main/docs/projects/README.md`,
@@ -28,6 +30,12 @@ export const DOCS = {
 
 // Projector's own Projector site, which its repository deploys from main.
 export const PROJECTOR_SITE = "https://ninjudd.com/projector/";
+
+// The summary the front page shows, on Projector's own site.
+export const SUMMARY_EXAMPLE = {
+  page: `${PROJECTOR_SITE}reviews/497/`,
+  index: `${PROJECTOR_SITE}reviews/`,
+};
 
 // The example on the front page is a real project in audiofield/field.
 const FIELD = "https://github.com/audiofield/field";

@@ -7,7 +7,7 @@ import { DOCS } from "@/lib/links";
 const parts: { title: string; invoke: string; body: ReactNode; href: string; link: string }[] = [
   {
     title: "Work while you are away",
-    invoke: "/projector:work finish the retry plan",
+    invoke: "/work finish the retry plan",
     body: (
       <>
         The session makes each decision that has a reasonable answer itself. It posts the ones you
@@ -36,7 +36,7 @@ const parts: { title: string; invoke: string; body: ReactNode; href: string; lin
   },
   {
     title: "Clean up when you are done",
-    invoke: "/projector:cleanup",
+    invoke: "/cleanup",
     body: (
       <>
         The session checks each thing you asked for against evidence that it was delivered, such

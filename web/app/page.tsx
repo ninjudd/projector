@@ -6,6 +6,7 @@ import { Loop } from "@/components/sections/loop";
 import { Panel } from "@/components/sections/panel";
 import { Sessions } from "@/components/sections/sessions";
 import { Site } from "@/components/sections/site";
+import { Summaries } from "@/components/sections/summaries";
 import { Tools } from "@/components/sections/tools";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
@@ -16,8 +17,9 @@ export default function Home() {
       <SiteHeader />
       <main id="main" className="flex-1">
         <Hero />
-        <Loop />
         <Panel />
+        <Summaries />
+        <Loop />
         <Create />
         <Example />
         <Sessions />

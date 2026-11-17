@@ -19,9 +19,8 @@ const parts: { title: string; body: ReactNode }[] = [
     title: "Reviews",
     body: (
       <>
-        A guided summary of each pull request that <Code>review-pr</Code> reviews, written by the{" "}
-        <Code>summarize-pr</Code> skill, one for each head the pull request reaches. The review
-        links to it.
+        The summaries shown above, one for each head a pull request reaches, listed with the
+        state of each pull request&rsquo;s review.
       </>
     ),
   },

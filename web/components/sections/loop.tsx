@@ -7,7 +7,7 @@ import { DOCS } from "@/lib/links";
 const steps: { title: string; invoke: string; body: ReactNode }[] = [
   {
     title: "Spec it",
-    invoke: "/projector:spec a count-in before each take",
+    invoke: "/spec a count-in before each take",
     body: (
       <>
         The agent reads the repository and its existing projects, asks only what the code cannot
@@ -19,7 +19,7 @@ const steps: { title: string; invoke: string; body: ReactNode }[] = [
   },
   {
     title: "Build it",
-    invoke: "/projector:implement count-in",
+    invoke: "/implement count-in",
     body: (
       <>
         A later session starts from the plan, not from the earlier conversation. It builds the
@@ -31,11 +31,12 @@ const steps: { title: string; invoke: string; body: ReactNode }[] = [
   },
   {
     title: "Review it",
-    invoke: "/projector:review-repo",
+    invoke: "/review-repo",
     body: (
       <>
         Another session reviews each pull request once it is ready. It checks out the exact head,
-        reads the change against the plan and the repository&rsquo;s rules, and posts one review.
+        reads the change against the plan and the repository&rsquo;s rules, and posts one review,
+        linked to a summary of the change.
         A clean review labels the pull request <Code>clean</Code>. The next push removes the label,
         so each new head waits for its own review.
       </>
@@ -56,7 +57,7 @@ const steps: { title: string; invoke: string; body: ReactNode }[] = [
   },
   {
     title: "You decide what merges",
-    invoke: "/projector:finish count-in",
+    invoke: "/finish count-in",
     body: (
       <>
         Projector opens pull requests and never merges them. You read the plan, the review, and its

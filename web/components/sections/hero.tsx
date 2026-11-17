@@ -63,8 +63,8 @@ export function Hero() {
             Projector gives Claude Code and Codex a workflow for a whole project. Agents write the
             plan into the repository, build it, review each other&rsquo;s pull requests, and fix
             what the reviews find. You review the plan, answer the questions only you can, and
-            decide what merges. A panel above your prompt shows every pull request and every
-            question that waits for you.
+            decide what merges. Every question waits for you in a panel above your prompt, and
+            every pull request comes with a summary that walks you through the change.
           </p>
           <div className="mt-8 max-w-xl">
             <Command text={INSTALL.script} />
@@ -100,7 +100,13 @@ export function Hero() {
           <Panel caption="Claude Code · Projector's panel" lines={lines} />
           <p className="mt-3 text-sm text-muted">
             An example of the panel. Each row is a pull request and its state. Below the rows, a
-            question and a request wait in your inbox while the agents keep working.
+            question and a request wait in your inbox while the agents keep working.{" "}
+            <a
+              href="#panel"
+              className="text-fg underline decoration-line-strong underline-offset-4 transition-colors hover:text-accent"
+            >
+              Try a working one below.
+            </a>
           </p>
         </div>
       </div>

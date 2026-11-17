@@ -32,8 +32,9 @@ const rows: { title: string; body: ReactNode; commands: string[] }[] = [
     title: "Claude Code",
     body: (
       <>
-        Adds the repository as a plugin marketplace and installs the plugin for your user. Skills
-        are invoked as <Code>/projector:&lt;skill&gt;</Code>.
+        Adds the repository as a plugin marketplace and installs the plugin for your user. Invoke a
+        skill by its name, such as <Code>/spec</Code>. When another plugin has a skill of the same
+        name, use the full name, such as <Code>/projector:spec</Code>.
       </>
     ),
     commands: INSTALL.claude,

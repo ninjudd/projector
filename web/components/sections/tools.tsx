@@ -26,7 +26,7 @@ const tools: {
   },
   {
     title: "Write prose people can read",
-    command: "/projector:rewrite the install section of the README",
+    command: "/rewrite the install section of the README",
     body: (
       <>
         Every plan, review, summary, and pull request body follows one writing guide.{" "}
@@ -39,7 +39,7 @@ const tools: {
   },
   {
     title: "Write tests that catch bugs",
-    command: "/projector:write-tests audit tests/test_site.py",
+    command: "/write-tests audit tests/test_site.py",
     body: (
       <>
         Each test names the bug it catches. <Code>write-tests</Code> writes those tests, and deletes
