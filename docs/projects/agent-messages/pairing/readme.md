@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -249,3 +249,31 @@ changed in the building:
   letter, digit, or hyphen left after it is reduced.
 - **`join` takes no `--json`.** It is interactive, and the old `import`'s
   JSON output has no caller.
+
+## 8. Outcome
+
+Shipped. `project agent key join` and `project agent key grant` replace
+`key export` and `key import`, which are now usage errors that name
+`key join`, and `key init` and `key join` store a key inline only with
+`--inline`. § 7 records where the commands differ in detail from § 2.
+
+Each criterion in § 4 is a test in `PairingTests` in `tests/test_relay.py`,
+and each was seen to fail with the fault it names introduced:
+
+| Criterion | Test |
+| --- | --- |
+| Round trip | `test_join_and_grant_copy_the_key_through_two_terminals_into_the_new_machines_keychain`, with `join` on a pseudo-terminal |
+| Every byte and argument | `test_no_byte_join_or_grant_writes_and_no_argument_of_a_process_they_start_holds_the_key`, which records every process `join` and `grant` start |
+| Lines for another request, altered, or of another kind | `test_a_line_for_another_request_altered_or_of_another_kind_is_refused_and_stores_nothing` |
+| Another key, denied | `test_a_line_another_key_encrypted_to_the_request_is_not_stored_when_its_key_id_is_denied` |
+| Sender is not the key carried | `test_a_line_whose_key_did_not_encrypt_it_is_refused_before_the_question` |
+| `grant` without a yes | `test_grant_prints_no_line_unless_the_answer_is_yes`, with `test_grant_refuses_a_request_of_another_kind_version_or_length` for the request's format |
+| No terminal | `test_join_and_grant_refuse_without_a_terminal_on_standard_input_and_output` |
+| Ctrl-C and timeout | `test_join_stores_nothing_and_writes_no_file_when_interrupted_or_out_of_time`, with `join` on a pseudo-terminal |
+| `--replace` | `test_join_replaces_a_key_this_machine_holds_only_with_replace` |
+| No keychain, with and without `--inline` | `test_init_and_join_store_the_key_inline_only_with_inline_when_no_keychain_answers`, with `KeyTests.test_the_linux_backend_stores_through_standard_input_and_init_stores_nothing_when_it_cannot` for a keychain that fails or hangs |
+| `key export`, `key import`, and `config set agent.key` | `test_the_old_ways_to_copy_or_set_the_key_are_refused_and_name_key_join` |
+
+Pairing a second machine by hand and confirming that messages flow is a
+check only the user can run after the merge, on two of their own machines.
+Record its result here once it runs.
