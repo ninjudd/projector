@@ -1,0 +1,52 @@
+{
+ "version": 1,
+ "name": "projector.bot panel spacing",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 504,
+  "title": "Set the projector.bot panel's lines as close together as a terminal's",
+  "head": "0c701ccfb93fab40691ea8a540faa9291c9913d7",
+  "headRef": "site-drawer-spacing",
+  "base": "d967f15c269a77a042d11c709cd07bb8cd686765",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The projector.bot home page shows a working copy of Projector's panel, the list of pull requests and inbox items that Projector draws above the prompt in Claude Code. Under it sits a copy of the prompt box, which the panel's options fill in. Both are drawn in a monospace font, as a terminal draws them.",
+   "Before this change the page set the panel's lines 24px apart at a 12px font, twice the font size. A terminal sets its lines about 1.2 to 1.3 times the font size apart, so the copy looked much looser than the real panel. The change sets the panel's line height to 1.3, which is 15.6px, and the prompt box's to 1.35, which is 16.875px at its 12.5px font. Nothing else moves. The blank lines the real panel draws, such as the one under an open item's top line, are still there, at the new, shorter height.",
+   "The review found one problem. The prompt box's blinking cursor is 16px tall and stands on the text's baseline. At the new line height it no longer fits, so the line it sits on, which is always the prompt's last line, comes out about 4px taller than the others."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "line-height",
+   "title": "Tighter lines in the panel and the prompt box",
+   "kicker": "Two line-height classes in the demo component",
+   "intro": [
+    "<code>InboxDemo</code> in <code>web/components/inbox-demo.tsx</code> draws the panel and the prompt box. Each is one <code>div</code> whose Tailwind classes set the font size and line height, and every line inside inherits them. This pull request changes only those two classes: <code>leading-6</code>, a fixed 24px, becomes <code>leading-[1.3]</code> on the panel and <code>leading-[1.35]</code> on the prompt box.",
+    "The pull request has two commits. The first also removed the blank line under an open item's top line, and the second put it back, so the net diff is the two classes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "web/components/inbox-demo.tsx",
+     "note": "The panel and the prompt box each get a line height relative to their font size in place of a fixed 24px.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Every panel row measures 15.6px, blank lines included. The review measured this in headless Chrome on a build of this head. A blank line is a <code>block</code> span that holds one space under <code>whitespace-pre</code>, so it keeps a full line. The row buttons inherit the line height through Tailwind's base styles, so a row's hover highlight still covers its whole line.",
+       "line": 851
+      },
+      {
+       "kind": "flag",
+       "text": "Open review finding: the prompt's last line sits about 4px lower than its other lines. The cursor (<code>h-4</code>, 16px, on the baseline) is taller than the roughly 12px the new line leaves above the baseline, so it stretches its own line to 20.9px. Replacing <code>translate-y-0.5</code> with <code>align-middle</code> on the cursor brings every line back to 16.875px in Chrome.",
+       "line": 875
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
