@@ -884,7 +884,7 @@ export function InboxDemo() {
                 you to send.
               </span>
             )}
-            <span className="ml-px inline-block h-4 w-2 translate-y-0.5 animate-pulse bg-[#e8e6e3]/70" />
+            <span className="ml-px inline-block h-[1.1em] w-2 align-middle animate-pulse bg-[#e8e6e3]/70" />
           </span>
         </div>
       </div>
