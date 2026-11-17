@@ -114,8 +114,8 @@ has ever carried:
 ## Find a peer
 
 `project agent list` prints each live registered session signed in to the
-same GitHub login: its name, or the first 8 characters of its ID when it
-has none, its host and model, its machine, its repository and branch, how
+same GitHub login: its name, or the last group of its ID when it has
+none, its host and model, its machine, its repository and branch, how
 long ago its record changed, and its summary. It marks this session
 `(you)`. `--all` adds lapsed sessions, and `--json` prints the records.
 Choose the session whose summary matches what you need to ask.
@@ -132,8 +132,10 @@ machine's daemon delivers it on its next poll.
 project agent send test-writer "Which error type should the parser raise on a truncated header?"
 ```
 
-Address the peer by its name, or by its full session ID. Pass `-` as the
-text to read a longer message from standard input. A message holds at most
+Address the peer by its name, its full session ID, or the short ID `list`
+shows for it. When two live sessions share that short ID, `send` refuses
+and names both full IDs, so pass the full ID or a name instead. Pass `-` as
+the text to read a longer message from standard input. A message holds at most
 16 KiB, and it can span several lines.
 
 - **Ask one clear question or give one clear piece of news.** Say what you

@@ -123,7 +123,7 @@ class RegisterTests(AgentCase):
 
         self.assertEqual(0, code, err)
         self.assertEqual("local only: no agent.key is set; run `project agent key init` to make one\n"
-                         "b5e6f7a8\tcodex\tlaptop\tacme/app feature\t1m ago\tWriting the parser's tests\n"
+                         "00000000000b\tcodex\tlaptop\tacme/app feature\t1m ago\tWriting the parser's tests\n"
                          f"parser-refactor (you)\tclaude {MODEL}\tlaptop\tacme/app feature\t1m ago\t"
                          "Refactoring the parser\n", out)
 
@@ -363,6 +363,119 @@ class MessageTests(AgentCase):
         [message_id] = self.message_ids(A)
         self.assertEqual("Which error type?", read_json(self.folder(A) / "messages" / f"{message_id}.json")["text"])
         self.assertEqual([], self.events(A))
+
+
+# Two Codex session IDs, UUIDv7s whose shared first 8 characters are the creation time.
+EARLY = "01a1e770-79df-7340-90dc-11d1a9295838"
+LATE = "01a1e770-94fa-7cb0-99b6-a659f011e432"
+
+
+class ShortIdTests(AgentCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.git_checkout()
+        self.codex(EARLY)
+        self.register(EARLY, "--summary", "Reviewing acme/app pull requests")
+
+    def join_late(self) -> None:
+        self.codex(LATE)
+        self.register(LATE, "--summary", "Writing the parser's tests")
+
+    def test_two_codex_sessions_started_within_a_minute_list_under_different_labels(self) -> None:
+        self.join_late()
+
+        code, out, err = self.project("list", "--session", EARLY)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(["11d1a9295838 (you)\tcodex\tlaptop\tacme/app feature\t0s ago\t"
+                          "Reviewing acme/app pull requests",
+                          "a659f011e432\tcodex\tlaptop\tacme/app feature\t0s ago\tWriting the parser's tests"],
+                         out.splitlines()[1:])
+
+    def test_a_message_between_two_codex_sessions_sharing_a_prefix_names_each_by_its_own_label(self) -> None:
+        self.join_late()
+
+        code, out, err = self.send(EARLY, LATE, "Which error type?")
+        [message_id] = self.message_ids(LATE)
+        [line] = [item["line"] for item in codex.queued(self.folder(LATE))]
+        read_code, read_out, read_err = self.project("read", message_id, "--session", LATE)
+
+        self.assertEqual((0, 0), (code, read_code), err + read_err)
+        self.assertEqual(f"Sent {message_id} to a659f011e432 (codex); delivery: codex\n", out)
+        self.assertTrue(line.startswith(f"PEER MESSAGE {message_id} from 11d1a9295838 (codex). "), line)
+        self.assertTrue(read_out.startswith(f"{message_id} from 11d1a9295838 (codex) on laptop\n"), read_out)
+
+    def test_a_session_keeps_the_label_its_messages_carry_as_other_sessions_come_and_go(self) -> None:
+        self.claude(A)
+        self.register(A, "--name", "parser-refactor", "--summary", "Refactoring the parser")
+        self.send(EARLY, "parser-refactor", "Which error type?")
+        self.join_late()
+
+        [message_id] = self.message_ids(A)
+        [line] = self.events(A)
+        listed = self.project("list", claude=A)[1].splitlines()[1:]
+
+        self.assertTrue(line.startswith(f"PEER MESSAGE {message_id} from 11d1a9295838 (codex). "), line)
+        self.assertEqual(["11d1a9295838", "a659f011e432", "parser-refactor (you)"],
+                         [row.split("\t")[0] for row in listed])
+
+    def test_a_session_id_that_is_no_uuid_lists_by_its_last_12_characters(self) -> None:
+        session = "ci-runner-2026-11-16.build-417"
+        self.claude(session)
+        self.register(session, "--summary", "Running the nightly build")
+
+        listed = self.project("list", "--session", EARLY)[1].splitlines()[1:]
+
+        self.assertEqual(["11d1a9295838 (you)", "16.build-417"], [row.split("\t")[0] for row in listed])
+
+    def test_send_reaches_the_session_whose_short_id_it_is_given_in_any_case(self) -> None:
+        self.join_late()
+
+        sent = [self.send(EARLY, to, "Which error type?") for to in ("a659f011e432", "A659F011E432")]
+
+        self.assertEqual([0, 0], [code for code, _, _ in sent], [err for _, _, err in sent])
+        self.assertEqual([f"Sent {message_id} to a659f011e432 (codex); delivery: codex\n"
+                          for message_id in sorted(self.message_ids(LATE))], sorted(out for _, out, _ in sent))
+        self.assertEqual([], self.message_ids(EARLY))
+
+    def test_a_name_that_is_another_sessions_short_id_reaches_the_named_session(self) -> None:
+        self.join_late()
+        self.claude(A)
+        self.register(A, "--name", "a659f011e432", "--summary", "Refactoring the parser")
+
+        code, _, err = self.send(EARLY, "a659f011e432", "Which error type?")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(1, len(self.message_ids(A)))
+        self.assertEqual([], self.message_ids(LATE))
+
+    def test_a_short_id_two_live_sessions_share_is_refused_naming_both_and_writes_nothing(self) -> None:
+        twin = "02b2f881-1a2b-7c3d-8e4f-11d1a9295838"
+        self.codex(twin)
+        self.register(twin, "--summary", "Reviewing acme/web pull requests")
+        self.join_late()
+        before = self.files()
+
+        code, _, err = self.send(LATE, "11d1a9295838", "Which of you?")
+
+        self.assertEqual(65, code)
+        self.assertIn(f"11d1a9295838 is the short ID of 2 live sessions, {EARLY} and {twin}", err)
+        self.assertIn("pass its full session ID or its name", err)
+        self.assertEqual(before, self.files())
+
+    def test_the_short_id_of_a_lapsed_session_is_refused_as_its_full_id_is(self) -> None:
+        self.claude(C)
+        self.register(C, "--summary", "Writing the parser's docs")
+        self.now += watch.LAPSE
+        self.codex(EARLY)
+        before = self.files()
+
+        refused = [self.send(EARLY, to, "Which error type?") for to in ("00000000000C", C)]
+
+        self.assertEqual([65, 65], [code for code, _, _ in refused])
+        self.assertIn("00000000000C has lapsed", refused[0][2])
+        self.assertIn(f"{C} has lapsed", refused[1][2])
+        self.assertEqual(before, self.files())
 
 
 class SubscriberTests(AgentCase):

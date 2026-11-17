@@ -1157,6 +1157,30 @@ class LifecycleTests(RelayCase):
         self.assertEqual(65, code)
         self.assertIn("test-writer names 2 live sessions", err)
 
+    def test_a_session_on_another_machine_is_reached_by_the_short_id_list_shows_for_it(self) -> None:
+        self.one.inline_key(self.private)
+        self.two.inline_key(self.private)
+        self.one.claude(A)
+        self.two.claude(B)
+        self.one.register(A, "--name", "parser-refactor", "--summary", "Refactoring the parser")
+        self.two.register(B, "--summary", "Writing the parser's tests", "--model", "gpt-5.5")
+        self.one.run_pass()
+        self.two.run_pass()
+        self.one.run_pass()
+
+        listed = self.one.project("agent", "list", claude=A)[1].splitlines()
+        code, out, err = self.one.send(A, agents.short_id(B), "Which error type?")
+        queued = len(self.one.outbox())
+        self.one.run_pass()
+        self.two.run_pass()
+
+        self.assertIn(f"{agents.short_id(B)}\tclaude gpt-5.5\ttwo", "\n".join(listed))
+        self.assertEqual(0, code, err)
+        self.assertIn("delivery: relay (queued)", out)
+        self.assertEqual(1, queued)
+        [line] = self.two.events(B)
+        self.assertIn('"Which error type?"', line)
+
     def test_the_message_limit_counts_relayed_sends_and_a_refused_one_queues_nothing(self) -> None:
         self.pair()
         (self.one.home / ".projector.toml").write_text(
@@ -1204,7 +1228,7 @@ class LifecycleTests(RelayCase):
             self.one.run_pass()
             self.two.run_pass()
             listed += [line.split("\t")[-1] for line in self.two.project("agent", "list", claude=B)[1].splitlines()
-                       if line.startswith(C[:8])]
+                       if line.startswith(agents.short_id(C))]
 
         self.assertEqual(["Fixing acme/app#12", "Fixing acme/app#12 and acme/app#13"], listed)
 
@@ -1222,7 +1246,7 @@ class LifecycleTests(RelayCase):
         self.two.run_pass()
 
         listed = [line.split("\t")[-1] for line in self.two.project("agent", "list", claude=B)[1].splitlines()
-                  if line.startswith(C[:8])]
+                  if line.startswith(agents.short_id(C))]
         self.assertEqual(["Fixing acme/app#12 and acme/app#13"], listed)
 
     def test_an_idle_codex_agent_keeps_its_daemon_renews_its_lease_and_receives(self) -> None:
