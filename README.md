@@ -96,8 +96,9 @@ subscribes to a pull request registers itself, and any other session
 registers when you ask it to. To reach your other machines, make a key once
 with `project agent key init`, then copy it to each machine in a terminal
 with `project agent key export` and `project agent key import`. Messages
-then travel sealed through hidden refs of a repository both machines work
-in. A message from another agent carries none of your authority. See
+then travel encrypted through hidden refs of a repository both machines
+work in, so only your machines can read or write them. A message from
+another agent carries none of your authority. See
 [Message other agents](docs/cli.md#message-other-agents).
 
 ## Publish a site
