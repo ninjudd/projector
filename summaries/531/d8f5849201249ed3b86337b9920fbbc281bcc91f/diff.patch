@@ -1,0 +1,2423 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 261bdf78..481cc7d6 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2525,6 +2525,22 @@ it as `dismissed`. Only `answer` takes a letter: every other command refuses
+ `3.a` with exit code 65, so `dismiss` never drops the answer you meant to
+ give.
+ 
++To tell the agent more than the answer, add `--note` with one paragraph of
++at most 4 KiB in UTF-8, with no line breaks, as a message takes. The
++line that reaches the agent ends with ` — note: ` and your note:
++
++```console
++$ project inbox answer 3.b --note "the host behind the proxy retries on its own"
++answered 3.b
++$ project inbox watch --once --session "$SESSION"
++ANSWER 3.b Decline the finding about the retry budget? → Add a budget of two retries per host — note: the host behind the proxy retries on its own
++```
++
++`answer` refuses a note with a line break or of more than 4 KiB with exit
++code 65 and records nothing, and an empty note records none. `show` prints
++the note under the item's state. The note is how
++[the console](#use-the-console) carries what you type under an option.
++
+ In Projector's panel, only an option answers a question. The panel records an
+ answer when a prompt you send quotes the question and follows the quote with
+ one of its options' text and nothing else, as pressing the option in its
+@@ -2633,21 +2649,22 @@ request's options with `--option`, and `--no-options` removes them.
+ 
+ Once you have done the work, run `project inbox done 5`, or
+ `project inbox decline 5` when you will not do it. Either takes `--text`
+-with one line for the agent. The deliverer sends the agent `DONE 5` or
+-`DECLINED 5` and the request, with an arrow and your text after them when you
+-gave one:
++with one line for the agent, and `--note` with more context, as `answer`
++does. The deliverer sends the agent `DONE 5` or `DECLINED 5` and the
++request, with an arrow and your text after them when you gave one, and then
++` — note: ` and your note:
+ 
+ ```console
+-$ project inbox done 5 --text "Step 4 didn't work" --session "$SESSION"
++$ project inbox done 5 --text "Some feedback" --note "Step 4 didn't work" --session "$SESSION"
+ done 5
+ $ project inbox watch --once --session "$SESSION"
+-DONE 5 Test the gutters on your phone → Step 4 didn't work
++DONE 5 Test the gutters on your phone → Some feedback — note: Step 4 didn't work
+ ```
+ 
+ `request` refuses a request by the checks `tell` makes of a notice. A request
+ takes no answer, so `answer` refuses one with exit code 65, and `done` and
+-`decline` refuse any other kind of item, a resolved request, and a `--text` of
+-more than one line. `dismiss` declines a request with no text. A decline is a
++`decline` refuse any other kind of item, a resolved request, a `--text` of
++more than one line, and a note that `answer` refuses. `dismiss` declines a request with no text. A decline is a
+ dismissal, so `restore` reopens a declined request, and the agent that heard
+ `DECLINED` hears `RESTORED`. `list` shows a request as `open`, `unclear`,
+ `started`, `ready`, `blocked`, `done`, `declined`, or `withdrawn`.
+@@ -2904,21 +2921,36 @@ to open its drawer:
+ 
+ - **An item's drawer** shows the item's detail and each message you sent
+   about it, after `you:`, then its controls. A question offers `1` and on
+-  for its options, the first marked `(recommended)`, and `t` to type an
+-  answer of your own. A request offers `1: Start`, or `1: Retry` once its
+-  agent reports it blocked, when it has a start action, and then its
+-  outcomes, or `Done`. Every open item offers `6: I don't understand`,
+-  `7: Discuss`, `8: Dismiss`, and `9: Snooze`, which asks for 15 minutes,
+-  1 hour, 4 hours, or 1 day. A dismissed item offers `8: Restore`.
++  for its options, the first marked `(recommended)`. The console offers no
++  typed answer: to give the agent your own words, use `7: Discuss`. A
++  request offers `1: Start`, or `1: Retry` once its agent reports it
++  blocked, when it has a start action, and then its outcomes, or `Done`.
++  The drawer opens with the focus on the first option, and Enter picks the
++  focused one, as its number does. Picking one opens a one-line field under
++  it for an optional note: Enter records your choice, with the note when you
++  typed one, and Esc goes back to the options without recording. Every open
++  item offers `6: I don't understand`, `7: Discuss`, `8: Dismiss`, and
++  `9: Snooze`, which lists 15 minutes, 1 hour, 4 hours, and 1 day, with the
++  focus on the first. A dismissed item offers `8: Restore`.
+ - **A pull request's drawer** shows the session's role, the branch, the size,
+   the checks, and the labels, then the unresolved review threads by file.
+   `7` sends the session a message about the pull request, `8` asks before it
+   stops this session watching the pull request, `o` opens the pull request
+   on GitHub, and `p` opens its Projector summary when its description links
+-  one.
++  one. Over SSH or mosh, `o` and `p` show the URL under the actions instead,
++  whole, so you can click it in your terminal; it stays until your next key.
++  They also send it to your clipboard with an OSC 52 escape sequence, passed
++  through tmux when `TMUX` is set, where your terminal allows it. Nothing
++  reports whether it did, so the drawer says only that it was sent. Set
++  `PROJECTOR_REMOTE=1` to treat the console as remote when it cannot tell,
++  such as in a tmux server started before you connected, or
++  `PROJECTOR_REMOTE=0` to open URLs in a browser. Set `BROWSER` to a command
++  that opens a URL on your own machine, and a remote console uses it, showing
++  and copying the URL only when it fails. A URL that fails to open in a
++  browser on a local machine shows the same way, without the clipboard.
+ 
+ With no drawer open, `7` sends a message about the session itself, so you can
+-talk to a session that has no item and no pull request. Discuss and `t` open a
++talk to a session that has no item and no pull request. Discuss opens a
+ one-line text field at the bottom of the screen. A message is one way: the
+ agent hears it as a `DISCUSS` line and answers in its own conversation. A
+ message about a pull request or the session is an item of kind `message`,
+@@ -2927,16 +2959,17 @@ then leaves the list 30 seconds later. A message about an item stays in that
+ item's drawer.
+ 
+ The conversation sits at the bottom of the panel, collapsed to its heading.
+-Press `v`, or Enter on its heading, to show it, and `v` again to hide it. The
+-console remembers which sessions show it until you quit. It lists what you
+-said and what the agent said, newest last, and leaves out tool calls, tool
+-results, thinking, and the instructions the host adds. What you said includes
+-the prompts you typed and the inbox lines Projector delivered for you, such as
+-`ANSWER 3.a` and `DISCUSS 5`, but not pull request events. Showing it moves
+-the cursor to it and starts at its newest line, which stays in view as the
+-agent writes, until you scroll back with the page keys. Collapsed suits a
+-split whose other half shows the session's own chat; shown suits a session
+-whose chat is not on screen.
++Press `v`, or Enter on its heading, to show it, and either again to hide it.
++The console remembers which sessions show it until you quit. It lists what
++you said and what the agent said, newest last, and leaves out tool calls,
++tool results, thinking, and the instructions the host adds. What you said
++includes the prompts you typed and the inbox lines Projector delivered for
++you, such as `ANSWER 3.a` and `DISCUSS 5`, but not pull request events.
++Showing it moves the focus to its heading and starts at its newest line,
++which stays in view as the agent writes, until you scroll back with the page
++keys. Up moves the focus off it again. Collapsed suits a split whose other
++half shows the session's own chat; shown suits a session whose chat is not
++on screen.
+ 
+ The console reads the conversation from the transcript the session's host
+ writes: for Claude Code, `projects/<project>/<session>.jsonl` under
+@@ -2947,18 +2980,36 @@ second while it stays shown, and never while it is hidden. A transcript holds
+ whatever the conversation held, including any secret an agent quoted there, so
+ the console shows only what the session's own chat already shows you.
+ 
++In a panel, one focus moves through everything you can press. Up and down
++move it through the rows and, directly under the open drawer's row, the
++drawer's options and then its actions, and on past them to the next row,
++ending on the conversation's heading. The open drawer stays open while the
++focus moves, so you can look at another row first. Enter presses what has the focus: an option, an action
++such as `7: Discuss` or `9: Snooze`, or a row, which opens that row's drawer
++in place of the open one, or closes the drawer when it is the open row
++itself. A drawer without options opens with the focus on its row, so Enter
++twice opens and closes it. The focused row, option, or action is drawn
++reversed, with a `›` before an option or an action.
++
++The note goes to the agent on the same line as your choice, as
++`project inbox answer --note` and `done --note` send it, such as
++`ANSWER 3.a Decline the finding? → Decline it — note: keep the cap`. A note
++under a question's option records the answer. That differs from Projector's
++panel, where an option with more words after it is a reply that leaves the
++question open, because the console has no prompt to carry your words.
++
+ | Key | Effect |
+ | --- | --- |
+-| Up and down, or `k` and `j` | Move between rows |
+-| Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
+-| Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
+-| Left | Returns to the home list from a panel, closing any open drawer |
++| Up and down, or `k` and `j` | On the home list, move between sessions. In a panel, move the focus through the rows, the open drawer's options and actions, and the conversation's heading, and stay put at the first and the last |
++| Enter | On the home list, opens the session's panel. In a panel, presses the focused option or action, closes the open drawer when its row has the focus, opens the focused row's drawer in place of the open one, or, on the conversation's heading, shows or hides the conversation |
++| An option's or action's own key, such as `2` or `8` | Presses it in the open drawer, as Enter on it does |
++| Left, Esc, or `0` | Closes the open drawer, leaving the focus on its row, or, with no drawer open, returns to the home list |
+ | `7` in a panel with no drawer open | Sends a message about the session |
+ | `v` in a panel | Shows or hides the session's conversation |
+ | Page Down or Space, Page Up or `b` | Scrolls a drawer or the conversation, when taller than the screen, a page down or up |
+ | End or `G`, Home or `g` | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
+-| Enter in a text field | Sends the message. Esc cancels it, and Left and Right move the cursor |
+-| `q` | Quits |
++| Enter in a text field | Sends the message, or, in a note field, records the option with the note you typed, if any. Esc or Ctrl-C cancels it, or goes back to the options, and Left and Right move the cursor |
++| Ctrl-C | Quits from the home list. In a panel, the first press shows `Press Ctrl-C again to exit`, and a second within 3 seconds quits |
+ 
+ The console records each choice with the same functions `project inbox`
+ runs, for the session on screen: an option is `project inbox answer`, `7` is
+@@ -2985,7 +3036,12 @@ watch daemon's cache every 5 seconds, so they cost no GitHub query. An open
+ pull request drawer asks GitHub for its threads when it opens and every 30
+ seconds while it stays open, at about one point of your hourly GraphQL quota
+ each, and asks nothing when the cache counts no unresolved thread. The console
+-draws in your terminal's own colors, and draws none when `NO_COLOR` is set.
++draws in the colors of Projector's panel in Claude Code, on your terminal's
++own background: a question in Claude Code's `permission` blue, a request in
++peach, a notice in gray, and each pull request's state as the panel draws
++it. It uses Claude Code's default dark theme, or its light theme when your
++terminal's `COLORFGBG` names a white background. A terminal of 8 colors
++gets the nearest of them, and `NO_COLOR` turns color off.
+ 
+ Without a terminal on standard input and standard output, `project console`
+ exits with code 69 and says it needs one. On a Python without the `curses`
+diff --git a/docs/projects/console/readme.md b/docs/projects/console/readme.md
+index a0c3cd4f..ce837966 100644
+--- a/docs/projects/console/readme.md
++++ b/docs/projects/console/readme.md
+@@ -210,8 +210,8 @@ thread. The drawer's actions are these:
+ | --- | --- |
+ | `7` | Discuss: opens a text field, and sends your message about this pull request to this session as a `message` item (§ 2.6) |
+ | `8` | Dismiss, after a confirmation. The console runs `project watch drop <owner>/<repo>#<n> --role <role> --session <s>` for each role this session holds |
+-| `o` | Opens the pull request in a browser with `webbrowser.open` |
+-| `p` | Opens its projector.bot summary, when the description carries one |
++| `o` | Opens the pull request in a browser with `webbrowser.open`, or, on a remote machine, shows its URL and sends it to the clipboard (§ 2.7) |
++| `p` | Opens its projector.bot summary, when the description carries one, or, on a remote machine, shows its URL and sends it to the clipboard |
+ 
+ ### 2.5 A session's panel: inbox items
+ 
+@@ -223,7 +223,7 @@ controls:
+ 
+ | Kind | Controls |
+ | --- | --- |
+-| Question | `1`… for the options, the first marked `(recommended)`. The last option, `type an answer`, opens a one-line text field |
++| Question | `1`… for the options, the first marked `(recommended)`. No typed answer: `7: Discuss` carries your own words (§ 2.7) |
+ | Request | `1: Start` or `Retry` when the item has a start action, then the choices, or `Done` |
+ | Message | No options and no `I don't understand`. It leaves the list 30 seconds after its message is delivered |
+ | Any open item | `6: I don't understand`, `7: Discuss`, `8: Dismiss` or `Restore`, and `9: Snooze`, whose options are 15 minutes, 1 hour, 4 hours, and 1 day |
+@@ -343,23 +343,23 @@ $ project console
+ 
+ | Key | Effect |
+ | --- | --- |
+-| Up and down, or `k` and `j` | Move between rows |
+-| Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
+-| Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
++| Up and down, or `k` and `j` | On the home list, move between sessions. In a panel, move one focus through the rows and, directly under the open drawer's row, its controls: the options, then the actions. The conversation's heading is the last place. The open drawer stays open |
++| Enter | On the home list, opens the session's panel. In a panel, presses the focused control, closes the drawer of the focused row when it is open, opens the focused row's drawer in place of the open one, or, on the conversation's heading, shows or hides the conversation as `v` does |
++| A control's own key, such as `2` or `8` | Presses that control of the open drawer, as Enter on it does |
++| Left, Esc, or `0` | Closes the open drawer, leaving the focus on its row, or, with no drawer open, returns to the home list. In a text field, Left moves the cursor instead |
+ | `7` in a panel with no drawer open | Sends a message about the session (§ 2.5) |
+ | `v` in a panel | Shows or hides the session's conversation (§ 2.5) |
+ | Page Down or Space, Page Up or `b` | Scrolls a drawer or the conversation, when taller than the screen, a page down or up |
+ | End or `G`, Home or `g` | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
+-| Left | Returns to the home list from a session's panel, closing any open drawer. In a text field, it moves the cursor instead |
+-| Enter in a text field | Sends the message. Esc cancels it |
+-| `q` | Quits |
++| Enter in a text field | Sends the message, or, in a note field, records the option with the note typed, if any. Esc or Ctrl-C cancels it, or returns to the options, and Left and Right move the cursor |
++| Ctrl-C | Quits from the home list. In a panel, the first press asks for a second within 3 seconds, which quits |
+ 
+ The console reads the inbox store each second. It compares each live
+ session's directory signature (names, sizes, and modification times) and
+ reloads only the sessions whose signature changed. It reloads the pull
+-request rows from the cache every 5 seconds. It draws with the terminal's
+-own colors through `curses.use_default_colors`, and it honors `NO_COLOR`.
+-`panel.background` and Claude Code's themes stay the panel's settings.
++request rows from the cache every 5 seconds. It draws in the colors of
++Claude Code's panel on the terminal's own background, and it honors
++`NO_COLOR`. `panel.background` stays the panel's setting.
+ 
+ Without a terminal, `project console` exits with code 69 and the message
+ `project console needs a terminal; run it in its own window or split`.
+@@ -368,13 +368,14 @@ Without `curses`, it also exits with code 69 and points you to
+ 
+ Building the console settled these details:
+ 
+-- **A key records at once.** The panel fills Claude Code's prompt, and
+-  sending it records the choice. The console has no prompt, so an option,
+-  Start, a request's outcome, I don't understand, Dismiss, and a snooze
+-  length each record when you press them. A pull request's Dismiss still
+-  asks first, as the panel's does. A request's option records `done` with
+-  the option's words as its text, and a request with no options offers
+-  `Done`, which records no text.
++- **A key records at once, except an option.** The panel fills Claude
++  Code's prompt, and sending it records the choice. The console has no
++  prompt, so Start, I don't understand, Dismiss, and a snooze length each
++  record when you press them. A pull request's Dismiss still asks first, as
++  the panel's does. A question's option and a request's outcome open a note
++  field instead, and record when it is sent, as the note decisions below
++  say. A request's option records `done` with the option's words as its
++  text, and a request with no options offers `Done`, which records no text.
+ - **`t` types an answer.** A question can carry five choices, which take
+   `1` to `5`, and `6` is I don't understand, so the typed answer takes `t`
+   rather than the next digit. A refused send keeps the text field and what
+@@ -385,11 +386,14 @@ Building the console settled these details:
+   terminal cuts neither. The counts include messages, as the panel's
+   header does. A session that `project watch stream` delivers shows the host
+   its `agent.json` names, or `other`.
+-- **The cursor closes a drawer.** Up and down move to the next row and close
+-  any open drawer. A drawer opens under its row, and the screen scrolls to
+-  keep the row and its drawer in view. Sending a message about a pull
+-  request or the session moves the cursor to the new `message` item, which
+-  reads `sending` until its line is delivered and then leaves.
++- **The cursor closes a drawer without options.** Up and down move to the
++  next row and close the open drawer of a notice, a message, a pull
++  request, or a resolved item. In an open question's or request's drawer
++  they move the highlight instead, as the decisions below say. A drawer
++  opens under its row, and the screen scrolls to keep the row and its
++  drawer in view. Sending a message about a pull request or the session
++  moves the cursor to the new `message` item, which reads `sending` until
++  its line is delivered and then leaves.
+ - **One background thread refreshes.** It wakes every quarter second, takes
+   the lock only to decide what is due and to show what it read, and reads
+   the inbox, the rows, and the threads without it. Opening a pull request's
+@@ -402,8 +406,8 @@ Building the console settled these details:
+   when the item owes a line.
+ - **Page keys scroll a tall drawer.** A drawer taller than the screen
+   opens with its row at the top, and the rest of it, the newest message and
+-  the controls included, is below the screen. Up and down still close the
+-  drawer, so the page keys scroll it instead: Page Down and Page Up move a
++  the controls included, is below the screen. Up and down close the drawer
++  or move its highlight, so the page keys scroll it instead: Page Down and Page Up move a
+   page, and End and Home jump to its controls and back to its row. Space,
+   `b`, `G`, and `g` do the same for a terminal that keeps those keys for
+   its own scrollback. The scroll survives each redraw, including the
+@@ -424,6 +428,178 @@ Building the console settled these details:
+   viewed session's transcript each second while its conversation is shown,
+   off the drawing thread, and never reads a collapsed one.
+ 
++Testing the console by hand settled these details, which replace the
++earlier decisions that every key records at once and that the cursor closes
++every drawer:
++
++- **The arrows move through an open item's options.** In an open
++  question's or request's drawer, Up and Down move a highlight through its
++  choices: a question's options and its typed answer, or a request's
++  outcomes, or `Done`. A request's Start or Retry is not a choice, and
++  neither is a snooze length. The highlight starts on the first choice, the
++  recommended answer for a question, and stays put at either end. Enter
++  picks the highlighted choice, as its number does, so Esc or `0` close
++  the drawer. Enter on `type an answer` opens the typed answer's field, as
++  `t` does. Moving the highlight scrolls a tall drawer only as far as it
++  must to show it, and the page keys still scroll the rest. Other drawers
++  keep the arrows for moving between rows.
++- **A note can follow any choice.** In Claude Code's panel, you can type
++  more under the option you pressed before you send the prompt. The console
++  has no prompt, so picking a choice opens a one-line field directly under
++  it, labelled `Note (optional)`. Enter in the field records the choice,
++  with the note when you typed one and without one when the field is
++  empty. Esc returns to the options and records nothing. Left and Right
++  move the cursor, as in the other fields. The field closes when its item
++  is resolved elsewhere, so it never takes keys while nothing shows it.
++- **The inbox stores the note.** `inbox.answer`, `inbox.done`, and
++  `inbox.decline` take a `note`: one paragraph of at most 4 KiB in UTF-8,
++  with no line breaks, the check a message passes. It is stored in
++  the item's `answer` record, and `project inbox answer`, `done`, and
++  `decline` take it as `--note`. The `ANSWER`, `DONE`, or `DECLINED` line
++  ends with ` — note: ` and the note, such as
++  `ANSWER 3.a Decline the finding? → Decline it — note: keep the cap`, so
++  both deliverers carry it with no change of their own. The permission
++  rules need no change, because `answer`, `done`, and `decline` already ask
++  in Claude Code and are left to Codex's approval.
++- **A note under a question's option is still an answer.** In Claude Code's
++  panel, an option with more words after it is a reply: the question stays
++  open, and the agent reads your words in the prompt. The console records
++  the answer with its note instead. It has no prompt to carry a reply, and
++  you pressed an option to give an answer, so leaving the question open
++  would undo what you chose. The note still gives the agent your words on
++  the answer's line, and the agent can ask again when the note changes what
++  it should do.
++
++A second round of testing by hand settled these details, which replace the
++decisions above that the arrows move a highlight through an open item's
++options and leave other drawers by closing them, that Left returns to the
++home list from a panel, and that `q` quits:
++
++- **One focus moves through the whole panel.** Up and Down move a single
++  focus through a flat list: the pull request rows, then the item rows,
++  with the open drawer's controls directly under its row. A question lists
++  its options, `type an answer`, and then `6: I don't understand`,
++  `7: Discuss`, `8: Dismiss` or `Restore`, and `9: Snooze`. A request lists
++  its Start or Retry, its choices or `Done`, and the same actions. A notice,
++  a message, and a pull request list their actions. Past a drawer's last
++  control the focus goes on to the next row, and above its first to its own
++  row. Moving the focus never closes the drawer, and it stays put at the
++  first and last places. The focused row, option, or action is drawn
++  reversed, and a focused option or action also has a `›` before it. A
++  tall drawer scrolls only as far as it must to show the focus.
++- **Enter presses what has the focus.** On an option, it opens the note
++  field under it. On `type an answer`, it opens the typed answer's field.
++  On Start it starts, on Discuss it opens the message field, and on
++  Dismiss or Restore it records at once, except that a pull request's
++  Dismiss still asks first. On another row, it closes the open drawer and
++  opens that row's. On the open drawer's own row, it closes the drawer.
++  A control's own key still presses it directly and moves the focus onto
++  it.
++- **Opening a drawer focuses its first choice, or else its row.** A
++  question's drawer opens with the focus on the recommended answer, and a
++  request's on its first outcome, not on Start, which records at once. A
++  drawer with no choices keeps the focus on its row, so Enter twice opens
++  and closes it. Claude Code's panel puts its ring on Discuss there
++  instead. The console does not, because Enter on Discuss opens a text
++  field rather than closing the drawer.
++- **Follow-up questions join the ring.** Enter on Snooze lists the four
++  lengths and Cancel as controls, with the focus on the first length.
++  Enter on a pull request's Dismiss lists `Yes, dismiss it` and
++  `No, keep it`, with the focus on Yes, as the panel does. Cancel and
++  No, keep it put the focus back on the control that asked.
++- **The conversation's heading is the ring's last place.** Down from the
++  last row, or from the last control of the last row's open drawer,
++  reaches the heading, and Enter on it shows or hides the conversation, as
++  `v` does from anywhere in the panel. Showing it closes the open drawer and
++  leaves the focus on the heading, so the page keys scroll the conversation.
++  Up moves the focus off it, and coming back to it starts again at its
++  newest line.
++- **Left closes the open drawer.** With a drawer open, Left, Esc, and `0`
++  close it and leave the focus on its row. With none open, they return to
++  the home list. In a text field, Left still moves the cursor.
++- **Ctrl-C quits, and `q` is an ordinary key.** A stray `q` quit the
++  console. Now Ctrl-C quits at once from the home list. In a panel, the
++  first Ctrl-C shows `Press Ctrl-C again to exit`, as Claude Code does, and
++  a second within 3 seconds quits. Any other key, or the 3 seconds passing,
++  clears it. In a text field, Ctrl-C cancels the field, as Esc does, and
++  does not count toward quitting, so pressing it twice to clear a field
++  never quits. The terminal delivers Ctrl-C as `SIGINT`, so the console
++  sets a handler that only marks the press, and the loop reads it as a
++  key. A press never interrupts the console between two steps, and curses
++  restores the terminal on the way out.
++- **The console reads cursor keys in either encoding.** A terminal sends
++  Down as `ESC O B` in the application mode curses asks for, or as
++  `ESC [ B` when it ignores that request. curses names only the form the
++  terminfo entry lists, and passes the other on byte by byte. Before this
++  change, a run of the console in a pseudo-terminal under the
++  `xterm-256color`, `tmux-256color`, and `screen` entries recorded the
++  second option when Down came as `ESC O B` and nothing when it came as
++  `ESC [ B`, because the Esc closed the drawer. The console now reads the rest of a sequence curses did not name,
++  waiting up to 50 milliseconds after the Esc, and names it by its last
++  byte: `A` to `D` for the arrows, `H` and `F` for Home and End, and `5~`,
++  `6~`, and `3~` for Page Up, Page Down, and Delete. Esc alone is still
++  Esc.
++- **Colors match the panel.** An open question draws in Claude Code's
++  `permission` color, a request in the panel's own peach (an orange on a
++  light theme), a notice in `inactive`, and a message in the default
++  color. A resolved or snoozed item draws in `subtle`, as do the ages and
++  the header. A pull request's `ready` draws in `suggestion`,
++  `conflict` and `failing` in `error`, `changes` and `findings` in
++  `warning`, `reviewing` in `claude`, and `clean`, `approved`, and
++  `passing` in `success`. A drawer draws the fixer role in palette color 4,
++  the reviewer in `claude`, the branch in palette color 6, the checks by
++  their state, and the additions and deletions in `success` and `error`.
++  The theme colors come from the tables in the JavaScript bundled into
++  Claude Code 2.1.326's executable, and `console.py` records each one. On a
++  terminal of 256 colors the console draws the nearest of xterm's color
++  cube and gray ramp, and on one of 8 the nearest named color, as Claude
++  Code's `dark-ansi` theme picks them. It takes the `light` theme when
++  `COLORFGBG` names a white background, and Claude Code's default `dark`
++  theme otherwise. It cannot read the theme Claude Code is set to.
++
++A third round of testing by hand settled these details, the first of which
++replaces the decision above that `t` types an answer, with the typed
++answer's place among a question's options and in the focus ring:
++
++- **The console offers no typed answer.** A typed answer and Discuss both
++  send the agent your own words, so the console keeps only Discuss. A
++  question's drawer lists its options and then the actions,
++  `6: I don't understand`, `7: Discuss`, `8: Dismiss`, and `9: Snooze`, and
++  the focus moves through them in that order. `t` does nothing. The inbox
++  keeps the typed answer: `project inbox answer <n>.<last letter> --text`
++  and Claude Code's panel still record one, and the console never lists the
++  typed letter.
++- **A remote console shows the URL instead of opening it.** A browser that
++  `o` or `p` opened on a remote machine would open out of your sight, so
++  there the console calls no browser. It draws the whole URL from the first
++  column on the lines directly under the drawer's actions, a window's width
++  to a line however long it is, so your terminal can find it and make it
++  clickable. It stays until the next key. The console counts as remote when
++  `SSH_CONNECTION`, `SSH_CLIENT`, or `SSH_TTY` is set, which also covers
++  mosh, whose server starts over SSH. `PROJECTOR_REMOTE=1` makes it remote
++  and `PROJECTOR_REMOTE=0` local, for a tmux server whose environment lost
++  the SSH variables. On a local machine it opens the URL with
++  `webbrowser.open`, and shows the URL as a remote console does when the
++  open returns false or raises, because nothing opened. A remote console
++  whose `BROWSER` is set calls the browser too, because `webbrowser` runs
++  that command, which can be a helper that opens the URL on your own
++  machine through an SSH tunnel. It shows and copies the URL only when that
++  open returns false or raises.
++- **`o` stays the key for GitHub.** `g` and `G` are the standard pair for
++  the top and the end, as in `less` and `vi`, so they stay Home and End,
++  and `o` keeps opening a pull request in GitHub beside `p` for its
++  Projector summary.
++- **A remote console also sends the URL to your clipboard.** It writes the
++  OSC 52 sequence `ESC ] 52 ; c ; <base64 of the URL> BEL` to the terminal
++  after curses has drawn the screen, outside curses, so it is never drawn as
++  text, and once for each press. Under tmux, which `TMUX` names, it wraps
++  the sequence in tmux's passthrough, `ESC Ptmux;` and the sequence with
++  each Esc doubled, then `ESC \`. Nothing comes back to say whether the
++  terminal accepted it, so the drawer says only
++  `Sent to your clipboard where your terminal allows it` under the URL. A
++  local console whose open failed writes nothing, because a local browser
++  or clipboard is the person's own.
++
+ ### 2.8 Changes by file
+ 
+ | File | Change |
+@@ -685,7 +861,11 @@ Checked against `codex-cli 0.169.0` and `openai/codex` at `d8d840d` on
+ 
+ ## 9. Outcome
+ 
+-Shipped, in the four pull requests § 6 lists. `project console` lists every
++Shipped, in the four pull requests § 6 lists and a fifth from testing it by
++hand, which moves one focus through a panel's rows and its open drawer's
++options and actions, lets a note follow any choice, quits with Ctrl-C,
++reads either encoding of the cursor keys, and draws in the panel's colors
++(§ 2.7). `project console` lists every
+ live session, Claude Code and Codex alike, and records answers and messages
+ that each session's own deliverer brings in. Each panel ends with the
+ session's conversation, collapsed by default, read from the host's
+@@ -704,7 +884,10 @@ answered a question, returned home with Left, and started a discussion
+ about the session, with and without `NO_COLOR`. After the one-way messages
+ replaced threads, another run sent a message about the session, showed it
+ `sending`, and showed and hid the conversation of a session with a
+-transcript with `v`.
++transcript with `v`. The `Terminal` tests in `tests/test_console.py` now run
++it in a pseudo-terminal on every run: Down as `ESC [ B` and as `ESC O B`
++each picks a question's second option, one Ctrl-C quits from the home list,
++and a panel quits on the second.
+ 
+ The cost § 5 asked for: one console with 10 live sessions, 30 pull requests,
+ and 50 open questions used 0.71 seconds of CPU in 60 seconds, 1.2% of one
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 150ee8d6..5252d01a 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -78,16 +78,21 @@ export type Snapshot = {
+ /** A dismissal, `withdrawn` when the agent that posted the item took it back. */
+ export type Dismissal = { dismissed: true; withdrawn?: true; answeredAt: number }
+ 
+-/** How an item was resolved: dismissed, or a question answered with a lettered choice or typed text. */
+-export type Answer = { letter: string; text: string; answeredAt: number } | Dismissal
++/**
++ * How an item was resolved: dismissed, or a question answered with a lettered
++ * choice or typed text, and the `note` the person added in `project console`
++ * or with `--note`.
++ */
++export type Answer = { letter: string; text: string; note?: string; answeredAt: number } | Dismissal
+ 
+ /**
+  * How a request was resolved: done, declined, or withdrawn, with the person's
+- * one line of `text` when they gave one. A decline is a dismissal.
++ * one line of `text` and their `note` when they gave them. A decline is a
++ * dismissal.
+  */
+ export type Outcome =
+-  | { done: true; text?: string; answeredAt: number }
+-  | { dismissed: true; declined: true; text?: string; answeredAt: number }
++  | { done: true; text?: string; note?: string; answeredAt: number }
++  | { dismissed: true; declined: true; text?: string; note?: string; answeredAt: number }
+   | Dismissal
+ 
+ /** A message you sent the agent about an item, which reaches it as `DISCUSS` and has `deliveredAt` once it did. */
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 4219bb22..70db4aa1 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1041,6 +1041,7 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     answer = command("answer", "record an answer, such as 3.a")
+     answer.add_argument("reference", help="the question's number and the answer's letter, such as 3.a")
+     answer.add_argument("--text", help="the typed answer, for the question's last letter")
++    answer.add_argument("--note", help="more context for the agent, one paragraph of at most 4 KiB")
+ 
+     dismiss = command("dismiss", "record that you dismissed a question, read a notice, or declined a request")
+     dismiss.add_argument("reference")
+@@ -1050,6 +1051,7 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+         outcome = command(name, help_text)
+         outcome.add_argument("reference", help="the request's number, such as 3")
+         outcome.add_argument("--text", help="what you tell the agent, in one line")
++        outcome.add_argument("--note", help="more context for the agent, one paragraph of at most 4 KiB")
+ 
+     start = command("start", "record that you pressed start on a request, for the start action you read")
+     start.add_argument("reference", help="the request's number, such as 3")
+@@ -2358,6 +2360,8 @@ def print_item(item: dict) -> None:
+     for said in item.get("messages") or []:
+         print(f"you: {said['text']}")
+     print(item_state(item))
++    if (item.get("answer") or {}).get("note"):
++        print(f"note: {item['answer']['note']}")
+ 
+ 
+ def print_choices(question: dict) -> None:
+@@ -2428,7 +2432,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+             print_item(item)
+     elif command in ("answer", "dismiss", "withdraw"):
+         session = inbox_session(arguments, False)
+-        item = (inbox.answer(session, ref, letter, arguments.text) if command == "answer"
++        item = (inbox.answer(session, ref, letter, arguments.text, arguments.note) if command == "answer"
+                 else inbox.dismiss(session, ref, withdrawn=command == "withdraw"))
+         wake_codex_delivery(session, item)
+         done = {"answer": "answered", "dismiss": "dismissed", "withdraw": "withdrew"}[command]
+@@ -2436,7 +2440,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+     elif command in ("done", "decline"):
+         record = inbox.done if command == "done" else inbox.decline
+         session = inbox_session(arguments, False)
+-        item = record(session, ref, arguments.text)
++        item = record(session, ref, arguments.text, arguments.note)
+         wake_codex_delivery(session, item)
+         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
+     elif command in ("start", "ready", "block", "unclear"):
+diff --git a/src/projector/console.py b/src/projector/console.py
+index 6c12a69c..fff91e6e 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -13,7 +13,9 @@
+ 
+ from __future__ import annotations
+ 
++import base64
+ import os
++import signal
+ import sys
+ import textwrap
+ import threading
+@@ -21,7 +23,7 @@
+ import webbrowser
+ from dataclasses import dataclass, field
+ from pathlib import Path
+-from typing import Any, Callable, Optional
++from typing import Any, Callable, Optional, TextIO
+ 
+ from . import agents, codex_watch, conversation, inbox, rows, watch
+ from .core import ProjectorError
+@@ -43,8 +45,23 @@
+ # Page Down or Space, Page Up or `b`, End or `G`, and Home or `g`: the second of each pair for a terminal that keeps
+ # the first for its own scrollback.
+ SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "G", "home", "g")
++# The variables an SSH server sets in a session's environment. mosh's server starts over SSH, so its shells have
++# them too.
++SSH_VARIABLES = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
+ # The key of the panel's last row, the session's conversation.
+ CONVERSATION = "conversation"
++# How long after a panel's first Ctrl-C a second one quits, in seconds.
++EXIT_WINDOW = 3.0
++# What Enter on Snooze or on a pull request's Dismiss puts the focus on, and what leaving that question puts it back on.
++ASKED_FOCUS = {"snooze": ("1", "9"), "dismiss": ("8", "8")}
++# The color of each word after a pull request's label or title, as the panel's `HOLDS`, `REVIEW_LABELS`, `rowState`,
++# and `notesOf` give them; `draft` draws in the default color.
++WORD_STYLES = {"conflict": "error", "failing": "error", "changes": "warning", "findings": "warning",
++               "reviewing": "claude", "clean": "success", "ready": "suggestion", "approved": "success",
++               "passing": "success", "cancelled": "subtle"}
++CHECK_STYLES = {"passing": "success", "failing": "error", "pending": "warning", "cancelled": "subtle"}
++ROLE_STYLES = {"fixing": "fixer", "reviewing": "claude"}
++STAGE_STYLES = {"starting": "subtle", "ready": "success", "blocked": "warning"}
+ 
+ 
+ @dataclass
+@@ -63,32 +80,47 @@ class Session:
+ 
+ @dataclass
+ class Field:
+-    """The one-line text field: what sending it records, and the words typed so far with the cursor in them."""
++    """The one-line text field: what sending it records, and the words typed so far with the cursor in them. A
++    `note` field records the option it opened under through `then`, and the drawer draws it under that option
++    rather than at the bottom of the screen."""
+ 
+     purpose: str
+     target: Optional[str]
+     prompt: str
+     text: str = ""
+     cursor: int = 0
++    then: Optional[Callable[[Optional[str]], Optional[dict]]] = None
++
++    @property
++    def inline(self) -> bool:
++        return self.purpose == "note"
+ 
+ 
+ @dataclass(frozen=True)
+ class Control:
+     """A key a drawer offers, its label, what pressing it does, and whether it is one of the item's options, which
+-    the drawer lists one to a line above its other keys."""
++    the drawer lists one to a line above its other keys. A `choice` is an option opening the drawer puts the focus
++    on: a question's answers and a request's outcomes, but not a request's Start or a snooze length."""
+ 
+     key: str
+     label: str
+     act: Callable[[], None]
+     option: bool = False
++    choice: bool = False
+ 
+ 
+ @dataclass
+ class Line:
+-    """One line of the screen: its parts, each text with a style name, and whether the cursor's row is on it."""
++    """One line of the screen: its parts, each text with a style name, and whether the focus is on it: on the whole
++    line for a row or an option, or on the part at `lit` for one of a line of actions. A `spot` line, the focus or
++    a note field, scrolls into view when the focus moves, and `cursor` is the column of the terminal's cursor on
++    the note field's line."""
+ 
+     parts: list[tuple[str, str]]
+     selected: bool = False
++    spot: bool = False
++    cursor: Optional[int] = None
++    lit: Optional[int] = None
+ 
+     @property
+     def text(self) -> str:
+@@ -220,7 +252,7 @@ def marks_of(item: dict) -> list[tuple[str, str]]:
+         marks.append(("unclear", "warning"))
+     stage = stage_of(item)
+     if stage is not None:
+-        marks.append((stage, {"starting": "subtle", "ready": "success", "blocked": "warning"}[stage]))
++        marks.append((stage, STAGE_STYLES[stage]))
+     if item.get("pr"):
+         marks.append((item["pr"], "subtle"))
+     return marks
+@@ -269,6 +301,36 @@ def headline(session: Session, now_ms: int) -> Optional[dict]:
+     return next((item for item in shown_items(session, now_ms) if is_awake(item, now_ms)), None)
+ 
+ 
++def is_remote(environ: Optional[dict] = None) -> bool:
++    """Whether the console runs on a machine other than the one the person sits at, where a browser it opened would
++    open out of their sight: `PROJECTOR_REMOTE=1` says it does and `PROJECTOR_REMOTE=0` that it does not, for a
++    tmux server whose environment lost the SSH variables, and otherwise any of `SSH_VARIABLES` says it does."""
++    environ = os.environ if environ is None else environ
++    forced = environ.get("PROJECTOR_REMOTE")
++    if forced in ("0", "1"):
++        return forced == "1"
++    return any(environ.get(name) for name in SSH_VARIABLES)
++
++
++def opens_browser(environ: Optional[dict] = None) -> bool:
++    """Whether `o` and `p` call the browser: on a local machine, and on a remote one whose `BROWSER` names a command,
++    which `webbrowser` runs, such as a helper that opens the URL on the person's own machine through an SSH tunnel.
++    A remote console without one shows the URL and sends it to the clipboard instead."""
++    environ = os.environ if environ is None else environ
++    return not is_remote(environ) or bool(environ.get("BROWSER"))
++
++
++def clipboard_sequence(text: str, environ: Optional[dict] = None) -> str:
++    """The OSC 52 escape sequence that asks the terminal to put `text` on the clipboard of the machine the person sits
++    at. Under tmux, which `TMUX` names, it is wrapped in tmux's passthrough, each Esc doubled, so tmux hands it on to
++    the terminal. Nothing comes back to say whether the terminal allowed it."""
++    environ = os.environ if environ is None else environ
++    sequence = f"\x1b]52;c;{base64.b64encode(text.encode('utf-8')).decode('ascii')}\x07"
++    if environ.get("TMUX"):
++        return "\x1bPtmux;" + sequence.replace("\x1b", "\x1b\x1b") + "\x1b\\"
++    return sequence
++
++
+ def pull_key(pull: rows.Pull) -> str:
+     return f"pr:{pull.repo}#{pull.number}"
+ 
+@@ -300,6 +362,16 @@ def __init__(self, root: Path, *, clock: Callable[[], float] = time.time,
+         self.asking: Optional[str] = None
+         self.field: Optional[Field] = None
+         self.threads: Optional[list[rows.Thread]] = None
++        # The key of the open drawer's control the focus is on, or None while it is on a row, and whether the next
++        # layout scrolls the focus into view.
++        self.control: Optional[str] = None
++        self.reveal = False
++        # When a panel's first Ctrl-C asked for a second, by `clock`.
++        self.exit_at: Optional[float] = None
++        # The open drawer's key, the action's key, the URL that action showed rather than opened, until the next key,
++        # and whether it was sent to the clipboard; and the text `Screen` still has to send there.
++        self.link: Optional[tuple[str, str, str, bool]] = None
++        self.clipboard: Optional[str] = None
+         self.offset = 0
+         self.room = 1
+         # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
+@@ -404,7 +476,8 @@ def reload(self) -> None:
+         self.settle_view()
+ 
+     def settle_view(self) -> None:
+-        """Leave a panel whose session is gone, and close a drawer whose row is gone."""
++        """Leave a panel whose session is gone, close a drawer whose row is gone, and close a note field whose
++        option is gone."""
+         if self.view == "panel" and self.session not in self.sessions:
+             self.status = f"{self.session} is no longer live"
+             self.go_home()
+@@ -414,6 +487,10 @@ def settle_view(self) -> None:
+         keys = [key for key, _ in self.entries()]
+         if self.drawer is not None and self.drawer not in keys:
+             self.close_drawer()
++        if self.field is not None and self.field.inline and not self.choices():
++            self.field = None
++        if self.control is not None and self.control not in {one.key for one in self.controls()}:
++            self.control = None
+ 
+     # What is on screen
+ 
+@@ -452,15 +529,22 @@ def item(self, key: Optional[str]) -> Optional[dict]:
+ 
+     def key(self, name: str) -> None:
+         """Do what the key named `name` does: a character, or `up`, `down`, `left`, `right`, `enter`, `esc`,
+-        `backspace`, `delete`, `home`, `end`, `pageup`, or `pagedown`."""
++        `backspace`, `delete`, `home`, `end`, `pageup`, `pagedown`, or `ctrl-c`."""
+         with self.lock:
+             self.status = ""
++            self.link = None
++            if name == "ctrl-c" and self.field is None:
++                self.interrupt()
++                return
++            self.exit_at = None
+             if self.field is not None:
+                 self.field_key(name)
+-            elif name == "q":
+-                self.quit = True
+             elif name in ("up", "k", "down", "j"):
+-                self.move(-1 if name in ("up", "k") else 1)
++                step = -1 if name in ("up", "k") else 1
++                if self.view == "panel":
++                    self.step_focus(step)
++                else:
++                    self.move(step)
+             elif name in SCROLL_KEYS:
+                 self.scroll(name)
+             elif self.view == "home":
+@@ -488,15 +572,55 @@ def selected_key(self) -> Optional[str]:
+         keys = self.keys()
+         return self.selected if self.selected in keys else (keys[0] if keys else None)
+ 
++    def interrupt(self) -> None:
++        """Ctrl-C: quit from the home list, and from a panel on the second press within `EXIT_WINDOW` seconds."""
++        now = self.clock()
++        if self.view == "home" or (self.exit_at is not None and now - self.exit_at < EXIT_WINDOW):
++            self.quit = True
++        else:
++            self.exit_at = now
++
+     def move(self, step: int) -> None:
++        """Move the cursor a session up or down the home list, staying put at either end."""
+         keys = self.keys()
+         if not keys:
+             return
+         at = keys.index(self.selected) if self.selected in keys else 0
+         self.selected = keys[max(0, min(len(keys) - 1, at + step))]
+-        if self.view == "panel":
+-            self.close_drawer()
++
++    def choices(self) -> list[Control]:
++        """The open drawer's choices, which the note field opens under."""
++        return [one for one in self.controls() if one.choice]
++
++    def ring(self) -> list[tuple[str, Optional[str]]]:
++        """Every place the panel's focus can be, in order: each row, as its key and None, with the open drawer's
++        controls, as its key and each control's, directly under its row, and last the conversation's heading."""
++        found: list[tuple[str, Optional[str]]] = []
++        for key, _ in self.entries():
++            found.append((key, None))
++            if key == self.drawer:
++                found += [(key, one.key) for one in self.controls()]
++        if self.viewed() is not None:
++            found.append((CONVERSATION, None))
++        return found
++
++    def focus(self) -> tuple[Optional[str], Optional[str]]:
++        """Where the panel's focus is: a row's key, and the key of the open drawer's control it is on, if any."""
++        key = self.selected_key()
++        return key, self.control if key is not None and key == self.drawer else None
++
++    def step_focus(self, step: int) -> None:
++        """Move the focus a place up or down the ring, staying put at either end. The open drawer stays open. Arriving
++        on the conversation's heading starts at its newest line, as `viewport` shows it."""
++        ring = self.ring()
++        if not ring:
++            return
++        at = ring.index(self.focus()) if self.focus() in ring else 0
++        row = self.selected_key()
++        self.selected, self.control = ring[max(0, min(len(ring) - 1, at + step))]
++        if self.selected != row:
+             self.follow = True
++        self.reveal = True
+ 
+     def open_panel(self, name: str) -> None:
+         self.view, self.session, self.selected = "panel", name, None
+@@ -508,24 +632,26 @@ def go_home(self) -> None:
+         self.view, self.selected, self.session = "home", self.session, None
+ 
+     def close_drawer(self) -> None:
++        """Close the open drawer. A focus on one of its controls goes to its row, where `selected` already is."""
+         self.drawer = self.asking = None
+         self.threads = None
++        self.control = None
+ 
+     def panel_key(self, name: str) -> None:
+-        if name == "left" or (name in ("esc", "0") and self.drawer is None):
+-            self.go_home()
+-        elif name in ("esc", "0"):
+-            self.close_drawer()
+-        elif name == "enter" and self.selected_key() == CONVERSATION:
+-            self.toggle_conversation()
++        if name in ("left", "esc", "0"):
++            if self.drawer is None:
++                self.go_home()
++            else:
++                self.selected = self.drawer
++                self.close_drawer()
+         elif name == "enter":
+-            self.toggle_drawer()
++            self.press_focus()
+         elif name == "v":
+             self.toggle_conversation()
+         elif self.drawer is not None:
+             control = next((one for one in self.controls() if one.key == name), None)
+             if control is not None:
+-                control.act()
++                self.press(control)
+         elif name == "7":
+             self.open_field("session", None, "Message this session: ")
+ 
+@@ -542,13 +668,34 @@ def toggle_conversation(self) -> None:
+         self.next_conversation = float("-inf")
+         self.refresh_now.set()
+ 
+-    def toggle_drawer(self) -> None:
+-        key = self.selected_key()
+-        if key is None or key == self.drawer:
+-            self.close_drawer()
++    def press_focus(self) -> None:
++        """Enter: press the control the focus is on, close the drawer of the open row, open another row's, or show or
++        hide the conversation, as `v` does."""
++        key, control = self.focus()
++        if key is None:
+             return
++        if key == CONVERSATION:
++            self.toggle_conversation()
++            return
++        found = next((one for one in self.controls() if one.key == control), None)
++        if found is not None:
++            self.press(found)
++        elif key == self.drawer:
++            self.close_drawer()
++        else:
++            self.open_drawer(key)
++
++    def press(self, control: Control) -> None:
++        """Press one of the open drawer's controls, from Enter or its own key, moving the focus onto it first."""
++        self.selected, self.control = self.drawer, control.key
++        control.act()
++
++    def open_drawer(self, key: str) -> None:
++        """Open the row's drawer in place of the open one, with the focus on its first choice, or else on its row."""
+         self.close_drawer()
+         self.drawer = self.selected = key
++        choices = self.choices()
++        self.control = choices[0].key if choices else None
+         if key.startswith("pr:"):
+             self.next_threads = float("-inf")
+             self.refresh_now.set()
+@@ -568,11 +715,34 @@ def pull_controls(self, row: rows.Row) -> list[Control]:
+         reference = f"{pull.repo}#{pull.number}"
+         controls = [Control("7", "Discuss", lambda: self.open_field("pr", reference, f"Discuss {reference}: ")),
+                     Control("8", "Dismiss", lambda: self.ask("dismiss")),
+-                    Control("o", "Open in GitHub", lambda: self.open_url(pull.url))]
++                    Control("o", "Open in GitHub", lambda: self.visit("o", pull.url))]
+         if pull.summary_url is not None:
+-            controls.append(Control("p", "Open in Projector", lambda: self.open_url(pull.summary_url)))
++            summary = pull.summary_url
++            controls.append(Control("p", "Open in Projector", lambda: self.visit("p", summary)))
+         return controls
+ 
++    def visit(self, key: str, url: str) -> None:
++        """Open `url` in a browser when `opens_browser` says to, and otherwise, or when nothing opened, show it under
++        the action at `key` for the person's terminal to make clickable. A remote machine also sends it to the
++        person's clipboard."""
++        remote = is_remote()
++        if opens_browser():
++            try:
++                if self.open_url(url) is not False:
++                    return
++            except (webbrowser.Error, OSError):
++                pass
++        if remote:
++            self.clipboard = url
++        if self.drawer is not None:
++            self.link = (self.drawer, key, url, remote)
++
++    def take_clipboard(self) -> Optional[str]:
++        """The text an action asked to send to the clipboard, once."""
++        with self.lock:
++            text, self.clipboard = self.clipboard, None
++            return text
++
+     def item_controls(self, item: dict) -> list[Control]:
+         ref, now = item["ref"], self.now_ms()
+         answered = item.get("answer")
+@@ -586,19 +756,22 @@ def item_controls(self, item: dict) -> list[Control]:
+                     Control("9", "Cancel", self.stop_asking)]
+         controls = []
+         if item["kind"] == "question":
+-            controls += [Control(str(index), f"{choice}{' (recommended)' if index == 1 else ''}",
+-                                 lambda letter=chr(ord("a") + index - 1): self.record(inbox.answer, ref, letter), True)
+-                         for index, choice in enumerate(item["choices"], 1)]
+-            controls.append(Control("t", "type an answer", lambda: self.open_field("typed", ref, f"Answer {ref}: "),
+-                                    True))
++            letters = [chr(ord("a") + index) for index in range(len(item["choices"]))]
++            controls += [Control(str(at + 1), f"{choice}{' (recommended)' if at == 0 else ''}",
++                                 lambda letter=letter: self.choose(
++                                     ref, lambda note: self.record(inbox.answer, ref, letter, None, note)),
++                                 True, True)
++                         for at, (choice, letter) in enumerate(zip(item["choices"], letters))]
+         elif item["kind"] == "request":
+             start = start_of(item)
+             if start is not None:
+                 controls.append(Control("1", start, lambda: self.record(inbox.start, ref, item["start"]), True))
+             given = item.get("choices")
+-            controls += [Control(str(index), choice,
+-                                 lambda choice=choice: self.record(inbox.done, ref, choice if given else None), True)
+-                         for index, choice in enumerate(given or ["Done"], 1 if start is None else 2)]
++            controls += [Control(str(at + (1 if start is None else 2)), choice,
++                                 lambda choice=choice: self.choose(
++                                     ref, lambda note: self.record(inbox.done, ref, choice if given else None, note)),
++                                 True, True)
++                         for at, choice in enumerate(given or ["Done"])]
+         if not item.get("unclear") and item["kind"] != "message":
+             controls.append(Control("6", "I don't understand",
+                                     lambda: self.record(inbox.unclear, ref, item["subject"], item.get("detail", ""))))
+@@ -608,10 +781,19 @@ def item_controls(self, item: dict) -> list[Control]:
+                      else Control("9", "Snooze", lambda: self.ask("snooze"))]
+         return controls
+ 
++    def choose(self, ref: str, then: Callable[[Optional[str]], Optional[dict]]) -> None:
++        """Pick the focused choice: open the note field under it, whose Enter records it."""
++        self.reveal = True
++        self.field = Field("note", ref, "Note (optional): ", then=then)
++
+     def ask(self, what: str) -> None:
+-        self.asking = what
++        """Ask a follow-up question, the snooze lengths or a pull request's confirmation, with the focus on it."""
++        self.asking, self.control = what, ASKED_FOCUS[what][0]
+ 
+     def stop_asking(self) -> None:
++        """Put away the follow-up question, and the focus back on the control that asked it."""
++        if self.asking is not None:
++            self.control = ASKED_FOCUS[self.asking][1]
+         self.asking = None
+ 
+     # Recording
+@@ -627,7 +809,7 @@ def record(self, change: Callable[..., dict], *args) -> Optional[dict]:
+         except ProjectorError as error:
+             self.status = str(error)
+             return None
+-        self.asking = None
++        self.stop_asking()
+         if session.host == "codex":
+             try:
+                 self.wake(session.name, item)
+@@ -641,7 +823,7 @@ def dismiss_pull(self, row: rows.Row) -> None:
+         session = self.viewed()
+         if session is None:
+             return
+-        self.asking = None
++        self.stop_asking()
+         try:
+             for role in row.roles:
+                 watch.drop(self.root, session.name, row.pull.repo, row.pull.number, SUBSCRIPTION_ROLE[role])
+@@ -657,7 +839,7 @@ def open_field(self, purpose: str, target: Optional[str], prompt: str) -> None:
+     def field_key(self, name: str) -> None:
+         typing = self.field
+         assert typing is not None
+-        if name == "esc":
++        if name in ("esc", "ctrl-c"):
+             self.field = None
+         elif name == "enter":
+             self.send(typing)
+@@ -681,12 +863,10 @@ def field_key(self, name: str) -> None:
+     def send(self, typing: Field) -> None:
+         """Record what the field holds. A refusal keeps the field, so the person can fix what they typed."""
+         said, target = typing.text, typing.target
+-        if typing.purpose == "discuss":
++        if typing.purpose == "note" and typing.then is not None:
++            item = typing.then(said.strip() or None)
++        elif typing.purpose == "discuss":
+             item = self.record(inbox.discuss, target, said)
+-        elif typing.purpose == "typed":
+-            question = self.item(f"item:{target}")
+-            letter = inbox.typed_letter(question) if question is not None else None
+-            item = self.record(inbox.answer, target, letter, said)
+         else:
+             item = self.record(lambda name: inbox.send(name, said, pr=target))
+         if item is None:
+@@ -712,12 +892,15 @@ def viewport(self, width: int, room: int) -> list[Line]:
+         with self.lock:
+             body, (first, last) = self.lines(width)
+             self.room = room
++            spots = [index for index, line in enumerate(body) if line.spot]
+ 
+             def clamped(offset: int) -> int:
+                 if last - first + 1 > room:
+                     offset = min(max(offset, first), last - room + 1)
+                 else:
+                     offset = min(max(offset, last - room + 1), first)
++                if self.reveal and spots:
++                    offset = min(max(offset, spots[-1] - room + 1), spots[0])
+                 return max(0, min(offset, len(body) - room))
+ 
+             following = self.view == "panel" and self.selected_key() == CONVERSATION
+@@ -726,22 +909,30 @@ def clamped(offset: int) -> int:
+             self.offset = clamped(self.offset)
+             if following:
+                 self.follow = self.offset == clamped(sys.maxsize)
++            self.reveal = False
+             return body[self.offset:self.offset + room]
+ 
+     def footer(self) -> list[Line]:
+         """The lines under the body: what the keys do, and the last refusal or note."""
+         with self.lock:
+             lines = [Line([(self.status, "error")])] if self.status else []
++            if self.field is not None and self.field.inline:
++                return [*lines, Line([("Enter records, with the note if you typed one · Esc back to the options",
++                                       "subtle")])]
+             if self.field is not None:
+                 return [*lines, Line([("Enter sends · Esc cancels", "subtle")])]
++            if self.exit_at is not None and self.clock() - self.exit_at < EXIT_WINDOW:
++                return [*lines, Line([("Press Ctrl-C again to exit", "warning")])]
+             if self.view == "home":
+-                hint = "↑↓ move · Enter open · q quit"
++                hint = "↑↓ move · Enter open · Ctrl-C quit"
+             elif self.selected_key() == CONVERSATION and self.session in self.expanded:
+-                hint = "v hide · PgUp PgDn scroll · 7 message this session · ← or Esc back · q quit"
++                hint = ("↑↓ move · v or Enter hide · PgUp PgDn scroll · 7 message this session · ← or Esc back"
++                        " · Ctrl-C twice quit")
+             elif self.drawer is None:
+-                hint = "↑↓ move · Enter open · 7 message this session · v conversation · ← or Esc back · q quit"
++                hint = ("↑↓ move · Enter open · 7 message this session · v conversation · ← or Esc back"
++                        " · Ctrl-C twice quit")
+             else:
+-                hint = "Enter or Esc close · PgUp PgDn scroll · ← back · q quit"
++                hint = "↑↓ move · Enter press or open · ← or Esc close · PgUp PgDn scroll · Ctrl-C twice quit"
+             return [*lines, Line([(hint, "subtle")])]
+ 
+     def home_lines(self) -> tuple[list[Line], tuple[int, int]]:
+@@ -757,7 +948,7 @@ def home_lines(self) -> tuple[list[Line], tuple[int, int]]:
+         for session in listed:
+             start = len(lines)
+             lines.append(Line([(session.label, "bold"), (f"  {session.host}", "subtle"),
+-                               *([(f"  {session.place}", "accent")] if session.place else []),
++                               *([(f"  {session.place}", "branch")] if session.place else []),
+                                *([(f"  {' · '.join(counts_of(session, now))}", "")] if counts_of(session, now) else [])],
+                               selected=session.name == chosen))
+             if session.summary:
+@@ -799,7 +990,7 @@ def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+         now = self.now_ms()
+         counts = counts_of(session, now)
+         lines = [Line([(session.label, "bold"), (f"  {session.host}", "subtle"),
+-                       *([(f"  {session.place}", "accent")] if session.place else []),
++                       *([(f"  {session.place}", "branch")] if session.place else []),
+                        *([(f"  {' · '.join(counts)}", "subtle")] if counts else [])])]
+         if session.summary:
+             lines.append(Line([(session.summary, "subtle")]))
+@@ -807,7 +998,7 @@ def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+         entries = self.entries()
+         if not entries:
+             lines.append(Line([("No pull requests or items. Press 7 to send this session a message.", "subtle")]))
+-        chosen = self.selected_key()
++        chosen, control = self.focus()
+         focus = (0, 0)
+         label_width = max((len(row.label) for row in session.rows), default=0)
+         author_width = max((len(row.pull.author or "") for row in session.rows if row.section == "review"), default=0)
+@@ -818,12 +1009,14 @@ def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+                 lines.append(Line([]))
+             previous = group
+             start = len(lines)
++            # The row is lit only while the focus is on the row itself, not on one of its drawer's controls.
++            lit = key == chosen and control is None
+             if isinstance(entry, rows.Row):
+-                lines.append(self.pull_line(entry, label_width, author_width, key == chosen))
++                lines.append(self.pull_line(entry, label_width, author_width, lit))
+                 if key == self.drawer:
+-                    lines += self.pull_drawer(entry)
++                    lines += self.pull_drawer(entry, width)
+             else:
+-                lines.append(self.item_line(entry, now, key == chosen))
++                lines.append(self.item_line(entry, now, lit))
+                 if key == self.drawer:
+                     lines += self.item_drawer(entry, width)
+             if key == chosen:
+@@ -841,25 +1034,44 @@ def pull_line(self, row: rows.Row, label_width: int, author_width: int, selected
+         if pull.is_loading:
+             parts.append(("  loading…", "subtle"))
+             return Line(parts, selected)
+-        parts.append((f"  {row.state}", {"conflict": "error", "failing": "error", "changes": "warning",
+-                                         "findings": "warning", "clean": "success"}.get(row.state, "accent")))
++        parts.append((f"  {row.state}", WORD_STYLES.get(row.state, "")))
+         if row.section == "review":
+             parts.append((f"  {(pull.author or '').ljust(author_width)}", "subtle"))
+         parts.append((f"  {pull.title}", ""))
+-        if row.notes:
+-            parts.append((f"  {' · '.join(row.notes)}", "subtle"))
++        for at, note in enumerate(row.notes):
++            parts += [("  " if at == 0 else " · ", ""), (note, WORD_STYLES.get(note, ""))]
+         return Line(parts, selected)
+ 
+-    def pull_drawer(self, row: rows.Row) -> list[Line]:
++    def pull_drawer(self, row: rows.Row, width: int) -> list[Line]:
++        """The facts line, in the panel's colors for the roles, the branch, the size, and the checks, then the
++        actions, the URL an action showed rather than opened, and the threads by file."""
+         pull, indent = row.pull, " " * DRAWER_INDENT
+-        facts = [" and ".join(row.roles)] if row.roles else []
+-        facts += [pull.branch] if pull.branch else []
++        facts: list[list[tuple[str, str]]] = []
++        if row.roles:
++            roles: list[tuple[str, str]] = []
++            for at, role in enumerate(row.roles):
++                roles += [(" and ", "")] if at else []
++                roles.append((role, ROLE_STYLES.get(role, "")))
++            facts.append(roles)
++        facts += [[(pull.branch, "branch")]] if pull.branch else []
+         if not pull.is_loading:
+             files = int(pull.changed_files)
+-            facts.append(f"+{int(pull.additions)} −{int(pull.deletions)} in {files} file{'' if files == 1 else 's'}")
+-        facts += [f"checks {pull.checks}"] if pull.checks else []
+-        facts += pull.labels
+-        lines = [Line([(indent + " · ".join(facts), "subtle")]), self.controls_line(self.controls())]
++            facts.append([(f"+{int(pull.additions)}", "success"), (" ", ""), (f"−{int(pull.deletions)}", "error"),
++                          (f" in {files} file{'' if files == 1 else 's'}", "")])
++        facts += [[(f"checks {pull.checks}", CHECK_STYLES.get(pull.checks, ""))]] if pull.checks else []
++        facts += [[(label, "")] for label in pull.labels]
++        said: list[tuple[str, str]] = [(indent, "")]
++        for at, fact in enumerate(facts):
++            said += [(" · ", "subtle")] if at else []
++            said += fact
++        lines = [Line(said), self.controls_line(self.controls())]
++        if self.link is not None and self.link[0] == self.drawer:
++            # The whole URL from the first column, a window's width to a line, so a terminal can find it to click.
++            _, _, url, copied = self.link
++            lines += [Line([(url[start:start + width], "")]) for start in range(0, len(url), max(1, width))]
++            if copied:
++                lines.append(Line([(" " * DRAWER_INDENT + "Sent to your clipboard where your terminal allows it",
++                                    "subtle")]))
+         if pull.open_threads and self.threads is None:
+             lines.append(Line([(f"{indent}loading threads…", "subtle")]))
+         for path, threads in rows.threads_by_file(self.threads or []):
+@@ -873,8 +1085,10 @@ def pull_drawer(self, row: rows.Row) -> list[Line]:
+ 
+     def item_line(self, item: dict, now: int, selected: bool) -> Line:
+         is_open = not item.get("answer")
++        # The panel's `kindColors`: `permission` for a question, its own peach or orange for a request, `inactive`
++        # for a notice, and the default for a message.
+         style = "subtle" if not is_open or is_snoozed(item, now) else {
+-            "question": "accent", "request": "warning", "notice": "", "message": ""}[item["kind"]]
++            "question": "permission", "request": "request", "notice": "inactive", "message": ""}[item["kind"]]
+         parts = [(f"- {item['subject']}", style)]
+         parts += [(f"  {word}", mark) for word, mark in marks_of(item)]
+         parts.append((f"  {age(now - item.get('postedAt', now))}", "subtle"))
+@@ -896,24 +1110,39 @@ def item_drawer(self, item: dict, width: int) -> list[Line]:
+                 first, *rest = textwrap.wrap(said.get("text", ""), max(1, wrap - len("you: "))) or [""]
+                 lines.append(Line([(indent + "you: ", "subtle"), (first, "")]))
+                 lines += [Line([(indent + " " * len("you: ") + part, "")]) for part in rest]
+-        lines += self.answer_lines(item, indent)
++        lines += self.answer_lines(item, indent, wrap)
+         stage = stage_of(item)
+         if item.get("start") and not item.get("answer"):
+             reason = (item.get("progress") or {}).get("reason")
+             said = f"Blocked: {reason}" if stage == "blocked" else f"{(stage or 'start').capitalize()}: {item['start']}"
+-            lines += [Line([]), Line([(indent + said, "warning" if stage == "blocked" else "")])]
++            lines += [Line([]), Line([(indent + said, STAGE_STYLES.get(stage or "", ""))])]
+         controls = self.controls()
+         options = [one for one in controls if one.option]
++        _, focused = self.focus()
+         if options:
+             lines.append(Line([]))
+-            lines += [Line([(f"{indent}{one.key}: {one.label}", "accent")]) for one in options]
++        for one in options:
++            if one.key != focused:
++                lines.append(Line([(f"{indent}{one.key}: {one.label}", "")]))
++                continue
++            lines.append(Line([(f"{indent[:-2]}› {one.key}: {one.label}", "")], selected=True, spot=True))
++            if self.field is not None and self.field.inline and self.field.target == item["ref"]:
++                lines.append(self.note_line(self.field, indent + " " * (len(one.key) + 2), width))
+         rest = [one for one in controls if not one.option]
+         if rest:
+             lines += [Line([]), self.controls_line(rest)]
+         return lines
+ 
+-    def answer_lines(self, item: dict, indent: str) -> list[Line]:
+-        """What a resolved item's drawer says became of it."""
++    def note_line(self, typing: Field, indent: str, width: int) -> Line:
++        """The note field, under the option it records, showing the stretch of what was typed around the cursor."""
++        before = indent + typing.prompt
++        space = max(1, width - len(before) - 1)
++        start = max(0, typing.cursor - space)
++        return Line([(before, "bold"), (typing.text[start:start + space], "")], spot=True,
++                    cursor=len(before) + typing.cursor - start)
++
++    def answer_lines(self, item: dict, indent: str, wrap: int) -> list[Line]:
++        """What a resolved item's drawer says became of it, and the note the person added."""
+         answered = item.get("answer")
+         if not answered:
+             return []
+@@ -931,10 +1160,27 @@ def answer_lines(self, item: dict, indent: str) -> list[Line]:
+             said = f"Answered: {answered.get('text', '')}"
+         if answered.get("text") and (answered.get("done") or answered.get("declined")):
+             said += f": {answered['text']}"
+-        return [Line([]), Line([(f"{indent}{said} ✓", "success")])]
++        lines = [Line([]), Line([(f"{indent}{said}", ""), (" ✓", "success")])]
++        if answered.get("note"):
++            lines += [Line([(indent + part, "subtle")])
++                      for part in textwrap.wrap(f"note: {answered['note']}", wrap)]
++        return lines
+ 
+     def controls_line(self, controls: list[Control]) -> Line:
+-        return Line([(" " * DRAWER_INDENT + "   ".join(f"{one.key}: {one.label}" for one in controls), "accent")])
++        """The drawer's actions on one line, the focused one after a `›` in the gap before it."""
++        _, focused = self.focus()
++        parts: list[tuple[str, str]] = []
++        lit = None
++        for at, one in enumerate(controls):
++            gap = " " * DRAWER_INDENT if at == 0 else "   "
++            label = f"{one.key}: {one.label}"
++            if one.key == focused:
++                parts.append((f"{gap[:-2]}› ", ""))
++                lit = len(parts)
++                parts.append((label, ""))
++            else:
++                parts.append((gap + label, ""))
++        return Line(parts, spot=lit is not None, lit=lit)
+ 
+ 
+ # The terminal
+@@ -943,8 +1189,39 @@ def controls_line(self, controls: list[Control]) -> Line:
+                "KEY_BACKSPACE": "backspace", "KEY_DC": "delete", "KEY_HOME": "home", "KEY_END": "end",
+                "KEY_PPAGE": "pageup", "KEY_NPAGE": "pagedown"}
+ CHARACTER_KEYS = {"\n": "enter", "\r": "enter", "\x1b": "esc", "\x7f": "backspace", "\b": "backspace",
+-                  "\x01": "home", "\x05": "end"}
+-STYLE_COLORS = {"accent": "COLOR_CYAN", "success": "COLOR_GREEN", "warning": "COLOR_YELLOW", "error": "COLOR_RED"}
++                  "\x01": "home", "\x05": "end", "\x03": "ctrl-c"}
++# The cursor and editing keys by the last byte of their escape sequence, or by its number and `~`. A terminal sends
++# `ESC [` before them, or `ESC O` before an arrow in application mode; curses names only the form the terminfo
++# entry lists, and hands over the rest of the other byte by byte.
++ESCAPES = {"A": "up", "B": "down", "C": "right", "D": "left", "H": "home", "F": "end", "1~": "home", "7~": "home",
++           "4~": "end", "8~": "end", "3~": "delete", "5~": "pageup", "6~": "pagedown"}
++# How long to wait for the rest of an escape sequence, in milliseconds, and how long `get_wch` waits for a key
++# before the screen is drawn again.
++ESCAPE_WAIT = 50
++REDRAW_WAIT = 250
++
++# The colors of Claude Code's theme keys that the panel draws with, in Claude Code 2.1.326's default `dark` theme
++# and its `light` theme, as the theme tables in the JavaScript bundled into the `claude` executable define them.
++# They were read by a script that searched the executable for `permission:"rgb(` and printed each table around a
++# match, and the function there that maps a theme's name to its table. `request` is no theme key: it is
++# `hooks/register.tsx`'s own `OTHER_REQUEST_COLOR` and `REQUEST_COLORS` for a light theme.
++THEMES: dict[str, dict[str, tuple[int, int, int]]] = {
++    "dark": {"permission": (177, 185, 249), "suggestion": (177, 185, 249), "claude": (215, 119, 87),
++             "inactive": (153, 153, 153), "subtle": (80, 80, 80), "success": (78, 186, 101),
++             "error": (255, 107, 128), "warning": (255, 193, 7), "request": (255, 190, 140)},
++    "light": {"permission": (87, 105, 247), "suggestion": (87, 105, 247), "claude": (215, 119, 87),
++              "inactive": (102, 102, 102), "subtle": (175, 175, 175), "success": (44, 122, 57),
++              "error": (171, 43, 63), "warning": (150, 108, 30), "request": (180, 90, 40)},
++}
++# The panel's two terminal palette colors, `ansi256(4)` for a fixer and `ansi256(6)` for a branch, which are the
++# same slot among 8 colors as among 256.
++PALETTE = {"fixer": 4, "branch": 6}
++# Each theme key's color on a terminal of 8 colors, after Claude Code's `dark-ansi` theme. `subtle` has none and
++# draws dim. A request has no ansi color of its own in the panel, so it shares `warning`'s yellow.
++BASIC = {"permission": "COLOR_BLUE", "suggestion": "COLOR_BLUE", "claude": "COLOR_RED", "inactive": "COLOR_WHITE",
++         "success": "COLOR_GREEN", "error": "COLOR_RED", "warning": "COLOR_YELLOW", "request": "COLOR_YELLOW"}
++# The six levels of each channel in xterm's 6×6×6 color cube, colors 16 to 231.
++CUBE = (0, 95, 135, 175, 215, 255)
+ 
+ 
+ def key_name(pressed: object, curses: Any) -> Optional[str]:
+@@ -954,19 +1231,46 @@ def key_name(pressed: object, curses: Any) -> Optional[str]:
+     return next((name for constant, name in CURSES_KEYS.items() if pressed == getattr(curses, constant, None)), None)
+ 
+ 
++def xterm_color(rgb: tuple[int, int, int]) -> int:
++    """The xterm-256 color nearest `rgb`, from the color cube and the gray ramp. Colors 0 to 15 are left out,
++    because each terminal's palette sets them."""
++    colors = [(16 + 36 * red + 6 * green + blue, (CUBE[red], CUBE[green], CUBE[blue]))
++              for red in range(6) for green in range(6) for blue in range(6)]
++    colors += [(232 + step, (8 + 10 * step,) * 3) for step in range(24)]
++    return min(colors, key=lambda color: sum((one - other) ** 2 for one, other in zip(color[1], rgb)))[0]
++
++
++def theme_name(environ: Optional[dict] = None) -> str:
++    """`light` when `COLORFGBG`, which some terminals set, names a light background, white or bright white, and
++    otherwise `dark`, Claude Code's default."""
++    environ = os.environ if environ is None else environ
++    background = (environ.get("COLORFGBG") or "").split(";")[-1]
++    return "light" if background in ("7", "15") else "dark"
++
++
+ def styles(curses: Any) -> dict[str, int]:
+-    """Each style's attributes: the terminal's own colors on its own background, or none under `NO_COLOR`."""
++    """Each style's attributes: the panel's colors on the terminal's own background, as the nearest of 256 colors
++    or one of 8, or none under `NO_COLOR`."""
+     found = {"": 0, "subtle": curses.A_DIM, "bold": curses.A_BOLD}
+-    colored = not os.environ.get("NO_COLOR") and curses.has_colors()
+-    if colored:
+-        curses.start_color()
+-        curses.use_default_colors()
+-    for index, (style, color) in enumerate(STYLE_COLORS.items(), 1):
+-        if colored:
+-            curses.init_pair(index, getattr(curses, color), -1)
+-            found[style] = curses.color_pair(index)
++    names = [*THEMES["dark"], *PALETTE]
++    if os.environ.get("NO_COLOR") or not curses.has_colors():
++        found.update({name: curses.A_BOLD if name == "error" else 0 for name in names if name != "subtle"})
++        return found
++    curses.start_color()
++    curses.use_default_colors()
++    theme = THEMES[theme_name()]
++    rich = getattr(curses, "COLORS", 8) >= 256
++    for index, name in enumerate(names, 1):
++        if name in PALETTE:
++            color = PALETTE[name]
++        elif rich:
++            color = xterm_color(theme[name])
++        elif name in BASIC:
++            color = getattr(curses, BASIC[name])
+         else:
+-            found[style] = curses.A_BOLD if style == "error" else 0
++            continue
++        curses.init_pair(index, color, -1)
++        found[name] = curses.color_pair(index)
+     return found
+ 
+ 
+@@ -979,16 +1283,21 @@ def printable(text: str) -> str:
+ class Screen:
+     """Draws a `Console` with curses and feeds it keys."""
+ 
+-    def __init__(self, window: Any, console: Console, curses: Any) -> None:
++    def __init__(self, window: Any, console: Console, curses: Any, out: Optional[TextIO] = None) -> None:
+         self.window, self.console, self.curses = window, console, curses
++        # Where escape sequences that curses does not draw, such as the clipboard's, go to the terminal.
++        self.out = sys.stdout if out is None else out
+         self.styles = styles(curses)
++        # What `read_key` read past the end of an escape sequence, to hand over next.
++        self.pending: list[object] = []
+ 
+     def put(self, y: int, line: Line, width: int) -> None:
+         x = 0
+-        for text, style in line.parts:
++        for at, (text, style) in enumerate(line.parts):
+             if x >= width:
+                 break
+-            attributes = self.styles.get(style, 0) | (self.curses.A_REVERSE if line.selected else 0)
++            lit = line.selected or at == line.lit
++            attributes = self.styles.get(style, 0) | (self.curses.A_REVERSE if lit else 0)
+             shown = printable(text)[:width - x]
+             try:
+                 self.window.addstr(y, x, shown, attributes)
+@@ -1000,27 +1309,75 @@ def draw(self) -> None:
+         height, width = self.window.getmaxyx()
+         footer = self.console.footer()
+         typing = self.console.field
+-        room = max(1, height - len(footer) - (1 if typing else 0))
++        below = typing is not None and not typing.inline
++        room = max(1, height - len(footer) - (1 if below else 0))
+         shown = self.console.viewport(width, room)
+         self.window.erase()
+         for y, line in enumerate(shown):
+             self.put(y, line, width)
+         for y, line in enumerate(footer, room):
+             self.put(y, line, width)
+-        if typing is not None:
++        at = None
++        if typing is not None and below:
+             space = max(1, width - len(typing.prompt) - 1)
+             start = max(0, typing.cursor - space)
+             self.put(height - 1, Line([(typing.prompt, "bold"), (typing.text[start:start + space], "")]), width)
+-            self.window.move(height - 1, min(width - 1, len(typing.prompt) + typing.cursor - start))
++            at = (height - 1, min(width - 1, len(typing.prompt) + typing.cursor - start))
++        elif typing is not None:
++            at = next(((y, min(width - 1, line.cursor)) for y, line in enumerate(shown) if line.cursor is not None),
++                      None)
++        if at is not None:
++            self.window.move(*at)
+         try:
+-            self.curses.curs_set(0 if typing is None else 1)
++            self.curses.curs_set(0 if at is None else 1)
+         except self.curses.error:
+             pass
+         self.window.refresh()
++        # After curses has written the screen, so the sequence reaches the terminal whole and is never drawn as text.
++        copied = self.console.take_clipboard()
++        if copied is not None:
++            self.out.write(clipboard_sequence(copied))
++            self.out.flush()
++
++    def read_key(self) -> Optional[str]:
++        """The next key's name, or None for one the console does not use. An escape sequence curses did not name
++        is read to its last byte and named by `ESCAPES`. Raises `curses.error` when no key came in time."""
++        pressed = self.pending.pop(0) if self.pending else self.window.get_wch()
++        if pressed != "\x1b":
++            return key_name(pressed, self.curses)
++        follow = self.follow()
++        if follow not in ("[", "O"):
++            if follow is not None:
++                self.pending.append(follow)
++            return "esc"
++        body = ""
++        while len(body) < 8:
++            byte = self.follow()
++            if not isinstance(byte, str):
++                break
++            body += byte
++            if "@" <= byte <= "~":
++                break
++        final = body[-1:]
++        return ESCAPES.get(body[:-1].split(";")[0] + final if final == "~" else final)
++
++    def follow(self) -> object:
++        """The key after an Esc, when one comes within `ESCAPE_WAIT` milliseconds, or None."""
++        self.window.timeout(ESCAPE_WAIT)
++        try:
++            return self.window.get_wch()
++        except self.curses.error:
++            return None
++        finally:
++            self.window.timeout(REDRAW_WAIT)
+ 
+     def run(self) -> int:
++        """Draw and take keys until the console quits. The terminal's Ctrl-C reaches curses as SIGINT, which only
++        sets a flag here, so it is a key like any other and never stops the console between two of its steps."""
+         self.window.keypad(True)
+-        self.window.timeout(250)
++        self.window.timeout(REDRAW_WAIT)
++        interrupted = threading.Event()
++        previous = signal.signal(signal.SIGINT, lambda number, frame: interrupted.set())
+         stop = threading.Event()
+ 
+         def refresh() -> None:
+@@ -1036,22 +1393,26 @@ def refresh() -> None:
+         worker.start()
+         try:
+             while not self.console.quit:
++                if interrupted.is_set():
++                    interrupted.clear()
++                    self.console.key("ctrl-c")
++                    continue
+                 self.draw()
+                 try:
+-                    pressed = self.window.get_wch()
++                    name = self.read_key()
+                 except self.curses.error:
+                     continue
+-                name = key_name(pressed, self.curses)
+                 if name is not None:
+                     self.console.key(name)
+         finally:
++            signal.signal(signal.SIGINT, previous)
+             stop.set()
+             self.console.refresh_now.set()
+         return 0
+ 
+ 
+ def main(wake: Callable[[str, dict], None]) -> int:
+-    """Run the console in this terminal until `q`."""
++    """Run the console in this terminal until Ctrl-C quits it."""
+     import curses
+ 
+     os.environ.setdefault("ESCDELAY", "25")
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index 9f008385..cac70cd4 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -327,20 +327,26 @@ def request(session: str, subject: str, *, detail: str = "", pr: Optional[str] =
+     return post(session, "request", subject, detail=detail, pr=pr, agent=agent, start=start, choices=choices)
+ 
+ 
+-def check_message(text: str) -> str:
+-    """A message's text: one paragraph of at most `MAX_MESSAGE_BYTES` in UTF-8, on one line, as
+-    the `DISCUSS` line that carries it to the agent prints."""
++def check_message(text: str, what: str = "message") -> str:
++    """A message's text, or another of the person's paragraphs that `what` names: one paragraph of
++    at most `MAX_MESSAGE_BYTES` in UTF-8, on one line, as the line that carries it to the agent prints."""
+     said = text.strip()
+     if not said:
+-        raise InboxError("the message is empty")
++        raise InboxError(f"the {what} is empty")
+     if not is_one_line(said):
+-        raise InboxError("the message must be one paragraph, with no line breaks")
++        raise InboxError(f"the {what} must be one paragraph, with no line breaks")
+     size = len(said.encode("utf-8"))
+     if size > MAX_MESSAGE_BYTES:
+-        raise InboxError(f"the message is {size} bytes; keep it to {MAX_MESSAGE_BYTES} (4 KiB)")
++        raise InboxError(f"the {what} is {size} bytes; keep it to {MAX_MESSAGE_BYTES} (4 KiB)")
+     return said
+ 
+ 
++def note_of(note: Optional[str]) -> dict:
++    """The `note` an answer or outcome records: the person's one paragraph of more context, as a message is,
++    or nothing when they wrote none."""
++    return {"note": check_message(note, "note")} if note and note.strip() else {}
++
++
+ def new_message(text: str) -> dict:
+     return {"text": check_message(text), "at": now_ms()}
+ 
+@@ -500,7 +506,8 @@ def message(question: dict) -> str:
+     sends it: its answer or outcome, its dismissal, that a dismissal it may have heard of was
+     undone, that the person pressed start, quoting the start action they pressed it for, that the
+     person does not understand it, or a message the person wrote about it. A request's
+-    outcome ends with the person's text when they gave one."""
++    outcome ends with the person's text when they gave one, and an answer or outcome with their
++    note."""
+     line = claimed_line(question) or owed_line(question)
+     if line == "discuss":
+         said = question["messages"][discussed_message(question)]["text"]
+@@ -512,13 +519,14 @@ def message(question: dict) -> str:
+     if question.get("restoredAt"):
+         return f"RESTORED {question['ref']} {question['subject']}"
+     answered = question["answer"]
++    noted = f" — note: {answered['note']}" if answered.get("note") else ""
+     if answered.get("declined") or answered.get("done"):
+         word = "DECLINED" if answered.get("declined") else "DONE"
+         said = f" → {answered['text']}" if answered.get("text") else ""
+-        return f"{word} {question['ref']} {question['subject']}{said}"
++        return f"{word} {question['ref']} {question['subject']}{said}{noted}"
+     if answered.get("dismissed"):
+         return f"DISMISSED {question['ref']} {question['subject']}"
+-    return f"ANSWER {answer_ref(question)} {question['subject']} → {answered['text']}"
++    return f"ANSWER {answer_ref(question)} {question['subject']} → {answered['text']}{noted}"
+ 
+ 
+ # Answering and delivering
+@@ -536,7 +544,12 @@ def update(session: Optional[str], ref: str, change,
+     return item
+ 
+ 
+-def answer(session: Optional[str], ref: str, letter: Optional[str], text: Optional[str] = None) -> dict:
++def answer(session: Optional[str], ref: str, letter: Optional[str], text: Optional[str] = None,
++           note: Optional[str] = None) -> dict:
++    """Answer a question with a letter, the typed answer's `text` under its last letter, and the person's
++    `note` when they add one."""
++    noted = note_of(note)
++
+     def record(question: dict) -> None:
+         refuse_notice(question, "takes no answer")
+         refuse_request(question)
+@@ -560,7 +573,7 @@ def record(question: dict) -> None:
+         # The answer tells the agent the question was open, so it replaces word of a restore that
+         # has not reached the agent, and any claim to deliver that word.
+         clear_for_outcome(question)
+-        question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
++        question["answer"] = {"letter": letter, "text": chosen, **noted, "answeredAt": now_ms()}
+ 
+     return update(session, ref, record, is_open)
+ 
+@@ -613,10 +626,10 @@ def dismiss(session: Optional[str], ref: str, withdrawn: bool = False) -> dict:
+     return update(session, ref, lambda item: record_dismissal(item, withdrawn, {}), is_open)
+ 
+ 
+-def decline(session: Optional[str], ref: str, text: Optional[str] = None) -> dict:
+-    """Decline a request, with the person's one line of text when they give one: a dismissal its
+-    deliverer reports as `DECLINED`."""
+-    said = outcome_text(text)
++def decline(session: Optional[str], ref: str, text: Optional[str] = None, note: Optional[str] = None) -> dict:
++    """Decline a request, with the person's one line of text and their note when they give them: a
++    dismissal its deliverer reports as `DECLINED`."""
++    said = {**outcome_text(text), **note_of(note)}
+ 
+     def record(item: dict) -> None:
+         refuse_unless_request(item, "declined")
+@@ -625,9 +638,9 @@ def record(item: dict) -> None:
+     return update(session, ref, record, is_open)
+ 
+ 
+-def done(session: Optional[str], ref: str, text: Optional[str] = None) -> dict:
+-    """Mark a request done, with the person's one line of text when they give one."""
+-    said = outcome_text(text)
++def done(session: Optional[str], ref: str, text: Optional[str] = None, note: Optional[str] = None) -> dict:
++    """Mark a request done, with the person's one line of text and their note when they give them."""
++    said = {**outcome_text(text), **note_of(note)}
+ 
+     def record(item: dict) -> None:
+         refuse_unless_request(item, "done")
+diff --git a/tests/test_console.py b/tests/test_console.py
+index 97f8c4ec..b6ff0c8b 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -15,8 +15,10 @@
+ import tempfile
+ import time
+ import unittest
++import webbrowser
+ from contextlib import redirect_stderr
+ from pathlib import Path
++from typing import Optional
+ from unittest import mock
+ 
+ from projector import cli, console, inbox, watch
+@@ -44,7 +46,10 @@ def setUp(self) -> None:
+         scratch = tempfile.TemporaryDirectory()
+         self.addCleanup(scratch.cleanup)
+         self.scratch = Path(scratch.name)
+-        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state")})
++        # Local, with no `BROWSER`, so a run over SSH or with a browser helper opens URLs as a run at the machine
++        # does.
++        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state"), "PROJECTOR_REMOTE": "0",
++                                               "BROWSER": ""})
+         environ.start()
+         self.addCleanup(environ.stop)
+         self.root = watch.state_root()
+@@ -99,6 +104,25 @@ def home_names(self) -> list[str]:
+     def screen(self) -> str:
+         return "\n".join(line.text for line in self.console.lines(100)[0])
+ 
++    def focused(self) -> list[str]:
++        """What the focus is on: a control's label after its `›`, or a row's text up to its first gap. A single
++        focus gives a list of one."""
++        found = []
++        for line in self.console.lines(100)[0]:
++            if "› " in line.text:
++                found.append(line.text.split("› ", 1)[1].split("   ")[0])
++            elif line.selected:
++                found.append(line.text.strip().split("  ")[0])
++        return found
++
++    def focus_on(self, label: str) -> None:
++        """Press Down until the focus is on `label`."""
++        for _ in range(30):
++            if self.focused() == [label]:
++                return
++            self.press("down")
++        self.fail(f"Down never reached {label!r}; the focus is on {self.focused()}")
++
+     def open_entry(self, session: str, key: str) -> None:
+         """Open the session's panel and the drawer of the row under `key`."""
+         self.console.tick()
+@@ -157,7 +181,7 @@ def test_an_option_answers_the_item_of_the_viewed_session_when_another_session_h
+                 self.ask(session, question)
+ 
+         self.open_entry("second", "item:3")
+-        self.press("1")
++        self.press("1", "enter")
+ 
+         answers = [inbox.read_item(inbox.session_dir(name), "3").get("answer") for name in ("first", "second")]
+         self.assertEqual([None, "a"], [answer and answer["letter"] for answer in answers])
+@@ -168,7 +192,7 @@ def test_an_answer_or_a_message_from_the_console_is_recorded_and_left_to_the_ses
+         self.ask("s1", "Merge it now?")
+ 
+         self.open_entry("s1", "item:1")
+-        self.press("1")
++        self.press("1", "enter")
+         self.console.selected = "item:2"
+         self.press("enter", "7")
+         self.type("Why now?")
+@@ -186,7 +210,7 @@ def test_a_codex_sessions_answer_wakes_its_delivery_and_a_claude_sessions_does_n
+             self.ask(session)
+         for session in ("codex-session", "claude-session"):
+             self.open_entry(session, "item:1")
+-            self.press("1")
++            self.press("1", "enter")
+ 
+         self.assertEqual([("codex-session", "1")], self.woken)
+ 
+@@ -280,19 +304,113 @@ def test_an_open_drawer_asks_for_threads_every_30_seconds_and_never_without_an_u
+                     self.console.tick()
+                 self.assertEqual(expected, len(self.queries))
+ 
+-    def test_o_opens_the_pull_request_in_a_browser(self) -> None:
++    def open_pull(self) -> None:
+         self.claude("s1")
+         self.subscribe("s1", "acme/app#12 fix")
+         self.cache("acme/app", 12)
+         self.open_entry("s1", "pr:acme/app#12")
+ 
++    def test_o_opens_the_pull_request_in_a_browser_and_shows_no_url_on_a_local_machine(self) -> None:
++        # Catches a local console that shows the URL even though the browser opened it.
++        self.open_pull()
++
+         self.press("o")
+ 
+-        self.assertEqual(["https://github.com/acme/app/pull/12"], self.opened)
++        self.assertEqual((["https://github.com/acme/app/pull/12"], False),
++                         (self.opened, "https://github.com" in self.screen()))
++
++    def test_a_remote_console_shows_the_whole_url_under_the_actions_until_the_next_key(self) -> None:
++        # Catches a remote console opening a browser on the far machine, a URL cut at the window's edge, or one
++        # that stays after the next key.
++        url = "https://github.com/acme/app/pull/12"
++        for environ in ({"SSH_CONNECTION": "10.0.0.2 52000 10.0.0.1 22"}, {"SSH_CLIENT": "10.0.0.2 52000 22"},
++                        {"SSH_TTY": "/dev/pts/3"}, {"PROJECTOR_REMOTE": "1"}):
++            with self.subTest(environ=environ):
++                self.opened.clear()
++                self.console = self.new_console()
++                self.open_pull()
++                with mock.patch.dict(os.environ, {"PROJECTOR_REMOTE": "", **environ}):
++                    self.press("o")
++                body = self.console.lines(20)[0]
++                under = [line.text for line in body[[index for index, line in enumerate(body)
++                                                     if "o: Open in GitHub" in line.text][0] + 1:]]
++                shown = "".join(under[:2])
++                self.press("down")
++
++                self.assertEqual(([], url, False),
++                                 (self.opened, shown, url in self.screen()))
++
++    def test_projector_remote_0_opens_locally_even_over_ssh(self) -> None:
++        # Catches the SSH variables winning over `PROJECTOR_REMOTE=0`, which a person sets when the browser does
++        # open where they sit.
++        self.open_pull()
++        with mock.patch.dict(os.environ, {"PROJECTOR_REMOTE": "0", "SSH_CONNECTION": "10.0.0.2 52000 10.0.0.1 22"}):
++            self.press("o")
++
++        self.assertEqual((["https://github.com/acme/app/pull/12"], False),
++                         (self.opened, "https://github.com" in self.screen()))
++
++    def test_a_remote_console_sends_the_url_to_the_clipboard_with_osc_52_and_a_local_one_sends_nothing(self) -> None:
++        # Catches a sequence the terminal would not read, the wrong base64, a tmux passthrough that tmux would swallow,
++        # a sequence sent again on the next draw, or any bytes a local console writes.
++        encoded = "aHR0cHM6Ly9naXRodWIuY29tL2FjbWUvYXBwL3B1bGwvMTI="
++        plain = f"\x1b]52;c;{encoded}\x07"
++        for environ, expected in (({"PROJECTOR_REMOTE": "1", "TMUX": ""}, plain),
++                                  ({"PROJECTOR_REMOTE": "1", "TMUX": "/tmp/tmux-501/default,1234,0"},
++                                   f"\x1bPtmux;\x1b\x1b]52;c;{encoded}\x07\x1b\\"),
++                                  ({"PROJECTOR_REMOTE": "0", "TMUX": ""}, "")):
++            with self.subTest(environ=environ):
++                self.opened.clear()
++                self.console = self.new_console()
++                out = io.StringIO()
++                screen = console.Screen(FakeWindow(30, 100), self.console, FakeCurses, out)
++                self.open_pull()
++                with mock.patch.dict(os.environ, environ):
++                    self.press("o")
++                    screen.draw()
++                    screen.draw()
++
++                self.assertEqual((expected, bool(expected)),
++                                 (out.getvalue(),
++                                  "Sent to your clipboard where your terminal allows it" in self.screen()))
++
++    def test_a_remote_console_with_browser_set_opens_through_it_and_shows_the_url_only_when_that_fails(self) -> None:
++        # Catches a remote console that ignores `BROWSER`, which a person points at a helper that opens the URL on
++        # their own machine, or one that leaves them nothing to follow when that helper fails.
++        url = "https://github.com/acme/app/pull/12"
++        remote = {"PROJECTOR_REMOTE": "1", "BROWSER": "open-on-my-laptop", "TMUX": ""}
++        for opens, shown in ((mock.Mock(return_value=True), False), (mock.Mock(return_value=False), True),
++                             (mock.Mock(side_effect=webbrowser.Error("tunnel down")), True)):
++            with self.subTest(opens=opens):
++                self.console = console.Console(self.root, clock=self.clock, gh=self.gh, open_url=opens)
++                out = io.StringIO()
++                screen = console.Screen(FakeWindow(30, 100), self.console, FakeCurses, out)
++                self.open_pull()
++                with mock.patch.dict(os.environ, remote):
++                    self.press("o")
++                    screen.draw()
++                    screen.draw()
++
++                opens.assert_called_once_with(url)
++                sent = "\x1b]52;c;aHR0cHM6Ly9naXRodWIuY29tL2FjbWUvYXBwL3B1bGwvMTI=\x07"
++                self.assertEqual((shown, sent if shown else ""), (url in self.screen(), out.getvalue()))
++
++    def test_a_local_open_that_fails_shows_the_url(self) -> None:
++        # Catches a failed open, which `webbrowser.open` reports by returning False or raising, leaving the person
++        # with nothing to follow.
++        for fails in (lambda url: False, mock.Mock(side_effect=webbrowser.Error("no browser"))):
++            with self.subTest(fails=fails):
++                self.console = console.Console(self.root, clock=self.clock, gh=self.gh, open_url=fails)
++                self.open_pull()
++                self.press("o")
++
++                self.assertIn("https://github.com/acme/app/pull/12", self.screen())
+ 
+ 
+ class Keys(ConsoleCase):
+-    def test_left_returns_home_closing_the_drawer_but_moves_the_cursor_in_a_text_field(self) -> None:
++    def test_left_closes_the_open_drawer_then_returns_home_but_moves_the_cursor_in_a_text_field(self) -> None:
++        # Catches Left leaving the panel with a drawer open, so you cannot close a question without losing the
++        # session, or Left in a text field doing either instead of moving the cursor.
+         self.claude("s1")
+         self.ask("s1")
+         self.open_entry("s1", "item:1")
+@@ -304,17 +422,270 @@ def test_left_returns_home_closing_the_drawer_but_moves_the_cursor_in_a_text_fie
+         self.press("enter")
+         in_field = (self.console.view, self.console.drawer)
+         self.press("left")
++        closed = (self.console.view, self.console.drawer, self.focused())
++        self.press("left")
+ 
+-        self.assertEqual((("panel", "item:1"), ("home", None), "abc"),
+-                         (in_field, (self.console.view, self.console.drawer),
++        self.assertEqual((("panel", "item:1"), ("panel", None, ["- Decline the finding?"]), ("home", None), "abc"),
++                         (in_field, closed, (self.console.view, self.console.drawer),
+                           inbox.read_item(inbox.session_dir("s1"), "1")["messages"][0]["text"]))
+ 
++    def test_q_is_an_ordinary_key_and_ctrl_c_quits_at_once_only_from_the_home_list(self) -> None:
++        # Catches `q` still quitting, which the person hits by mistake, or a single Ctrl-C quitting a panel.
++        self.claude("s1")
++        self.ask("s1")
++        self.open_entry("s1", "item:1")
++
++        self.press("q")
++        after_q = self.console.quit
++        self.press("ctrl-c")
++        after_one = (self.console.quit, self.console.footer()[-1].text)
++        self.press("left", "left", "ctrl-c")
++
++        self.assertEqual((False, (False, "Press Ctrl-C again to exit"), True),
++                         (after_q, after_one, self.console.quit))
++
++    def test_a_second_ctrl_c_quits_a_panel_unless_another_key_or_the_wait_came_between(self) -> None:
++        # Catches a panel that quits on one Ctrl-C, never quits, or still counts a Ctrl-C that a key or the hint's
++        # timing out has cleared.
++        self.claude("s1")
++        self.ask("s1")
++        for between in ((), ("down",), "wait"):
++            with self.subTest(between=between):
++                self.console = self.new_console()
++                self.open_entry("s1", "item:1")
++                self.press("ctrl-c")
++                if between == "wait":
++                    self.clock.now += console.EXIT_WINDOW + 1
++                else:
++                    self.press(*between)
++                self.press("ctrl-c")
++                self.assertEqual(between == (), self.console.quit)
++
++    def test_ctrl_c_in_a_text_field_cancels_the_field_without_counting_toward_quitting(self) -> None:
++        # Catches Ctrl-C typed into the field, or counted as the first of the two presses that quit, so two
++        # presses meant to clear a field quit the console.
++        self.claude("s1")
++        self.ask("s1")
++        self.open_entry("s1", "item:1")
++        self.press("7")
++        self.type("half a thought")
++
++        self.press("ctrl-c")
++        cancelled = (self.console.field, self.console.quit)
++        self.press("ctrl-c")
++        armed = self.console.quit
++        self.press("ctrl-c")
++
++        self.assertEqual(((None, False), False, True), (cancelled, armed, self.console.quit))
++
++    def test_escape_sequences_the_terminal_sends_for_the_arrows_are_read_as_the_arrows(self) -> None:
++        # Catches the console reading `ESC [ B`, the cursor key a terminal sends outside application mode, as Esc,
++        # `[`, and `B`, which closed the drawer instead of moving down.
++        cases = ((["\x1b", "[", "B"], ["down"]), (["\x1b", "O", "B"], ["down"]), (["\x1b", "[", "A"], ["up"]),
++                 (["\x1b", "[", "D"], ["left"]), (["\x1b", "[", "6", "~"], ["pagedown"]),
++                 (["\x1b", "[", "1", ";", "5", "B"], ["down"]), (["\x1b"], ["esc"]),
++                 (["\x1b", "\x1b"], ["esc", "esc"]), (["\x03"], ["ctrl-c"]))
++        for pressed, names in cases:
++            with self.subTest(pressed=pressed):
++                window = FakeWindow(12)
++                window.pressed = list(pressed)
++                screen = console.Screen(window, self.console, FakeCurses)
++                self.assertEqual(names, [screen.read_key() for _ in names])
++
++
++class Options(ConsoleCase):
++    def answer(self, ref: str = "1", session: str = "s1") -> dict:
++        return inbox.read_item(inbox.session_dir(session), ref).get("answer")
++
++    def test_enter_on_the_focused_option_opens_its_note_field_and_records_that_option(self) -> None:
++        # Catches the focus leaving an open question's options for the wrong place, or Enter recording an option
++        # other than the focused one.
++        for session, keys in (("s1", ("up", "down", "down")), ("s2", ("down", "down", "up"))):
++            with self.subTest(keys=keys):
++                self.console = self.new_console()
++                self.claude(session)
++                self.ask(session)
++                self.open_entry(session, "item:1")
++
++                self.press(*keys, "enter")
++                field = self.console.field
++                self.press("enter")
++
++                self.assertEqual(("note", "item:1", "b"),
++                                 (field and field.purpose, self.console.drawer, self.answer("1", session)["letter"]))
++                self.assertNotIn("note", self.answer("1", session))
++
++    def test_a_question_offers_no_typed_answer_and_t_records_nothing(self) -> None:
++        # Catches `type an answer` left among a question's options or in the focus ring, or `t` still opening the
++        # typed answer's field, when Discuss is how the person writes their own words.
++        self.claude("s1")
++        self.ask("s1")
++        self.open_entry("s1", "item:1")
++
++        ring = [control for key, control in self.console.ring() if key == "item:1" and control is not None]
++        drawn = self.screen()
++        self.press("t")
++
++        self.assertEqual((["1", "2", "6", "7", "8", "9"], False, None, None),
++                         (ring, "type an answer" in drawn, self.console.field, self.answer()))
++
++    def test_an_option_opens_a_note_field_under_itself_and_records_only_when_the_field_is_sent(self) -> None:
++        # Catches a number that records at once, leaving no room for a note, a note field drawn away from its
++        # option, Esc recording the option anyway, or a typed note that never reaches the agent's line.
++        self.claude("s1")
++        self.ask("s1")
++        self.open_entry("s1", "item:1")
++
++        self.press("2")
++        self.type("never sent")
++        lines = self.screen().splitlines()
++        self.press("esc")
++        after_esc = (self.answer(), self.console.field, self.console.drawer)
++        self.press("1")
++        self.type("keep the cap")
++        self.press("enter")
++
++        self.assertIn(("› 2: Fix it", "Note (optional): never sent"),
++                      [(above.strip(), line.strip()) for above, line in zip(lines, lines[1:])])
++        self.assertEqual((None, None, "item:1"), after_esc)
++        self.assertEqual("ANSWER 1.a Decline the finding? → Decline it — note: keep the cap",
++                         inbox.message(inbox.read_item(inbox.session_dir("s1"), "1")))
++
++    def test_a_requests_highlight_starts_on_its_first_choice_and_records_done_with_the_choice_and_note(self) -> None:
++        # Catches the highlight starting on Start, which Enter would press, or a request's choice and note
++        # recorded as anything but `done`.
++        self.claude("s1")
++        inbox.request("s1", "Test the gutters", start="Install it", options=["Looks good", "Some feedback"])
++        self.open_entry("s1", "item:1")
++
++        self.press("enter")
++        self.type("works on the phone")
++        self.press("enter")
++
++        item = inbox.read_item(inbox.session_dir("s1"), "1")
++        self.assertEqual((None, "DONE 1 Test the gutters → Looks good — note: works on the phone"),
++                         (item.get("started"), inbox.message(item)))
++
++    def test_a_note_field_closes_when_its_item_is_resolved_elsewhere(self) -> None:
++        # Catches a note field left open after its option is gone from the drawer, where it is no longer drawn but
++        # still takes every key, so Ctrl-C and Esc seem to do nothing.
++        for session, resolve in (("answered", lambda: inbox.answer("answered", "1", "b")),
++                                 ("withdrawn", lambda: inbox.dismiss("withdrawn", "1", withdrawn=True))):
++            with self.subTest(session):
++                self.console = self.new_console()
++                self.claude(session)
++                self.ask(session)
++                self.open_entry(session, "item:1")
++                self.press("1")
++                resolve()
++                self.clock.now += console.INBOX_EVERY
++
++                self.console.tick()
++                self.press("ctrl-c", "ctrl-c")
++
++                self.assertEqual((None, True), (self.console.field, self.console.quit))
++
++
++
++class Ring(ConsoleCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.claude("s1")
++        self.subscribe("s1", "acme/app#12 fix")
++        self.cache("acme/app", 12)
++        self.ask("s1")
++
++    def test_the_arrows_move_one_focus_through_the_rows_and_the_open_drawers_options_and_actions(self) -> None:
++        # Catches arrows that stop at an open question's last option, skip its actions or the conversation's
++        # heading, wrap past either end, or close the drawer when the focus leaves it.
++        self.open_entry("s1", "item:1")
++        seen = [self.focused()]
++        for name in ("up", "up", "up", *["down"] * 9):
++            self.press(name)
++            seen.append(self.focused())
++
++        self.assertEqual([["1: Decline it (recommended)"], ["- Decline the finding?"], ["#12"], ["#12"],
++                          ["- Decline the finding?"], ["1: Decline it (recommended)"], ["2: Fix it"],
++                          ["6: I don't understand"], ["7: Discuss"], ["8: Dismiss"],
++                          ["9: Snooze"], ["▸ Conversation"], ["▸ Conversation"]], seen)
++        self.assertEqual("item:1", self.console.drawer)
++
++    def test_a_pull_request_drawers_actions_follow_its_row_and_come_before_the_next_row(self) -> None:
++        # Catches a drawer without options keeping its actions out of the ring.
++        self.open_entry("s1", "pr:acme/app#12")
++        seen = [self.focused()]
++        for _ in range(4):
++            self.press("down")
++            seen.append(self.focused())
++
++        self.assertEqual([["#12"], ["7: Discuss"], ["8: Dismiss"], ["o: Open in GitHub"], ["- Decline the finding?"]],
++                         seen)
++        self.assertEqual("pr:acme/app#12", self.console.drawer)
++
++    def test_enter_on_another_row_closes_the_open_drawer_and_opens_that_rows(self) -> None:
++        # Catches Enter on another row acting on the open drawer, or opening a second drawer beside it.
++        self.open_entry("s1", "item:1")
++        self.press("up", "up")
++
++        self.press("enter")
++
++        self.assertEqual(("pr:acme/app#12", ["#12"]), (self.console.drawer, self.focused()))
++        self.assertNotIn("1: Decline it", self.screen())
++
++    def test_enter_on_the_open_drawers_own_row_closes_it(self) -> None:
++        # Catches Enter on the open row reopening the drawer, or leaving the focus on a control nobody can see.
++        self.open_entry("s1", "item:1")
++        self.press("up")
++
++        self.press("enter")
++
++        self.assertEqual((None, ["- Decline the finding?"]), (self.console.drawer, self.focused()))
++
++    def test_enter_on_discuss_opens_its_field_and_on_dismiss_dismisses(self) -> None:
++        # Catches Enter on an action doing nothing, or pressing another control than the focused one.
++        self.open_entry("s1", "item:1")
++        self.focus_on("7: Discuss")
++        self.press("enter")
++        discussing = self.console.field and self.console.field.purpose
++        self.press("esc")
++        self.focus_on("8: Dismiss")
++
++        self.press("enter")
++
++        self.assertEqual(("discuss", True),
++                         (discussing, inbox.read_item(inbox.session_dir("s1"), "1")["answer"].get("dismissed")))
++
++    def test_enter_on_snooze_puts_the_lengths_in_the_ring_and_enter_on_one_snoozes(self) -> None:
++        # Catches the lengths left out of the ring, so Snooze cannot be finished from the arrows.
++        self.open_entry("s1", "item:1")
++        self.focus_on("9: Snooze")
++        self.press("enter")
++        offered = self.focused()
++        self.press("down")
++
++        self.press("enter")
++
++        until = inbox.read_item(inbox.session_dir("s1"), "1")["snoozedUntil"]
++        self.assertEqual((["1: 15 min"], 60), (offered, round((until - self.console.now_ms()) / 60_000)))
++
++    def test_enter_on_a_pull_requests_dismiss_still_asks_before_dropping_it(self) -> None:
++        # Catches Enter on Dismiss dropping the pull request without its confirmation.
++        self.open_entry("s1", "pr:acme/app#12")
++        self.focus_on("8: Dismiss")
++
++        self.press("enter")
++        asked = (self.focused(), watch.read_lines(self.folder("s1")))
++        self.press("enter")
++
++        self.assertEqual(((["8: Yes, dismiss it"], ["acme/app#12 fix"]), ["acme/app#12 fix", "!acme/app#12 fix"]),
++                         (asked, watch.read_lines(self.folder("s1"))))
++
+ 
+ class FakeCurses:
+     """The parts of `curses` that `console.Screen` draws with, for a terminal with no colors."""
+ 
+     A_DIM, A_BOLD, A_REVERSE = 1, 2, 4
+-    KEY_NPAGE, KEY_PPAGE, KEY_HOME, KEY_END = 338, 339, 262, 360
++    KEY_NPAGE, KEY_PPAGE, KEY_HOME, KEY_END, KEY_DOWN = 338, 339, 262, 360, 258
+ 
+     class error(Exception):
+         pass
+@@ -334,15 +705,27 @@ class FakeWindow:
+     def __init__(self, height: int, width: int = 80) -> None:
+         self.height, self.width = height, width
+         self.rows: dict[int, str] = {}
++        self.drawn: list[tuple[str, int]] = []
++        self.pressed: list[object] = []
+ 
+     def getmaxyx(self) -> tuple[int, int]:
+         return self.height, self.width
+ 
+     def erase(self) -> None:
+         self.rows = {}
++        self.drawn = []
+ 
+     def addstr(self, y: int, x: int, text: str, attributes: int) -> None:
+         self.rows[y] = self.rows.get(y, "").ljust(x) + text
++        self.drawn.append((text, attributes))
++
++    def get_wch(self) -> object:
++        if not self.pressed:
++            raise FakeCurses.error("no input")
++        return self.pressed.pop(0)
++
++    def timeout(self, milliseconds: int) -> None:
++        pass
+ 
+     def move(self, y: int, x: int) -> None:
+         pass
+@@ -412,18 +795,36 @@ def test_end_and_home_jump_to_a_tall_drawers_controls_and_back_to_its_row(self)
+                          ("8: Dismiss" in at_end, "- Decline the finding?" in at_end,
+                           "- Decline the finding?" in at_top, "8: Dismiss" in at_top))
+ 
+-    def test_the_cursor_still_closes_a_tall_drawer_and_moves_to_the_next_row(self) -> None:
++    def test_moving_the_highlight_scrolls_it_and_its_note_field_into_a_tall_drawers_view(self) -> None:
++        # Catches a highlight that moves below the screen, where you cannot see what Enter would pick, or a note
++        # field drawn at the bottom of the screen instead of under its option.
++        self.tall_question()
++        opened = self.draw()
++        self.press_terminal(FakeCurses.KEY_DOWN)
++        moved = self.draw()
++        self.press_terminal("\n")
++        rows = self.draw().splitlines()
++
++        under = ["2: Fix it" in above and "Note (optional):" in row for above, row in zip(rows, rows[1:])]
++        self.assertEqual((False, True, True), ("2: Fix it" in opened, "› 2: Fix it" in moved, any(under)))
++
++    def test_the_focus_leaves_a_tall_notice_drawer_open_and_scrolls_to_the_next_row(self) -> None:
++        # Catches the arrows closing the drawer they leave, or a focused row left below the screen.
+         self.claude("s1")
+         self.ask("s1", "Merge it now?")
+-        self.tall_question()
++        notice = inbox.tell("s1", "Force-pushed the branch",
++                            detail="\n".join(f"Detail line {number}." for number in range(1, 41)))
++        self.open_entry("s1", f"item:{notice['ref']}")
+         self.draw()
+         self.press_terminal(FakeCurses.KEY_NPAGE)
+         # Both items can share a millisecond, so either may list first.
+         step = "down" if self.console.keys()[0] == "item:2" else "up"
+ 
+-        self.press(step)
++        # Down passes the notice's four actions to reach the question, and Up reaches it and stays there.
++        for _ in range(5):
++            self.press(step)
+ 
+-        self.assertEqual((None, "item:1"), (self.console.drawer, self.console.selected_key()))
++        self.assertEqual((f"item:{notice['ref']}", "item:1"), (self.console.drawer, self.console.selected_key()))
+         self.assertIn("- Merge it now?", self.draw())
+ 
+ 
+@@ -522,6 +923,34 @@ def test_an_open_conversation_starts_at_its_newest_line_and_follows_it_until_you
+                           "agent: A newer answer." in back, "The newest answer." in stayed, stayed == back,
+                           "agent: One more answer." in self.draw()))
+ 
++    def test_the_conversation_heading_is_the_rings_last_place_and_enter_on_it_shows_or_hides_it(self) -> None:
++        # Catches a ring that stops before the heading, Enter there opening nothing or a drawer instead of toggling
++        # the conversation as `v` does, or a shown conversation that keeps the focus or scrolls away from its newest
++        # line when the focus comes back to it.
++        self.claude("s1")
++        self.ask("s1")
++        self.say(self.transcript("s1"), *(("agent", f"Old line {number}.") for number in range(1, 31)))
++        self.open_entry("s1", "item:1")
++        self.focus_on("▸ Conversation")
++        reached = (self.console.drawer, self.console.expanded)
++        self.press("enter")
++        self.console.tick()
++        opened = self.draw()
++        self.press_terminal(FakeCurses.KEY_PPAGE)
++        back = self.draw()
++        self.press("up")
++        left = (self.focused(), self.draw())
++        self.press("down")
++        returned = self.draw()
++        self.press("enter")
++
++        self.assertEqual((("item:1", set()), True, None, True, False, ["- Decline the finding?"], True, True,
++                          set(), "▸ Conversation"),
++                         (reached, "agent: Old line 30." in opened, self.console.drawer, "Old line 20." in back,
++                          "Old line 30." in back, left[0], "- Decline the finding?" in left[1],
++                          "agent: Old line 30." in returned, self.console.expanded,
++                          self.screen().splitlines()[-1][:14]))
++
+     def test_a_codex_sessions_conversation_comes_from_the_rollout_codex_json_names(self) -> None:
+         rollout = self.scratch / "rollout.jsonl"
+         shutil.copy(Path(__file__).resolve().parent / "fixtures" / "conversation" / "codex.jsonl", rollout)
+@@ -541,6 +970,161 @@ def test_a_session_with_no_transcript_says_so(self) -> None:
+         self.console.tick()
+ 
+         self.assertIn("No transcript found for this session.", self.screen())
++class ColorCurses(FakeCurses):
++    """A terminal with `colors` colors, which keeps the foreground `init_pair` gave each pair."""
++
++    COLOR_BLACK, COLOR_RED, COLOR_GREEN, COLOR_YELLOW, COLOR_BLUE, COLOR_MAGENTA, COLOR_CYAN, COLOR_WHITE = range(8)
++
++    def __init__(self, colors: int) -> None:
++        self.COLORS = colors
++        self.pairs: dict[int, int] = {}
++
++    def has_colors(self) -> bool:
++        return True
++
++    def start_color(self) -> None:
++        pass
++
++    def use_default_colors(self) -> None:
++        pass
++
++    def init_pair(self, pair: int, foreground: int, background: int) -> None:
++        self.pairs[pair] = foreground
++
++    def color_pair(self, pair: int) -> int:
++        return pair << 8
++
++
++class Colors(ConsoleCase):
++    def foregrounds(self, curses: ColorCurses, environ: dict[str, str]) -> dict[str, object]:
++        """The foreground each piece of text on the screen was drawn in, or None when it has no color."""
++        window = FakeWindow(30, 120)
++        with mock.patch.dict(os.environ, environ):
++            screen = console.Screen(window, self.console, curses)
++        screen.draw()
++        return {text.strip(): curses.pairs.get(attributes >> 8) for text, attributes in window.drawn}
++
++    def test_a_question_line_and_a_conflict_draw_in_the_panels_permission_and_error_colors(self) -> None:
++        # Catches the console drawing in colors of its own rather than the panel's: a question in cyan, as it did,
++        # a theme color off by a cube step, or color drawn under NO_COLOR.
++        self.claude("s1")
++        self.subscribe("s1", "acme/app#12 fix")
++        node = pull_node(12)
++        node["repository"]["pullRequest"]["mergeable"] = "CONFLICTING"
++        path = watch.pull_cache(self.root, "acme/app", 12)
++        path.parent.mkdir(parents=True, exist_ok=True)
++        write_json(path, node)
++        self.ask("s1")
++        self.console.tick()
++        self.console.open_panel("s1")
++        dark, light = console.THEMES["dark"], console.THEMES["light"]
++        cases = ((256, {"NO_COLOR": "", "COLORFGBG": ""}, console.xterm_color(dark["permission"]),
++                  console.xterm_color(dark["error"])),
++                 (256, {"NO_COLOR": "", "COLORFGBG": "0;15"}, console.xterm_color(light["permission"]),
++                  console.xterm_color(light["error"])),
++                 (8, {"NO_COLOR": "", "COLORFGBG": ""}, ColorCurses.COLOR_BLUE, ColorCurses.COLOR_RED),
++                 (256, {"NO_COLOR": "1"}, None, None))
++        for colors, environ, question, conflict in cases:
++            with self.subTest(colors=colors, environ=environ):
++                drawn = self.foregrounds(ColorCurses(colors), environ)
++                self.assertEqual((question, conflict), (drawn["- Decline the finding?"], drawn["conflict"]))
++        self.assertEqual((67, 239, 147), (console.xterm_color((95, 135, 175)), console.xterm_color((80, 80, 80)),
++                                          console.xterm_color((177, 185, 249))))
++
++
++class Terminal(unittest.TestCase):
++    """`project console` run in a pseudo-terminal, with the bytes a terminal sends for each key."""
++
++    def prepare(self) -> None:
++        """A state directory of its own with one live Claude Code session, `S`, asking one question."""
++        scratch = tempfile.TemporaryDirectory()
++        self.addCleanup(scratch.cleanup)
++        self.state = scratch.name
++        self.env = {**os.environ, "XDG_STATE_HOME": self.state, "PYTHONPATH": str(SOURCE), "TERM": "xterm-256color"}
++        self.env.pop("PROJECTOR_SESSION", None)
++        for args in (["inbox", "ask", "Decline the finding?", "--recommend", "Decline it", "--option", "Fix it",
++                      "--session", "S"], ["watch", "renew", "--deliverer", "mod", "--session", "S"]):
++            subprocess.run([sys.executable, "-m", "projector", *args], env=self.env, check=True, capture_output=True,
++                           timeout=60)
++
++    def start(self) -> None:
++        import fcntl
++        import pty
++        import struct
++        import termios
++
++        self.code: Optional[int] = None
++        self.pid, self.fd = pty.fork()
++        if self.pid == 0:
++            os.execve(sys.executable, [sys.executable, "-m", "projector", "console"], self.env)
++        self.addCleanup(os.close, self.fd)
++        fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
++        self.shown = bytearray()
++        # Not `live session`, which `no live sessions` holds before the first refresh finds `S`.
++        self.read_for(10, until=b"1 live session")
++
++    def read_for(self, seconds: float, until: bytes = b"") -> None:
++        import select
++
++        end = time.time() + seconds
++        while time.time() < end and not (until and until in self.shown):
++            if select.select([self.fd], [], [], 0.05)[0]:
++                try:
++                    self.shown.extend(os.read(self.fd, 65536))
++                except OSError:
++                    return
++
++    def send(self, *keys: bytes) -> None:
++        for one in keys:
++            try:
++                os.write(self.fd, one)
++            except OSError:  # the console already exited
++                return
++            self.read_for(0.4)
++
++    def exited(self, seconds: float, *, kill: bool = True) -> Optional[int]:
++        """The console's exit code once it exits within `seconds`, or None, killing it unless `kill` is false, when
++        it still runs."""
++        end = time.time() + seconds
++        while time.time() < end and self.code is None:
++            self.read_for(0.1)
++            done, status = os.waitpid(self.pid, os.WNOHANG)
++            if done:
++                self.code = os.waitstatus_to_exitcode(status)
++        if self.code is not None:
++            return self.code
++        if kill:
++            os.kill(self.pid, 9)
++            os.waitpid(self.pid, 0)
++        return None
++
++    @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
++    def test_either_down_arrow_encoding_moves_to_the_second_option_and_one_ctrl_c_quits_from_home(self) -> None:
++        # Catches the arrows doing nothing in a terminal that sends `ESC [ B` rather than `ESC O B`, as a test by
++        # hand found, or a Ctrl-C from the home list that does not quit or leaves a traceback.
++        for down in (b"\x1b[B", b"\x1bOB"):
++            with self.subTest(down=down):
++                self.prepare()
++                self.start()
++                self.send(b"\r", b"\r", down, b"\r", b"\r")
++                # Esc twice leaves any open field and the drawer, and then the panel, so Ctrl-C quits at once.
++                self.send(b"\x1b", b"\x1b", b"\x03")
++                code = self.exited(10)
++                item = json.loads((Path(self.state) / "projector" / "inbox" / "S" / "1.json").read_text())
++                self.assertEqual(("b", 0), ((item.get("answer") or {}).get("letter"), code))
++                self.assertNotIn(b"Traceback", bytes(self.shown))
++
++    @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
++    def test_a_panel_quits_on_the_second_ctrl_c_and_not_the_first(self) -> None:
++        # Catches the terminal's Ctrl-C reaching curses as an interrupt that quits at once from a panel.
++        self.prepare()
++        self.start()
++        self.send(b"\r", b"\x03")
++        first = self.exited(1, kill=False)
++        hinted = b"Press Ctrl-C again to exit" in self.shown
++        self.send(b"\x03")
++
++        self.assertEqual((None, True, 0), (first, hinted, self.exited(10)))
+ 
+ 
+ class Command(unittest.TestCase):
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index bd9c94af..caf99772 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -1572,5 +1572,40 @@ def test_a_message_is_one_paragraph_of_at_most_4_kib(self) -> None:
+         self.assertEqual({"last": 1}, json.loads((self.folder() / "count.json").read_text()))
+ 
+ 
++class NoteTests(InboxCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget")
++        for subject in ("Test the gutters", "Sign in to TestFlight"):
++            self.assertEqual(0, self.run_cli("request", subject, "--session", "s1")[0])
++
++    def cli(self, *args: str) -> tuple[int, str, str]:
++        return self.run_cli(*args, "--session", "s1")
++
++    def test_a_note_reaches_the_agent_on_the_answer_or_outcome_line(self) -> None:
++        # Catches `--note` dropped on its way to the store, or a stored note the delivered line leaves out.
++        self.assertEqual((0, "answered 1.b\n", ""), self.cli("answer", "1.b", "--note", " keep the cap "))
++        self.assertEqual(0, self.cli("done", "2", "--text", "Looks good", "--note", "works on the phone")[0])
++        self.assertEqual(0, self.cli("decline", "3", "--note", "no phone today")[0])
++
++        self.assertEqual(("keep the cap", "Add a budget"), (self.item(1)["answer"]["note"], self.item(1)["answer"]["text"]))
++        self.assertEqual("ANSWER 1.b Decline it? → Add a budget — note: keep the cap\n"
++                         "DONE 2 Test the gutters → Looks good — note: works on the phone\n"
++                         "DECLINED 3 Sign in to TestFlight — note: no phone today\n",
++                         self.cli("watch", "--once")[1])
++
++    def test_a_note_is_one_paragraph_of_at_most_4_kib_and_a_refused_one_records_nothing(self) -> None:
++        # Catches a limit counted in characters rather than UTF-8 bytes, or a line break that splits the line.
++        for note in ("é" * 2049, "one\ntwo"):
++            for args in (["answer", "1.a"], ["done", "2"], ["decline", "3"]):
++                with self.subTest(note=note[:8], command=args[0]):
++                    code, _, err = self.cli(*args, "--note", note)
++                    self.assertEqual(65, code)
++                    self.assertIn("note", err)
++        self.assertEqual([None, None, None], [self.item(ref).get("answer") for ref in (1, 2, 3)])
++        self.assertEqual(0, self.cli("answer", "1.a", "--note", "é" * 2048)[0])
++        self.assertEqual(4096, len(self.item(1)["answer"]["note"].encode()))
++
++
+ if __name__ == "__main__":
+     unittest.main()
