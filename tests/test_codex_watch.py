@@ -590,6 +590,25 @@ else:
         self.assertEqual(1, len(self.sent()))
         self.assertIsNotNone(self.item().get("deliveredAt"))
 
+    def test_an_answer_codex_took_is_not_sent_again_after_an_interrupted_settle(self):
+        # Catches a consumed batch whose inbox keys live only in memory, so a stop before they settle lets the
+        # claim lapse and the next daemon claims and sends the same answer again.
+        inbox.answer("session-A", "1", "a")
+        self.tick()
+        with mock.patch.object(codex, "settle", side_effect=RuntimeError("stopped")):
+            with self.assertRaises(RuntimeError):
+                self.acknowledge()
+        self.assertEqual([], codex.pending(self.folder))
+        self.dispatcher = codex.Dispatcher(wall=lambda: self.now)
+        self.addCleanup(self.dispatcher.close)
+        self.now += 61
+        self.ms += 61_000
+        self.tick()
+        self.tick()
+        self.assertEqual(1, len(self.sent()))
+        self.assertIsNotNone(self.item().get("deliveredAt"))
+        self.assertEqual([], codex.unsettled(self.folder))
+
     def test_a_restore_replaces_a_dismissal_that_has_not_gone_out(self):
         # Catches a stale DISMISSED sent after the restore that dropped its claim.
         self.hold_the_queue()

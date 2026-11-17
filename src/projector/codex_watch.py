@@ -322,6 +322,12 @@ def acknowledge(folder: Path, session: str, prompt: str, now: float) -> tuple[bo
 def consume(folder: Path, batch_id: str, now: float) -> None:
     path = folder / "codex-pending" / f"{batch_id}.json"
     keys = [key for item in (read_json(path) or {}).get("items") or [] if (key := inbox_key(item))]
+    # Record the keys as waiting to settle before the receipt and the unlink, so a stop anywhere after this
+    # leaves them where the next tick renews their claims and settles them, rather than nowhere.
+    waiting = unsettled(folder)
+    if any(key not in waiting for key in keys):
+        write_json(folder / "codex-unsettled.json",
+                   {"schema_version": 1, "keys": waiting + [key for key in keys if key not in waiting]})
     receipt = folder / "codex-receipts" / f"{batch_id}.json"
     receipt.parent.mkdir(exist_ok=True)
     write_json(receipt, {"batch_id": batch_id, "consumed_at": now})
