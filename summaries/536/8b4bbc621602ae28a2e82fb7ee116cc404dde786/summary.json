@@ -1,0 +1,84 @@
+{
+ "version": 1,
+ "name": "Paseo inbox integration",
+ "project": "paseo",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 536,
+  "title": "Plan a Paseo plugin that shows Projector's panel and delivers its answers",
+  "head": "8b4bbc621602ae28a2e82fb7ee116cc404dde786",
+  "headRef": "plan-paseo",
+  "base": "a9c6e98c862c996f05160a77e19e46f3a6259adb",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector records questions, notices, requests, and pull request events for agent sessions. Its terminal panel displays those records and delivers the person’s answers. A Paseo-hosted agent lacks that terminal surface, so this draft proposes a native Paseo plugin that displays the same records and sends answers through the daemon.",
+   "This pull request adds a plan only. It proposes a pill above each agent’s composer, a full agent panel, workspace counts, and a daemon adapter that uses the existing Python CLI for storage. No plugin or CLI behavior is implemented here."
+  ],
+  "cards": [
+   {
+    "id": "scope",
+    "title": "Draft scope",
+    "html": "<ul class=\"tight\"><li><b>State.</b> The plan is <code>draft</code>/<code>later</code>; its explicit open questions make no readiness claim.</li><li><b>Spikes.</b> Confirm Claude’s session environment and how Paseo Codex threads interact with Projector delivery before moving to <code>ready</code>.</li><li><b>Deferred.</b> Watch-event durability across plugin reloads, notifications, and registry distribution remain for later.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review result",
+    "html": "<ul class=\"tight\"><li><b>Validation.</b> The configured gate, exact-head CI, and project metadata checks passed.</li><li><b>Findings.</b> The current inbox CLI does not accept Claude’s session variable as a posting fallback, and cached choices need conditional writes to avoid recording revised answers.</li><li><b>Limits.</b> The host spikes were not run and no Paseo plugin was installed.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "paseo-plan",
+   "title": "Show and deliver Projector items in Paseo",
+   "kicker": "A native view and a daemon delivery adapter share the existing CLI store.",
+   "intro": [
+    "Paseo’s daemon owns the coding agents that its desktop, web, and phone clients display. The proposed plugin maps each agent to a Projector session, the identifier under which inbox items and watch events are stored. Its client surfaces show those records; its daemon adapter runs <code>project</code> to read and change them.",
+    "The delivery adapter proposes a new <code>paseo</code> renewal value so it stays out of a session already served by another deliverer. It claims owed inbox lines, waits for the agent to be idle, submits the lines and watch events together, and records successful delivery. CLI additions expose owed lines, cached pull request rows, and renewal that refuses an occupied session.",
+    "Read the posting and action flow carefully: both findings concern behavior that the existing CLI does not currently supply. The host spikes and deliberately deferred reload behavior remain separate draft decisions."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The plan deliberately waits for a Claude/Codex host spike before claiming implementation readiness; the API and data-flow claims are still reviewed for concrete contradictions."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/paseo/readme.md",
+     "note": "Defines the proposed surfaces, delivery protocol, session mapping, CLI changes, acceptance cases, and draft spikes.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2,
+       "text": "Project discovery and metadata checks report this project as draft/later, so its explicit unresolved host questions do not block readiness."
+      },
+      {
+       "kind": "flag",
+       "line": 66,
+       "text": "The posting flow relies on CLAUDE_CODE_SESSION_ID, but the current inbox_session resolver accepts only --session or PROJECTOR_SESSION. An isolated environment with only the Claude variable refuses posting; define an actual fallback or explicit session injection."
+      },
+      {
+       "kind": "flag",
+       "line": 75,
+       "text": "The action RPC runs unconditional CLI answers from a cached view. An isolated reproduction shows option a changing from Build locally to Deploy production before the press records Deploy production. Carry the displayed snapshot into a conditional write checked under the inbox lock."
+      },
+      {
+       "kind": "verify",
+       "line": 92,
+       "text": "Paseo’s published plugin reference supports composer pills, compact bottom sheets, agent panels, and shared workspace badge queries, matching the proposed UI surfaces."
+      },
+      {
+       "kind": "context",
+       "line": 263,
+       "text": "Watch events taken before a send can be lost on reload; the plan explicitly defers that durability work. This review does not treat the deferred draft decision as an implemented guarantee."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
