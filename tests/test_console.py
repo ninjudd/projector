@@ -389,9 +389,11 @@ class PullRequests(ConsoleCase):
                 with mock.patch.dict(os.environ, remote):
                     self.press("o")
                     screen.draw()
+                    screen.draw()
 
                 opens.assert_called_once_with(url)
-                self.assertEqual((shown, shown), (url in self.screen(), out.getvalue().startswith("\x1b]52;c;")))
+                sent = "\x1b]52;c;aHR0cHM6Ly9naXRodWIuY29tL2FjbWUvYXBwL3B1bGwvMTI=\x07"
+                self.assertEqual((shown, sent if shown else ""), (url in self.screen(), out.getvalue()))
 
     def test_a_local_open_that_fails_shows_the_url(self) -> None:
         # Catches a failed open, which `webbrowser.open` reports by returning False or raising, leaving the person

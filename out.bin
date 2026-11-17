@@ -1,14 +1,0 @@
-[?1049h[1;30r(B[m[4l[?7h[?1h=[39;49m[?1h=[?25l[39;49m(B[m[H[2J(B[0;1mProjector console(B[0m[38;5;239m  no live sessions
-
-No session is live. A session shows here while Claude Code's panel or the watch daemon's Codex adapt[30;1H↑↓ move · Enter open · Ctrl-C quit[39m(B[m[1;20H[38;5;239m1 live session[39m(B[m[K
-
-(B[0;1;7mS(B[0;7m[38;5;239m  claude[39m  1 pull request(B[m[K[30;35H[1;29r[29;1H[2S[1;30r[1;1H(B[0;1mS(B[0m[38;5;239m  claude  1 pull request
-
-[39m(B[0;7m#12[38;5;147m  ready[39m  Pull request 12
-
-(B[0;1m▸ Conversation(B[0m[38;5;239m  v shows what you and the agent said[30;24H7 message this session · v conversation · ← or Esc back · Ctrl-C twice quit[39m(B[m[4;29r[4;1H[2T[1;30r[4;5H[34mfixing[38;5;239m · [36mfeature[38;5;239m · [38;5;71m+0[39m(B[m [38;5;204m−0[39m(B[m in 0 files
-[5G7: Discuss   8: Dismiss   o: Open in GitHub[30;17H[38;5;239mpress or open · ← or Esc close · PgUp PgDn scroll[39m(B[m[13P[30;86H[6;29r[6;1H[2T[1;30r[3;1H#12[38;5;147m  ready[39m(B[m  Pull request 12
-
- › (B[0;7mo: Open in GitHub
-(B[mhttps://github.com/acme/app/pull/12
-[38;5;239m    Sent to your clipboard where your terminal allows it[30;86H[39m(B[m]52;c;aHR0cHM6Ly9naXRodWIuY29tL2FjbWUvYXBwL3B1bGwvMTI=[6;29r[29;1H[2S[1;30r[30;1H[38;5;214mPress Ctrl-C again to exit[39m(B[m[K[?1l>[30;1H[?12l[?25h[?1049l[?1l>
