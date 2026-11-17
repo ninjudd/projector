@@ -110,13 +110,17 @@ run the push service themselves.
    `done`, `decline`, `dismiss`, `snooze`, `restore`, `start`, `unclear`,
    `read`, or a `discuss` message, with the item's reference and the
    item's content digest, so an answer to an item that has since changed
-   is refused.
+   is refused. It also names its destination: the repository, the key ID,
+   the session's relay ID, and its own record ID, the four parts of the
+   ref the app writes it to.
 6. **The daemon imports.** On its next pass, the daemon on the session's
    machine fetches the record, checks the seal, then the signature against
-   the registered phone keys, and then that the record is fresh and was not
-   seen before. It applies the action with the inbox function the console
-   calls, deletes the ref, and republishes the item. A record that fails a
-   check is rejected and logged, as the relay logs rejections today.
+   the registered phone keys, then that the signed destination matches the
+   repository and the ref the record was fetched from, and then that the
+   record is fresh and was not seen before. It applies the action with the
+   inbox function the console calls, deletes the ref, and republishes the
+   item. A record that fails a check is rejected and logged, as the relay
+   logs rejections today.
 7. **The session hears it.** The session's deliverer claims the new line
    and brings it in as a new turn, as it does for an answer from the
    console.
@@ -135,6 +139,10 @@ An answer record also carries, inside the seal:
 
 | Field | Value |
 | --- | --- |
+| `repo` | The repository the phone wrote it to, as `owner/repo`. The daemon rejects a record whose `repo` does not name the repository it fetched the record from, compared without regard to case, as GitHub compares names |
+| `key` | The key ID in the record's ref. The daemon rejects a record whose `key` differs from its ref's |
+| `session` | The relay ID of the session the answer is for. The daemon rejects a record whose `session` differs from its ref's relay ID, and applies the action only to that session's item |
+| `id` | The record's own ID, the last part of its ref. The daemon rejects a record whose `id` differs from its ref's |
 | `phone` | The ID of the phone key that signed it |
 | `item` | The item's reference and its digest when the phone read it |
 | `action` | The action and its argument, such as the letter or the message |
@@ -236,6 +244,19 @@ anyone can run their own.
 - **An answer names the item's digest.** An agent can revise an item while
   your answer is on its way. The digest makes the daemon refuse an answer
   to text you never saw, as `unclear` already checks the text you read.
+- **An answer names its destination, under the signature.** The seal is
+  the relay key's, and any agent can read that key, so anything outside the
+  signature is the agent's to change, the ref an answer sits at included.
+  Item numbers restart in every session, and two sessions can post the same
+  question, so the item's reference and digest alone match more than one
+  item. Without the destination signed, an agent could copy or move a
+  freshly signed answer to another session's ref, in this repository or
+  another one, and a daemon that had never seen its nonce would apply it
+  there. Signing the repository, the key ID, the relay ID, and the record
+  ID, and checking each against the ref the daemon fetched, ties the answer
+  to the one item you answered. The relay already checks a message's
+  recipient and ID against its ref the same way, but only under the seal,
+  which carries none of your authority.
 - **The app and the push service are open source.** The app holds your
   GitHub token, your relay key, and the key that answers for you, and the
   service sees when you are notified. Users can trust them only if they can
@@ -275,6 +296,7 @@ anyone can run their own.
 | Resolve the item from the console | The item record is deleted on the next pass | Answered items that stay on the phone |
 | Write a signed answer record for item 3 | Item 3 is answered as the record says, the ref is deleted, and the session's deliverer sends `ANSWER 3.a …` | An answer that never reaches the inbox |
 | Write the same record a second time | The daemon rejects it as a repeat, and item 3 is unchanged | A replayed answer |
+| Copy a correctly signed answer for item 3 to another session's ref, where item 3 has the same text; to the same ref in another repository; and to a new record ID | Each copy is rejected and logged as a destination mismatch, and neither the other session's item 3 nor the other repository's changes | An agent that moves your answer to a session you did not answer |
 | Write an answer record sealed correctly but signed with an unregistered key | Rejected and logged, and item 3 stays open | An agent that answers for you with the relay key |
 | Revise item 3, then apply an answer that names its old digest | Rejected as stale, and item 3 stays open | An answer to text you never saw |
 | Run `project agent phone add` without a terminal | Exit 69, nothing registered | An agent that registers its own key |
