@@ -343,15 +343,15 @@ $ project console
 
 | Key | Effect |
 | --- | --- |
-| Up and down, or `k` and `j` | Move between rows |
-| Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
+| Up and down, or `k` and `j` | Move between rows. In an open question's or request's drawer, they move the highlight through its options instead |
+| Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor. In an open question's or request's drawer, picks the highlighted option and opens its note field |
 | Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
 | `7` in a panel with no drawer open | Sends a message about the session (§ 2.5) |
 | `v` in a panel | Shows or hides the session's conversation (§ 2.5) |
 | Page Down or Space, Page Up or `b` | Scrolls a drawer or the conversation, when taller than the screen, a page down or up |
 | End or `G`, Home or `g` | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
 | Left | Returns to the home list from a session's panel, closing any open drawer. In a text field, it moves the cursor instead |
-| Enter in a text field | Sends the message. Esc cancels it |
+| Enter in a text field | Sends the message, or, in a note field, records the option with the note typed, if any. Esc cancels it, or returns to the options |
 | `q` | Quits |
 
 The console reads the inbox store each second. It compares each live
@@ -368,13 +368,14 @@ Without `curses`, it also exits with code 69 and points you to
 
 Building the console settled these details:
 
-- **A key records at once.** The panel fills Claude Code's prompt, and
-  sending it records the choice. The console has no prompt, so an option,
-  Start, a request's outcome, I don't understand, Dismiss, and a snooze
-  length each record when you press them. A pull request's Dismiss still
-  asks first, as the panel's does. A request's option records `done` with
-  the option's words as its text, and a request with no options offers
-  `Done`, which records no text.
+- **A key records at once, except an option.** The panel fills Claude
+  Code's prompt, and sending it records the choice. The console has no
+  prompt, so Start, I don't understand, Dismiss, and a snooze length each
+  record when you press them. A pull request's Dismiss still asks first, as
+  the panel's does. A question's option and a request's outcome open a note
+  field instead, and record when it is sent, as the note decisions below
+  say. A request's option records `done` with the option's words as its
+  text, and a request with no options offers `Done`, which records no text.
 - **`t` types an answer.** A question can carry five choices, which take
   `1` to `5`, and `6` is I don't understand, so the typed answer takes `t`
   rather than the next digit. A refused send keeps the text field and what
@@ -385,11 +386,14 @@ Building the console settled these details:
   terminal cuts neither. The counts include messages, as the panel's
   header does. A session that `project watch stream` delivers shows the host
   its `agent.json` names, or `other`.
-- **The cursor closes a drawer.** Up and down move to the next row and close
-  any open drawer. A drawer opens under its row, and the screen scrolls to
-  keep the row and its drawer in view. Sending a message about a pull
-  request or the session moves the cursor to the new `message` item, which
-  reads `sending` until its line is delivered and then leaves.
+- **The cursor closes a drawer without options.** Up and down move to the
+  next row and close the open drawer of a notice, a message, a pull
+  request, or a resolved item. In an open question's or request's drawer
+  they move the highlight instead, as the decisions below say. A drawer
+  opens under its row, and the screen scrolls to keep the row and its
+  drawer in view. Sending a message about a pull request or the session
+  moves the cursor to the new `message` item, which reads `sending` until
+  its line is delivered and then leaves.
 - **One background thread refreshes.** It wakes every quarter second, takes
   the lock only to decide what is due and to show what it read, and reads
   the inbox, the rows, and the threads without it. Opening a pull request's
@@ -402,8 +406,8 @@ Building the console settled these details:
   when the item owes a line.
 - **Page keys scroll a tall drawer.** A drawer taller than the screen
   opens with its row at the top, and the rest of it, the newest message and
-  the controls included, is below the screen. Up and down still close the
-  drawer, so the page keys scroll it instead: Page Down and Page Up move a
+  the controls included, is below the screen. Up and down close the drawer
+  or move its highlight, so the page keys scroll it instead: Page Down and Page Up move a
   page, and End and Home jump to its controls and back to its row. Space,
   `b`, `G`, and `g` do the same for a terminal that keeps those keys for
   its own scrollback. The scroll survives each redraw, including the
@@ -423,6 +427,48 @@ Building the console settled these details:
 - **Only a shown conversation is read.** The refresh thread reads the
   viewed session's transcript each second while its conversation is shown,
   off the drawing thread, and never reads a collapsed one.
+
+Testing the console by hand settled these details, which replace the
+earlier decisions that every key records at once and that the cursor closes
+every drawer:
+
+- **The arrows move through an open item's options.** In an open
+  question's or request's drawer, Up and Down move a highlight through its
+  choices: a question's options and its typed answer, or a request's
+  outcomes, or `Done`. A request's Start or Retry is not a choice, and
+  neither is a snooze length. The highlight starts on the first choice, the
+  recommended answer for a question, and stays put at either end. Enter
+  picks the highlighted choice, as its number does, so Esc or `0` close
+  the drawer. Enter on `type an answer` opens the typed answer's field, as
+  `t` does. Moving the highlight scrolls a tall drawer only as far as it
+  must to show it, and the page keys still scroll the rest. Other drawers
+  keep the arrows for moving between rows.
+- **A note can follow any choice.** In Claude Code's panel, you can type
+  more under the option you pressed before you send the prompt. The console
+  has no prompt, so picking a choice opens a one-line field directly under
+  it, labelled `Note (optional)`. Enter in the field records the choice,
+  with the note when you typed one and without one when the field is
+  empty. Esc returns to the options and records nothing. Left and Right
+  move the cursor, as in the other fields. The field closes when its item
+  is resolved elsewhere, so it never takes keys while nothing shows it.
+- **The inbox stores the note.** `inbox.answer`, `inbox.done`, and
+  `inbox.decline` take a `note`: one paragraph of at most 4 KiB in UTF-8,
+  with no line breaks, the check a message passes. It is stored in
+  the item's `answer` record, and `project inbox answer`, `done`, and
+  `decline` take it as `--note`. The `ANSWER`, `DONE`, or `DECLINED` line
+  ends with ` — note: ` and the note, such as
+  `ANSWER 3.a Decline the finding? → Decline it — note: keep the cap`, so
+  both deliverers carry it with no change of their own. The permission
+  rules need no change, because `answer`, `done`, and `decline` already ask
+  in Claude Code and are left to Codex's approval.
+- **A note under a question's option is still an answer.** In Claude Code's
+  panel, an option with more words after it is a reply: the question stays
+  open, and the agent reads your words in the prompt. The console records
+  the answer with its note instead. It has no prompt to carry a reply, and
+  you pressed an option to give an answer, so leaving the question open
+  would undo what you chose. The note still gives the agent your words on
+  the answer's line, and the agent can ask again when the note changes what
+  it should do.
 
 ### 2.8 Changes by file
 
@@ -685,7 +731,9 @@ Checked against `codex-cli 0.169.0` and `openai/codex` at `d8d840d` on
 
 ## 9. Outcome
 
-Shipped, in the four pull requests § 6 lists. `project console` lists every
+Shipped, in the four pull requests § 6 lists and a fifth from testing it by
+hand, which moves the arrows through an open item's options and lets a note
+follow any choice (§ 2.7). `project console` lists every
 live session, Claude Code and Codex alike, and records answers and messages
 that each session's own deliverer brings in. Each panel ends with the
 session's conversation, collapsed by default, read from the host's

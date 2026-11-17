@@ -78,16 +78,21 @@ export type Snapshot = {
 /** A dismissal, `withdrawn` when the agent that posted the item took it back. */
 export type Dismissal = { dismissed: true; withdrawn?: true; answeredAt: number }
 
-/** How an item was resolved: dismissed, or a question answered with a lettered choice or typed text. */
-export type Answer = { letter: string; text: string; answeredAt: number } | Dismissal
+/**
+ * How an item was resolved: dismissed, or a question answered with a lettered
+ * choice or typed text, and the `note` the person added in `project console`
+ * or with `--note`.
+ */
+export type Answer = { letter: string; text: string; note?: string; answeredAt: number } | Dismissal
 
 /**
  * How a request was resolved: done, declined, or withdrawn, with the person's
- * one line of `text` when they gave one. A decline is a dismissal.
+ * one line of `text` and their `note` when they gave them. A decline is a
+ * dismissal.
  */
 export type Outcome =
-  | { done: true; text?: string; answeredAt: number }
-  | { dismissed: true; declined: true; text?: string; answeredAt: number }
+  | { done: true; text?: string; note?: string; answeredAt: number }
+  | { dismissed: true; declined: true; text?: string; note?: string; answeredAt: number }
   | Dismissal
 
 /** A message you sent the agent about an item, which reaches it as `DISCUSS` and has `deliveredAt` once it did. */

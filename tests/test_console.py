@@ -157,7 +157,7 @@ class Recording(ConsoleCase):
                 self.ask(session, question)
 
         self.open_entry("second", "item:3")
-        self.press("1")
+        self.press("1", "enter")
 
         answers = [inbox.read_item(inbox.session_dir(name), "3").get("answer") for name in ("first", "second")]
         self.assertEqual([None, "a"], [answer and answer["letter"] for answer in answers])
@@ -168,7 +168,7 @@ class Recording(ConsoleCase):
         self.ask("s1", "Merge it now?")
 
         self.open_entry("s1", "item:1")
-        self.press("1")
+        self.press("1", "enter")
         self.console.selected = "item:2"
         self.press("enter", "7")
         self.type("Why now?")
@@ -186,7 +186,7 @@ class Recording(ConsoleCase):
             self.ask(session)
         for session in ("codex-session", "claude-session"):
             self.open_entry(session, "item:1")
-            self.press("1")
+            self.press("1", "enter")
 
         self.assertEqual([("codex-session", "1")], self.woken)
 
@@ -310,11 +310,102 @@ class Keys(ConsoleCase):
                           inbox.read_item(inbox.session_dir("s1"), "1")["messages"][0]["text"]))
 
 
+class Options(ConsoleCase):
+    def answer(self, ref: str = "1", session: str = "s1") -> dict:
+        return inbox.read_item(inbox.session_dir(session), ref).get("answer")
+
+    def test_up_and_down_move_the_highlight_through_a_questions_options_and_stop_at_its_ends(self) -> None:
+        # Catches the arrows moving to the next row from an open question, a highlight that wraps past either end,
+        # or Enter recording an option other than the highlighted one.
+        for session, keys in (("s1", ("up", "down")), ("s2", ("down", "down", "down", "down", "up"))):
+            with self.subTest(keys=keys):
+                self.console = self.new_console()
+                self.claude(session)
+                self.ask(session)
+                self.open_entry(session, "item:1")
+
+                self.press(*keys, "enter")
+                field = self.console.field
+                self.press("enter")
+
+                self.assertEqual(("note", "item:1", "b"),
+                                 (field and field.purpose, self.console.drawer, self.answer("1", session)["letter"]))
+                self.assertNotIn("note", self.answer("1", session))
+
+    def test_an_option_opens_a_note_field_under_itself_and_records_only_when_the_field_is_sent(self) -> None:
+        # Catches a number that records at once, leaving no room for a note, a note field drawn away from its
+        # option, Esc recording the option anyway, or a typed note that never reaches the agent's line.
+        self.claude("s1")
+        self.ask("s1")
+        self.open_entry("s1", "item:1")
+
+        self.press("2")
+        self.type("never sent")
+        lines = self.screen().splitlines()
+        self.press("esc")
+        after_esc = (self.answer(), self.console.field, self.console.drawer)
+        self.press("1")
+        self.type("keep the cap")
+        self.press("enter")
+
+        self.assertIn(("› 2: Fix it", "Note (optional): never sent"),
+                      [(above.strip(), line.strip()) for above, line in zip(lines, lines[1:])])
+        self.assertEqual((None, None, "item:1"), after_esc)
+        self.assertEqual("ANSWER 1.a Decline the finding? → Decline it — note: keep the cap",
+                         inbox.message(inbox.read_item(inbox.session_dir("s1"), "1")))
+
+    def test_a_requests_highlight_starts_on_its_first_choice_and_records_done_with_the_choice_and_note(self) -> None:
+        # Catches the highlight starting on Start, which Enter would press, or a request's choice and note
+        # recorded as anything but `done`.
+        self.claude("s1")
+        inbox.request("s1", "Test the gutters", start="Install it", options=["Looks good", "Some feedback"])
+        self.open_entry("s1", "item:1")
+
+        self.press("enter")
+        self.type("works on the phone")
+        self.press("enter")
+
+        item = inbox.read_item(inbox.session_dir("s1"), "1")
+        self.assertEqual((None, "DONE 1 Test the gutters → Looks good — note: works on the phone"),
+                         (item.get("started"), inbox.message(item)))
+
+    def test_a_note_field_closes_when_its_item_is_resolved_elsewhere(self) -> None:
+        # Catches a note field left open after its option is gone from the drawer, where it is no longer drawn but
+        # still takes every key, so `q` and Esc seem to do nothing.
+        for session, resolve in (("answered", lambda: inbox.answer("answered", "1", "b")),
+                                 ("withdrawn", lambda: inbox.dismiss("withdrawn", "1", withdrawn=True))):
+            with self.subTest(session):
+                self.console = self.new_console()
+                self.claude(session)
+                self.ask(session)
+                self.open_entry(session, "item:1")
+                self.press("1")
+                resolve()
+                self.clock.now += console.INBOX_EVERY
+
+                self.console.tick()
+                self.press("q")
+
+                self.assertEqual((None, True), (self.console.field, self.console.quit))
+
+    def test_up_and_down_in_a_pull_request_drawer_still_move_between_rows(self) -> None:
+        # Catches the highlight taking the arrows in a drawer that has no options.
+        self.claude("s1")
+        self.subscribe("s1", "acme/app#12 fix", "acme/app#13 fix")
+        for number in (12, 13):
+            self.cache("acme/app", number)
+        self.open_entry("s1", "pr:acme/app#13")
+
+        self.press("down")
+
+        self.assertEqual((None, "pr:acme/app#12"), (self.console.drawer, self.console.selected_key()))
+
+
 class FakeCurses:
     """The parts of `curses` that `console.Screen` draws with, for a terminal with no colors."""
 
     A_DIM, A_BOLD, A_REVERSE = 1, 2, 4
-    KEY_NPAGE, KEY_PPAGE, KEY_HOME, KEY_END = 338, 339, 262, 360
+    KEY_NPAGE, KEY_PPAGE, KEY_HOME, KEY_END, KEY_DOWN = 338, 339, 262, 360, 258
 
     class error(Exception):
         pass
@@ -412,10 +503,25 @@ class Scrolling(TerminalCase):
                          ("8: Dismiss" in at_end, "- Decline the finding?" in at_end,
                           "- Decline the finding?" in at_top, "8: Dismiss" in at_top))
 
-    def test_the_cursor_still_closes_a_tall_drawer_and_moves_to_the_next_row(self) -> None:
+    def test_moving_the_highlight_scrolls_it_and_its_note_field_into_a_tall_drawers_view(self) -> None:
+        # Catches a highlight that moves below the screen, where you cannot see what Enter would pick, or a note
+        # field drawn at the bottom of the screen instead of under its option.
+        self.tall_question()
+        opened = self.draw()
+        self.press_terminal(FakeCurses.KEY_DOWN)
+        moved = self.draw()
+        self.press_terminal("\n")
+        rows = self.draw().splitlines()
+
+        under = ["2: Fix it" in above and "Note (optional):" in row for above, row in zip(rows, rows[1:])]
+        self.assertEqual((False, True, True), ("2: Fix it" in opened, "› 2: Fix it" in moved, any(under)))
+
+    def test_the_cursor_still_closes_a_tall_notice_drawer_and_moves_to_the_next_row(self) -> None:
         self.claude("s1")
         self.ask("s1", "Merge it now?")
-        self.tall_question()
+        notice = inbox.tell("s1", "Force-pushed the branch",
+                            detail="\n".join(f"Detail line {number}." for number in range(1, 41)))
+        self.open_entry("s1", f"item:{notice['ref']}")
         self.draw()
         self.press_terminal(FakeCurses.KEY_NPAGE)
         # Both items can share a millisecond, so either may list first.

@@ -2525,6 +2525,22 @@ it as `dismissed`. Only `answer` takes a letter: every other command refuses
 `3.a` with exit code 65, so `dismiss` never drops the answer you meant to
 give.
 
+To tell the agent more than the answer, add `--note` with one paragraph of
+at most 4 KiB in UTF-8, with no line breaks, as a message takes. The
+line that reaches the agent ends with ` — note: ` and your note:
+
+```console
+$ project inbox answer 3.b --note "the host behind the proxy retries on its own"
+answered 3.b
+$ project inbox watch --once --session "$SESSION"
+ANSWER 3.b Decline the finding about the retry budget? → Add a budget of two retries per host — note: the host behind the proxy retries on its own
+```
+
+`answer` refuses a note with a line break or of more than 4 KiB with exit
+code 65 and records nothing, and an empty note records none. `show` prints
+the note under the item's state. The note is how
+[the console](#use-the-console) carries what you type under an option.
+
 In Projector's panel, only an option answers a question. The panel records an
 answer when a prompt you send quotes the question and follows the quote with
 one of its options' text and nothing else, as pressing the option in its
@@ -2633,21 +2649,22 @@ request's options with `--option`, and `--no-options` removes them.
 
 Once you have done the work, run `project inbox done 5`, or
 `project inbox decline 5` when you will not do it. Either takes `--text`
-with one line for the agent. The deliverer sends the agent `DONE 5` or
-`DECLINED 5` and the request, with an arrow and your text after them when you
-gave one:
+with one line for the agent, and `--note` with more context, as `answer`
+does. The deliverer sends the agent `DONE 5` or `DECLINED 5` and the
+request, with an arrow and your text after them when you gave one, and then
+` — note: ` and your note:
 
 ```console
-$ project inbox done 5 --text "Step 4 didn't work" --session "$SESSION"
+$ project inbox done 5 --text "Some feedback" --note "Step 4 didn't work" --session "$SESSION"
 done 5
 $ project inbox watch --once --session "$SESSION"
-DONE 5 Test the gutters on your phone → Step 4 didn't work
+DONE 5 Test the gutters on your phone → Some feedback — note: Step 4 didn't work
 ```
 
 `request` refuses a request by the checks `tell` makes of a notice. A request
 takes no answer, so `answer` refuses one with exit code 65, and `done` and
-`decline` refuse any other kind of item, a resolved request, and a `--text` of
-more than one line. `dismiss` declines a request with no text. A decline is a
+`decline` refuse any other kind of item, a resolved request, a `--text` of
+more than one line, and a note that `answer` refuses. `dismiss` declines a request with no text. A decline is a
 dismissal, so `restore` reopens a declined request, and the agent that heard
 `DECLINED` hears `RESTORED`. `list` shows a request as `open`, `unclear`,
 `started`, `ready`, `blocked`, `done`, `declined`, or `withdrawn`.
@@ -2907,9 +2924,14 @@ to open its drawer:
   for its options, the first marked `(recommended)`, and `t` to type an
   answer of your own. A request offers `1: Start`, or `1: Retry` once its
   agent reports it blocked, when it has a start action, and then its
-  outcomes, or `Done`. Every open item offers `6: I don't understand`,
-  `7: Discuss`, `8: Dismiss`, and `9: Snooze`, which asks for 15 minutes,
-  1 hour, 4 hours, or 1 day. A dismissed item offers `8: Restore`.
+  outcomes, or `Done`. Up and down move a highlight through a question's
+  options or a request's outcomes, starting on the first, and Enter picks
+  the highlighted one, as its number does. Picking one opens a one-line
+  field under it for an optional note: Enter records your choice, with the
+  note when you typed one, and Esc goes back to the options without
+  recording. Every open item offers `6: I don't understand`, `7: Discuss`,
+  `8: Dismiss`, and `9: Snooze`, which asks for 15 minutes, 1 hour, 4 hours,
+  or 1 day. A dismissed item offers `8: Restore`.
 - **A pull request's drawer** shows the session's role, the branch, the size,
   the checks, and the labels, then the unresolved review threads by file.
   `7` sends the session a message about the pull request, `8` asks before it
@@ -2947,17 +2969,24 @@ second while it stays shown, and never while it is hidden. A transcript holds
 whatever the conversation held, including any secret an agent quoted there, so
 the console shows only what the session's own chat already shows you.
 
+The note goes to the agent on the same line as your choice, as
+`project inbox answer --note` and `done --note` send it, such as
+`ANSWER 3.a Decline the finding? → Decline it — note: keep the cap`. A note
+under a question's option records the answer. That differs from Projector's
+panel, where an option with more words after it is a reply that leaves the
+question open, because the console has no prompt to carry your words.
+
 | Key | Effect |
 | --- | --- |
-| Up and down, or `k` and `j` | Move between rows |
-| Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
+| Up and down, or `k` and `j` | Move between rows. In an open question's or request's drawer, they move the highlight through its options instead, and stay put at the first and the last |
+| Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor. In an open question's or request's drawer, picks the highlighted option and opens its note field |
 | Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
 | Left | Returns to the home list from a panel, closing any open drawer |
 | `7` in a panel with no drawer open | Sends a message about the session |
 | `v` in a panel | Shows or hides the session's conversation |
 | Page Down or Space, Page Up or `b` | Scrolls a drawer or the conversation, when taller than the screen, a page down or up |
 | End or `G`, Home or `g` | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
-| Enter in a text field | Sends the message. Esc cancels it, and Left and Right move the cursor |
+| Enter in a text field | Sends the message, or, in a note field, records the option with the note you typed, if any. Esc cancels it, or goes back to the options, and Left and Right move the cursor |
 | `q` | Quits |
 
 The console records each choice with the same functions `project inbox`

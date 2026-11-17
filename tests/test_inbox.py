@@ -1572,5 +1572,40 @@ class MessageTests(InboxCase):
         self.assertEqual({"last": 1}, json.loads((self.folder() / "count.json").read_text()))
 
 
+class NoteTests(InboxCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget")
+        for subject in ("Test the gutters", "Sign in to TestFlight"):
+            self.assertEqual(0, self.run_cli("request", subject, "--session", "s1")[0])
+
+    def cli(self, *args: str) -> tuple[int, str, str]:
+        return self.run_cli(*args, "--session", "s1")
+
+    def test_a_note_reaches_the_agent_on_the_answer_or_outcome_line(self) -> None:
+        # Catches `--note` dropped on its way to the store, or a stored note the delivered line leaves out.
+        self.assertEqual((0, "answered 1.b\n", ""), self.cli("answer", "1.b", "--note", " keep the cap "))
+        self.assertEqual(0, self.cli("done", "2", "--text", "Looks good", "--note", "works on the phone")[0])
+        self.assertEqual(0, self.cli("decline", "3", "--note", "no phone today")[0])
+
+        self.assertEqual(("keep the cap", "Add a budget"), (self.item(1)["answer"]["note"], self.item(1)["answer"]["text"]))
+        self.assertEqual("ANSWER 1.b Decline it? → Add a budget — note: keep the cap\n"
+                         "DONE 2 Test the gutters → Looks good — note: works on the phone\n"
+                         "DECLINED 3 Sign in to TestFlight — note: no phone today\n",
+                         self.cli("watch", "--once")[1])
+
+    def test_a_note_is_one_paragraph_of_at_most_4_kib_and_a_refused_one_records_nothing(self) -> None:
+        # Catches a limit counted in characters rather than UTF-8 bytes, or a line break that splits the line.
+        for note in ("é" * 2049, "one\ntwo"):
+            for args in (["answer", "1.a"], ["done", "2"], ["decline", "3"]):
+                with self.subTest(note=note[:8], command=args[0]):
+                    code, _, err = self.cli(*args, "--note", note)
+                    self.assertEqual(65, code)
+                    self.assertIn("note", err)
+        self.assertEqual([None, None, None], [self.item(ref).get("answer") for ref in (1, 2, 3)])
+        self.assertEqual(0, self.cli("answer", "1.a", "--note", "é" * 2048)[0])
+        self.assertEqual(4096, len(self.item(1)["answer"]["note"].encode()))
+
+
 if __name__ == "__main__":
     unittest.main()

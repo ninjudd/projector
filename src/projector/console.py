@@ -63,32 +63,45 @@ class Session:
 
 @dataclass
 class Field:
-    """The one-line text field: what sending it records, and the words typed so far with the cursor in them."""
+    """The one-line text field: what sending it records, and the words typed so far with the cursor in them. A
+    `note` field records the option it opened under through `then`, and the drawer draws it under that option
+    rather than at the bottom of the screen."""
 
     purpose: str
     target: Optional[str]
     prompt: str
     text: str = ""
     cursor: int = 0
+    then: Optional[Callable[[Optional[str]], Optional[dict]]] = None
+
+    @property
+    def inline(self) -> bool:
+        return self.purpose == "note"
 
 
 @dataclass(frozen=True)
 class Control:
     """A key a drawer offers, its label, what pressing it does, and whether it is one of the item's options, which
-    the drawer lists one to a line above its other keys."""
+    the drawer lists one to a line above its other keys. A `choice` is an option the highlight moves through: a
+    question's answers and a request's outcomes, but not a request's Start or a snooze length."""
 
     key: str
     label: str
     act: Callable[[], None]
     option: bool = False
+    choice: bool = False
 
 
 @dataclass
 class Line:
-    """One line of the screen: its parts, each text with a style name, and whether the cursor's row is on it."""
+    """One line of the screen: its parts, each text with a style name, and whether the cursor's row or the
+    highlighted option is on it. A `spot` line, the highlighted option or its note field, scrolls into view when
+    the highlight moves, and `cursor` is the column of the terminal's cursor on the note field's line."""
 
     parts: list[tuple[str, str]]
     selected: bool = False
+    spot: bool = False
+    cursor: Optional[int] = None
 
     @property
     def text(self) -> str:
@@ -300,6 +313,9 @@ class Console:
         self.asking: Optional[str] = None
         self.field: Optional[Field] = None
         self.threads: Optional[list[rows.Thread]] = None
+        # The choice the highlight is on in the open drawer, and whether the next layout scrolls it into view.
+        self.highlight = 0
+        self.reveal = False
         self.offset = 0
         self.room = 1
         # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
@@ -404,7 +420,8 @@ class Console:
         self.settle_view()
 
     def settle_view(self) -> None:
-        """Leave a panel whose session is gone, and close a drawer whose row is gone."""
+        """Leave a panel whose session is gone, close a drawer whose row is gone, and close a note field whose
+        option is gone."""
         if self.view == "panel" and self.session not in self.sessions:
             self.status = f"{self.session} is no longer live"
             self.go_home()
@@ -414,6 +431,8 @@ class Console:
         keys = [key for key, _ in self.entries()]
         if self.drawer is not None and self.drawer not in keys:
             self.close_drawer()
+        if self.field is not None and self.field.inline and not self.choices():
+            self.field = None
 
     # What is on screen
 
@@ -460,7 +479,11 @@ class Console:
             elif name == "q":
                 self.quit = True
             elif name in ("up", "k", "down", "j"):
-                self.move(-1 if name in ("up", "k") else 1)
+                step = -1 if name in ("up", "k") else 1
+                if self.view == "panel" and self.choices():
+                    self.step_highlight(step)
+                else:
+                    self.move(step)
             elif name in SCROLL_KEYS:
                 self.scroll(name)
             elif self.view == "home":
@@ -498,6 +521,20 @@ class Console:
             self.close_drawer()
             self.follow = True
 
+    def choices(self) -> list[Control]:
+        """The open drawer's choices, which the arrows and Enter pick from."""
+        return [one for one in self.controls() if one.choice]
+
+    def highlighted(self, choices: list[Control]) -> int:
+        """Where the highlight is among `choices`, kept on one after a revision takes some away."""
+        return max(0, min(self.highlight, len(choices) - 1))
+
+    def step_highlight(self, step: int) -> None:
+        """Move the highlight a choice up or down, staying put at either end."""
+        choices = self.choices()
+        self.highlight = max(0, min(len(choices) - 1, self.highlighted(choices) + step))
+        self.reveal = True
+
     def open_panel(self, name: str) -> None:
         self.view, self.session, self.selected = "panel", name, None
         self.close_drawer()
@@ -510,6 +547,7 @@ class Console:
     def close_drawer(self) -> None:
         self.drawer = self.asking = None
         self.threads = None
+        self.highlight = 0
 
     def panel_key(self, name: str) -> None:
         if name == "left" or (name in ("esc", "0") and self.drawer is None):
@@ -518,6 +556,9 @@ class Console:
             self.close_drawer()
         elif name == "enter" and self.selected_key() == CONVERSATION:
             self.toggle_conversation()
+        elif name == "enter" and self.drawer is not None and self.choices():
+            choices = self.choices()
+            choices[self.highlighted(choices)].act()
         elif name == "enter":
             self.toggle_drawer()
         elif name == "v":
@@ -586,19 +627,24 @@ class Console:
                     Control("9", "Cancel", self.stop_asking)]
         controls = []
         if item["kind"] == "question":
-            controls += [Control(str(index), f"{choice}{' (recommended)' if index == 1 else ''}",
-                                 lambda letter=chr(ord("a") + index - 1): self.record(inbox.answer, ref, letter), True)
-                         for index, choice in enumerate(item["choices"], 1)]
-            controls.append(Control("t", "type an answer", lambda: self.open_field("typed", ref, f"Answer {ref}: "),
-                                    True))
+            letters = [chr(ord("a") + index) for index in range(len(item["choices"]))]
+            controls += [Control(str(at + 1), f"{choice}{' (recommended)' if at == 0 else ''}",
+                                 lambda at=at, letter=letter: self.choose(
+                                     at, ref, lambda note: self.record(inbox.answer, ref, letter, None, note)),
+                                 True, True)
+                         for at, (choice, letter) in enumerate(zip(item["choices"], letters))]
+            controls.append(Control("t", "type an answer", lambda: self.type_answer(len(letters), ref), True, True))
         elif item["kind"] == "request":
             start = start_of(item)
             if start is not None:
                 controls.append(Control("1", start, lambda: self.record(inbox.start, ref, item["start"]), True))
             given = item.get("choices")
-            controls += [Control(str(index), choice,
-                                 lambda choice=choice: self.record(inbox.done, ref, choice if given else None), True)
-                         for index, choice in enumerate(given or ["Done"], 1 if start is None else 2)]
+            controls += [Control(str(at + (1 if start is None else 2)), choice,
+                                 lambda at=at, choice=choice: self.choose(
+                                     at, ref, lambda note: self.record(inbox.done, ref, choice if given else None,
+                                                                       note)),
+                                 True, True)
+                         for at, choice in enumerate(given or ["Done"])]
         if not item.get("unclear") and item["kind"] != "message":
             controls.append(Control("6", "I don't understand",
                                     lambda: self.record(inbox.unclear, ref, item["subject"], item.get("detail", ""))))
@@ -607,6 +653,15 @@ class Console:
                      Control("9", "Unsnooze", lambda: self.record(inbox.restore, ref)) if is_snoozed(item, now)
                      else Control("9", "Snooze", lambda: self.ask("snooze"))]
         return controls
+
+    def choose(self, at: int, ref: str, then: Callable[[Optional[str]], Optional[dict]]) -> None:
+        """Pick the choice at `at`: highlight it and open the note field under it, whose Enter records it."""
+        self.highlight, self.reveal = at, True
+        self.field = Field("note", ref, "Note (optional): ", then=then)
+
+    def type_answer(self, at: int, ref: str) -> None:
+        self.highlight = at
+        self.open_field("typed", ref, f"Answer {ref}: ")
 
     def ask(self, what: str) -> None:
         self.asking = what
@@ -681,7 +736,9 @@ class Console:
     def send(self, typing: Field) -> None:
         """Record what the field holds. A refusal keeps the field, so the person can fix what they typed."""
         said, target = typing.text, typing.target
-        if typing.purpose == "discuss":
+        if typing.purpose == "note" and typing.then is not None:
+            item = typing.then(said.strip() or None)
+        elif typing.purpose == "discuss":
             item = self.record(inbox.discuss, target, said)
         elif typing.purpose == "typed":
             question = self.item(f"item:{target}")
@@ -712,12 +769,15 @@ class Console:
         with self.lock:
             body, (first, last) = self.lines(width)
             self.room = room
+            spots = [index for index, line in enumerate(body) if line.spot]
 
             def clamped(offset: int) -> int:
                 if last - first + 1 > room:
                     offset = min(max(offset, first), last - room + 1)
                 else:
                     offset = min(max(offset, last - room + 1), first)
+                if self.reveal and spots:
+                    offset = min(max(offset, spots[-1] - room + 1), spots[0])
                 return max(0, min(offset, len(body) - room))
 
             following = self.view == "panel" and self.selected_key() == CONVERSATION
@@ -726,12 +786,16 @@ class Console:
             self.offset = clamped(self.offset)
             if following:
                 self.follow = self.offset == clamped(sys.maxsize)
+            self.reveal = False
             return body[self.offset:self.offset + room]
 
     def footer(self) -> list[Line]:
         """The lines under the body: what the keys do, and the last refusal or note."""
         with self.lock:
             lines = [Line([(self.status, "error")])] if self.status else []
+            if self.field is not None and self.field.inline:
+                return [*lines, Line([("Enter records, with the note if you typed one · Esc back to the options",
+                                       "subtle")])]
             if self.field is not None:
                 return [*lines, Line([("Enter sends · Esc cancels", "subtle")])]
             if self.view == "home":
@@ -740,6 +804,8 @@ class Console:
                 hint = "v hide · PgUp PgDn scroll · 7 message this session · ← or Esc back · q quit"
             elif self.drawer is None:
                 hint = "↑↓ move · Enter open · 7 message this session · v conversation · ← or Esc back · q quit"
+            elif self.choices():
+                hint = "↑↓ choose · Enter pick · Esc close · PgUp PgDn scroll · ← back · q quit"
             else:
                 hint = "Enter or Esc close · PgUp PgDn scroll · ← back · q quit"
             return [*lines, Line([(hint, "subtle")])]
@@ -896,7 +962,7 @@ class Console:
                 first, *rest = textwrap.wrap(said.get("text", ""), max(1, wrap - len("you: "))) or [""]
                 lines.append(Line([(indent + "you: ", "subtle"), (first, "")]))
                 lines += [Line([(indent + " " * len("you: ") + part, "")]) for part in rest]
-        lines += self.answer_lines(item, indent)
+        lines += self.answer_lines(item, indent, wrap)
         stage = stage_of(item)
         if item.get("start") and not item.get("answer"):
             reason = (item.get("progress") or {}).get("reason")
@@ -904,16 +970,32 @@ class Console:
             lines += [Line([]), Line([(indent + said, "warning" if stage == "blocked" else "")])]
         controls = self.controls()
         options = [one for one in controls if one.option]
+        choices = [one for one in options if one.choice]
+        lit = choices[self.highlighted(choices)] if choices else None
         if options:
             lines.append(Line([]))
-            lines += [Line([(f"{indent}{one.key}: {one.label}", "accent")]) for one in options]
+        for one in options:
+            if one is not lit:
+                lines.append(Line([(f"{indent}{one.key}: {one.label}", "accent")]))
+                continue
+            lines.append(Line([(f"{indent[:-2]}› {one.key}: {one.label}", "accent")], selected=True, spot=True))
+            if self.field is not None and self.field.inline and self.field.target == item["ref"]:
+                lines.append(self.note_line(self.field, indent + " " * (len(one.key) + 2), width))
         rest = [one for one in controls if not one.option]
         if rest:
             lines += [Line([]), self.controls_line(rest)]
         return lines
 
-    def answer_lines(self, item: dict, indent: str) -> list[Line]:
-        """What a resolved item's drawer says became of it."""
+    def note_line(self, typing: Field, indent: str, width: int) -> Line:
+        """The note field, under the option it records, showing the stretch of what was typed around the cursor."""
+        before = indent + typing.prompt
+        space = max(1, width - len(before) - 1)
+        start = max(0, typing.cursor - space)
+        return Line([(before, "bold"), (typing.text[start:start + space], "")], spot=True,
+                    cursor=len(before) + typing.cursor - start)
+
+    def answer_lines(self, item: dict, indent: str, wrap: int) -> list[Line]:
+        """What a resolved item's drawer says became of it, and the note the person added."""
         answered = item.get("answer")
         if not answered:
             return []
@@ -931,7 +1013,11 @@ class Console:
             said = f"Answered: {answered.get('text', '')}"
         if answered.get("text") and (answered.get("done") or answered.get("declined")):
             said += f": {answered['text']}"
-        return [Line([]), Line([(f"{indent}{said} ✓", "success")])]
+        lines = [Line([]), Line([(f"{indent}{said} ✓", "success")])]
+        if answered.get("note"):
+            lines += [Line([(indent + part, "subtle")])
+                      for part in textwrap.wrap(f"note: {answered['note']}", wrap)]
+        return lines
 
     def controls_line(self, controls: list[Control]) -> Line:
         return Line([(" " * DRAWER_INDENT + "   ".join(f"{one.key}: {one.label}" for one in controls), "accent")])
@@ -1000,20 +1086,27 @@ class Screen:
         height, width = self.window.getmaxyx()
         footer = self.console.footer()
         typing = self.console.field
-        room = max(1, height - len(footer) - (1 if typing else 0))
+        below = typing is not None and not typing.inline
+        room = max(1, height - len(footer) - (1 if below else 0))
         shown = self.console.viewport(width, room)
         self.window.erase()
         for y, line in enumerate(shown):
             self.put(y, line, width)
         for y, line in enumerate(footer, room):
             self.put(y, line, width)
-        if typing is not None:
+        at = None
+        if typing is not None and below:
             space = max(1, width - len(typing.prompt) - 1)
             start = max(0, typing.cursor - space)
             self.put(height - 1, Line([(typing.prompt, "bold"), (typing.text[start:start + space], "")]), width)
-            self.window.move(height - 1, min(width - 1, len(typing.prompt) + typing.cursor - start))
+            at = (height - 1, min(width - 1, len(typing.prompt) + typing.cursor - start))
+        elif typing is not None:
+            at = next(((y, min(width - 1, line.cursor)) for y, line in enumerate(shown) if line.cursor is not None),
+                      None)
+        if at is not None:
+            self.window.move(*at)
         try:
-            self.curses.curs_set(0 if typing is None else 1)
+            self.curses.curs_set(0 if at is None else 1)
         except self.curses.error:
             pass
         self.window.refresh()
