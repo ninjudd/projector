@@ -76,7 +76,9 @@ for both hosts and never sends anything to a session itself.
    and the console shows that session's panel: its pull requests (§ 2.4)
    and its inbox items (§ 2.5).
 4. You open an item's drawer and press an option, or type a message with
-   Discuss. The console records it with the functions in
+   Discuss. Or, with no drawer open, you press `7` and type a message to
+   start a discussion about the session itself (§ 2.6). The console records
+   it with the functions in
    `src/projector/inbox.py`, passing the session you are viewing: `answer`,
    `done`, `decline`, `unclear`, `start`, `dismiss`, `snooze`, `restore`,
    or the new `discuss` (§ 2.6). These are the same functions
@@ -147,8 +149,8 @@ Each live session gets one row: its label, host, repository and branch,
 and its summary from `agent.json`, then the counts the panel's header
 shows (pull requests, review requests, questions, requests, and notices),
 then the subject of its newest open item. A session with no open item and
-no pull request still gets a row, so you can open it and start a
-discussion.
+no pull request still gets a row, so you can open its panel and press `7`
+to start a discussion about the session (§ 2.5).
 
 Sessions are sorted by what needs you:
 
@@ -208,6 +210,12 @@ as wrapped text, then the item's thread, then the panel's controls:
 
 Opening a drawer marks the agent's replies in its thread read.
 
+With no drawer open, `7` opens a text field and starts a `discussion` item
+about the session itself (§ 2.6), whichever row the cursor is on. It works
+in a panel with no rows, such as an idle session's or a new one's. To
+discuss a particular item or pull request, open its drawer and press `7`
+there.
+
 ### 2.6 Threads
 
 An item's thread holds the messages you and the agent exchange about it.
@@ -224,9 +232,14 @@ well inside the adapter's batch limit.
 | `thread[].readAt` | Set on an `agent` entry when you open the item's drawer, in the console or in the panel |
 
 A `discussion` item is an item of a new kind that you start, about a pull
-request. It has `pr`, a `subject` of `About <owner>/<repo>#<n>`, and a
-thread whose first entry is your message. It takes the next number in the
-session's count, like any other item.
+request or about the session itself. It has a thread whose first entry is
+your message, and it takes the next number in the session's count, like any
+other item. Its subject says what it is about:
+
+| About | `pr` | `subject` |
+| --- | --- | --- |
+| A pull request | `<owner>/<repo>#<n>` | `About <owner>/<repo>#<n>` |
+| The session | Absent | `About this session` |
 
 The commands:
 
@@ -234,13 +247,16 @@ The commands:
 | --- | --- | --- |
 | `project inbox discuss <number> --text <words> --session <s>` | You, through the console or a terminal | Adds a `person` entry to an open item's thread |
 | `project inbox discuss --pr <owner>/<repo>#<n> --text <words> --session <s>` | You | Starts a `discussion` item about that pull request, and prints its number |
+| `project inbox discuss --text <words> --session <s>` | You | Starts a `discussion` item about the session itself, and prints its number |
 | `project inbox reply <number> --text <words> --session <s>` | The agent | Adds an `agent` entry to the thread. It needs no delivery, because you read it in the console or the panel |
 
 Each undelivered `person` entry owes a line, after the lines the item
 already owes in this order: `answer`, `restored`, `started`, and `unclear`.
 An item has one claim at a time, so its entries are delivered one at a
 time, oldest first. The line is
-`DISCUSS 3 Decline the finding about the retry budget? → <words>`.
+`DISCUSS 3 Decline the finding about the retry budget? → <words>`, or
+`DISCUSS 5 About this session → <words>` for a discussion about the
+session. `discuss` refuses a number together with `--pr`.
 
 The agent treats a `DISCUSS` line as a reply to the item. It answers with
 `project inbox reply`, or with the panel's new `reply` tool in Claude Code.
@@ -263,6 +279,7 @@ $ project console
 | Up and down, or `k` and `j` | Move between rows |
 | Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
 | Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
+| `7` in a panel with no drawer open | Starts a discussion about the session (§ 2.5) |
 | Left | Returns to the home list from a session's panel, closing any open drawer. In a text field, it moves the cursor instead |
 | Enter in a text field | Sends the message. Esc cancels it |
 | `q` | Quits |
@@ -371,6 +388,8 @@ Without `curses`, it also exits with code 69 and points you to
 | Record an answer for a Codex session while the daemon is stopped | The daemon is running when the command exits | An answer that waits for the session's next hook |
 | Discuss item 3 twice, then let the Codex adapter and, separately, the panel deliver | Two `DISCUSS 3` lines, in the order you sent them, each delivered once, and item 3 still open | Entries delivered out of order or twice, or a discussion that closes the item |
 | Have the agent run `project inbox reply 3 --text …` | The home list sorts that session first and shows `replied`. Opening the drawer shows the reply and clears `replied` | A reply nobody sees, or one that stays unread after you read it |
+| Open the panel of a session with no item and no pull request, press `7`, and send `hello` | A `discussion` item with no `pr` and the subject `About this session`, and the session's deliverer sends `DISCUSS <n> About this session → hello` | An empty session that you can open but cannot talk to |
+| Run `project inbox discuss --text hello --session <s>`, then the same with `3 --pr acme/app#12` | The first prints the new item's number. The second exits with an error and records nothing | A session discussion missing from the CLI, or an ambiguous call that picks one target |
 | Discuss a pull request that two sessions hold, from the second session's panel | A `discussion` item about it in the second session only, with your words as the first entry | A discussion started in the wrong session |
 | Start the console with one Claude Code session renewed by `mod`, one Codex session, and one session whose `session.json` is 10 minutes old | Home rows for the first two, each labelled with its host. None for the third | A session set that includes dead sessions, or one that misses a host |
 | On the home list, give one session an unread reply and another two open questions | The session with the reply comes first | A sort that ignores replies |
