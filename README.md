@@ -73,13 +73,14 @@ which the session that pushed a pull request runs again whenever a review
 finds something; `summarize-pr`, which summarizes a pull request's changes
 as a guided review page; `write`, which writes any prose so that it follows
 Projector's writing guide; `rewrite`, which revises existing text by
-that guide and writes it back where it lives; `cleanup`, which checks that
-a session finished what you asked, releases what it holds, and tells you
-when you can shut it down; `write-tests`, which writes tests that catch
-real bugs and prunes the ones that catch nothing; and `work`, which keeps a
-session working on its own, posting the decisions you need to review to
-your inbox and handing each pull request to review. Claude invokes a skill as
-`/projector:<skill>` and Codex as `$<skill>`. See
+that guide and writes it back where it lives; `message`, which lets a
+session find and talk to your other agent sessions; `cleanup`, which
+checks that a session finished what you asked, releases what it holds, and
+tells you when you can shut it down; `write-tests`, which writes tests that
+catch real bugs and prunes the ones that catch nothing; and `work`, which
+keeps a session working on its own, posting the decisions you need to
+review to your inbox and handing each pull request to review. Claude
+invokes a skill as `/projector:<skill>` and Codex as `$<skill>`. See
 [Install Projector](docs/plugins.md) for how the skills work together.
 
 In Claude Code, the plugin also shows Projector's panel above the prompt.
@@ -88,6 +89,16 @@ the questions, notices, and requests that agents post with the `ask`,
 `tell`, and `request` tools or with `project inbox`. See
 [Read your inbox in Projector's panel](docs/plugins.md#read-your-inbox-in-projectors-panel)
 and [Use the inbox](docs/cli.md#use-the-inbox).
+
+Your agent sessions can also find and message each other, in Claude Code
+and Codex alike, on one machine or across your machines. A session that
+subscribes to a pull request registers itself, and any other session
+registers when you ask it to. To reach your other machines, make a key once
+with `project agent key init`, then copy it to each machine in a terminal
+with `project agent key export` and `project agent key import`. Messages
+then travel sealed through hidden refs of a repository both machines work
+in. A message from another agent carries none of your authority. See
+[Message other agents](docs/cli.md#message-other-agents).
 
 ## Publish a site
 
