@@ -1,0 +1,2245 @@
+diff --git a/docs/projects/console/readme.md b/docs/projects/console/readme.md
+index 5d13988d..61ec06a2 100644
+--- a/docs/projects/console/readme.md
++++ b/docs/projects/console/readme.md
+@@ -184,6 +184,20 @@ cache at `cache/<owner>/<repo>/pulls/<number>.json`. A new module,
+ | Checks | Passing, pending, failing, or cancelled, from the cache's check runs |
+ | Section | Yours first, then review requests grouped by author, each group by repository and then newest number first |
+ 
++`rows.py` sorts as the panel's `localeCompare` does, by Unicode's root
++collation, so `acme/app_b` lists before `acme/app-b`, and both before
++`acme/app1`. It lists only the pull requests the session subscribes to.
++The panel also lists those an older `watch-prs.sh` or `watch-threads.sh`
++watcher tracks, which it learns from the commands it sees the session run.
++The console cannot see those commands, so it leaves those pull requests out.
++
++Each file in `tests/fixtures/rows/` is a TypeScript module whose body after
++`export default` is JSON: a list of cases, each either the files under the
++watch root and the rows they give, or a thread query or response and what
++the drawer lists. The panel's test runtime can import a module but cannot
++read a file, so `index.ts` imports every case file, and
++`tests/test_rows.py` fails when one is missing from it.
++
+ The drawer shows the facts line (the session's role, the branch, the size,
+ the checks, and the labels) and the unresolved threads by file. The
+ daemon's cache lacks the thread fields the drawer shows, so `rows.py` also
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 304ee772..21e9c40e 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -106,10 +106,10 @@ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+ const KINDS: readonly LoopKind[] = ['watching', 'reviewing']
+ 
+ /** The roles in the order a drawer names them. */
+-const ROLES: readonly Role[] = ['fixing', 'reviewing']
++export const ROLES: readonly Role[] = ['fixing', 'reviewing']
+ 
+ /** The role a subscription's role, or an earlier watcher's kind, holds. */
+-const ROLE_OF: Record<SubscriptionRole | LoopKind, Role> = {
++export const ROLE_OF: Record<SubscriptionRole | LoopKind, Role> = {
+   fix: 'fixing',
+   review: 'reviewing',
+   watching: 'fixing',
+@@ -1331,7 +1331,7 @@ const reviewLabel = (pr: PullRequest) => REVIEW_LABELS.find(label => hasLabel(pr
+  * says so too when another status takes the word. Opening the row's drawer
+  * changes none of it, so the row reads the same as the drawer opens.
+  */
+-function notesOf(pr: PullRequest): Note[] {
++export function notesOf(pr: PullRequest): Note[] {
+   const shown = rowState(pr).text
+   const notes = HOLDS.flatMap(({ status, color, holds }): Note[] =>
+     holds(pr) && status !== shown ? [{ text: status, color }] : [],
+@@ -1351,7 +1351,7 @@ function notesOf(pr: PullRequest): Note[] {
+  * number, so a held draft shows an italic `clean`. Every other status that
+  * applies follows the title as a note.
+  */
+-function rowState(pr: PullRequest): { text: string; color?: string } {
++export function rowState(pr: PullRequest): { text: string; color?: string } {
+   const hold = HOLDS.find(one => one.holds(pr))
+   if (hold !== undefined) return { text: hold.status, color: hold.color }
+   return reviewLabel(pr) ?? (pr.isDraft ? { text: 'draft' } : { text: 'ready', color: 'suggestion' })
+@@ -1391,7 +1391,7 @@ function threadLabel(thread: Thread, columns: number): string {
+ }
+ 
+ /** Threads gathered under their files, which come in the order of each file's first thread. */
+-function threadsByFile(threads: readonly Thread[]): [string, Thread[]][] {
++export function threadsByFile(threads: readonly Thread[]): [string, Thread[]][] {
+   const files = new Map<string, Thread[]>()
+   for (const thread of threads) files.set(thread.path, [...(files.get(thread.path) ?? []), thread])
+   return [...files]
+@@ -1416,7 +1416,7 @@ const newestFirst = (one: Row, other: Row) =>
+  * then the review requests, each author's together and the authors by login.
+  * Within each, they go by repository and newest first.
+  */
+-function bySection(rows: readonly Row[], viewer: string | null): Record<(typeof PR_SECTIONS)[number], Row[]> {
++export function bySection(rows: readonly Row[], viewer: string | null): Record<(typeof PR_SECTIONS)[number], Row[]> {
+   const loginOf = (row: Row) => (row.pr.author ?? '').toLowerCase()
+   return {
+     pr: rows.filter(row => !isReviewRequest(row.pr, viewer)).sort(newestFirst),
+@@ -1433,7 +1433,7 @@ const countOf = (count: number, noun: string) =>
+   count === 0 ? undefined : `${count} ${noun}${count === 1 ? '' : 's'}`
+ 
+ /** Labels a pull request `#12` when the panel shows one repository, else by its repository's name. */
+-function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
++export function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+   const repos = [...new Set(prs.map(pr => pr.repo))]
+   if (repos.length <= 1) return pr => `#${pr.number}`
+   const names = repos.map(repo => repo.split('/')[1])
+diff --git a/hooks/rows.test.ts b/hooks/rows.test.ts
+new file mode 100644
+index 00000000..3ca98e88
+--- /dev/null
++++ b/hooks/rows.test.ts
+@@ -0,0 +1,115 @@
++import { describe, expect, test } from 'claude-code/testing'
++
++import fixtures from '../tests/fixtures/rows/index'
++import { buildThreadsQuery, loadingOf, parseCache, parseThreads } from './github'
++import { cachePathOf, parseAdopted, parseOperator, parseSubscriptions, subscribedOf, type TrackedPr } from './parse'
++import { bySection, labeler, notesOf, ROLE_OF, ROLES, rowState, threadsByFile } from './register'
++import type { PullRequest, Row, Thread } from './types'
++
++/**
++ * A case in `tests/fixtures/rows/`, which `tests/test_rows.py` runs through `src/projector/rows.py` too: the
++ * files under the watch root and the rows they give, a pull request and the thread query the drawer sends
++ * for it, or what `gh api graphql` printed and the threads the drawer lists.
++ */
++type Case = {
++  name: string
++  session?: string
++  files?: Record<string, unknown>
++  rows?: unknown
++  pr?: TrackedPr
++  query?: string
++  stdout?: unknown
++  threads?: unknown
++}
++
++const cases: Case[] = fixtures.flat()
++
++const ROOT = '/state/projector/watch'
++
++/** A fixture file's text: a string as it stands, any other value as its JSON. */
++const textOf = (value: unknown) => (typeof value === 'string' ? value : JSON.stringify(value))
++
++const pullOf = (pr: PullRequest) => ({
++  repo: pr.repo,
++  number: pr.number,
++  title: pr.title,
++  url: pr.url,
++  state: pr.state,
++  is_draft: pr.isDraft,
++  review_decision: pr.reviewDecision,
++  is_conflicting: pr.isConflicting,
++  open_threads: pr.openThreads,
++  author: pr.author,
++  branch: pr.branch,
++  additions: pr.additions,
++  deletions: pr.deletions,
++  changed_files: pr.changedFiles,
++  checks: pr.checks,
++  is_cancelled: pr.isCancelled,
++  labels: pr.labels.map(label => label.name),
++  summary_url: pr.summaryUrl,
++  is_loading: pr.isLoading === true,
++})
++
++const threadOf = (thread: Thread) => ({
++  path: thread.path,
++  line: thread.line,
++  is_outdated: thread.isOutdated,
++  author: thread.author,
++  excerpt: thread.excerpt,
++  url: thread.url,
++})
++
++/** The rows the panel lists for the case's session, read from its files as the panel's `load` reads them. */
++function rowsOf(files: Record<string, unknown>, session: string) {
++  const read = (path: string) => {
++    const value = files[path.slice(ROOT.length + 1)]
++    return value === undefined ? undefined : textOf(value)
++  }
++  const folder = `${ROOT}/sessions/${session}`
++  const subscribed = subscribedOf(
++    parseSubscriptions(read(`${folder}/subscriptions`) ?? ''),
++    parseAdopted(read(`${folder}/state.json`) ?? ''),
++  )
++  const rows: Row[] = subscribed.flatMap(({ pr: entry, roles }) => {
++    const text = read(cachePathOf(ROOT, entry))
++    const pr = (text === undefined ? null : parseCache(entry, text)) ?? loadingOf(entry)
++    const held = ROLES.filter(role => roles.some(one => ROLE_OF[one] === role))
++    return pr.state === 'OPEN' ? [{ pr, roles: held }] : []
++  })
++  const label = labeler(rows.map(row => row.pr))
++  const sections = bySection(rows, parseOperator(read(`${ROOT}/daemon.json`) ?? ''))
++  return (['pr', 'review'] as const).flatMap(section =>
++    sections[section].map(row => ({
++      section,
++      label: label(row.pr),
++      state: rowState(row.pr).text,
++      notes: notesOf(row.pr).map(note => note.text),
++      roles: row.roles,
++      pull: pullOf(row.pr),
++    })),
++  )
++}
++
++describe('the shared row fixtures', () => {
++  test('hold cases of every kind', () => {
++    expect(cases.filter(one => one.files !== undefined).length).toBeGreaterThan(0)
++    expect(cases.filter(one => one.query !== undefined).length).toBeGreaterThan(0)
++    expect(cases.filter(one => one.stdout !== undefined).length).toBeGreaterThan(0)
++  })
++
++  for (const one of cases) {
++    test(one.name, () => {
++      const pr = one.pr ?? { repo: '', number: 0 }
++      if (one.files !== undefined) {
++        expect(rowsOf(one.files, one.session ?? '')).toEqual(one.rows)
++      } else if (one.query !== undefined) {
++        expect(buildThreadsQuery(pr).text).toBe(one.query)
++      } else {
++        const found = parseThreads(buildThreadsQuery(pr), { exitCode: 0, stdout: textOf(one.stdout), stderr: '' })
++        const grouped = found === null ? null : threadsByFile(found).map(([path, threads]) => [path, threads.map(threadOf)])
++        expect(grouped).toEqual(one.threads)
++      }
++    })
++  }
++})
+diff --git a/src/projector/rows.py b/src/projector/rows.py
+new file mode 100644
+index 00000000..8882c326
+--- /dev/null
++++ b/src/projector/rows.py
+@@ -0,0 +1,439 @@
++"""A session's pull request rows, as Projector's panel lists them, read from the files the panel reads.
++
++The panel's row model lives in TypeScript, in `hooks/github.ts`, `hooks/parse.ts`, and `hooks/register.tsx`.
++This module ports it for `project console`, keeping the panel's names. Both copies run the cases in
++`tests/fixtures/rows/`, through `tests/test_rows.py` and `hooks/rows.test.ts`, so a rule that changes in one
++copy only fails the other copy's tests.
++
++The files, under the watch daemon's state root:
++
++    sessions/<session>/subscriptions            the session's subscription lines
++    sessions/<session>/state.json               `adopted`: the pull requests its repository lines cover
++    daemon.json                                 `operator`: the login the rows are seen as
++    cache/<owner>/<repo>/pulls/<number>.json    the daemon's last result for a pull request
++"""
++
++from __future__ import annotations
++
++import json
++import re
++from dataclasses import dataclass, replace
++from pathlib import Path
++from typing import Callable, Optional
++
++from . import review, summary, watch
++from .inbox import read_json
++
++# The roles in the order a drawer names them, and the role each subscription role holds.
++ROLES = ("fixing", "reviewing")
++ROLE_OF = {"fix": "fixing", "review": "reviewing"}
++
++SECTIONS = ("pr", "review")
++
++CHECKS = {"SUCCESS": "passing", "FAILURE": "failing", "ERROR": "failing", "PENDING": "pending", "EXPECTED": "pending"}
++
++# What each check run's and commit status's state counts as. A state missing here, such as `SKIPPED`, counts
++# as passing.
++CONTEXT_CHECKS = {
++    "checkRunCountsByState": {
++        **dict.fromkeys(watch.CHECK_FAILURES, "failing"),
++        "CANCELLED": "cancelled",
++        **dict.fromkeys(("QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED"), "pending"),
++    },
++    "statusContextCountsByState": {**dict.fromkeys(watch.STATUS_FAILURES, "failing"),
++                                   **dict.fromkeys(("PENDING", "EXPECTED"), "pending")},
++}
++
++SUMMARY = re.compile(r"^<!-- " + summary.SUMMARY_MARKER + r" v=1 sha=[0-9a-f]{40} -->\r?\n"
++                     r"\S* ?\*\*Projector summary\*\* [^\r\n]*?(https?://\S+)\s*$", re.M)
++
++# GitHub counts `comments` under `reviewThreads(first: 100)` as 100 requests, so only an open drawer asks
++# for these, and only for its own pull request.
++THREAD_FIELDS = ("reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine\n"
++                 "  comments(first: 1) { nodes { url bodyText author { login } } } } }")
++
++# The panel sorts with JavaScript's `localeCompare`, which orders by Unicode's root collation rather than by
++# code point: `_` before `-`, both before `.` and `/`, and punctuation before digits. These are the characters
++# of a lowercased repository name or login.
++COLLATION = {character: rank for rank, character in enumerate("_-./0123456789abcdefghijklmnopqrstuvwxyz")}
++
++
++@dataclass(frozen=True)
++class Pull:
++    """A pull request as a row draws it: the panel's `PullRequest`, less the label colors."""
++
++    repo: str
++    number: int
++    title: str
++    url: str
++    state: str
++    is_draft: bool
++    review_decision: Optional[str]
++    is_conflicting: bool
++    open_threads: int
++    author: Optional[str]
++    branch: str
++    additions: float
++    deletions: float
++    changed_files: float
++    checks: Optional[str]
++    is_cancelled: bool
++    labels: list[str]
++    summary_url: Optional[str]
++    is_loading: bool = False
++
++
++@dataclass(frozen=True)
++class Row:
++    """One line of the pull request list: its section, its label, the word after the label, the notes after
++    the title, and the roles the session holds on it."""
++
++    section: str
++    label: str
++    state: str
++    notes: list[str]
++    roles: list[str]
++    pull: Pull
++
++
++@dataclass(frozen=True)
++class Thread:
++    """An unresolved review thread, as a pull request's drawer lists it."""
++
++    path: str
++    line: Optional[int]
++    is_outdated: bool
++    author: Optional[str]
++    excerpt: str
++    url: Optional[str]
++
++
++def is_number(value: object) -> bool:
++    return isinstance(value, (int, float)) and not isinstance(value, bool)
++
++
++def number_of(value: object) -> float:
++    return value if is_number(value) else 0
++
++
++def string_of(value: object) -> Optional[str]:
++    return value if isinstance(value, str) else None
++
++
++def record_of(value: object) -> dict:
++    return value if isinstance(value, dict) else {}
++
++
++def nodes_of(value: object) -> list:
++    nodes = record_of(value).get("nodes")
++    return nodes if isinstance(nodes, list) else []
++
++
++def first_line(text: str) -> str:
++    return text.strip().split("\n")[0]
++
++
++# Subscriptions
++
++def subscribed_of(lines: list[watch.Subscription], adopted: list[tuple[str, int]]
++                  ) -> list[tuple[tuple[str, int], list[str]]]:
++    """The pull requests a session subscribes to, in the order its lines name them, then those its repository
++    lines adopted, each once with its subscription roles. A `!` line takes the pull request out of that role,
++    and for `review` out of that model, wherever the line sits. An adopted pull request stays only while a
++    repository line reviews it with a model no `!` line names."""
++    excluded = {(line.repo.lower(), line.number, line.role_name) for line in lines
++                if line.excluded and line.number is not None}
++    live = [line for line in lines if not line.excluded]
++    found: dict[tuple[str, int], list[str]] = {}
++
++    def add(pull: tuple[str, int], role: str) -> None:
++        roles = found.setdefault(pull, [])
++        if role not in roles:
++            roles.append(role)
++
++    for line in live:
++        if line.number is not None and (line.repo.lower(), line.number, line.role_name) not in excluded:
++            add((line.repo.lower(), line.number), line.role)
++    repositories = [line for line in live if line.number is None]
++    for repo, number in adopted:
++        if any(line.repo.lower() == repo and (repo, number, line.role_name) not in excluded for line in repositories):
++            add((repo, number), "review")
++    return list(found.items())
++
++
++def adopted_of(state: Optional[dict]) -> list[tuple[str, int]]:
++    """The pull requests the daemon adopted for the session's repository lines, from its `state.json`:
++    `{"adopted": {"owner/repo": [12, 14]}}`."""
++    adopted = record_of(record_of(state).get("adopted"))
++    return [(repo.lower(), int(number)) for repo, numbers in adopted.items()
++            if watch.REPO_ONLY.match(repo) and isinstance(numbers, list)
++            for number in numbers if is_number(number) and float(number).is_integer() and number > 0]
++
++
++def operator_of(daemon: Optional[dict]) -> Optional[str]:
++    """The login `daemon.json` names as the operator, or None when it names none."""
++    operator = record_of(daemon).get("operator")
++    return operator if isinstance(operator, str) and operator else None
++
++
++# Pull requests
++
++def suite_of(context: dict) -> dict:
++    return record_of(context.get("checkSuite")) if context.get("__typename") == "CheckRun" else {}
++
++
++def newest_runs(contexts: list[dict]) -> list[Optional[str]]:
++    """The conclusion of each workflow's newest run on the head, among the check runs the rollup lists."""
++    newest: dict[int, tuple[str, Optional[str]]] = {}
++    for context in contexts:
++        run = watch.workflow_run(context) if context.get("__typename") == "CheckRun" else None
++        if run is None:
++            continue
++        workflow, at = run
++        if workflow not in newest or at > newest[workflow][0]:
++            newest[workflow] = (at, string_of(suite_of(context).get("conclusion")))
++    return [conclusion for _, conclusion in newest.values()]
++
++
++def context_nodes(commit: dict) -> list[dict]:
++    rollup = record_of(commit.get("statusCheckRollup"))
++    return [context for context in nodes_of(rollup.get("contexts")) if isinstance(context, dict)]
++
++
++def checks_of(commit: dict) -> Optional[str]:
++    """The head's checks from the rollup's counts, which cover every check run and commit status, less the
++    `projector/review` status a review posts and each failed check run of a cancelled workflow run that the
++    cancel caused or that a newer run tests again. A head with nothing failing or pending reads `cancelled`
++    when every workflow's newest run on it was cancelled. Without the counts the rollup's own state stands."""
++    rollup = record_of(commit.get("statusCheckRollup"))
++    state = CHECKS.get(rollup["state"]) if isinstance(rollup.get("state"), str) else None
++    contexts = rollup.get("contexts")
++    if not isinstance(contexts, dict) or not any(isinstance(contexts.get(key), list) for key in CONTEXT_CHECKS):
++        return state
++
++    counts = dict.fromkeys(("failing", "pending", "passing", "cancelled"), 0)
++    for key, states in CONTEXT_CHECKS.items():
++        for row in contexts.get(key) if isinstance(contexts.get(key), list) else []:
++            if isinstance(row, dict) and isinstance(row.get("state"), str) and is_number(row.get("count")):
++                counts[states.get(row["state"], "passing")] += row["count"]
++    own = string_of(record_of(record_of(commit.get("status")).get("context")).get("state"))
++    if own is not None:
++        counts[CONTEXT_CHECKS["statusContextCountsByState"].get(own, "passing")] -= 1
++    nodes = context_nodes(commit)
++    times = watch.cancel_times(nodes)
++    for context in nodes:
++        if context.get("conclusion") in watch.CHECK_FAILURES and (
++                watch.caused_by_cancel(context, times) or watch.superseded(context, nodes)):
++            counts["failing"] -= 1
++            counts["cancelled"] += 1
++    if counts["failing"] > 0:
++        return "failing"
++    if counts["pending"] > 0:
++        return "pending"
++    newest = newest_runs(nodes)
++    if newest and all(conclusion == "CANCELLED" for conclusion in newest):
++        return "cancelled"
++    return next((checks for checks in ("passing", "cancelled") if counts[checks] > 0), None)
++
++
++def cancelled_of(commit: dict) -> bool:
++    """Whether a workflow's newest run on the head was cancelled, so nothing has run its checks since."""
++    return "CANCELLED" in newest_runs(context_nodes(commit))
++
++
++def to_pull(repo: str, number: int, node: dict) -> Pull:
++    """A pull request from the node the daemon's query returned for it, as the panel's `toPullRequest` reads
++    it: a field of the wrong type reads as missing."""
++    commits = nodes_of(node.get("commits"))
++    head = record_of(record_of(commits[0]).get("commit")) if commits else {}
++    author = record_of(node.get("author")).get("login")
++    url = node.get("url")
++    body = node.get("body")
++    found = SUMMARY.search(body) if isinstance(body, str) else None
++    return Pull(
++        repo=repo,
++        number=number,
++        title=string_of(node.get("title")) or "",
++        url=url if isinstance(url, str) else f"https://github.com/{repo}/pull/{number}",
++        state=node["state"] if node.get("state") in ("MERGED", "CLOSED") else "OPEN",
++        is_draft=node.get("isDraft") is True,
++        review_decision=node["reviewDecision"] if node.get("reviewDecision") in (
++            "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED") else None,
++        is_conflicting=node.get("mergeable") == "CONFLICTING",
++        open_threads=sum(1 for thread in nodes_of(node.get("reviewThreads"))
++                         if isinstance(thread, dict) and thread.get("isResolved") is False),
++        author=author if isinstance(author, str) else None,
++        branch=string_of(node.get("headRefName")) or "",
++        additions=number_of(node.get("additions")),
++        deletions=number_of(node.get("deletions")),
++        changed_files=number_of(node.get("changedFiles")),
++        checks=checks_of(head),
++        is_cancelled=cancelled_of(head),
++        labels=[label["name"] for label in nodes_of(node.get("labels"))
++                if isinstance(label, dict) and isinstance(label.get("name"), str)],
++        summary_url=found.group(1) if found else None,
++    )
++
++
++def cached_pull(root: Path, repo: str, number: int) -> Optional[Pull]:
++    """The daemon's last result for a pull request, `{"repository": {"pullRequest": {...}}, ...}`, or None
++    when it has none yet or the file holds no pull request."""
++    node = record_of(record_of(read_json(watch.pull_cache(root, repo, number))).get("repository")).get("pullRequest")
++    return to_pull(repo, number, node) if isinstance(node, dict) else None
++
++
++def loading_pull(repo: str, number: int) -> Pull:
++    """A pull request the session subscribes to that the daemon has no result for yet."""
++    return replace(to_pull(repo, number, {}), is_loading=True)
++
++
++# The row model
++
++HOLDS: tuple[tuple[str, Callable[[Pull], bool]], ...] = (
++    ("conflict", lambda pull: pull.is_conflicting),
++    ("failing", lambda pull: pull.checks == "failing"),
++    ("changes", lambda pull: pull.review_decision == "CHANGES_REQUESTED"),
++    ("findings", lambda pull: pull.open_threads > 0),
++)
++
++# The labels a review sets, in the order a row's word takes them.
++REVIEW_LABELS = (review.REVIEWING_LABEL, review.CLEAN_LABEL)
++
++
++def has_label(pull: Pull, name: str) -> bool:
++    return any(label.lower() == name for label in pull.labels)
++
++
++def row_state(pull: Pull) -> str:
++    """The word after a row's label: the first of `HOLDS` that holds, then its review label, and otherwise
++    `draft` or `ready`."""
++    hold = next((status for status, holds in HOLDS if holds(pull)), None)
++    label = next((name for name in REVIEW_LABELS if has_label(pull, name)), None)
++    return hold or label or ("draft" if pull.is_draft else "ready")
++
++
++def notes_of(pull: Pull) -> list[str]:
++    """What a row says after the title: every other status that applies, in the order the word takes them,
++    then `draft` when another status takes the word, its approval, `passing` while the head's checks pass,
++    and `cancelled` while a workflow's newest run on the head was cancelled."""
++    shown = row_state(pull)
++    notes = [status for status, holds in HOLDS if holds(pull) and status != shown]
++    notes += [name for name in REVIEW_LABELS if name != shown and has_label(pull, name)]
++    if pull.is_draft and shown != "draft":
++        notes.append("draft")
++    if pull.review_decision == "APPROVED":
++        notes.append("approved")
++    if pull.checks == "passing":
++        notes.append("passing")
++    if pull.is_cancelled:
++        notes.append("cancelled")
++    return notes
++
++
++def is_review_request(pull: Pull, viewer: Optional[str]) -> bool:
++    """Whether someone other than the viewer wrote the pull request. Until the viewer is known, and while a
++    pull request loads, it lists with the viewer's own."""
++    return viewer is not None and not pull.is_loading and pull.author != viewer
++
++
++def collated(text: str) -> tuple[int, ...]:
++    return tuple(COLLATION.get(character, len(COLLATION) + ord(character)) for character in text)
++
++
++def newest_first(pull: Pull) -> tuple:
++    return collated(pull.repo), -pull.number
++
++
++def by_section(pulls: list[Pull], viewer: Optional[str]) -> dict[str, list[Pull]]:
++    """The pull requests in the order the panel lists them, by section: yours, then the review requests, each
++    author's together and the authors by login. Within each, by repository and newest first."""
++    return {
++        "pr": sorted((pull for pull in pulls if not is_review_request(pull, viewer)), key=newest_first),
++        "review": sorted((pull for pull in pulls if is_review_request(pull, viewer)),
++                         key=lambda pull: (collated((pull.author or "").lower()), *newest_first(pull))),
++    }
++
++
++def labeler(pulls: list[Pull]) -> Callable[[Pull], str]:
++    """Labels a pull request `#12` when the rows hold one repository, `name#12` when the repositories' names
++    tell them apart, and `owner/repo#12` otherwise."""
++    repos = list(dict.fromkeys(pull.repo for pull in pulls))
++    if len(repos) <= 1:
++        return lambda pull: f"#{pull.number}"
++    names = [repo.split("/")[1] for repo in repos]
++    is_name_enough = len(set(names)) == len(names)
++    return lambda pull: f"{pull.repo.split('/')[1] if is_name_enough else pull.repo}#{pull.number}"
++
++
++def rows_for(root: Path, session: str) -> list[Row]:
++    """The session's open pull requests as the panel lists them. One the daemon has no result for yet is a
++    loading row."""
++    folder = watch.session_folder(root, session)
++    subscribed = subscribed_of(watch.subscriptions(folder), adopted_of(read_json(folder / "state.json")))
++    roles_of: dict[tuple[str, int], list[str]] = {}
++    pulls: list[Pull] = []
++    for (repo, number), roles in subscribed:
++        pull = cached_pull(root, repo, number) or loading_pull(repo, number)
++        if pull.state == "OPEN":
++            pulls.append(pull)
++            roles_of[(repo, number)] = [role for role in ROLES if role in {ROLE_OF[one] for one in roles}]
++    label = labeler(pulls)
++    sections = by_section(pulls, operator_of(read_json(root / "daemon.json")))
++    return [Row(section, label(pull), row_state(pull), notes_of(pull), roles_of[(pull.repo, pull.number)], pull)
++            for section in SECTIONS for pull in sections[section]]
++
++
++# Threads
++
++def threads_query(repo: str, number: int) -> str:
++    """The GraphQL query for one pull request's threads, which its open drawer lists."""
++    owner, name = repo.split("/")
++    return (f'query {{ r0: repository(owner: "{owner}", name: "{name}") '
++            f'{{ p{number}: pullRequest(number: {number}) {{ {THREAD_FIELDS} }} }} }}')
++
++
++def thread_of(node: object) -> Optional[Thread]:
++    """An unresolved thread as the drawer lists it, or None for a resolved one."""
++    if not isinstance(node, dict) or node.get("isResolved") is not False:
++        return None
++    comments = nodes_of(node.get("comments"))
++    comment = record_of(comments[0]) if comments else {}
++    line = node.get("line") if is_number(node.get("line")) else node.get("originalLine")
++    return Thread(
++        path=string_of(node.get("path")) or "",
++        line=line if is_number(line) else None,
++        is_outdated=node.get("isOutdated") is True,
++        author=string_of(record_of(comment.get("author")).get("login")),
++        excerpt=first_line(string_of(comment.get("bodyText")) or ""),
++        url=string_of(comment.get("url")),
++    )
++
++
++def parse_threads(number: int, stdout: str) -> Optional[list[Thread]]:
++    """The unresolved threads, oldest first, in what `gh api graphql` printed for `threads_query`, or None
++    when GitHub gave none of the pull request."""
++    try:
++        body = json.loads(stdout)
++    except ValueError:
++        return None
++    node = record_of(record_of(record_of(body).get("data")).get("r0")).get(f"p{number}")
++    if not isinstance(node, dict):
++        return None
++    return [thread for thread in map(thread_of, nodes_of(node.get("reviewThreads"))) if thread is not None]
++
++
++def threads_by_file(threads: list[Thread]) -> list[tuple[str, list[Thread]]]:
++    """Threads gathered under their files, which come in the order of each file's first thread."""
++    files: dict[str, list[Thread]] = {}
++    for thread in threads:
++        files.setdefault(thread.path, []).append(thread)
++    return list(files.items())
++
++
++def fetch_threads(pull: Pull, gh: Callable[[list[str]], watch.GhResult] = watch.run_gh) -> Optional[list[Thread]]:
++    """A pull request's unresolved threads, or None when GitHub cannot say. Each query costs a point of the
++    account's GraphQL quota, so a pull request whose cached result counts no unresolved thread asks nothing."""
++    if pull.open_threads == 0:
++        return []
++    result = gh(["api", "graphql", "-f", f"query={threads_query(pull.repo, pull.number)}"])
++    return parse_threads(pull.number, result.stdout)
+diff --git a/tests/fixtures/rows/checks.ts b/tests/fixtures/rows/checks.ts
+new file mode 100644
+index 00000000..d1a5b619
+--- /dev/null
++++ b/tests/fixtures/rows/checks.ts
+@@ -0,0 +1,424 @@
++export default [
++  {
++    "name": "a head's checks come from the rollup's counts, less the review's own status and the failures a cancel caused or a newer run tests again",
++    "session": "s1",
++    "files": {
++      "sessions/s1/subscriptions": "acme/app#1 fix\nacme/app#2 fix\nacme/app#3 fix\nacme/app#4 fix\nacme/app#5 fix\nacme/app#6 fix\nacme/app#7 fix\nacme/app#8 fix\nacme/app#9 fix\nacme/app#10 fix\n",
++      "cache/acme/app/pulls/1.json": {"repository": {"pullRequest": {}}},
++      "cache/acme/app/pulls/2.json": {
++        "repository": {"pullRequest": {"commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}}}
++      },
++      "cache/acme/app/pulls/3.json": {
++        "repository": {"pullRequest": {"commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "EXPECTED"}}}]}}}
++      },
++      "cache/acme/app/pulls/4.json": {
++        "repository": {
++          "pullRequest": {
++            "commits": {
++              "nodes": [
++                {
++                  "commit": {
++                    "statusCheckRollup": {
++                      "state": "PENDING",
++                      "contexts": {
++                        "checkRunCountsByState": [{"state": "IN_PROGRESS", "count": 1}, {"state": "SUCCESS", "count": 2}],
++                        "nodes": []
++                      }
++                    }
++                  }
++                }
++              ]
++            }
++          }
++        }
++      },
++      "cache/acme/app/pulls/5.json": {
++        "repository": {
++          "pullRequest": {
++            "commits": {
++              "nodes": [
++                {
++                  "commit": {
++                    "status": {"context": {"state": "FAILURE"}},
++                    "statusCheckRollup": {
++                      "state": "FAILURE",
++                      "contexts": {
++                        "checkRunCountsByState": [{"state": "SUCCESS", "count": 2}],
++                        "statusContextCountsByState": [{"state": "FAILURE", "count": 1}],
++                        "nodes": []
++                      }
++                    }
++                  }
++                }
++              ]
++            }
++          }
++        }
++      },
++      "cache/acme/app/pulls/6.json": {
++        "repository": {
++          "pullRequest": {
++            "commits": {
++              "nodes": [
++                {
++                  "commit": {
++                    "statusCheckRollup": {
++                      "state": "FAILURE",
++                      "contexts": {
++                        "checkRunCountsByState": [{"state": "FAILURE", "count": 1}, {"state": "SUCCESS", "count": 1}],
++                        "nodes": [
++                          {
++                            "__typename": "CheckRun",
++                            "name": "test",
++                            "conclusion": "FAILURE",
++                            "checkSuite": {
++                              "conclusion": "FAILURE",
++                              "workflowRun": {"databaseId": 60, "createdAt": "2026-11-16T10:00:00Z", "workflow": {"databaseId": 1}}
++                            },
++                            "startedAt": "2026-11-16T10:01:00Z",
++                            "completedAt": "2026-11-16T10:03:00Z"
++                          },
++                          {
++                            "__typename": "CheckRun",
++                            "name": "lint",
++                            "conclusion": "SUCCESS",
++                            "checkSuite": {
++                              "conclusion": "FAILURE",
++                              "workflowRun": {"databaseId": 60, "createdAt": "2026-11-16T10:00:00Z", "workflow": {"databaseId": 1}}
++                            },
++                            "startedAt": "2026-11-16T10:01:00Z",
++                            "completedAt": "2026-11-16T10:02:00Z"
++                          }
++                        ]
++                      }
++                    }
++                  }
++                }
++              ]
++            }
++          }
++        }
++      },
++      "cache/acme/app/pulls/7.json": {
++        "repository": {
++          "pullRequest": {
++            "commits": {
++              "nodes": [
++                {
++                  "commit": {
++                    "statusCheckRollup": {
++                      "state": "SUCCESS",
++                      "contexts": {
++                        "checkRunCountsByState": [{"state": "CANCELLED", "count": 1}],
++                        "nodes": [
++                          {
++                            "__typename": "CheckRun",
++                            "name": "test",
++                            "conclusion": "CANCELLED",
++                            "checkSuite": {
++                              "conclusion": "CANCELLED",
++                              "workflowRun": {"databaseId": 70, "createdAt": "2026-11-16T10:00:00Z", "workflow": {"databaseId": 1}}
++                            },
++                            "startedAt": "2026-11-16T10:01:00Z",
++                            "completedAt": "2026-11-16T10:05:00Z"
++                          }
++                        ]
++                      }
++                    }
++                  }
++                }
++              ]
++            }
++          }
++        }
++      },
++      "cache/acme/app/pulls/8.json": {
++        "repository": {
++          "pullRequest": {
++            "commits": {
++              "nodes": [
++                {
++                  "commit": {
++                    "statusCheckRollup": {
++                      "state": "FAILURE",
++                      "contexts": {
++                        "checkRunCountsByState": [{"state": "CANCELLED", "count": 1}, {"state": "FAILURE", "count": 1}],
++                        "nodes": [
++                          {
++                            "__typename": "CheckRun",
++                            "name": "build",
++                            "conclusion": "CANCELLED",
++                            "checkSuite": {
++                              "conclusion": "CANCELLED",
++                              "workflowRun": {"databaseId": 80, "createdAt": "2026-11-16T10:00:00Z", "workflow": {"databaseId": 1}}
++                            },
++                            "startedAt": "2026-11-16T10:01:00Z",
++                            "completedAt": "2026-11-16T10:05:00Z"
++                          },
++                          {
++                            "__typename": "CheckRun",
++                            "name": "gate",
++                            "conclusion": "FAILURE",
++                            "checkSuite": {
++                              "conclusion": "CANCELLED",
++                              "workflowRun": {"databaseId": 80, "createdAt": "2026-11-16T10:00:00Z", "workflow": {"databaseId": 1}}
++                            },
++                            "startedAt": "2026-11-16T10:06:00Z",
++                            "completedAt": "2026-11-16T10:06:00Z"
++                          }
++                        ]
++                      }
++                    }
++                  }
++                }
++              ]
++            }
++          }
++        }
++      },
++      "cache/acme/app/pulls/9.json": {
++        "repository": {
++          "pullRequest": {
++            "commits": {
++              "nodes": [
++                {
++                  "commit": {
++                    "statusCheckRollup": {
++                      "state": "FAILURE",
++                      "contexts": {
++                        "checkRunCountsByState": [{"state": "CANCELLED", "count": 1}, {"state": "FAILURE", "count": 1}],
++                        "nodes": [
++                          {
++                            "__typename": "CheckRun",
++                            "name": "build",
++                            "conclusion": "CANCELLED",
++                            "checkSuite": {
++                              "conclusion": "CANCELLED",
++                              "workflowRun": {"databaseId": 90, "createdAt": "2026-11-16T10:00:00Z", "workflow": {"databaseId": 1}}
++                            },
++                            "startedAt": "2026-11-16T10:01:00Z",
++                            "completedAt": "2026-11-16T10:05:00Z"
++                          },
++                          {
++                            "__typename": "CheckRun",
++                            "name": "test",
++                            "conclusion": "FAILURE",
++                            "checkSuite": {
++                              "conclusion": "CANCELLED",
++                              "workflowRun": {"databaseId": 90, "createdAt": "2026-11-16T10:00:00Z", "workflow": {"databaseId": 1}}
++                            },
++                            "startedAt": "2026-11-16T10:01:00Z",
++                            "completedAt": "2026-11-16T10:03:00Z"
++                          }
++                        ]
++                      }
++                    }
++                  }
++                }
++              ]
++            }
++          }
++        }
++      },
++      "cache/acme/app/pulls/10.json": {
++        "repository": {
++          "pullRequest": {
++            "commits": {
++              "nodes": [
++                {
++                  "commit": {
++                    "statusCheckRollup": {
++                      "state": "FAILURE",
++                      "contexts": {
++                        "checkRunCountsByState": [
++                          {"state": "FAILURE", "count": 1}, {"state": "CANCELLED", "count": 1},
++                          {"state": "SUCCESS", "count": 1}
++                        ],
++                        "nodes": [
++                          {
++                            "__typename": "CheckRun",
++                            "name": "test",
++                            "conclusion": "FAILURE",
++                            "checkSuite": {
++                              "conclusion": "CANCELLED",
++                              "workflowRun": {
++                                "databaseId": 100, "createdAt": "2026-11-16T10:00:00Z",
++                                "workflow": {"databaseId": 1}
++                              }
++                            },
++                            "startedAt": "2026-11-16T10:01:00Z",
++                            "completedAt": "2026-11-16T10:03:00Z"
++                          },
++                          {
++                            "__typename": "CheckRun",
++                            "name": "build",
++                            "conclusion": "CANCELLED",
++                            "checkSuite": {
++                              "conclusion": "CANCELLED",
++                              "workflowRun": {
++                                "databaseId": 100, "createdAt": "2026-11-16T10:00:00Z",
++                                "workflow": {"databaseId": 1}
++                              }
++                            },
++                            "startedAt": "2026-11-16T10:01:00Z",
++                            "completedAt": "2026-11-16T10:05:00Z"
++                          },
++                          {
++                            "__typename": "CheckRun",
++                            "name": "test",
++                            "conclusion": "SUCCESS",
++                            "checkSuite": {
++                              "conclusion": "SUCCESS",
++                              "workflowRun": {
++                                "databaseId": 101, "createdAt": "2026-11-16T10:10:00Z",
++                                "workflow": {"databaseId": 1}
++                              }
++                            },
++                            "startedAt": "2026-11-16T10:11:00Z",
++                            "completedAt": "2026-11-16T10:14:00Z"
++                          }
++                        ]
++                      }
++                    }
++                  }
++                }
++              ]
++            }
++          }
++        }
++      }
++    },
++    "rows": [
++      {
++        "section": "pr",
++        "label": "#10",
++        "state": "ready",
++        "notes": ["passing"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 10, "title": "", "url": "https://github.com/acme/app/pull/10",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#9",
++        "state": "failing",
++        "notes": ["cancelled"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 9, "title": "", "url": "https://github.com/acme/app/pull/9", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#8",
++        "state": "ready",
++        "notes": ["cancelled"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 8, "title": "", "url": "https://github.com/acme/app/pull/8", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "cancelled",
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#7",
++        "state": "ready",
++        "notes": ["cancelled"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "cancelled",
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#6",
++        "state": "failing",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#5",
++        "state": "ready",
++        "notes": ["passing"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#4",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "pending",
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#3",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "pending",
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#2",
++        "state": "ready",
++        "notes": ["passing"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#1",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": false
++        }
++      }
++    ]
++  }
++]
+diff --git a/tests/fixtures/rows/facts.ts b/tests/fixtures/rows/facts.ts
+new file mode 100644
+index 00000000..b60a054f
+--- /dev/null
++++ b/tests/fixtures/rows/facts.ts
+@@ -0,0 +1,65 @@
++export default [
++  {
++    "name": "a row carries the drawer's facts and the link to its summary",
++    "session": "s1",
++    "files": {
++      "daemon.json": {"operator": "ada"},
++      "sessions/s1/subscriptions": "acme/app#12 fix\nacme/app#11 review claude-opus-4 claude\n",
++      "cache/acme/app/pulls/12.json": {
++        "repository": {
++          "pullRequest": {
++            "title": "Add the console",
++            "url": "https://github.com/acme/app/pull/12",
++            "state": "OPEN",
++            "author": {"login": "ada"},
++            "headRefName": "console/rows",
++            "additions": 120,
++            "deletions": 8,
++            "changedFiles": 4,
++            "labels": {"nodes": [{"name": "enhancement", "color": "a2eeef"}]},
++            "body": "Adds rows.\r\n\r\n<!-- projector-summary v=1 sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\r\n📽️ **Projector summary** of aaaaaaa: https://projector.bot/acme/app/reviews/12 \r\n"
++          }
++        }
++      },
++      "cache/acme/app/pulls/11.json": {
++        "repository": {
++          "pullRequest": {
++            "title": "Fix the cache",
++            "author": {"login": "bob"},
++            "headRefName": "fix-cache",
++            "body": "<!-- projector-summary v=1 sha=aaaaaaa -->\n**Projector summary** of aaaaaaa: https://projector.bot/acme/app/reviews/11\n"
++          }
++        }
++      }
++    },
++    "rows": [
++      {
++        "section": "pr",
++        "label": "#12",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 12, "title": "Add the console", "url": "https://github.com/acme/app/pull/12",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": "ada", "branch": "console/rows", "additions": 120, "deletions": 8, "changed_files": 4,
++          "checks": null, "is_cancelled": false, "labels": ["enhancement"],
++          "summary_url": "https://projector.bot/acme/app/reviews/12", "is_loading": false
++        }
++      },
++      {
++        "section": "review",
++        "label": "#11",
++        "state": "ready",
++        "notes": [],
++        "roles": ["reviewing"],
++        "pull": {
++          "repo": "acme/app", "number": 11, "title": "Fix the cache", "url": "https://github.com/acme/app/pull/11",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": "bob", "branch": "fix-cache", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      }
++    ]
++  }
++]
+diff --git a/tests/fixtures/rows/index.ts b/tests/fixtures/rows/index.ts
+new file mode 100644
+index 00000000..0a369cee
+--- /dev/null
++++ b/tests/fixtures/rows/index.ts
+@@ -0,0 +1,14 @@
++// Every case file, for `hooks/rows.test.ts`, which cannot list a directory. `tests/test_rows.py` fails when
++// a case file is missing here.
++import checks from './checks'
++import facts from './facts'
++import labels from './labels'
++import loading from './loading'
++import malformed from './malformed'
++import notes from './notes'
++import roles from './roles'
++import sections from './sections'
++import states from './states'
++import threads from './threads'
++
++export default [checks, facts, labels, loading, malformed, notes, roles, sections, states, threads]
+diff --git a/tests/fixtures/rows/labels.ts b/tests/fixtures/rows/labels.ts
+new file mode 100644
+index 00000000..04cf58b0
+--- /dev/null
++++ b/tests/fixtures/rows/labels.ts
+@@ -0,0 +1,114 @@
++export default [
++  {
++    "name": "one repository labels each row by its number",
++    "session": "s1",
++    "files": {"sessions/s1/subscriptions": "acme/app#3 fix\nacme/app#5 fix\n"},
++    "rows": [
++      {
++        "section": "pr",
++        "label": "#5",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#3",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      }
++    ]
++  },
++  {
++    "name": "repositories whose names differ label each row by name and number",
++    "session": "s1",
++    "files": {"sessions/s1/subscriptions": "acme/app#3 fix\nacme/web#5 fix\n"},
++    "rows": [
++      {
++        "section": "pr",
++        "label": "app#3",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      },
++      {
++        "section": "pr",
++        "label": "web#5",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/web", "number": 5, "title": "", "url": "https://github.com/acme/web/pull/5", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      }
++    ]
++  },
++  {
++    "name": "repositories that share a name label each row by owner, repository, and number",
++    "session": "s1",
++    "files": {"sessions/s1/subscriptions": "acme/app#3 fix\nother/app#4 fix\nacme/web#1 fix\n"},
++    "rows": [
++      {
++        "section": "pr",
++        "label": "acme/app#3",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      },
++      {
++        "section": "pr",
++        "label": "acme/web#1",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/web", "number": 1, "title": "", "url": "https://github.com/acme/web/pull/1", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      },
++      {
++        "section": "pr",
++        "label": "other/app#4",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "other/app", "number": 4, "title": "", "url": "https://github.com/other/app/pull/4",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": true
++        }
++      }
++    ]
++  }
++]
+diff --git a/tests/fixtures/rows/loading.ts b/tests/fixtures/rows/loading.ts
+new file mode 100644
+index 00000000..7c119ea9
+--- /dev/null
++++ b/tests/fixtures/rows/loading.ts
+@@ -0,0 +1,69 @@
++export default [
++  {
++    "name": "a pull request the daemon has no result for is a loading row, and a closed one has no row",
++    "session": "s1",
++    "files": {
++      "daemon.json": {"operator": "ada"},
++      "sessions/s1/subscriptions": "acme/app#1 fix\nacme/app#2 fix\nacme/app#3 fix\nacme/app#4 fix\nacme/app#5 fix\nacme/app#6 fix\n",
++      "cache/acme/app/pulls/2.json": {"repository": {"pullRequest": {"state": "MERGED"}}},
++      "cache/acme/app/pulls/3.json": {"repository": {"pullRequest": {"state": "CLOSED"}}},
++      "cache/acme/app/pulls/4.json": "{not json",
++      "cache/acme/app/pulls/5.json": {"repository": null},
++      "cache/acme/app/pulls/6.json": {"repository": {"pullRequest": {}}}
++    },
++    "rows": [
++      {
++        "section": "pr",
++        "label": "#5",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#4",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#1",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      },
++      {
++        "section": "review",
++        "label": "#6",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": false
++        }
++      }
++    ]
++  }
++]
+diff --git a/tests/fixtures/rows/malformed.ts b/tests/fixtures/rows/malformed.ts
+new file mode 100644
+index 00000000..7007a4e1
+--- /dev/null
++++ b/tests/fixtures/rows/malformed.ts
+@@ -0,0 +1,63 @@
++export default [
++  {
++    "name": "a field of the wrong type reads as missing, and a file that does not parse as empty",
++    "session": "s1",
++    "files": {
++      "daemon.json": [1, 2],
++      "sessions/s1/subscriptions": "acme/app#1 fix\n#2 fix\n",
++      "sessions/s1/state.json": "{oops",
++      "cache/acme/app/pulls/1.json": {
++        "repository": {
++          "pullRequest": {
++            "title": 5,
++            "url": 7,
++            "state": "merged",
++            "isDraft": "true",
++            "reviewDecision": "approved",
++            "mergeable": "conflicting",
++            "author": "ada",
++            "headRefName": null,
++            "additions": true,
++            "deletions": "3",
++            "changedFiles": 2.5,
++            "body": 3,
++            "labels": {"nodes": [{"name": 5}, null, {"name": "CLEAN"}]},
++            "reviewThreads": {"nodes": [{"isResolved": false}, {"isResolved": "false"}, null, {"isResolved": true}]},
++            "commits": {
++              "nodes": [
++                {
++                  "commit": {
++                    "statusCheckRollup": {
++                      "state": 1,
++                      "contexts": {
++                        "checkRunCountsByState": [
++                          {"state": "FAILURE", "count": "1"}, {"state": "FAILURE", "count": true},
++                          {"state": "SUCCESS", "count": 2}, null
++                        ]
++                      }
++                    }
++                  }
++                }
++              ]
++            }
++          }
++        }
++      }
++    },
++    "rows": [
++      {
++        "section": "pr",
++        "label": "#1",
++        "state": "findings",
++        "notes": ["clean", "passing"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 1, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 2.5, "checks": "passing",
++          "is_cancelled": false, "labels": ["CLEAN"], "summary_url": null, "is_loading": false
++        }
++      }
++    ]
++  }
++]
+diff --git a/tests/fixtures/rows/notes.ts b/tests/fixtures/rows/notes.ts
+new file mode 100644
+index 00000000..6577f293
+--- /dev/null
++++ b/tests/fixtures/rows/notes.ts
+@@ -0,0 +1,83 @@
++export default [
++  {
++    "name": "a row notes its approval, passing checks, a cancelled newest run, and a draft another word takes",
++    "session": "s1",
++    "files": {
++      "sessions/s1/subscriptions": "acme/app#1 fix\nacme/app#2 fix\n",
++      "cache/acme/app/pulls/1.json": {
++        "repository": {
++          "pullRequest": {
++            "reviewDecision": "APPROVED",
++            "commits": {
++              "nodes": [
++                {
++                  "commit": {
++                    "statusCheckRollup": {
++                      "state": "SUCCESS",
++                      "contexts": {
++                        "checkRunCountsByState": [{"state": "SUCCESS", "count": 1}, {"state": "CANCELLED", "count": 1}],
++                        "statusContextCountsByState": [],
++                        "nodes": [
++                          {
++                            "__typename": "CheckRun",
++                            "name": "test",
++                            "conclusion": "SUCCESS",
++                            "checkSuite": {
++                              "conclusion": "SUCCESS",
++                              "workflowRun": {"databaseId": 10, "createdAt": "2026-11-16T10:00:00Z", "workflow": {"databaseId": 1}}
++                            }
++                          },
++                          {
++                            "__typename": "CheckRun",
++                            "name": "deploy",
++                            "conclusion": "CANCELLED",
++                            "checkSuite": {
++                              "conclusion": "CANCELLED",
++                              "workflowRun": {"databaseId": 20, "createdAt": "2026-11-16T10:00:00Z", "workflow": {"databaseId": 2}}
++                            },
++                            "completedAt": "2026-11-16T10:02:00Z"
++                          }
++                        ]
++                      }
++                    }
++                  }
++                }
++              ]
++            }
++          }
++        }
++      },
++      "cache/acme/app/pulls/2.json": {
++        "repository": {"pullRequest": {"isDraft": true, "reviewDecision": "APPROVED", "labels": {"nodes": [{"name": "clean"}]}}}
++      }
++    },
++    "rows": [
++      {
++        "section": "pr",
++        "label": "#2",
++        "state": "clean",
++        "notes": ["draft", "approved"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
++          "is_draft": true, "review_decision": "APPROVED", "is_conflicting": false, "open_threads": 0,
++          "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": ["clean"], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#1",
++        "state": "ready",
++        "notes": ["approved", "passing", "cancelled"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
++          "is_draft": false, "review_decision": "APPROVED", "is_conflicting": false, "open_threads": 0,
++          "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++        }
++      }
++    ]
++  }
++]
+diff --git a/tests/fixtures/rows/roles.ts b/tests/fixtures/rows/roles.ts
+new file mode 100644
+index 00000000..9684fe9d
+--- /dev/null
++++ b/tests/fixtures/rows/roles.ts
+@@ -0,0 +1,87 @@
++export default [
++  {
++    "name": "each pull request lists once with its roles, less what a ! line takes out, then the adopted ones",
++    "session": "s1",
++    "files": {
++      "sessions/s1/subscriptions": "acme/app#1 review claude-opus-4 claude\nacme/app#1 fix\nacme/app#2 fix\n!acme/app#2 fix\nacme/app#3 review gpt-5 codex\n!acme/app#3 review GPT-5[1m] codex\nAcme/App#4 fix auto\nacme/app review claude-opus-4 claude\n!acme/app#6 review claude-opus-4 claude\nthis line is not a subscription\nacme/web#9 fix extra\n!acme/app fix\n",
++      "sessions/s1/state.json": {"adopted": {"acme/app": [5, 6, 1, 0, -2, true, 7.0], "acme/other": [8], "not a repository": [9]}, "fix": {}}
++    },
++    "rows": [
++      {
++        "section": "pr",
++        "label": "#7",
++        "state": "ready",
++        "notes": [],
++        "roles": ["reviewing"],
++        "pull": {
++          "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#5",
++        "state": "ready",
++        "notes": [],
++        "roles": ["reviewing"],
++        "pull": {
++          "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#4",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#1",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing", "reviewing"],
++        "pull": {
++          "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      }
++    ]
++  },
++  {
++    "name": "an adopted pull request stays while one model of its repository still reviews it",
++    "session": "s1",
++    "files": {
++      "sessions/s1/subscriptions": "acme/app review claude-opus-4 claude\nacme/app review gpt-5 codex\n!acme/app#6 review claude-opus-4 claude\n!acme/app#7 review claude-opus-4 claude\n!acme/app#7 review gpt-5 codex\n",
++      "sessions/s1/state.json": {"adopted": {"acme/app": [6, 7]}}
++    },
++    "rows": [
++      {
++        "section": "pr",
++        "label": "#6",
++        "state": "ready",
++        "notes": [],
++        "roles": ["reviewing"],
++        "pull": {
++          "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": true
++        }
++      }
++    ]
++  }
++]
+diff --git a/tests/fixtures/rows/sections.ts b/tests/fixtures/rows/sections.ts
+new file mode 100644
+index 00000000..d87ae9d4
+--- /dev/null
++++ b/tests/fixtures/rows/sections.ts
+@@ -0,0 +1,189 @@
++export default [
++  {
++    "name": "your pull requests come first, then review requests by author, each by repository in the panel's collation and newest first",
++    "session": "s1",
++    "files": {
++      "daemon.json": {"pid": 1, "operator": "ada"},
++      "sessions/s1/subscriptions": "acme/app-b#1 fix\nacme/app_b#2 fix\nacme/app_b#3 fix\nacme/app1#4 fix\nacme/app_b#5 fix\nacme/app-b#6 fix\nacme/app_b#7 fix\nacme/app_b#8 fix\nacme/app_b#9 fix\nacme/app_b#10 fix\n",
++      "cache/acme/app-b/pulls/1.json": {"repository": {"pullRequest": {"author": {"login": "ada"}}}},
++      "cache/acme/app_b/pulls/2.json": {"repository": {"pullRequest": {"author": {"login": "ada"}}}},
++      "cache/acme/app1/pulls/4.json": {"repository": {"pullRequest": {"author": {"login": "ada"}}}},
++      "cache/acme/app_b/pulls/5.json": {"repository": {"pullRequest": {"author": {"login": "carol"}}}},
++      "cache/acme/app-b/pulls/6.json": {"repository": {"pullRequest": {"author": {"login": "Bob"}}}},
++      "cache/acme/app_b/pulls/7.json": {"repository": {"pullRequest": {"author": null}}},
++      "cache/acme/app_b/pulls/8.json": {"repository": {"pullRequest": {"author": {"login": "bob"}}}},
++      "cache/acme/app_b/pulls/9.json": {"repository": {"pullRequest": {"author": {"login": "ada"}}}},
++      "cache/acme/app_b/pulls/10.json": {"repository": {"pullRequest": {"author": {"login": "Ada"}}}}
++    },
++    "rows": [
++      {
++        "section": "pr",
++        "label": "app_b#9",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app_b", "number": 9, "title": "", "url": "https://github.com/acme/app_b/pull/9",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "app_b#3",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app_b", "number": 3, "title": "", "url": "https://github.com/acme/app_b/pull/3",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": true
++        }
++      },
++      {
++        "section": "pr",
++        "label": "app_b#2",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app_b", "number": 2, "title": "", "url": "https://github.com/acme/app_b/pull/2",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "app-b#1",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app-b", "number": 1, "title": "", "url": "https://github.com/acme/app-b/pull/1",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "app1#4",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app1", "number": 4, "title": "", "url": "https://github.com/acme/app1/pull/4",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "review",
++        "label": "app_b#7",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app_b", "number": 7, "title": "", "url": "https://github.com/acme/app_b/pull/7",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "review",
++        "label": "app_b#10",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app_b", "number": 10, "title": "", "url": "https://github.com/acme/app_b/pull/10",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": "Ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "review",
++        "label": "app_b#8",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app_b", "number": 8, "title": "", "url": "https://github.com/acme/app_b/pull/8",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": "bob", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "review",
++        "label": "app-b#6",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app-b", "number": 6, "title": "", "url": "https://github.com/acme/app-b/pull/6",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": "Bob", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "review",
++        "label": "app_b#5",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app_b", "number": 5, "title": "", "url": "https://github.com/acme/app_b/pull/5",
++          "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
++          "author": "carol", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++        }
++      }
++    ]
++  },
++  {
++    "name": "until the operator is known, every pull request lists with yours",
++    "session": "s1",
++    "files": {
++      "daemon.json": {"pid": 1, "operator": ""},
++      "sessions/s1/subscriptions": "acme/app#1 fix\nacme/app#2 fix\n",
++      "cache/acme/app/pulls/1.json": {"repository": {"pullRequest": {"author": {"login": "bob"}}}},
++      "cache/acme/app/pulls/2.json": {"repository": {"pullRequest": {"author": {"login": "ada"}}}}
++    },
++    "rows": [
++      {
++        "section": "pr",
++        "label": "#2",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": "ada",
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#1",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": "bob",
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": false
++        }
++      }
++    ]
++  }
++]
+diff --git a/tests/fixtures/rows/states.ts b/tests/fixtures/rows/states.ts
+new file mode 100644
+index 00000000..c42cd1b3
+--- /dev/null
++++ b/tests/fixtures/rows/states.ts
+@@ -0,0 +1,163 @@
++export default [
++  {
++    "name": "the state word is the first rule that holds, and every other one that holds follows as a note",
++    "session": "s1",
++    "files": {
++      "sessions/s1/subscriptions": "acme/app#1 fix\nacme/app#2 fix\nacme/app#3 fix\nacme/app#4 fix\nacme/app#5 fix\nacme/app#6 fix\nacme/app#7 fix\nacme/app#8 fix\n",
++      "cache/acme/app/pulls/8.json": {
++        "repository": {
++          "pullRequest": {
++            "isDraft": true,
++            "reviewDecision": "CHANGES_REQUESTED",
++            "reviewThreads": {"nodes": [{"isResolved": false}, {"isResolved": true}]},
++            "labels": {"nodes": [{"name": "reviewing", "color": "d77757"}, {"name": "clean", "color": "4eba65"}]},
++            "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
++            "mergeable": "CONFLICTING"
++          }
++        }
++      },
++      "cache/acme/app/pulls/7.json": {
++        "repository": {
++          "pullRequest": {
++            "isDraft": true,
++            "reviewDecision": "CHANGES_REQUESTED",
++            "reviewThreads": {"nodes": [{"isResolved": false}, {"isResolved": true}]},
++            "labels": {"nodes": [{"name": "reviewing", "color": "d77757"}, {"name": "clean", "color": "4eba65"}]},
++            "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]}
++          }
++        }
++      },
++      "cache/acme/app/pulls/6.json": {
++        "repository": {
++          "pullRequest": {
++            "isDraft": true,
++            "reviewDecision": "CHANGES_REQUESTED",
++            "reviewThreads": {"nodes": [{"isResolved": false}, {"isResolved": true}]},
++            "labels": {"nodes": [{"name": "reviewing", "color": "d77757"}, {"name": "clean", "color": "4eba65"}]}
++          }
++        }
++      },
++      "cache/acme/app/pulls/5.json": {
++        "repository": {
++          "pullRequest": {
++            "isDraft": true,
++            "reviewThreads": {"nodes": [{"isResolved": false}, {"isResolved": true}]},
++            "labels": {"nodes": [{"name": "reviewing", "color": "d77757"}, {"name": "clean", "color": "4eba65"}]}
++          }
++        }
++      },
++      "cache/acme/app/pulls/4.json": {
++        "repository": {"pullRequest": {"isDraft": true, "labels": {"nodes": [{"name": "Reviewing"}, {"name": "clean"}]}}}
++      },
++      "cache/acme/app/pulls/3.json": {"repository": {"pullRequest": {"isDraft": true, "labels": {"nodes": [{"name": "clean"}]}}}},
++      "cache/acme/app/pulls/2.json": {"repository": {"pullRequest": {"isDraft": true}}},
++      "cache/acme/app/pulls/1.json": {"repository": {"pullRequest": {}}}
++    },
++    "rows": [
++      {
++        "section": "pr",
++        "label": "#8",
++        "state": "conflict",
++        "notes": ["failing", "changes", "findings", "reviewing", "clean", "draft"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 8, "title": "", "url": "https://github.com/acme/app/pull/8", "state": "OPEN",
++          "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": true, "open_threads": 1,
++          "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#7",
++        "state": "failing",
++        "notes": ["changes", "findings", "reviewing", "clean", "draft"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
++          "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": false, "open_threads": 1,
++          "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#6",
++        "state": "changes",
++        "notes": ["findings", "reviewing", "clean", "draft"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
++          "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": false, "open_threads": 1,
++          "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#5",
++        "state": "findings",
++        "notes": ["reviewing", "clean", "draft"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
++          "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 1, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#4",
++        "state": "reviewing",
++        "notes": ["clean", "draft"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
++          "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": ["Reviewing", "clean"], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#3",
++        "state": "clean",
++        "notes": ["draft"],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
++          "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": ["clean"], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#2",
++        "state": "draft",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
++          "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": false
++        }
++      },
++      {
++        "section": "pr",
++        "label": "#1",
++        "state": "ready",
++        "notes": [],
++        "roles": ["fixing"],
++        "pull": {
++          "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
++          "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
++          "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
++          "labels": [], "summary_url": null, "is_loading": false
++        }
++      }
++    ]
++  }
++]
+diff --git a/tests/fixtures/rows/threads.ts b/tests/fixtures/rows/threads.ts
+new file mode 100644
+index 00000000..c37fe8cd
+--- /dev/null
++++ b/tests/fixtures/rows/threads.ts
+@@ -0,0 +1,117 @@
++export default [
++  {
++    "name": "the drawer asks for one pull request's threads and each one's first comment",
++    "pr": {"repo": "acme/app", "number": 12},
++    "query": "query { r0: repository(owner: \"acme\", name: \"app\") { p12: pullRequest(number: 12) { reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine\n  comments(first: 1) { nodes { url bodyText author { login } } } } } } } }"
++  },
++  {
++    "name": "the unresolved threads gather under their files, in the order of each file's first thread",
++    "pr": {"repo": "acme/app", "number": 12},
++    "stdout": {
++      "data": {
++        "r0": {
++          "p12": {
++            "reviewThreads": {
++              "nodes": [
++                {
++                  "isResolved": false,
++                  "isOutdated": false,
++                  "path": "src/a.py",
++                  "line": 3,
++                  "originalLine": 3,
++                  "comments": {
++                    "nodes": [
++                      {
++                        "url": "https://github.com/acme/app/pull/12#discussion_r1",
++                        "bodyText": "  Rename this.\nIt reads as a verb.", "author": {"login": "bob"}
++                      }
++                    ]
++                  }
++                },
++                {
++                  "isResolved": true,
++                  "isOutdated": false,
++                  "path": "src/a.py",
++                  "line": 5,
++                  "originalLine": 5,
++                  "comments": {
++                    "nodes": [
++                      {
++                        "url": "https://github.com/acme/app/pull/12#discussion_r2", "bodyText": "Done",
++                        "author": {"login": "bob"}
++                      }
++                    ]
++                  }
++                },
++                {
++                  "isResolved": false,
++                  "isOutdated": true,
++                  "path": "src/b.py",
++                  "line": null,
++                  "originalLine": 7,
++                  "comments": {
++                    "nodes": [
++                      {
++                        "url": "https://github.com/acme/app/pull/12#discussion_r3", "bodyText": "Outdated note",
++                        "author": null
++                      }
++                    ]
++                  }
++                },
++                {
++                  "isResolved": false, "isOutdated": false, "path": "src/a.py", "line": null, "originalLine": null,
++                  "comments": {"nodes": []}
++                },
++                {"isResolved": false, "comments": {"nodes": [{"bodyText": "No path"}]}}
++              ]
++            }
++          }
++        }
++      }
++    },
++    "threads": [
++      [
++        "src/a.py",
++        [
++          {
++            "path": "src/a.py", "line": 3, "is_outdated": false, "author": "bob", "excerpt": "Rename this.",
++            "url": "https://github.com/acme/app/pull/12#discussion_r1"
++          },
++          {"path": "src/a.py", "line": null, "is_outdated": false, "author": null, "excerpt": "", "url": null}
++        ]
++      ],
++      [
++        "src/b.py",
++        [
++          {
++            "path": "src/b.py", "line": 7, "is_outdated": true, "author": null, "excerpt": "Outdated note",
++            "url": "https://github.com/acme/app/pull/12#discussion_r3"
++          }
++        ]
++      ],
++      ["", [{"path": "", "line": null, "is_outdated": false, "author": null, "excerpt": "No path", "url": null}]]
++    ]
++  },
++  {
++    "name": "output that is not JSON gives no threads",
++    "pr": {"repo": "acme/app", "number": 12},
++    "stdout": "Could not resolve to a Repository with the name 'acme/app'.",
++    "threads": null
++  },
++  {
++    "name": "errors without data give no threads",
++    "pr": {"repo": "acme/app", "number": 12},
++    "stdout": {"errors": [{"message": "Could not resolve to a PullRequest with the number of 12."}]},
++    "threads": null
++  },
++  {
++    "name": "data without the pull request gives no threads",
++    "pr": {"repo": "acme/app", "number": 12},
++    "stdout": {"data": {"r0": {"p13": {"reviewThreads": {"nodes": []}}}}},
++    "threads": null
++  },
++  {
++    "name": "a pull request without a threads field has none", "pr": {"repo": "acme/app", "number": 12},
++    "stdout": {"data": {"r0": {"p12": {}}}}, "threads": []
++  }
++]
+diff --git a/tests/test_rows.py b/tests/test_rows.py
+new file mode 100644
+index 00000000..9d774daf
+--- /dev/null
++++ b/tests/test_rows.py
+@@ -0,0 +1,132 @@
++"""A session's pull request rows and a drawer's threads, as `src/projector/rows.py` reads them.
++
++The cases in `tests/fixtures/rows/` run here and, through the panel's own model, in `hooks/rows.test.ts`, so
++a rule that changes in one copy only fails the other copy's tests. Each case file is a TypeScript module,
++because the panel's test runtime can import a module but not read a file, and its body after
++`export default ` is JSON.
++"""
++
++from __future__ import annotations
++
++import json
++import re
++import tempfile
++import unittest
++from dataclasses import asdict
++from pathlib import Path
++
++from projector import rows, watch
++
++FIXTURES = Path(__file__).resolve().parent / "fixtures" / "rows"
++PREFIX = "export default "
++
++
++def case_files() -> list[Path]:
++    return sorted(path for path in FIXTURES.glob("*.ts") if path.name != "index.ts")
++
++
++def load_cases() -> list[dict]:
++    cases = []
++    for path in case_files():
++        text = path.read_text(encoding="utf-8")
++        if not text.startswith(PREFIX):
++            raise AssertionError(f"{path.name} does not start with {PREFIX!r}")
++        cases += json.loads(text[len(PREFIX):])
++    return cases
++
++
++def write_files(root: Path, files: dict) -> None:
++    for name, content in files.items():
++        path = root / name
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(content if isinstance(content, str) else json.dumps(content), encoding="utf-8")
++
++
++def grouped(threads: list[rows.Thread]) -> list:
++    return [[path, [asdict(thread) for thread in found]] for path, found in rows.threads_by_file(threads)]
++
++
++CASES = load_cases()
++
++
++class SharedFixtures(unittest.TestCase):
++    def test_the_panel_test_runs_every_case_file(self):
++        index = (FIXTURES / "index.ts").read_text(encoding="utf-8")
++        imported = dict(re.findall(r"^import (\w+) from '\./([\w-]+)'$", index, re.M))
++        exported = re.search(r"^export default \[(.*)\]$", index, re.M)
++        self.assertEqual([path.stem for path in case_files()],
++                         sorted(imported[name.strip()] for name in (exported[1] if exported else "").split(",")))
++
++    def test_each_case_gives_the_rows_the_panel_lists(self):
++        found = [case for case in CASES if "files" in case]
++        self.assertTrue(found)
++        for case in found:
++            with self.subTest(case["name"]), tempfile.TemporaryDirectory() as folder:
++                write_files(Path(folder), case["files"])
++                self.assertEqual(case["rows"], [asdict(row) for row in rows.rows_for(Path(folder), case["session"])])
++
++    def test_the_thread_query_is_the_panels(self):
++        found = [case for case in CASES if "query" in case]
++        self.assertTrue(found)
++        for case in found:
++            with self.subTest(case["name"]):
++                self.assertEqual(case["query"], rows.threads_query(case["pr"]["repo"], case["pr"]["number"]))
++
++    def test_each_response_gives_the_threads_the_drawer_lists(self):
++        found = [case for case in CASES if "stdout" in case]
++        self.assertTrue(found)
++        for case in found:
++            with self.subTest(case["name"]):
++                stdout = case["stdout"] if isinstance(case["stdout"], str) else json.dumps(case["stdout"])
++                threads = rows.parse_threads(case["pr"]["number"], stdout)
++                self.assertEqual(case["threads"], None if threads is None else grouped(threads))
++
++
++class Files(unittest.TestCase):
++    def setUp(self):
++        folder = tempfile.TemporaryDirectory()
++        self.addCleanup(folder.cleanup)
++        self.root = Path(folder.name)
++
++    def test_a_session_that_subscribes_to_nothing_has_no_rows(self):
++        (self.root / "sessions" / "s1").mkdir(parents=True)
++        self.assertEqual([], rows.rows_for(self.root, "s1"))
++
++    def test_a_cache_file_that_cannot_be_read_gives_a_loading_row(self):
++        write_files(self.root, {"sessions/s1/subscriptions": "acme/app#3 fix\n"})
++        watch.pull_cache(self.root, "acme/app", 3).mkdir(parents=True)
++        self.assertEqual([("#3", True)], [(row.label, row.pull.is_loading) for row in rows.rows_for(self.root, "s1")])
++
++
++class FetchThreads(unittest.TestCase):
++    RESPONSE = json.dumps({"data": {"r0": {"p12": {"reviewThreads": {"nodes": [
++        {"isResolved": False, "path": "src/a.py", "line": 3, "comments": {"nodes": [{"bodyText": "Rename this."}]}},
++    ]}}}}})
++
++    def setUp(self):
++        self.calls: list[list[str]] = []
++
++    def gh(self, stdout: str, returncode: int = 0):
++        def run(args: list[str]) -> watch.GhResult:
++            self.calls.append(args)
++            return watch.GhResult(returncode, stdout)
++        return run
++
++    def test_a_pull_request_without_an_unresolved_thread_asks_github_nothing(self):
++        self.assertEqual([], rows.fetch_threads(rows.loading_pull("acme/app", 12), self.gh(self.RESPONSE)))
++        self.assertEqual([], self.calls)
++
++    def test_a_pull_request_with_an_unresolved_thread_sends_the_thread_query(self):
++        pull = rows.to_pull("acme/app", 12, {"reviewThreads": {"nodes": [{"isResolved": False}]}})
++        threads = rows.fetch_threads(pull, self.gh(self.RESPONSE))
++        self.assertEqual(([["api", "graphql", "-f", f"query={rows.threads_query('acme/app', 12)}"]],
++                          [("src/a.py", 3, "Rename this.")]),
++                         (self.calls, [(thread.path, thread.line, thread.excerpt) for thread in threads or []]))
++
++    def test_a_failed_query_gives_none_so_the_drawer_keeps_what_it_listed(self):
++        pull = rows.to_pull("acme/app", 12, {"reviewThreads": {"nodes": [{"isResolved": False}]}})
++        self.assertIsNone(rows.fetch_threads(pull, self.gh("", returncode=1)))
++
++
++if __name__ == "__main__":
++    unittest.main()

@@ -1,0 +1,145 @@
+{
+ "version": 1,
+ "name": "Multi-session console",
+ "project": "console",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 528,
+  "title": "Port the panel's pull request rows to Python, with fixtures both copies run",
+  "head": "396f0bc26e99d009ddf10a08ac1a80abdf7b7c5e",
+  "headRef": "console/rows",
+  "base": "748b0b8430cfe972f3acacc6f7cf537c61379dbe",
+  "baseRef": "console/threads",
+  "basePr": 527
+ },
+ "overview": {
+  "summary": [
+   "The terminal console needs the same pull-request states, notes, labels, and ordering as the Claude Code panel. The panel computes those rules in TypeScript, while the console runs in Python.",
+   "This layer ports that row model to <code>rows.py</code> and runs both implementations against one set of expected results. It reads subscription and pull-request cache files locally; only an open drawer with unresolved review threads needs a GitHub query.",
+   "The terminal UI comes in the next layer. This layer supplies its data model and records the deliberate difference: the console lists daemon subscriptions, while the panel can also discover older shell watchers."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Inputs and outputs",
+    "html": "<ul class=\"tight\"><li><b>Subscription:</b> the session’s request to fix or review a pull request.</li><li><b>Adopted pull request:</b> a pull request retained by a repository review subscription.</li><li><b>Row:</b> a pull request’s section, label, state, notes, and session roles.</li><li><b>Drawer:</b> the expanded view of a pull request and its unresolved review threads.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Review evidence",
+    "html": "<ul class=\"tight\"><li>The new-head gate and exact-head CI passed after a clean rebase; the layer’s own patch is unchanged.</li><li>The earlier full review passed 152 focused Python tests and both implementations’ shared fixtures.</li><li>No findings or suggestions remain on this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "model",
+   "title": "Read the panel’s row model in Python",
+   "kicker": "Subscriptions and cached GitHub data become ordered rows.",
+   "intro": [
+    "A row combines a pull request with the roles a session holds on it. <code>rows_for</code> reads explicit subscriptions and adopted pull requests, applies exclusions, and creates loading rows while cache data is missing.",
+    "The Python model preserves the panel’s precedence for conflicts, failing checks, requested changes, open threads, and review labels. It also groups review requests by author and exposes the drawer’s unresolved-thread query without adding a Python runtime dependency."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/rows.py",
+     "note": "The console’s local row reader and on-demand review-thread loader.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Compared state precedence, notes, check cancellation handling, subscription exclusions, labels, and thread parsing with the panel implementations and their shared fixtures."
+      },
+      {
+       "kind": "verify",
+       "text": "Focused tests verify that a pull request with no unresolved thread makes no GitHub request, and that a failed thread query returns no replacement data."
+      }
+     ]
+    },
+    {
+     "path": "hooks/register.tsx",
+     "note": "Exports the existing panel helpers so the shared fixtures exercise production behavior.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The diff adds exports only; the panel’s existing helper bodies are unchanged."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "fixtures",
+   "title": "Run one contract through both implementations",
+   "kicker": "The same input files and expected rows constrain Python and TypeScript.",
+   "intro": [
+    "Each fixture is a TypeScript module whose exported value is JSON. The panel’s test runtime imports that value, while Python reads the same JSON after the export prefix.",
+    "The fixtures cover row states, notes, checks, labels, sections, roles, missing or malformed data, and grouped review threads. The Python test also checks that the TypeScript index includes every fixture file."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The earlier full review passed both shared-fixture runners and 152 focused Python tests. The clean rebase changes none of this layer’s row or fixture code; the new-head gate reruns the hook tests."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/rows.test.ts",
+     "note": "Feeds shared cache and subscription cases through the panel’s real helpers."
+    },
+    {
+     "path": "tests/test_rows.py",
+     "note": "Feeds the same cases through Python and tests local reads and thread-fetch boundaries."
+    },
+    {
+     "path": "tests/fixtures/rows/index.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/roles.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/loading.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/malformed.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/checks.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/states.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/notes.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/sections.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/labels.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/facts.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/threads.ts"
+    }
+   ]
+  },
+  {
+   "id": "scope",
+   "title": "Document the console’s subscription scope",
+   "kicker": "The plan describes which pull requests the console can discover.",
+   "intro": [
+    "The console plan now records the shared fixture format and the repository-name collation used by the panel. It also explains why shell watchers known only to the panel do not appear in console rows."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/console/readme.md",
+     "note": "Section 2.4 defines row ordering, shared fixtures, and the older-watcher limitation."
+    }
+   ]
+  }
+ ]
+}
