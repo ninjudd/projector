@@ -272,6 +272,45 @@ and `skills/work/SKILL.md` say so beside their instructions for `ANSWER`
 lines. In the panel, `7: Discuss` still fills Claude Code's prompt, and
 the drawer shows the item's thread.
 
+Building the threads settled these details:
+
+- **The claim names its entry.** A `DISCUSS` claim records `line: discuss`
+  and the index of the entry it carries in `entry`, so `message` and
+  `settle` act on that entry even when another arrives meanwhile.
+  `settle(delivered=True)` sets the entry's `deliveredAt`.
+  `settle(delivered=False)` removes the entry, as a failed `UNCLEAR` is
+  taken back, and drops `thread` once it is empty, so you say it again. The
+  panel's toast for it reads "your message about … did not reach its agent;
+  send it again".
+- **Your words are owed whatever becomes of the item.** An entry stays owed
+  after you answer, dismiss, or withdraw the item, so a message sent just
+  before a dismissal still arrives. Its claim survives an answer, an
+  outcome, a dismissal, and a restore, as a claimed `STARTED` or `UNCLEAR`
+  does, and the answer's line follows once it settles. Pruning keeps a
+  delivered item that still owes a line.
+- **A discussion is notice-like.** `answer` refuses it as a kind that takes
+  no answer, `revise` refuses it because its subject names what it is
+  about, and `done`, `decline`, and `start` refuse it as they refuse any
+  kind but a request. Its dismissal is delivered at once and sends nothing,
+  and a restore sends no `RESTORED`. `snooze`, `restore`, `withdraw`, and
+  `unclear` work on it.
+- **Reading is a command.** `project inbox read <number> --session <s>`
+  sets `readAt` on the item's agent entries. `discuss` and `read` record
+  your words and what you saw, so both join `ASK` and `ASKED` and stay out
+  of `CODEX_ALLOW`. `reply` joins `CODEX_ALLOW`. `reply` refuses a resolved
+  item and tells the agent to answer in the conversation instead, since you
+  no longer see its thread.
+- **A message is one line.** "One paragraph" means no line break, so a
+  `DISCUSS` line stays one line for `watch`, and the 4 KiB limit counts
+  UTF-8 bytes.
+- **What shows it.** `list` shows an open item with an unread reply as
+  `replied`, and `show` prints the thread as `you:` and `agent:` lines. The
+  panel draws a discussion in the theme's `text` color and `replied` in
+  `suggestion`. A line reads `sending` while it owes a message. The panel
+  runs `read` when a drawer opens on an item with an unread reply, and on
+  each inbox check while that drawer stays open. The `reply` tool registers
+  after `restore`. The template in `agents-block.md` moves to version 30.
+
 ### 2.7 Running the console
 
 ```console
