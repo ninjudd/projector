@@ -599,6 +599,17 @@ answer's place among a question's options and in the focus ring:
   `Sent to your clipboard where your terminal allows it` under the URL. A
   local console whose open failed writes nothing, because a local browser
   or clipboard is the person's own.
+- **A choice records only the item you read.** The note field keeps the
+  item's subject and options as the drawer showed them when you picked a
+  choice. `inbox.answer` and `inbox.done` take them as `subject` and
+  `choices` and compare them with the stored item under its lock, as
+  `inbox.unclear` compares the text you read. When the agent revised either
+  while you typed, Enter records nothing: the field closes, the drawer
+  shows the revised item, and the status line says
+  `3 changed while you were choosing; read it and choose again`. Choosing
+  again on that item opens the field with the note you had typed. Without
+  this, the letter alone would record whatever option the revision put
+  under it, even before the drawer showed the revision.
 
 ### 2.8 Changes by file
 

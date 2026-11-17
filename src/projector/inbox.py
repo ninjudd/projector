@@ -63,6 +63,11 @@ class InboxError(ProjectorError):
     """An item fails a check, or an answer, claim, or snooze is not allowed in its state."""
 
 
+class ChangedError(InboxError):
+    """The item's agent revised it after the person read it, so the choice they made may no longer name what
+    they read."""
+
+
 class InboxBusy(InboxError):
     """Another command held the session's lock for the whole wait, so running the command again can work."""
 
@@ -544,10 +549,20 @@ def update(session: Optional[str], ref: str, change,
     return item
 
 
+def refuse_changed(item: dict, subject: Optional[str], choices: Optional[list[str]]) -> None:
+    """Refuse a choice made from an item the person read as `subject` and `choices`, when its agent has
+    revised either since, as `unclear` refuses a press on text that changed. None checks nothing."""
+    if ((subject is not None and subject != item["subject"])
+            or (choices is not None and list(choices) != list(item.get("choices") or []))):
+        raise ChangedError(f"{item['ref']} changed while you were choosing; read it and choose again")
+
+
 def answer(session: Optional[str], ref: str, letter: Optional[str], text: Optional[str] = None,
-           note: Optional[str] = None) -> dict:
+           note: Optional[str] = None, *, subject: Optional[str] = None,
+           choices: Optional[list[str]] = None) -> dict:
     """Answer a question with a letter, the typed answer's `text` under its last letter, and the person's
-    `note` when they add one."""
+    `note` when they add one. `subject` and `choices`, when given, are the question as the person read it,
+    and a revision since then records nothing."""
     noted = note_of(note)
 
     def record(question: dict) -> None:
@@ -555,6 +570,7 @@ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Option
         refuse_request(question)
         if question.get("answer"):
             raise InboxError(f"{question['ref']} is already {resolution(question)}")
+        refuse_changed(question, subject, choices)
         last = typed_letter(question)
         if letter is None:
             raise InboxError(f"name the answer's letter, such as {question['ref']}.a")
@@ -638,14 +654,18 @@ def decline(session: Optional[str], ref: str, text: Optional[str] = None, note: 
     return update(session, ref, record, is_open)
 
 
-def done(session: Optional[str], ref: str, text: Optional[str] = None, note: Optional[str] = None) -> dict:
-    """Mark a request done, with the person's one line of text and their note when they give them."""
+def done(session: Optional[str], ref: str, text: Optional[str] = None, note: Optional[str] = None, *,
+         subject: Optional[str] = None, choices: Optional[list[str]] = None) -> dict:
+    """Mark a request done, with the person's one line of text and their note when they give them.
+    `subject` and `choices`, when given, are the request as the person read it, and a revision since
+    then records nothing."""
     said = {**outcome_text(text), **note_of(note)}
 
     def record(item: dict) -> None:
         refuse_unless_request(item, "done")
         if item.get("answer"):
             raise InboxError(f"{item['ref']} is already {resolution(item)}")
+        refuse_changed(item, subject, choices)
         # As an answer does, the outcome replaces word of a restore that has not reached the agent.
         clear_for_outcome(item)
         item["answer"] = {"done": True, **said, "answeredAt": now_ms()}

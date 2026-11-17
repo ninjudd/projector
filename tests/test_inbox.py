@@ -1572,6 +1572,28 @@ class MessageTests(InboxCase):
         self.assertEqual({"last": 1}, json.loads((self.folder() / "count.json").read_text()))
 
 
+class ChangedChoiceTests(unittest.TestCase):
+    def test_a_choice_made_from_text_the_agent_has_since_revised_records_nothing(self) -> None:
+        # Catches `answer` or `done` recording a letter or outcome against options the person never read.
+        with tempfile.TemporaryDirectory() as scratch, mock.patch.dict(os.environ, {"XDG_STATE_HOME": scratch}):
+            question = inbox.ask("s1", "Build it?", "Build locally", ["Wait"])
+            request = inbox.request("s1", "Check the build", options=["Built locally"])
+            inbox.revise("s1", question["ref"], recommend="Deploy production")
+            inbox.revise("s1", request["ref"], options=["Deployed production"])
+            for record in (lambda: inbox.answer("s1", question["ref"], "a", subject="Build it?",
+                                                choices=["Build locally", "Wait"]),
+                           lambda: inbox.done("s1", request["ref"], "Built locally", subject="Check the build",
+                                              choices=["Built locally"])):
+                with self.assertRaises(inbox.ChangedError):
+                    record()
+            answered = inbox.answer("s1", question["ref"], "a", subject="Build it?",
+                                    choices=["Deploy production", "Wait"])
+
+            self.assertEqual(("Deploy production", None),
+                             (answered["answer"]["text"],
+                              inbox.read_item(inbox.session_dir("s1"), request["ref"]).get("answer")))
+
+
 class NoteTests(InboxCase):
     def setUp(self) -> None:
         super().setUp()

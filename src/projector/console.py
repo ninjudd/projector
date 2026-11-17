@@ -372,6 +372,10 @@ class Console:
         # and whether it was sent to the clipboard; and the text `Screen` still has to send there.
         self.link: Optional[tuple[str, str, str, bool]] = None
         self.clipboard: Optional[str] = None
+        # The last refusal `record` showed, and the item and note of a note field a revision closed, which choosing
+        # again on that item brings back.
+        self.refusal: Optional[ProjectorError] = None
+        self.kept_note: Optional[tuple[str, str]] = None
         self.offset = 0
         self.room = 1
         # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
@@ -755,11 +759,15 @@ class Console:
                       for index, (label, minutes) in enumerate(SNOOZES, 1)),
                     Control("9", "Cancel", self.stop_asking)]
         controls = []
+        # The item as the drawer shows it, which a choice made through the note field must still match when it is
+        # recorded.
+        read, options = item["subject"], list(item.get("choices") or [])
         if item["kind"] == "question":
             letters = [chr(ord("a") + index) for index in range(len(item["choices"]))]
             controls += [Control(str(at + 1), f"{choice}{' (recommended)' if at == 0 else ''}",
-                                 lambda letter=letter: self.choose(
-                                     ref, lambda note: self.record(inbox.answer, ref, letter, None, note)),
+                                 lambda letter=letter: self.choose(ref, lambda note: self.record(
+                                     lambda name: inbox.answer(name, ref, letter, None, note, subject=read,
+                                                               choices=options))),
                                  True, True)
                          for at, (choice, letter) in enumerate(zip(item["choices"], letters))]
         elif item["kind"] == "request":
@@ -768,8 +776,9 @@ class Console:
                 controls.append(Control("1", start, lambda: self.record(inbox.start, ref, item["start"]), True))
             given = item.get("choices")
             controls += [Control(str(at + (1 if start is None else 2)), choice,
-                                 lambda choice=choice: self.choose(
-                                     ref, lambda note: self.record(inbox.done, ref, choice if given else None, note)),
+                                 lambda choice=choice: self.choose(ref, lambda note: self.record(
+                                     lambda name: inbox.done(name, ref, choice if given else None, note, subject=read,
+                                                             choices=options))),
                                  True, True)
                          for at, choice in enumerate(given or ["Done"])]
         if not item.get("unclear") and item["kind"] != "message":
@@ -782,9 +791,12 @@ class Console:
         return controls
 
     def choose(self, ref: str, then: Callable[[Optional[str]], Optional[dict]]) -> None:
-        """Pick the focused choice: open the note field under it, whose Enter records it."""
+        """Pick the focused choice: open the note field under it, whose Enter records it, holding the note a
+        revision of the item made the person leave."""
         self.reveal = True
-        self.field = Field("note", ref, "Note (optional): ", then=then)
+        kept = self.kept_note[1] if self.kept_note is not None and self.kept_note[0] == ref else ""
+        self.kept_note = None
+        self.field = Field("note", ref, "Note (optional): ", text=kept, cursor=len(kept), then=then)
 
     def ask(self, what: str) -> None:
         """Ask a follow-up question, the snooze lengths or a pull request's confirmation, with the focus on it."""
@@ -804,10 +816,11 @@ class Console:
         session = self.viewed()
         if session is None:
             return None
+        self.refusal = None
         try:
             item = change(session.name, *args)
         except ProjectorError as error:
-            self.status = str(error)
+            self.status, self.refusal = str(error), error
             return None
         self.stop_asking()
         if session.host == "codex":
@@ -865,6 +878,12 @@ class Console:
         said, target = typing.text, typing.target
         if typing.purpose == "note" and typing.then is not None:
             item = typing.then(said.strip() or None)
+            if item is None and isinstance(self.refusal, inbox.ChangedError) and target is not None:
+                # The choice may no longer name what the person read, so the field closes on the revised item,
+                # keeping their note for the choice they make next.
+                self.field, self.kept_note = None, (target, said)
+                self.reload()
+                return
         elif typing.purpose == "discuss":
             item = self.record(inbox.discuss, target, said)
         else:

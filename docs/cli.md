@@ -2996,7 +2996,10 @@ The note goes to the agent on the same line as your choice, as
 `ANSWER 3.a Decline the finding? → Decline it — note: keep the cap`. A note
 under a question's option records the answer. That differs from Projector's
 panel, where an option with more words after it is a reply that leaves the
-question open, because the console has no prompt to carry your words.
+question open, because the console has no prompt to carry your words. If the
+agent revises the item while the note field is open, Enter records nothing
+and says the item changed. The drawer then shows the revised item, and the
+field brings your note back when you choose again.
 
 | Key | Effect |
 | --- | --- |

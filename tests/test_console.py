@@ -515,6 +515,38 @@ class Options(ConsoleCase):
                                  (field and field.purpose, self.console.drawer, self.answer("1", session)["letter"]))
                 self.assertNotIn("note", self.answer("1", session))
 
+    def test_a_revision_while_the_note_field_is_open_records_nothing_and_keeps_the_note(self) -> None:
+        # Catches a choice recorded by its letter or words alone, so a revision the drawer had not yet shown makes
+        # Enter record an option the person never read, or a refusal that drops the note they typed.
+        for kind in ("question", "request"):
+            with self.subTest(kind=kind):
+                self.console = self.new_console()
+                self.claude(kind)
+                if kind == "question":
+                    posted = inbox.ask(kind, "Build it?", "Build locally", ["Wait"])
+                    revise = {"recommend": "Deploy production"}
+                else:
+                    posted = inbox.request(kind, "Check the build", options=["Built locally", "Not yet"])
+                    revise = {"options": ["Deployed production", "Not yet"]}
+                ref = posted["ref"]
+                self.open_entry(kind, f"item:{ref}")
+                self.press("1")
+                self.type("keep the cap")
+                inbox.revise(kind, ref, **revise)
+                self.press("enter")
+                refused = (inbox.read_item(inbox.session_dir(kind), ref).get("answer"), self.console.field,
+                           self.console.status)
+                self.press("1")
+                kept = self.console.field.text if self.console.field else None
+                self.press("enter")
+
+                self.assertEqual((None, None, f"{ref} changed while you were choosing; read it and choose again"),
+                                 refused)
+                self.assertEqual("keep the cap", kept)
+                answered = inbox.read_item(inbox.session_dir(kind), ref)["answer"]
+                self.assertEqual(("Deploy production" if kind == "question" else "Deployed production",
+                                  "keep the cap"), (answered["text"], answered["note"]))
+
     def test_a_question_offers_no_typed_answer_and_t_records_nothing(self) -> None:
         # Catches `type an answer` left among a question's options or in the focus ring, or `t` still opening the
         # typed answer's field, when Discuss is how the person writes their own words.
