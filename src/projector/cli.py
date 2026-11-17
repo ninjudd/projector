@@ -1378,7 +1378,7 @@ def confirmed(prompt: str, deadline: float, outcome: str) -> bool:
     return terminal_line(prompt, deadline, outcome).lower() in ("y", "yes")
 
 
-def join_key(root: Path, arguments: argparse.Namespace) -> tuple[str, str, str]:
+def join_key(root: Path, arguments: argparse.Namespace) -> tuple[relay.Key, str, str]:
     """Make a request for the relay key, read the line `key grant` prints for it, and store the key it carries.
     The temporary private key lives only in this function."""
     relay.check_join(inline=arguments.inline, replace=arguments.replace)
