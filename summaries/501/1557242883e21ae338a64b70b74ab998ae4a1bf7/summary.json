@@ -1,0 +1,91 @@
+{
+ "version": 1,
+ "name": "Steady pull request rows",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 501,
+  "title": "Keep a pull request's row the same when its drawer opens",
+  "head": "1557242883e21ae338a64b70b74ab998ae4a1bf7",
+  "headRef": "steady-row-notes",
+  "base": "0bb146a081784eddc25284ae99e964664f481d63",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's mod draws a panel above the Claude Code prompt that lists the pull requests your session fixes or reviews, one row each. A row shows the pull request's number, its <b>state</b> (the first status that applies, such as <code>failing</code>, <code>changes</code>, or <code>findings</code>), its title, and then <b>notes</b>: every other status that applies, such as <code>clean</code> or <code>passing</code>. Pressing a row's number opens its <b>drawer</b> beneath it, which shows the branch, the size of the change, the checks, the labels, and the unresolved review threads.",
+   "Before this change, opening the drawer also rewrote the row above it. The notes spelled holds out in full (<code>checks failing</code>, <code>changes requested</code>), added the hold that was already the row's state, and turned <code>passing</code> into <code>checks passing</code>. So the line you clicked changed shape as the drawer opened, and its last note repeated the drawer's facts line directly below.",
+   "Now a row's notes read the same open or closed. They keep their short forms, and no note repeats the state. The drawer's facts line still gives the checks in full, such as <code>checks failing</code>. The change removes the <code>phrase</code> field on each hold and the drawer argument to <code>notesOf</code>, updates the test to check that opening any drawer changes no row, and updates the panel documentation and its example."
+  ],
+  "cards": [
+   {
+    "id": "merge",
+    "title": "Merged with the blank-line change",
+    "html": "<p>The branch merges in main, which now puts a blank line between your pull requests and the review requests. The two changes met only in the example panel in <code>docs/plugins.md</code>, where main added the blank line directly above the <code>#258</code> row this change edits. The resolution keeps both: the blank line, then the <code>#258</code> row ending in <code>reviewing · passing</code>, with its age in the same column as the row above. <code>hooks/register.tsx</code> and <code>hooks/panel.test.tsx</code> merged without a conflict, and this change's hunks in them are the same as before the merge.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "notes",
+   "title": "A row's notes no longer depend on its drawer",
+   "kicker": "notesOf drops its drawer argument, and each hold keeps one word",
+   "intro": [
+    "<code>HOLDS</code> lists what holds a pull request back, most urgent first: <code>conflict</code>, <code>failing</code>, <code>changes</code>, and <code>findings</code>. <code>rowState</code> takes the first that holds as the row's state, and <code>notesOf</code> lists every other status after the title. Each hold used to carry an optional <code>phrase</code>, its long form, which <code>notesOf</code> used while the row's drawer was open.",
+    "Now <code>notesOf</code> takes only the pull request. A hold becomes a note exactly when it holds and is not the state, as review labels and <code>draft</code> already did, so the same row draws the same notes whichever drawer is open."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Removes <code>phrase</code> from <code>Hold</code> and <code>HOLDS</code>, drops the <code>isOpen</code> argument from <code>notesOf</code> and its one caller in <code>drawRow</code>, and always writes <code>passing</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "No note can repeat the state: holds and review labels are filtered against <code>rowState(pr).text</code>, <code>draft</code> shows only when the state is not <code>draft</code>, and <code>approved</code>, <code>passing</code>, and <code>cancelled</code> are never a state. Checked by reading <code>rowState</code> and <code>notesOf</code> at the head."
+      },
+      {
+       "kind": "verify",
+       "text": "<code>drawRow</code> is the only caller of <code>notesOf</code>, and nothing else read <code>phrase</code>. Checked by searching the hooks module and <code>site/src</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "The test opens drawers and compares every row",
+   "kicker": "One loop replaces the assertions that pinned the long forms",
+   "intro": [
+    "The panel test that lists each row's notes reads every row closed, then opens five drawers in turn and checks that every row's notes stay exactly as they were. The five cover a row failing its checks, one with changes requested, one whose state is <code>findings</code>, one whose state is <code>failing</code>, and one whose checks pass."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Renames the test and replaces the open-drawer assertions with a loop that compares all rows against their closed notes.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The test catches a row that changes as its drawer opens: with the base's <code>hooks/register.tsx</code> under the head's tests, <code>claude plugin test .</code> fails this test alone (236 pass, 1 fail)."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The panel documentation describes the steady row",
+   "kicker": "docs/plugins.md and its example panel",
+   "intro": [
+    "The paragraph on a row's notes now says that no note repeats the state and that opening a drawer leaves the row as it was, with the drawer's facts line giving the checks in full. The example panel's open row ends in <code>reviewing · passing</code>, and its title is longer, so the line keeps its width."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
