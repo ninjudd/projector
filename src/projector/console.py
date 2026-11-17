@@ -41,9 +41,12 @@ NOUNS = {"pr": "pull request", "review": "review request", **{kind: kind for kin
 SNOOZES = (("15 min", 15), ("1 hour", 60), ("4 hours", 240), ("1 day", 1440))
 SUBSCRIPTION_ROLE = {held: role for role, held in rows.ROLE_OF.items()}
 DRAWER_INDENT = 4
-# Page Down or Space, Page Up or `b`, End or `G`, and Home or `g`: the second of each pair for a terminal that keeps
-# the first for its own scrollback.
-SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "G", "home", "g")
+# Page Down or Space, Page Up or `b`, End, and Home: Space and `b` for a terminal that keeps the page keys for its own
+# scrollback. `g` opens a pull request in GitHub, so it is no alias for Home, nor `G` for End.
+SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "home")
+# The variables an SSH server sets in a session's environment. mosh's server starts over SSH, so its shells have
+# them too.
+SSH_VARIABLES = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
 # The key of the panel's last row, the session's conversation.
 CONVERSATION = "conversation"
 # How long after a panel's first Ctrl-C a second one quits, in seconds.
@@ -297,6 +300,17 @@ def headline(session: Session, now_ms: int) -> Optional[dict]:
     return next((item for item in shown_items(session, now_ms) if is_awake(item, now_ms)), None)
 
 
+def is_remote(environ: Optional[dict] = None) -> bool:
+    """Whether the console runs on a machine other than the one the person sits at, where a browser it opened would
+    open out of their sight: `PROJECTOR_REMOTE=1` says it does and `PROJECTOR_REMOTE=0` that it does not, for a
+    tmux server whose environment lost the SSH variables, and otherwise any of `SSH_VARIABLES` says it does."""
+    environ = os.environ if environ is None else environ
+    forced = environ.get("PROJECTOR_REMOTE")
+    if forced in ("0", "1"):
+        return forced == "1"
+    return any(environ.get(name) for name in SSH_VARIABLES)
+
+
 def pull_key(pull: rows.Pull) -> str:
     return f"pr:{pull.repo}#{pull.number}"
 
@@ -334,6 +348,9 @@ class Console:
         self.reveal = False
         # When a panel's first Ctrl-C asked for a second, by `clock`.
         self.exit_at: Optional[float] = None
+        # The open drawer's key, the action's key, and the URL that action showed rather than opened, until the
+        # next key.
+        self.link: Optional[tuple[str, str, str]] = None
         self.offset = 0
         self.room = 1
         # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
@@ -494,6 +511,7 @@ class Console:
         `backspace`, `delete`, `home`, `end`, `pageup`, `pagedown`, or `ctrl-c`."""
         with self.lock:
             self.status = ""
+            self.link = None
             if name == "ctrl-c" and self.field is None:
                 self.interrupt()
                 return
@@ -524,7 +542,7 @@ class Console:
             self.offset += page
         elif name in ("pageup", "b"):
             self.offset -= page
-        elif name in ("end", "G"):
+        elif name == "end":
             self.offset = sys.maxsize
         else:
             self.offset = 0
@@ -676,10 +694,23 @@ class Console:
         reference = f"{pull.repo}#{pull.number}"
         controls = [Control("7", "Discuss", lambda: self.open_field("pr", reference, f"Discuss {reference}: ")),
                     Control("8", "Dismiss", lambda: self.ask("dismiss")),
-                    Control("o", "Open in GitHub", lambda: self.open_url(pull.url))]
+                    Control("g", "Open in GitHub", lambda: self.visit("g", pull.url))]
         if pull.summary_url is not None:
-            controls.append(Control("p", "Open in Projector", lambda: self.open_url(pull.summary_url)))
+            summary = pull.summary_url
+            controls.append(Control("p", "Open in Projector", lambda: self.visit("p", summary)))
         return controls
+
+    def visit(self, key: str, url: str) -> None:
+        """Open `url` in a browser, or, on a remote machine or when nothing opened, show it under the action at `key`
+        for the person's terminal to make clickable."""
+        if not is_remote():
+            try:
+                if self.open_url(url) is not False:
+                    return
+            except (webbrowser.Error, OSError):
+                pass
+        if self.drawer is not None:
+            self.link = (self.drawer, key, url)
 
     def item_controls(self, item: dict) -> list[Control]:
         ref, now = item["ref"], self.now_ms()
@@ -952,7 +983,7 @@ class Console:
             if isinstance(entry, rows.Row):
                 lines.append(self.pull_line(entry, label_width, author_width, lit))
                 if key == self.drawer:
-                    lines += self.pull_drawer(entry)
+                    lines += self.pull_drawer(entry, width)
             else:
                 lines.append(self.item_line(entry, now, lit))
                 if key == self.drawer:
@@ -980,9 +1011,9 @@ class Console:
             parts += [("  " if at == 0 else " · ", ""), (note, WORD_STYLES.get(note, ""))]
         return Line(parts, selected)
 
-    def pull_drawer(self, row: rows.Row) -> list[Line]:
+    def pull_drawer(self, row: rows.Row, width: int) -> list[Line]:
         """The facts line, in the panel's colors for the roles, the branch, the size, and the checks, then the
-        actions and the threads by file."""
+        actions, the URL an action showed rather than opened, and the threads by file."""
         pull, indent = row.pull, " " * DRAWER_INDENT
         facts: list[list[tuple[str, str]]] = []
         if row.roles:
@@ -1003,6 +1034,10 @@ class Console:
             said += [(" · ", "subtle")] if at else []
             said += fact
         lines = [Line(said), self.controls_line(self.controls())]
+        if self.link is not None and self.link[0] == self.drawer:
+            # The whole URL from the first column, a window's width to a line, so a terminal can find it to click.
+            url = self.link[2]
+            lines += [Line([(url[start:start + width], "")]) for start in range(0, len(url), max(1, width))]
         if pull.open_threads and self.threads is None:
             lines.append(Line([(f"{indent}loading threads…", "subtle")]))
         for path, threads in rows.threads_by_file(self.threads or []):

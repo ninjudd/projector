@@ -2935,9 +2935,14 @@ to open its drawer:
 - **A pull request's drawer** shows the session's role, the branch, the size,
   the checks, and the labels, then the unresolved review threads by file.
   `7` sends the session a message about the pull request, `8` asks before it
-  stops this session watching the pull request, `o` opens the pull request
+  stops this session watching the pull request, `g` opens the pull request
   on GitHub, and `p` opens its Projector summary when its description links
-  one.
+  one. Over SSH or mosh, `g` and `p` show the URL under the actions instead,
+  whole, so you can click it in your terminal; it stays until your next key.
+  Set `PROJECTOR_REMOTE=1` to show URLs when the console cannot tell it is
+  remote, such as in a tmux server started before you connected, or
+  `PROJECTOR_REMOTE=0` to open them in a browser. A URL that fails to open
+  in a browser shows the same way.
 
 With no drawer open, `7` sends a message about the session itself, so you can
 talk to a session that has no item and no pull request. Discuss opens a
@@ -2997,7 +3002,7 @@ question open, because the console has no prompt to carry your words.
 | `7` in a panel with no drawer open | Sends a message about the session |
 | `v` in a panel | Shows or hides the session's conversation |
 | Page Down or Space, Page Up or `b` | Scrolls a drawer or the conversation, when taller than the screen, a page down or up |
-| End or `G`, Home or `g` | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
+| End, Home | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
 | Enter in a text field | Sends the message, or, in a note field, records the option with the note you typed, if any. Esc or Ctrl-C cancels it, or goes back to the options, and Left and Right move the cursor |
 | Ctrl-C | Quits from the home list. In a panel, the first press shows `Press Ctrl-C again to exit`, and a second within 3 seconds quits |
 

@@ -210,8 +210,8 @@ thread. The drawer's actions are these:
 | --- | --- |
 | `7` | Discuss: opens a text field, and sends your message about this pull request to this session as a `message` item (§ 2.6) |
 | `8` | Dismiss, after a confirmation. The console runs `project watch drop <owner>/<repo>#<n> --role <role> --session <s>` for each role this session holds |
-| `o` | Opens the pull request in a browser with `webbrowser.open` |
-| `p` | Opens its projector.bot summary, when the description carries one |
+| `g` | Opens the pull request in a browser with `webbrowser.open`, or, on a remote machine, shows its URL (§ 2.7) |
+| `p` | Opens its projector.bot summary, when the description carries one, or, on a remote machine, shows its URL |
 
 ### 2.5 A session's panel: inbox items
 
@@ -350,7 +350,7 @@ $ project console
 | `7` in a panel with no drawer open | Sends a message about the session (§ 2.5) |
 | `v` in a panel | Shows or hides the session's conversation (§ 2.5) |
 | Page Down or Space, Page Up or `b` | Scrolls a drawer or the conversation, when taller than the screen, a page down or up |
-| End or `G`, Home or `g` | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
+| End, Home | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
 | Enter in a text field | Sends the message, or, in a note field, records the option with the note typed, if any. Esc or Ctrl-C cancels it, or returns to the options, and Left and Right move the cursor |
 | Ctrl-C | Quits from the home list. In a panel, the first press asks for a second within 3 seconds, which quits |
 
@@ -557,9 +557,10 @@ home list from a panel, and that `q` quits:
   `COLORFGBG` names a white background, and Claude Code's default `dark`
   theme otherwise. It cannot read the theme Claude Code is set to.
 
-A third round of testing by hand settled this detail, which replaces the
-decision above that `t` types an answer, and the typed answer's place among
-a question's options and in the focus ring:
+A third round of testing by hand settled these details, which replace the
+decisions above that `t` types an answer, with the typed answer's place
+among a question's options and in the focus ring, that `G` and `g` scroll
+as End and Home do, and that `o` opens a pull request:
 
 - **The console offers no typed answer.** A typed answer and Discuss both
   send the agent your own words, so the console keeps only Discuss. A
@@ -569,6 +570,23 @@ a question's options and in the focus ring:
   keeps the typed answer: `project inbox answer <n>.<last letter> --text`
   and Claude Code's panel still record one, and the console never lists the
   typed letter.
+- **`g` opens GitHub, so the vi-style scroll aliases are gone.** A pull
+  request's drawer opens the pull request with `g`, for GitHub, and its
+  Projector summary with `p`. `o` does nothing. `g` and `G` no longer scroll
+  back to the top and to the end, so each key has one meaning. Home and End
+  still do, and Space and `b` still page down and up.
+- **A remote console shows the URL instead of opening it.** A browser that
+  `g` or `p` opened on a remote machine would open out of your sight, so
+  there the console calls no browser. It draws the whole URL from the first
+  column on the lines directly under the drawer's actions, a window's width
+  to a line however long it is, so your terminal can find it and make it
+  clickable. It stays until the next key. The console counts as remote when
+  `SSH_CONNECTION`, `SSH_CLIENT`, or `SSH_TTY` is set, which also covers
+  mosh, whose server starts over SSH. `PROJECTOR_REMOTE=1` makes it remote
+  and `PROJECTOR_REMOTE=0` local, for a tmux server whose environment lost
+  the SSH variables. On a local machine it opens the URL with
+  `webbrowser.open`, and shows the URL as a remote console does when the
+  open returns false or raises, because nothing opened.
 
 ### 2.8 Changes by file
 

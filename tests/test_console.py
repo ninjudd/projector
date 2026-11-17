@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+import webbrowser
 from contextlib import redirect_stderr
 from pathlib import Path
 from typing import Optional
@@ -45,7 +46,8 @@ class ConsoleCase(unittest.TestCase):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         self.scratch = Path(scratch.name)
-        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state")})
+        # Local, so a run over SSH opens URLs as a run at the machine does.
+        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state"), "PROJECTOR_REMOTE": "0"})
         environ.start()
         self.addCleanup(environ.stop)
         self.root = watch.state_root()
@@ -300,15 +302,65 @@ class PullRequests(ConsoleCase):
                     self.console.tick()
                 self.assertEqual(expected, len(self.queries))
 
-    def test_o_opens_the_pull_request_in_a_browser(self) -> None:
+    def open_pull(self) -> None:
         self.claude("s1")
         self.subscribe("s1", "acme/app#12 fix")
         self.cache("acme/app", 12)
         self.open_entry("s1", "pr:acme/app#12")
 
-        self.press("o")
+    def test_g_opens_the_pull_request_in_a_browser_and_o_does_nothing(self) -> None:
+        # Catches `g` still read as Home, or `o` still opening the pull request.
+        self.open_pull()
 
-        self.assertEqual(["https://github.com/acme/app/pull/12"], self.opened)
+        self.press("o")
+        after_o = list(self.opened)
+        self.press("g")
+
+        self.assertEqual(([], ["https://github.com/acme/app/pull/12"], False),
+                         (after_o, self.opened, "https://github.com" in self.screen()))
+        self.assertIn("g: Open in GitHub", self.screen())
+
+    def test_a_remote_console_shows_the_whole_url_under_the_actions_until_the_next_key(self) -> None:
+        # Catches a remote console opening a browser on the far machine, a URL cut at the window's edge, or one
+        # that stays after the next key.
+        url = "https://github.com/acme/app/pull/12"
+        for environ in ({"SSH_CONNECTION": "10.0.0.2 52000 10.0.0.1 22"}, {"SSH_CLIENT": "10.0.0.2 52000 22"},
+                        {"SSH_TTY": "/dev/pts/3"}, {"PROJECTOR_REMOTE": "1"}):
+            with self.subTest(environ=environ):
+                self.opened.clear()
+                self.console = self.new_console()
+                self.open_pull()
+                with mock.patch.dict(os.environ, {"PROJECTOR_REMOTE": "", **environ}):
+                    self.press("g")
+                body = self.console.lines(20)[0]
+                under = [line.text for line in body[[index for index, line in enumerate(body)
+                                                     if "g: Open in GitHub" in line.text][0] + 1:]]
+                shown = "".join(under[:2])
+                self.press("down")
+
+                self.assertEqual(([], url, False),
+                                 (self.opened, shown, url in self.screen()))
+
+    def test_projector_remote_0_opens_locally_even_over_ssh(self) -> None:
+        # Catches the SSH variables winning over `PROJECTOR_REMOTE=0`, which a person sets when the browser does
+        # open where they sit.
+        self.open_pull()
+        with mock.patch.dict(os.environ, {"PROJECTOR_REMOTE": "0", "SSH_CONNECTION": "10.0.0.2 52000 10.0.0.1 22"}):
+            self.press("g")
+
+        self.assertEqual((["https://github.com/acme/app/pull/12"], False),
+                         (self.opened, "https://github.com" in self.screen()))
+
+    def test_a_local_open_that_fails_shows_the_url(self) -> None:
+        # Catches a failed open, which `webbrowser.open` reports by returning False or raising, leaving the person
+        # with nothing to follow.
+        for fails in (lambda url: False, mock.Mock(side_effect=webbrowser.Error("no browser"))):
+            with self.subTest(fails=fails):
+                self.console = console.Console(self.root, clock=self.clock, gh=self.gh, open_url=fails)
+                self.open_pull()
+                self.press("g")
+
+                self.assertIn("https://github.com/acme/app/pull/12", self.screen())
 
 
 class Keys(ConsoleCase):
@@ -522,7 +574,7 @@ class Ring(ConsoleCase):
             self.press("down")
             seen.append(self.focused())
 
-        self.assertEqual([["#12"], ["7: Discuss"], ["8: Dismiss"], ["o: Open in GitHub"], ["- Decline the finding?"]],
+        self.assertEqual([["#12"], ["7: Discuss"], ["8: Dismiss"], ["g: Open in GitHub"], ["- Decline the finding?"]],
                          seen)
         self.assertEqual("pr:acme/app#12", self.console.drawer)
 
@@ -690,13 +742,15 @@ class Scrolling(TerminalCase):
 
         self.press_terminal(FakeCurses.KEY_END)
         at_end = self.draw()
+        # `g` opens a pull request in GitHub, so it no longer scrolls a drawer back to its row.
         self.press("g")
-        self.terminal.draw()
+        after_g = self.draw()
+        self.press_terminal(FakeCurses.KEY_HOME)
         self.press(" ", "b")
         at_top = self.draw()
 
-        self.assertEqual((True, False, True, False),
-                         ("8: Dismiss" in at_end, "- Decline the finding?" in at_end,
+        self.assertEqual((True, False, True, True, False),
+                         ("8: Dismiss" in at_end, "- Decline the finding?" in at_end, after_g == at_end,
                           "- Decline the finding?" in at_top, "8: Dismiss" in at_top))
 
     def test_moving_the_highlight_scrolls_it_and_its_note_field_into_a_tall_drawers_view(self) -> None:
@@ -816,7 +870,7 @@ class Conversation(TerminalCase):
         self.clock.now += 1
         self.console.tick()
         stayed = self.draw()
-        self.press_terminal("G")
+        self.press_terminal(FakeCurses.KEY_END)
         self.say(path, ("agent", "One more answer."))
         self.clock.now += 1
         self.console.tick()
