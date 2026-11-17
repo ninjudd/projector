@@ -1,0 +1,199 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 60853337..79f45119 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -1079,6 +1079,15 @@ do not install the CLI, so install it separately before running a project
+ workflow. `all` installs each host CLI it finds, skips a missing host, and exits
+ 69 only when neither Claude Code nor Codex is installed.
+ 
++A host command can be on your `PATH` and still fail to start, as Codex does
++when its npm package has lost its native binary. The installer runs
++`<host> --version` before anything else. When that fails, `all` prints a
++`skipped` row with a ⚠️ marker that tells you to reinstall the host, and goes on
++to the other host and the `gh stack` extension. `./install.sh claude` and
++`./install.sh codex` exit 69 with the same message, and `status` prints a
++`host-broken` row for that host. A host that does not run counts as missing
++for `all`'s exit status.
++
+ The marketplace source is the checkout's `origin` remote, so a fork installs
+ from the fork. A GitHub remote becomes `owner/repo` for Claude Code and the
+ HTTPS URL for Codex; any other remote URL is handed to both hosts as it is;
+diff --git a/install.sh b/install.sh
+index 0e357f0c..dfd8de8c 100755
+--- a/install.sh
++++ b/install.sh
+@@ -156,6 +156,16 @@ sys.exit(sys.version_info < (3, 11))
+   return 69
+ }
+ 
++# A host on PATH can still fail to start, as an npm install of Codex does when
++# its native binary is missing. Every command it is given then fails the same
++# way, so the installer asks for its version first rather than read that
++# failure as a slow clone or an absent plugin.
++host_runs() { "$1" --version >/dev/null 2>&1; }
++
++broken_host() {
++  printf '%s is installed but does not run: `%s --version` fails -- reinstall %s' "$1" "$2" "$1"
++}
++
+ run_claude() { CLAUDE_CONFIG_DIR="$CLAUDE_DIR" "$CLAUDE_COMMAND" "$@"; }
+ run_codex() { CODEX_HOME="$CODEX_DIR" "$CODEX_COMMAND" "$@"; }
+ 
+@@ -318,6 +328,10 @@ install_claude() {
+     echo "install.sh: Claude Code is not installed" >&2
+     return 69
+   }
++  host_runs "$CLAUDE_COMMAND" || {
++    echo "install.sh: $(broken_host "Claude Code" "$CLAUDE_COMMAND")" >&2
++    return 69
++  }
+   mkdir -p "$CLAUDE_DIR"
+   remove_legacy_links claude
+   local marketplace source installed
+@@ -377,6 +391,10 @@ install_codex() {
+     echo "install.sh: Codex is not installed" >&2
+     return 69
+   }
++  host_runs "$CODEX_COMMAND" || {
++    echo "install.sh: $(broken_host Codex "$CODEX_COMMAND")" >&2
++    return 69
++  }
+   mkdir -p "$CODEX_DIR"
+   remove_legacy_links codex
+   local marketplace source
+@@ -530,6 +548,10 @@ report_plugin() {
+     printf '%-14s %s\n' "host-missing" "$host"
+     return
+   }
++  host_runs "$command" || {
++    warn_row "host-broken" "$host -- \`$command --version\` fails, so reinstall it and run $(rerun "$host")"
++    return
++  }
+   marketplace="$(host_marketplace "$host")"
+   if [ -n "$marketplace" ]; then
+     printf '%-14s %s\n' "marketplace" "$host $marketplace"
+@@ -562,6 +584,7 @@ report_plugin() {
+ report_codex_hooks() {
+   local installed
+   command -v "$CODEX_COMMAND" >/dev/null 2>&1 || return 0
++  host_runs "$CODEX_COMMAND" || return 0
+   installed="$(host_plugin_version codex projector-hooks@projector)"
+   if [ -z "$installed" ]; then
+     printf '%-14s %s\n' "hooks-absent" "codex projector-hooks@projector -- run $(rerun codex)"
+@@ -674,22 +697,26 @@ case "${1:-all}" in
+   all)
+     install_cli
+     installed_hosts=0
+-    if command -v "$CLAUDE_COMMAND" >/dev/null 2>&1; then
++    if ! command -v "$CLAUDE_COMMAND" >/dev/null 2>&1; then
++      printf '%-14s %s\n' "skipped" "Claude Code is not installed"
++    elif ! host_runs "$CLAUDE_COMMAND"; then
++      warn_row "skipped" "$(broken_host "Claude Code" "$CLAUDE_COMMAND"), then run $(rerun claude)"
++    else
+       install_claude
+       installed_hosts=$((installed_hosts + 1))
+-    else
+-      printf '%-14s %s\n' "skipped" "Claude Code is not installed"
+     fi
+-    if command -v "$CODEX_COMMAND" >/dev/null 2>&1; then
++    if ! command -v "$CODEX_COMMAND" >/dev/null 2>&1; then
++      printf '%-14s %s\n' "skipped" "Codex is not installed"
++    elif ! host_runs "$CODEX_COMMAND"; then
++      warn_row "skipped" "$(broken_host Codex "$CODEX_COMMAND"), then run $(rerun codex)"
++    else
+       install_codex
+       installed_hosts=$((installed_hosts + 1))
+-    else
+-      printf '%-14s %s\n' "skipped" "Codex is not installed"
+     fi
+     install_gh_stack
+     report_checkout
+     if [ "$installed_hosts" -eq 0 ]; then
+-      echo "install.sh: neither Claude Code nor Codex is installed" >&2
++      echo "install.sh: neither Claude Code nor Codex is installed and runs" >&2
+       exit 69
+     fi
+     ;;
+diff --git a/tests/test_install.py b/tests/test_install.py
+index 6006b40a..1ee958b2 100644
+--- a/tests/test_install.py
++++ b/tests/test_install.py
+@@ -719,6 +719,78 @@ def test_all_skips_one_missing_host_and_installs_the_other(self) -> None:
+         self.assertIn("skipped", result.stdout)
+         self.assertIn("codex plugin add projector@projector", self.log.read_text())
+ 
++    def breaks(self, executable: str) -> Path:
++        """Make a host fail every command, as one whose binary is missing does."""
++        path = self.fake_bin / executable
++        path.write_text(
++            "#!/bin/sh\n"
++            "printf '%s %s\\n' broken \"$*\" >> \"$PROJECTOR_TEST_LOG\"\n"
++            "exit 1\n"
++        )
++        return path
++
++    def test_all_skips_a_codex_that_does_not_run_and_finishes_the_rest(self) -> None:
++        codex = self.breaks("host-b")
++
++        result = self.install("all")
++
++        self.assertEqual(0, result.returncode, result.stderr)
++        self.assertIn(
++            f"skipped        ⚠️  Codex is installed but does not run: `{codex} --version` fails"
++            " -- reinstall Codex, then run ./install.sh codex",
++            result.stdout,
++        )
++        self.assertNotIn("retrying", result.stdout)
++        log = self.log.read_text()
++        self.assertEqual(["broken --version"], [line for line in log.splitlines() if line.startswith("broken")])
++        self.assertIn("claude plugin install projector@projector", log)
++        self.assertIn("gh extension install github/gh-stack", log)
++
++    def test_all_skips_a_claude_code_that_does_not_run(self) -> None:
++        claude = self.breaks("host-a")
++
++        result = self.install("all")
++
++        self.assertEqual(0, result.returncode, result.stderr)
++        self.assertIn(f"Claude Code is installed but does not run: `{claude} --version` fails", result.stdout)
++        self.assertIn("codex plugin add projector@projector", self.log.read_text())
++
++    def test_a_host_install_stops_at_a_host_that_does_not_run(self) -> None:
++        for target, executable, name in (("claude", "host-a", "Claude Code"), ("codex", "host-b", "Codex")):
++            with self.subTest(target):
++                self.breaks(executable)
++                self.log.write_text("")
++
++                result = self.install(target)
++
++                self.assertEqual(69, result.returncode)
++                self.assertIn(f"install.sh: {name} is installed but does not run", result.stderr)
++                self.assertNotIn("retrying", result.stdout)
++                self.assertEqual("broken --version\n", self.log.read_text())
++
++    def test_all_fails_when_no_host_runs(self) -> None:
++        self.breaks("host-a")
++        self.breaks("host-b")
++
++        result = self.install("all")
++
++        self.assertEqual(69, result.returncode)
++        self.assertIn("neither Claude Code nor Codex is installed and runs", result.stderr)
++
++    def test_status_reports_a_host_that_does_not_run(self) -> None:
++        codex = self.breaks("host-b")
++
++        result = self.install("status")
++
++        self.assertEqual(0, result.returncode, result.stderr)
++        self.assertIn(
++            f"host-broken    ⚠️  codex -- `{codex} --version` fails, so reinstall it and run ./install.sh codex",
++            result.stdout,
++        )
++        self.assertNotIn("plugin-absent  codex", result.stdout)
++        self.assertNotIn("hooks-absent", result.stdout)
++        self.assertIn("plugin-absent  claude", result.stdout)
++
+     def test_all_fails_when_both_hosts_are_missing(self) -> None:
+         self.environment["PROJECTOR_CLAUDE_COMMAND"] = "missing-claude"
+         self.environment["PROJECTOR_CODEX_COMMAND"] = "missing-codex"

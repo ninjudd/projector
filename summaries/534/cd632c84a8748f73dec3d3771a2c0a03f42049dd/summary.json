@@ -1,0 +1,84 @@
+{
+ "version": 1,
+ "name": "Broken host detection",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 534,
+  "title": "Skip a host that is installed but does not run instead of retrying its clone",
+  "head": "cd632c84a8748f73dec3d3771a2c0a03f42049dd",
+  "headRef": "report-broken-codex",
+  "base": "672d1383d18fc79762281fa6346ea10224eca430",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The installer adds Projector to Claude Code and Codex through each host’s plugin manager. Finding a command on <code>PATH</code> does not prove that command can run: a package can remain installed after its native executable disappears.",
+   "The installer now probes <code>--version</code> before host operations. A broken host is skipped during <code>all</code>, rejected with exit 69 during a host-only install, and reported as <code>host-broken</code> during <code>status</code>. The other host and the optional <code>gh stack</code> extension can still install."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Review evidence",
+    "html": "This fork head was reviewed by reading; its installer and tests did not run locally. The exact-head <code>check</code> workflow <a href=\"https://github.com/ninjudd/projector/actions/runs/44120532699\">awaits maintainer approval</a>, so CI supplied no test evidence. No findings or suggestions were identified."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "host-guard",
+   "title": "Stop before a broken host’s plugin commands",
+   "kicker": "Probe host startup and give each install mode its own result",
+   "intro": [
+    "The shared <code>host_runs</code> helper invokes the selected executable with <code>--version</code> and discards its output. A failed probe produces a reinstall message instead of being mistaken for a slow marketplace clone or a missing plugin.",
+    "<code>all</code> continues past a broken host and counts only usable hosts toward success. A targeted host install exits 69 before creating its configuration directory or removing legacy links. Status reporting emits one broken-host warning and suppresses a misleading missing-hooks row."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "install.sh",
+     "note": "Adds the startup probe and routes failure through targeted installs, all, and status.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 331,
+       "text": "Reading both install functions confirms the probe precedes directory creation, legacy-link removal, and marketplace commands."
+      },
+      {
+       "kind": "verify",
+       "line": 700,
+       "text": "Traced both all branches: a failed probe skips only that host, then reaches the other host and gh-stack installation before deciding exit 69."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Documents skipped and host-broken rows and the unavailable-host exit behavior.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "installer-tests",
+   "title": "Exercise unavailable hosts through the installer",
+   "kicker": "Keep the real installer while replacing external host commands",
+   "intro": [
+    "The fixture replaces a fake host executable with one that fails every invocation. Each case then calls the real installer interface and checks its exit status, warning, or recorded commands.",
+    "The cases cover broken Codex and Claude Code during <code>all</code>, host-only refusal, no usable host, and diagnostic status. They also check that broken hosts receive no marketplace command or retry and that unaffected components continue."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "These tests were inspected, not executed locally. CI for this fork has not run because the workflow needs maintainer approval."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_install.py",
+     "note": "Adds a failing-host fixture and five installer behavior regressions.",
+     "collapsed": true
+    }
+   ]
+  }
+ ]
+}
