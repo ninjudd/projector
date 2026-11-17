@@ -148,7 +148,10 @@ The push service is a small HTTPS service in `services/push/`, with two
 calls and no storage. It is TypeScript on Node, whose standard library has
 the HTTP/2 client that Apple's push service requires and the ES256 signing
 its tokens use, so it has no runtime dependencies at all. It deploys on its
-own, apart from the `projector.bot` site in `web/`.
+own, apart from the `projector.bot` site in `web/`, as a Vercel project
+whose root directory is `services/push/`. Its two calls are Vercel
+Functions on the Node runtime. The app uses this hosted instance by
+default.
 
 | Call | Sent by | Body | What the service does |
 | --- | --- | --- | --- |
@@ -160,7 +163,10 @@ only the service can read it and no one can forge one. So the service keeps
 no table and needs no database, and losing its host loses nothing but its
 secret key and Apple's push key, both from its environment. It stores no
 notification and logs no body. It counts each push ID's notifications in
-memory for the rate limit, which a restart resets. A push ID reaches the
+memory for the rate limit. Vercel runs and retires function instances as
+traffic comes and goes, so that count is a best-effort cap for each
+instance, not a shared one. Vercel's Runtime Cache can make it shared
+later, still without a database. A push ID reaches the
 daemon only inside `project agent phone add`, so knowing one is the only
 credential `POST /v1/push` asks for, and the rate limit caps what a leaked
 ID can do. `phone.push_url` in `~/.projector.toml` names the service, so
@@ -179,7 +185,7 @@ anyone can run their own.
 | `tests/fixtures/relay/` | New. Sealed and signed records with their plaintexts, which the Python tests and the app's tests both check |
 | `docs/cli.md` | Describes the phone records, the commands, and what a leaked key exposes |
 | `ios/` | New. The SwiftUI app: GitHub sign-in, key join, the phone's keys, push registration, the notification service extension, ref reading and writing through GitHub's API, the seal, the row model, the home list, the panels, and background refresh. Its tests read `tests/fixtures/rows/` and `tests/fixtures/relay/` in place |
-| `services/push/` | New. The two calls, Apple's push key and the service's secret key from its environment, its tests, and a deploy recipe for one small host or serverless function |
+| `services/push/` | New. The two calls as Vercel Functions on the Node runtime, Apple's push key, key ID, team ID, and the app's bundle ID, and the service's secret key, all from production-only environment variables, its tests, and a README that says how to deploy your own instance |
 | `.github/workflows/` | A workflow for `ios/` on a macOS runner and one for `services/push/`, each run only when its directory or `tests/fixtures/` changes. The `check` job keeps its current scope |
 | `tests/test_packaging.py` | Pins that neither the wheel nor either plugin ships `ios/` or `services/` |
 
@@ -290,9 +296,10 @@ anyone can run their own.
 - **The daemon's pushes.** Items change rarely, so publishing adds a few
   refs to the one push each relay pass already makes.
 - **The push service.** It handles one request per new item or reply, a
-  few hundred a day for a busy user, and stores nothing. One small host or
-  a serverless function covers many users. Apple charges nothing for
-  push, but sending it needs an Apple developer account's push key.
+  few hundred a day for a busy user, and stores nothing. Each call is one
+  short function invocation on Vercel, so many users fit in a small plan.
+  Apple charges nothing for push, but sending it needs an Apple developer
+  account's push key.
 - **What a leaked relay key exposes.** A deleted ref's commit stays
   readable by its SHA on GitHub. Inbox items hold more detail than presence
   records, so a leaked key exposes every item the relay published. The
@@ -305,10 +312,9 @@ anyone can run their own.
   probing each one. Options: the grant line carries the repositories the
   granting machine relays, or the daemon publishes a roster to a home
   repository you name. Owner: whoever takes this project.
-- **Who runs the push service, and where.** A hosted instance that the app
-  uses by default, with `phone.push_url` for anyone who runs their own, is
-  the recommendation. Its host, its domain, and the Apple push key it
-  holds are the user's. Owner: the user.
+- **The push service's domain.** The hosted instance runs on Vercel. It
+  can use the project's default domain or a subdomain of `projector.bot`.
+  Owner: the user, when the service is first deployed.
 - **App Store distribution.** Publishing needs an Apple developer account
   and App Review. TestFlight can come first. Owner: the user.
 - **Messages to agents.** The phone could also send relay messages to an
