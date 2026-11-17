@@ -30,7 +30,7 @@ from typing import Optional
 from unittest import mock
 
 from projector import agents, cli, codex_watch as codex, config, crypto, keychain, relay, watch
-from projector.inbox import read_json
+from projector.inbox import read_json, try_lock, unlock
 from tests.scratch import copy_of
 from tests.test_watch import FakeGitHub
 
@@ -1080,6 +1080,119 @@ def wait_for(condition, seconds: float = 10.0) -> bool:
             return False
         time.sleep(0.02)
     return True
+
+
+class KeyArrivalTests(RelayCase):
+    """A session that registered while machine one had no key, and the key arriving by `key init`, `key join`, or
+    an edit to `agent.key`."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.one.claude(A)
+        self.one.register(A, "--name", "parser-refactor", "--summary", "Refactoring the parser")
+        self.one.run_pass()
+        self.advance(1)
+
+    def presence(self, key_id: str, session: str = A) -> str:
+        return relay.presence_ref(key_id, agents.record(self.one.root, session)["relay_id"])
+
+    def queued(self) -> tuple[list[str], str]:
+        return [item["ref"] for item in self.one.outbox()], agents.record(self.one.root, A)["relay"]
+
+    def tick(self) -> None:
+        """One turn of the daemon's loop that is not a poll, and the relay jobs it starts."""
+        self.one.daemon.tick()
+        self.one.settle()
+
+    def hold_daemon_lock(self) -> None:
+        """Hold the lock the daemon holds, so a `project` process finds machine one's daemon running."""
+        descriptor = os.open(self.one.root / "daemon.mutex", os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, descriptor)
+        self.assertTrue(try_lock(descriptor))
+        self.addCleanup(unlock, descriptor)
+
+    def test_key_init_queues_a_session_registered_before_it_and_one_daemon_tick_pushes_it(self) -> None:
+        self.on_macos()
+
+        code, out, err = self.one.project("agent", "key", "init")
+        key_id = relay.value_id(relay.configured(self.one.env))
+        queued = self.queued()
+        self.tick()
+
+        self.assertEqual(0, code, err)
+        self.assertIn("queued the presence of 1 registered session for the relay", out)
+        self.assertEqual(([self.presence(key_id)], "pending"), queued)
+        self.assertIn(self.presence(key_id), self.refs())
+        self.assertEqual("published", agents.record(self.one.root, A)["relay"])
+
+    def test_key_join_queues_a_session_registered_before_it_and_one_daemon_tick_pushes_it(self) -> None:
+        self.two.inline_key(self.private)
+        self.hold_daemon_lock()
+
+        join = Pty(self, self.one, "agent", "key", "join")
+        request = re.search(r"project agent key grant (pj1-\S+)",
+                            join.until("Paste the line it prints here: ")).group(1)
+        granted = self.two.project("agent", "key", "grant", request, stdin="y\n", terminal=True)
+        join.type(re.search(r"^  (pk1-\S+)$", granted[1], re.MULTILINE).group(1))
+        join.until("Does the other machine show the same key? [y/N] ")
+        join.type("y")
+        code, output = join.finish()
+        queued = self.queued()
+        self.tick()
+
+        self.assertEqual(0, code, output)
+        self.assertEqual(([self.presence(self.key.id)], "pending"), queued)
+        self.assertIn(self.presence(self.key.id), self.refs())
+
+    def test_key_init_queues_no_presence_for_a_session_that_unregistered(self) -> None:
+        self.one.claude(C)
+        self.one.register(C, "--name", "test-writer", "--summary", "Writing the parser's tests")
+        self.one.project("agent", "unregister", claude=A)
+
+        code, out, err = self.one.project("agent", "key", "init", "--inline")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([self.presence(relay.value_id(relay.configured(self.one.env)), C)],
+                         [item["ref"] for item in self.one.outbox()])
+
+    def test_key_init_skips_a_session_whose_checkout_has_no_origin(self) -> None:
+        elsewhere = self.scratch / "no-origin"
+        git("init", "-q", "-b", "main", str(elsewhere))
+        self.one.project("agent", "unregister", claude=A)
+        self.one.claude(C)
+        self.one.register(C, "--name", "test-writer", "--summary", "Writing the parser's tests", cwd=elsewhere)
+
+        code, out, err = self.one.project("agent", "key", "init", "--inline")
+
+        self.assertEqual(0, code, err)
+        self.assertNotIn("queued the presence", out)
+        self.assertEqual(([], "none"), ([item["ref"] for item in self.one.outbox()],
+                                        agents.record(self.one.root, C)["relay"]))
+
+    def test_a_key_read_while_a_job_runs_publishes_on_the_job_after_it_rather_than_the_next_poll(self) -> None:
+        self.one.inline_key(self.private)
+        self.one.run_pass()
+        self.tick()
+        self.assertIn(self.presence(self.key.id), self.refs())
+        self.advance(1)
+        other = relay.Key(bytes(range(2, 34)), "inline")
+        self.one.inline_key(other.private)
+        log = hook(self.one.work)
+
+        # A poll that sees the new key starts reading it, and starts a job, without the key, that deletes the old
+        # key's presence and waits in the pre-push hook.
+        self.one.daemon.wanted = True
+        self.one.daemon.tick()
+        self.assertTrue(wait_for(log.exists))
+        self.one.daemon.relay.reading[1].result(10)
+        self.advance(1)
+        self.one.daemon.tick()
+        log.with_suffix(".release").touch()
+        self.one.settle()
+        self.advance(1)
+        self.tick()
+
+        self.assertEqual([self.presence(other.id)], [ref for ref in self.refs() if ref.startswith(relay.AGENTS)])
 
 
 class PushTests(RelayCase):

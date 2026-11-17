@@ -140,11 +140,12 @@ def no_keychain(reason: str) -> RelayError:
                       "it in ~/.projector.toml instead, where every process running as you can read it")
 
 
-def save_key(root: Path, private: bytes, *, inline: bool, environ: Optional[dict] = None) -> tuple[str, str, str]:
+def save_key(root: Path, private: bytes, *, inline: bool, environ: Optional[dict] = None) -> tuple[Key, str, str]:
     """Store the private key in the keychain, or inline with `inline`, and write `agent.key` to
-    `~/.projector.toml` with mode 0600. Answers the key ID, where the key is stored, and why when that is inline.
+    `~/.projector.toml` with mode 0600. Answers the key, where it is stored, and why when that is inline.
     Without `inline`, a keychain that cannot store the key stores nothing."""
-    key_id = crypto.key_id(crypto.public_key(private))
+    key = Key(private, "inline" if inline else "keychain")
+    key_id = key.id
     secret = crypto.encode(private)
     value, store, reason = INLINE_KEY + secret, "inline", "you passed --inline"
     if not inline:
@@ -161,10 +162,10 @@ def save_key(root: Path, private: bytes, *, inline: bool, environ: Optional[dict
     write_value(path, "agent.key", value)
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "key.json", {"schema_version": 1, "key_id": key_id, "store": store, "reason": reason})
-    return key_id, store, reason
+    return key, store, reason
 
 
-def init_key(root: Path, *, inline: bool, environ: Optional[dict] = None) -> tuple[str, str, str]:
+def init_key(root: Path, *, inline: bool, environ: Optional[dict] = None) -> tuple[Key, str, str]:
     existing = configured(environ)
     if existing:
         raise RelayError(f"agent.key already holds key {value_id(existing)}; run `project agent key remove` "
@@ -281,11 +282,11 @@ def check_join(*, inline: bool, replace: bool, environ: Optional[dict] = None) -
 
 
 def join_key(root: Path, private: bytes, *, inline: bool, replace: bool,
-             environ: Optional[dict] = None) -> tuple[str, str, str]:
+             environ: Optional[dict] = None) -> tuple[Key, str, str]:
     """Store the key `join` accepted, and then delete the keychain item of a different key it replaced."""
     existing = replaceable(replace, environ)
     saved = save_key(root, private, inline=inline, environ=environ)
-    if existing and existing.startswith(KEYCHAIN) and value_id(existing) != saved[0]:
+    if existing and existing.startswith(KEYCHAIN) and value_id(existing) != saved[0].id:
         try:
             keychain.delete(value_id(existing))
         except KeychainError:
@@ -972,6 +973,9 @@ class Relay:
         self.signature: object = ()
         self.last_full: Optional[float] = None
         self.fresh = False
+        # The repositories whose job owes a poll since the key was read: a repository whose job was still running
+        # then gets it as soon as that job ends, so a registration waiting for the key need not wait for a pass.
+        self.owed: dict[str, str] = {}
         self.was_live: set[str] = set()
 
     def start(self) -> None:
@@ -995,20 +999,23 @@ class Relay:
             self.last_full = now
         self.collect()
         self.check_key(full)
-        polled = polled or self.fresh
-        self.fresh = False
         records, gone = agents.relayed(self.root)
         live = live - gone
         lapsed = self.was_live - live
         self.was_live = set(live)
-        for name, repo in sorted(self.repositories(records, polled, lapsed).items()):
+        if self.fresh:
+            self.owed.update(self.repositories(records, True, lapsed))
+            self.fresh = False
+        for name, repo in sorted({**self.repositories(records, polled, lapsed), **self.owed}.items()):
             if name in self.jobs:
                 continue
+            owed = self.owed.pop(name, None) is not None
             here = {session: found for session, found in records.items() if (found.get("repo") or "").lower() == name}
             remote = read_cache(self.root, repo)["remote"]
             lingering = {found.get("relay_id") for session, found in here.items() if session not in live}
-            poll = polled and (any(session in live for session in here)
-                               or any((parsed := parse_ref(ref)) and parsed[2] in lingering for ref in remote))
+            poll = (polled or owed) and (any(session in live for session in here)
+                                         or any((parsed := parse_ref(ref)) and parsed[2] in lingering
+                                                for ref in remote))
             job = Job(self.root, repo, self.key, set(live), now, poll=poll, full=full, gh=self.gh,
                       held=self.held())
             self.jobs[name] = (job, self.pool.submit(job.run))

@@ -3481,6 +3481,16 @@ nothing you copy between the two terminals can leak the key:
    key 3f2a9c1d7e4b6a05 stored in the macOS Keychain; ~/.projector.toml names it as agent.key = "keychain:3f2a9c1d7e4b6a05"
    ```
 
+A session that registered before the machine had a key is published as
+soon as the key arrives. Once `key init` or `key join` stores the key, it
+encrypts and queues the presence of each live session registered on this
+machine in a checkout with a GitHub `origin`, marks each `pending`, prints
+how many it queued, and starts the watch daemon if none runs, so the daemon
+pushes them within seconds. It skips a session that unregistered and one
+whose checkout has no `origin`. With `--json`, `key init` lists the
+sessions it queued as `queued`. The daemon also publishes them on its next
+job for each repository when `agent.key` changes some other way.
+
 `join` waits at most 30 minutes for the line, and Ctrl-C stops it at any
 point. When it stops, times out, or refuses a line, it stores nothing, and
 the temporary key goes with the process. It refuses a line encrypted to

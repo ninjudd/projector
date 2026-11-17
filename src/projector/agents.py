@@ -248,6 +248,24 @@ def write_registration(root: Path, session: str, login: str, place: dict, cwd: P
     return new, off
 
 
+def publish_waiting(root: Path, key: relay.Key, now: float) -> list[str]:
+    """Queue the presence of each live session registered on this machine in a checkout with an `origin`, sealed
+    with `key`, which `key init` or `key join` has just stored, so a session that registered before the machine had
+    a key reaches the relay without waiting for the daemon's next poll. Answers the sessions it queued."""
+    queued = []
+    for session in watch.session_names(root):
+        folder = watch.session_folder(root, session)
+        with locked(folder):
+            found = record(root, session)
+            if found is None or not found.get("repo") or not found.get("cwd") or not live(root, session, now):
+                continue
+            found = {**found, "relay": "pending"}
+            write_json(folder / "agent.json", found)
+            relay.publish(root, session, found, key, now)
+        queued.append(session)
+    return queued
+
+
 def register_subscriber(root: Path, session: str, cwd: Path, now: float, config: Config,
                         environ: Optional[dict] = None) -> Optional[dict]:
     """Register a session that has just subscribed to a pull request, with no name and a summary made from its
