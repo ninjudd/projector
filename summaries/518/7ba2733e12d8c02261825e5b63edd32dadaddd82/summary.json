@@ -1,0 +1,62 @@
+{
+ "version": 1,
+ "name": "Agent messaging check correction",
+ "project": "agent-messages",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 518,
+  "title": "Correct the agent-messages check record: the daemon never died",
+  "head": "7ba2733e12d8c02261825e5b63edd32dadaddd82",
+  "headRef": "correct-agent-messages-check",
+  "base": "74e8e5ea011e6ef4dda9a5d597c2534c1fe33672",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Agent messaging uses a background watch daemon to publish and remove encrypted session records between machines. This change corrects the completed project’s manual-check record: a process-name search missed the running daemon, rather than observing a crash.",
+   "Only the explanation after the dated results changes. The acceptance results, project status, section numbers, and runtime code stay as they are."
+  ],
+  "cards": [
+   {
+    "id": "evidence",
+    "title": "What this review verified",
+    "html": "The daemon launcher uses <code>python -m projector watch serve</code>, and relay cleanup deletes a local session’s presence after it lapses. The author’s observations of the manual run are reported evidence; this review did not repeat that run."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "outcome",
+   "title": "Correct the manual-check outcome",
+   "kicker": "Explain the process-search miss and normal session cleanup",
+   "intro": [
+    "Section 11 records the check deferred until after the agent-messaging implementation merged. Its dated bullets already report successful exchange and cleanup. The replacement paragraph removes the claim that the daemon died and explains why the process search found no match.",
+    "The corrected explanation attributes the removed presence refs to session lapse cleanup. A presence ref is the relay’s record that an agent is available; removing it stops other machines from listing that closed session."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/readme.md",
+     "note": "Section 11 corrects the daemon and cleanup explanation after the dated manual-check results.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 941,
+       "text": "Traced spawn_daemon in watch.py: its command contains projector watch serve, which does not contain the searched string project watch serve."
+      },
+      {
+       "kind": "verify",
+       "line": 946,
+       "text": "Traced the 300-second lapse in Daemon.scan and local-agent ref deletion in Job.maintain, and confirmed project metadata remains completed."
+      },
+      {
+       "kind": "context",
+       "text": "The reported process observation and later upgrade stop were not rerun or independently reconstructed in this review."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
