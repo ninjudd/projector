@@ -184,6 +184,20 @@ cache at `cache/<owner>/<repo>/pulls/<number>.json`. A new module,
 | Checks | Passing, pending, failing, or cancelled, from the cache's check runs |
 | Section | Yours first, then review requests grouped by author, each group by repository and then newest number first |
 
+`rows.py` sorts as the panel's `localeCompare` does, by Unicode's root
+collation, so `acme/app_b` lists before `acme/app-b`, and both before
+`acme/app1`. It lists only the pull requests the session subscribes to.
+The panel also lists those an older `watch-prs.sh` or `watch-threads.sh`
+watcher tracks, which it learns from the commands it sees the session run.
+The console cannot see those commands, so it leaves those pull requests out.
+
+Each file in `tests/fixtures/rows/` is a TypeScript module whose body after
+`export default` is JSON: a list of cases, each either the files under the
+watch root and the rows they give, or a thread query or response and what
+the drawer lists. The panel's test runtime can import a module but cannot
+read a file, so `index.ts` imports every case file, and
+`tests/test_rows.py` fails when one is missing from it.
+
 The drawer shows the facts line (the session's role, the branch, the size,
 the checks, and the labels) and the unresolved threads by file. The
 daemon's cache lacks the thread fields the drawer shows, so `rows.py` also

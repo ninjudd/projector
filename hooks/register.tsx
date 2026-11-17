@@ -106,10 +106,10 @@ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 const KINDS: readonly LoopKind[] = ['watching', 'reviewing']
 
 /** The roles in the order a drawer names them. */
-const ROLES: readonly Role[] = ['fixing', 'reviewing']
+export const ROLES: readonly Role[] = ['fixing', 'reviewing']
 
 /** The role a subscription's role, or an earlier watcher's kind, holds. */
-const ROLE_OF: Record<SubscriptionRole | LoopKind, Role> = {
+export const ROLE_OF: Record<SubscriptionRole | LoopKind, Role> = {
   fix: 'fixing',
   review: 'reviewing',
   watching: 'fixing',
@@ -1331,7 +1331,7 @@ const reviewLabel = (pr: PullRequest) => REVIEW_LABELS.find(label => hasLabel(pr
  * says so too when another status takes the word. Opening the row's drawer
  * changes none of it, so the row reads the same as the drawer opens.
  */
-function notesOf(pr: PullRequest): Note[] {
+export function notesOf(pr: PullRequest): Note[] {
   const shown = rowState(pr).text
   const notes = HOLDS.flatMap(({ status, color, holds }): Note[] =>
     holds(pr) && status !== shown ? [{ text: status, color }] : [],
@@ -1351,7 +1351,7 @@ function notesOf(pr: PullRequest): Note[] {
  * number, so a held draft shows an italic `clean`. Every other status that
  * applies follows the title as a note.
  */
-function rowState(pr: PullRequest): { text: string; color?: string } {
+export function rowState(pr: PullRequest): { text: string; color?: string } {
   const hold = HOLDS.find(one => one.holds(pr))
   if (hold !== undefined) return { text: hold.status, color: hold.color }
   return reviewLabel(pr) ?? (pr.isDraft ? { text: 'draft' } : { text: 'ready', color: 'suggestion' })
@@ -1391,7 +1391,7 @@ function threadLabel(thread: Thread, columns: number): string {
 }
 
 /** Threads gathered under their files, which come in the order of each file's first thread. */
-function threadsByFile(threads: readonly Thread[]): [string, Thread[]][] {
+export function threadsByFile(threads: readonly Thread[]): [string, Thread[]][] {
   const files = new Map<string, Thread[]>()
   for (const thread of threads) files.set(thread.path, [...(files.get(thread.path) ?? []), thread])
   return [...files]
@@ -1416,7 +1416,7 @@ const newestFirst = (one: Row, other: Row) =>
  * then the review requests, each author's together and the authors by login.
  * Within each, they go by repository and newest first.
  */
-function bySection(rows: readonly Row[], viewer: string | null): Record<(typeof PR_SECTIONS)[number], Row[]> {
+export function bySection(rows: readonly Row[], viewer: string | null): Record<(typeof PR_SECTIONS)[number], Row[]> {
   const loginOf = (row: Row) => (row.pr.author ?? '').toLowerCase()
   return {
     pr: rows.filter(row => !isReviewRequest(row.pr, viewer)).sort(newestFirst),
@@ -1433,7 +1433,7 @@ const countOf = (count: number, noun: string) =>
   count === 0 ? undefined : `${count} ${noun}${count === 1 ? '' : 's'}`
 
 /** Labels a pull request `#12` when the panel shows one repository, else by its repository's name. */
-function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+export function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
   const repos = [...new Set(prs.map(pr => pr.repo))]
   if (repos.length <= 1) return pr => `#${pr.number}`
   const names = repos.map(repo => repo.split('/')[1])
