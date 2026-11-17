@@ -3619,10 +3619,11 @@ rejection:
 ### What a presence carries
 
 A presence is the session's registration, as `project agent list --json`
-prints it, with its lease. Its `reviews` field lists what the session
-reviews in the repository the relay publishes the presence into: one entry
-for each `review` subscription in that repository, with its `target` and
-`model`. The target is `owner/repo` for a review of the repository, or
+prints it, with its lease and a `reviews` field. The relay fills `reviews`
+from the session's subscriptions each time it encrypts the presence, with
+what the session reviews in the repository the relay publishes the presence
+into: one entry for each `review` subscription in that repository, with its
+`target` and `model`. The target is `owner/repo` for a review of the repository, or
 `owner/repo#number` for one pull request. A pull request the session
 dropped with `project watch drop` has `"excluded": true`:
 
@@ -3639,10 +3640,11 @@ published into can be public while another one the session reviews is
 private. A machine rejects a presence whose `reviews` names another
 repository, as `field-shape`. The list holds at most 32 entries, exclusions
 first and then reviews of a whole repository, so a session with more never
-appears to review a pull request it dropped. Projector rewrites `reviews`
-each time the session's subscriptions change, and the daemon publishes the
-presence again on its next poll, whether or not the summary is the generated
-one.
+appears to review a pull request it dropped. A change to the session's
+review subscriptions makes the daemon publish the presence again on its next
+poll, whether or not the summary is the generated one, and each 30-minute
+renewal carries the subscriptions as they are then, so a session registered
+before Projector published `reviews` gains them by its next renewal.
 
 The watch daemon reads `reviews` to decide `UNREVIEWED`. A pull request has
 a reviewer on another machine when a live presence of the operator's login,

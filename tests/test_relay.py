@@ -20,6 +20,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tomllib
@@ -30,7 +31,7 @@ from typing import Optional
 from unittest import mock
 
 from projector import agents, cli, codex_watch as codex, config, crypto, keychain, relay, watch
-from projector.inbox import read_json, try_lock, unlock
+from projector.inbox import read_json, try_lock, unlock, write_json
 from tests.scratch import copy_of
 from tests.test_watch import FakeGitHub
 
@@ -639,7 +640,7 @@ class CheckTests(RelayCase):
         message = lambda number, **fields: self.message(f"m-{number:032x}", to=b, **fields)
         flipped = json.loads(self.sealed(message(7)))
         flipped["tag"] = crypto.encode(bytes(32))
-        presence = relay.presence(B, agents.record(self.two.root, B), self.now)
+        presence = relay.presence(self.two.root, B, agents.record(self.two.root, B), self.now)
         planted = {
             f"refs/projector/inbox/{self.key.id}/{b}/not-a-message": ({"sealed.json": self.sealed(message(1))},
                                                                        "ref-name"),
@@ -1888,6 +1889,28 @@ class RemoteReviewerTests(RelayCase):
         self.assertNotIn("other/secret", plaintext)
         self.assertEqual([{"target": "acme/app#12", "model": "gpt-5.5"}], self.b_reviews())
 
+    def test_a_registration_an_older_version_wrote_publishes_its_review_targets_on_its_next_renewal(self) -> None:
+        self.pair()
+        self.github.repository("acme/app")
+        folder = watch.session_folder(self.two.root, B)
+        # An older version subscribed B to review acme/app and wrote B's registration with no review targets.
+        watch.write_text(folder / "subscriptions", f"acme/app review gpt-5.5 {LOGIN}\n")
+        found = agents.record(self.two.root, B)
+        found.pop("reviews", None)
+        write_json(folder / "agent.json", found)
+        self.two.run_pass()
+        self.one.run_pass()
+        before = self.b_reviews()
+
+        self.advance(relay.RENEW + 60)
+        self.one.claude(A)
+        self.two.claude(B)
+        self.two.run_pass()
+        self.one.run_pass()
+
+        self.assertEqual([], before or [], "nothing republishes the presence before its renewal is due")
+        self.assertEqual([{"target": "acme/app", "model": "gpt-5.5"}], self.b_reviews())
+
     def test_changing_a_review_subscription_republishes_a_presence_whose_summary_the_session_wrote(self) -> None:
         self.pair()
         self.github.pull_request(12, author=LOGIN)
@@ -1903,8 +1926,8 @@ class RemoteReviewerTests(RelayCase):
         self.pair()
         self.github.pull_request(12, author=LOGIN)
         relay_id = "d" * 16
-        older = {key: value for key, value in relay.presence(D, agents.record(self.two.root, B), self.now).items()
-                 if key != "reviews"}
+        older = {key: value for key, value in relay.presence(self.two.root, D, agents.record(self.two.root, B),
+                                                             self.now).items() if key != "reviews"}
         older.update(relay_id=relay_id, name="older-peer")
         self.plant(relay.presence_ref(self.key.id, relay_id),
                    {"sealed.json": json.dumps(crypto.seal(self.private, self.key.public,
@@ -1925,12 +1948,14 @@ class PresenceSizeTests(unittest.TestCase):
         lines = [watch.Subscription(repo, None, "review", "m" * 100, "octocat")] + [
             watch.Subscription(repo, 10 ** 9 + index, "review", f"{'m' * 99}{index % 10}", "octocat",
                                excluded=index % 2 == 0) for index in range(agents.MAX_REVIEWS * 2)]
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        watch.write_text(watch.session_folder(root, A) / "subscriptions", "".join(f"{line.text}\n" for line in lines))
         found = {"schema_version": 1, "login": "l" * 39, "name": "n" * 32, "summary": "s" * agents.MAX_SUMMARY,
                  "model": "m" * 100, "host": "claude", "machine": A, "machine_name": "h" * 64, "cwd": "c" * 4096,
                  "repo": repo, "branch": "b" * 256, "relay_id": "0" * 16, "registered_at": watch.stamp(0),
-                 "updated_at": watch.stamp(0), "reviews": agents.review_targets(lines, repo)}
+                 "updated_at": watch.stamp(0)}
 
-        record = relay.presence(A, found, 0)
+        record = relay.presence(root, A, found, 0)
         sealed = json.dumps(relay.seal(relay.Key(bytes(range(1, 33)), "inline"), record), sort_keys=True)
 
         self.assertTrue(agents.well_formed_presence(record))

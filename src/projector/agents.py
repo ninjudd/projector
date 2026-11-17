@@ -238,7 +238,6 @@ def write_registration(root: Path, session: str, login: str, place: dict, cwd: P
                 kept.pop("summary_auto", None)
             new = {
                 "schema_version": 1, "login": login, **kept, **given,
-                "reviews": review_targets(watch.subscriptions(folder), place.get("repo")),
                 "host": host_of(root, session, now, environ), "machine": this_machine(root),
                 "machine_name": socket.gethostname().split(".")[0] or "unknown", "cwd": str(cwd), **place,
                 "relay_id": old.get("relay_id") or secrets.token_hex(8),
@@ -386,33 +385,36 @@ def review_targets(lines: list[watch.Subscription], repo: Optional[str]) -> list
     return found[:MAX_REVIEWS]
 
 
-def refresh_registration(folder: Path, lines: list[str], now: float) -> None:
-    """Make the registration's review targets, and its summary while that is the generated one, agree with the
-    session's subscriptions, `lines`, and mark the session's presence for the relay to publish again. The caller
-    holds the session's lock."""
+def refresh_registration(folder: Path, before: list[str], after: list[str], now: float) -> None:
+    """Make a generated summary agree with the session's subscriptions, which changed from `before` to `after`,
+    and mark the session's presence for the relay to publish again when its summary or its review targets
+    changed. The caller holds the session's lock."""
     found = read_json(folder / "agent.json")
     if not found or found.get("schema_version") != 1:
         return
-    parsed = [line for line in map(watch.Subscription.parse, lines) if line is not None]
-    changes: dict = {"reviews": review_targets(parsed, found.get("repo"))}
+    repo = found.get("repo")
+    old, current = ([line for line in map(watch.Subscription.parse, lines) if line is not None]
+                    for lines in (before, after))
+    new = dict(found)
     if found.get("summary_auto") is True:
-        changes["summary"] = generated_summary([line for line in parsed if not line.excluded], found.get("repo"))
-    if all(found.get(key) == value for key, value in changes.items()):
-        return
-    new = {**found, **changes, "updated_at": watch.stamp(now),
-           **({"relay": "pending"} if found.get("relay") == "published" else {})}
-    if new.get("summary") is None:
         new.pop("summary", None)
+        if summary := generated_summary([line for line in current if not line.excluded], repo):
+            new["summary"] = summary
+    if new == found and review_targets(old, repo) == review_targets(current, repo):
+        return
+    new.update({"updated_at": watch.stamp(now), **({"relay": "pending"} if found.get("relay") == "published" else {})})
     write_json(folder / "agent.json", new)
 
 
 def mark_published(root: Path, session: str, landed: Optional[str]) -> None:
     """Mark the session's presence published when the presence that landed, by its digest, says what the
-    registration says now. A summary refreshed while an older presence waited to be pushed stays pending."""
+    registration and the subscriptions say now. A summary or review target that changed while an older presence
+    waited to be pushed stays pending."""
     folder = watch.session_folder(root, session)
     with locked(folder):
         found = record(root, session)
-        if found and found.get("relay") != "published" and relay.digest(relay.presence(session, found, 0)) == landed:
+        if found and found.get("relay") != "published" \
+                and relay.digest(relay.presence(root, session, found, 0)) == landed:
             write_json(folder / "agent.json", {**found, "relay": "published"})
 
 

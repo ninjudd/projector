@@ -491,9 +491,12 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
             write_json(path, box)
 
 
-def presence(session: str, found: dict, now: float) -> dict:
+def presence(root: Path, session: str, found: dict, now: float) -> dict:
+    """The session's presence: its registration, what it reviews in the registration's repository as its
+    subscriptions say when the presence is sealed, and its lease, so each renewal carries the current targets."""
     record = {key: value for key, value in found.items() if key not in ("relay", "ended_at", "summary_auto")}
-    return {**record, "session": session, "expires_at": now + LEASE}
+    reviews = agents.review_targets(watch.subscriptions(watch.session_folder(root, session)), found.get("repo"))
+    return {**record, "reviews": reviews, "session": session, "expires_at": now + LEASE}
 
 
 def seal(key: Key, record: dict) -> dict:
@@ -502,7 +505,7 @@ def seal(key: Key, record: dict) -> dict:
 
 def publish(root: Path, session: str, found: dict, key: Key, now: float) -> None:
     """Queue the session's sealed presence."""
-    record = presence(session, found, now)
+    record = presence(root, session, found, now)
     queue(root, found["repo"], found["cwd"], [(presence_ref(key.id, found["relay_id"]), seal(key, record),
                                                presence_meta(record))], now)
 
@@ -916,7 +919,7 @@ class Job:
                 due = ref not in self.cache["remote"] or not isinstance(expires, (int, float)) \
                     or expires - self.now < RENEW or found.get("relay") == "pending"
                 if due and ref not in queued:
-                    record = presence(name, found, self.now)
+                    record = presence(self.root, name, found, self.now)
                     self.changes.append((ref, seal(self.key, record), presence_meta(record)))
                 continue
             self.delete(ref)

@@ -301,7 +301,7 @@ def edit_subscriptions(folder: Path, edit: Callable[[list[str]], list[str]]) -> 
         if after != before:
             write_text(folder / "subscriptions", "".join(f"{line}\n" for line in after))
             with contextlib.suppress(OSError):
-                agents.refresh_registration(folder, after, time.time())
+                agents.refresh_registration(folder, before, after, time.time())
 
 
 def parse_target(text: str) -> tuple[str, Optional[int]]:
