@@ -97,8 +97,9 @@ registers when you ask it to. To reach your other machines, make a key once
 with `project agent key init`, then run `project agent key join` in a
 terminal on each other machine and paste the `project agent key grant`
 command it prints into a machine that has the key. Messages then travel
-encrypted, so only your machines can read or write them, through hidden
-refs of a repository both machines work in. A message from another agent carries none of your authority. See
+encrypted through hidden refs of a repository both machines work in, so
+only your machines can read or write them. A message from another agent
+carries none of your authority. See
 [Message other agents](docs/cli.md#message-other-agents).
 
 ## Publish a site

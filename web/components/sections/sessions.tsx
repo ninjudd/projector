@@ -28,8 +28,8 @@ const parts: { title: string; invoke: string; body: ReactNode; href: string; lin
         A session registers under a name and a summary of what it is doing. Ask one session to
         message another, and it finds that session by its name or summary and sends the message.
         The watch daemon wakes the recipient with it. Between your machines, the messages travel
-        sealed through hidden refs of a repository both machines work in. A message from another
-        agent carries none of your authority.
+        encrypted through hidden refs of a repository both machines work in, so only your machines
+        can read or write them. A message from another agent carries none of your authority.
       </>
     ),
     href: DOCS.message,
