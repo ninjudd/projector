@@ -105,7 +105,7 @@ export function Summaries() {
   return (
     <Section
       id="summaries"
-      title="Summaries that make a pull request reviewable"
+      title="Summaries that make a pull request reviewable by humans"
       lead={
         <>
           A diff in file order is hard to review, and harder when an agent wrote it.{" "}
