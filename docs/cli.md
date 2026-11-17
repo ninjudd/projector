@@ -2921,17 +2921,17 @@ to open its drawer:
 
 - **An item's drawer** shows the item's detail and each message you sent
   about it, after `you:`, then its controls. A question offers `1` and on
-  for its options, the first marked `(recommended)`, and `t` to type an
-  answer of your own. A request offers `1: Start`, or `1: Retry` once its
-  agent reports it blocked, when it has a start action, and then its
-  outcomes, or `Done`. The drawer opens with the focus on the first option,
-  and Enter picks the focused one, as its number does. Picking one opens a
-  one-line field under it for an optional note: Enter records your choice,
-  with the note when you typed one, and Esc goes back to the options without
-  recording. Every open item offers `6: I don't understand`, `7: Discuss`,
-  `8: Dismiss`, and `9: Snooze`, which lists 15 minutes, 1 hour, 4 hours,
-  and 1 day, with the focus on the first. A dismissed item offers
-  `8: Restore`.
+  for its options, the first marked `(recommended)`. The console offers no
+  typed answer: to give the agent your own words, use `7: Discuss`. A
+  request offers `1: Start`, or `1: Retry` once its agent reports it
+  blocked, when it has a start action, and then its outcomes, or `Done`.
+  The drawer opens with the focus on the first option, and Enter picks the
+  focused one, as its number does. Picking one opens a one-line field under
+  it for an optional note: Enter records your choice, with the note when you
+  typed one, and Esc goes back to the options without recording. Every open
+  item offers `6: I don't understand`, `7: Discuss`, `8: Dismiss`, and
+  `9: Snooze`, which lists 15 minutes, 1 hour, 4 hours, and 1 day, with the
+  focus on the first. A dismissed item offers `8: Restore`.
 - **A pull request's drawer** shows the session's role, the branch, the size,
   the checks, and the labels, then the unresolved review threads by file.
   `7` sends the session a message about the pull request, `8` asks before it
@@ -2940,7 +2940,7 @@ to open its drawer:
   one.
 
 With no drawer open, `7` sends a message about the session itself, so you can
-talk to a session that has no item and no pull request. Discuss and `t` open a
+talk to a session that has no item and no pull request. Discuss opens a
 one-line text field at the bottom of the screen. A message is one way: the
 agent hears it as a `DISCUSS` line and answers in its own conversation. A
 message about a pull request or the session is an item of kind `message`,

@@ -700,7 +700,6 @@ class Console:
                                      ref, lambda note: self.record(inbox.answer, ref, letter, None, note)),
                                  True, True)
                          for at, (choice, letter) in enumerate(zip(item["choices"], letters))]
-            controls.append(Control("t", "type an answer", lambda: self.type_answer(ref), True, True))
         elif item["kind"] == "request":
             start = start_of(item)
             if start is not None:
@@ -724,9 +723,6 @@ class Console:
         """Pick the focused choice: open the note field under it, whose Enter records it."""
         self.reveal = True
         self.field = Field("note", ref, "Note (optional): ", then=then)
-
-    def type_answer(self, ref: str) -> None:
-        self.open_field("typed", ref, f"Answer {ref}: ")
 
     def ask(self, what: str) -> None:
         """Ask a follow-up question, the snooze lengths or a pull request's confirmation, with the focus on it."""
@@ -809,10 +805,6 @@ class Console:
             item = typing.then(said.strip() or None)
         elif typing.purpose == "discuss":
             item = self.record(inbox.discuss, target, said)
-        elif typing.purpose == "typed":
-            question = self.item(f"item:{target}")
-            letter = inbox.typed_letter(question) if question is not None else None
-            item = self.record(inbox.answer, target, letter, said)
         else:
             item = self.record(lambda name: inbox.send(name, said, pr=target))
         if item is None:

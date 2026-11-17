@@ -419,6 +419,20 @@ class Options(ConsoleCase):
                                  (field and field.purpose, self.console.drawer, self.answer("1", session)["letter"]))
                 self.assertNotIn("note", self.answer("1", session))
 
+    def test_a_question_offers_no_typed_answer_and_t_records_nothing(self) -> None:
+        # Catches `type an answer` left among a question's options or in the focus ring, or `t` still opening the
+        # typed answer's field, when Discuss is how the person writes their own words.
+        self.claude("s1")
+        self.ask("s1")
+        self.open_entry("s1", "item:1")
+
+        ring = [control for key, control in self.console.ring() if key == "item:1" and control is not None]
+        drawn = self.screen()
+        self.press("t")
+
+        self.assertEqual((["1", "2", "6", "7", "8", "9"], False, None, None),
+                         (ring, "type an answer" in drawn, self.console.field, self.answer()))
+
     def test_an_option_opens_a_note_field_under_itself_and_records_only_when_the_field_is_sent(self) -> None:
         # Catches a number that records at once, leaving no room for a note, a note field drawn away from its
         # option, Esc recording the option anyway, or a typed note that never reaches the agent's line.
@@ -490,13 +504,13 @@ class Ring(ConsoleCase):
         # heading, wrap past either end, or close the drawer when the focus leaves it.
         self.open_entry("s1", "item:1")
         seen = [self.focused()]
-        for name in ("up", "up", "up", *["down"] * 10):
+        for name in ("up", "up", "up", *["down"] * 9):
             self.press(name)
             seen.append(self.focused())
 
         self.assertEqual([["1: Decline it (recommended)"], ["- Decline the finding?"], ["#12"], ["#12"],
                           ["- Decline the finding?"], ["1: Decline it (recommended)"], ["2: Fix it"],
-                          ["t: type an answer"], ["6: I don't understand"], ["7: Discuss"], ["8: Dismiss"],
+                          ["6: I don't understand"], ["7: Discuss"], ["8: Dismiss"],
                           ["9: Snooze"], ["▸ Conversation"], ["▸ Conversation"]], seen)
         self.assertEqual("item:1", self.console.drawer)
 

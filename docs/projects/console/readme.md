@@ -223,7 +223,7 @@ controls:
 
 | Kind | Controls |
 | --- | --- |
-| Question | `1`… for the options, the first marked `(recommended)`. The last option, `type an answer`, opens a one-line text field |
+| Question | `1`… for the options, the first marked `(recommended)`. No typed answer: `7: Discuss` carries your own words (§ 2.7) |
 | Request | `1: Start` or `Retry` when the item has a start action, then the choices, or `Done` |
 | Message | No options and no `I don't understand`. It leaves the list 30 seconds after its message is delivered |
 | Any open item | `6: I don't understand`, `7: Discuss`, `8: Dismiss` or `Restore`, and `9: Snooze`, whose options are 15 minutes, 1 hour, 4 hours, and 1 day |
@@ -556,6 +556,19 @@ home list from a panel, and that `q` quits:
   Code's `dark-ansi` theme picks them. It takes the `light` theme when
   `COLORFGBG` names a white background, and Claude Code's default `dark`
   theme otherwise. It cannot read the theme Claude Code is set to.
+
+A third round of testing by hand settled this detail, which replaces the
+decision above that `t` types an answer, and the typed answer's place among
+a question's options and in the focus ring:
+
+- **The console offers no typed answer.** A typed answer and Discuss both
+  send the agent your own words, so the console keeps only Discuss. A
+  question's drawer lists its options and then the actions,
+  `6: I don't understand`, `7: Discuss`, `8: Dismiss`, and `9: Snooze`, and
+  the focus moves through them in that order. `t` does nothing. The inbox
+  keeps the typed answer: `project inbox answer <n>.<last letter> --text`
+  and Claude Code's panel still record one, and the console never lists the
+  typed letter.
 
 ### 2.8 Changes by file
 
