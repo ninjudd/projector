@@ -919,6 +919,29 @@ acceptance criterion in § 4 has a test. The two-session check by hand
 after merge, on one machine and then on two, remains for the user, as § 4
 says.
 
+The check by hand ran on 2026-11-17 and passed:
+
+- **One machine.** A Claude Code session messaged an idle Codex session,
+  which woke on the `PEER MESSAGE` line, read the message with
+  `project agent read`, and replied in the thread. The Codex session had
+  registered itself when it subscribed, through automatic registration.
+- **One key on two machines.** After `key init` on one machine, and
+  `key export` and `key import` to copy the key to the other, each machine
+  listed the other's agents.
+- **Two machines.** A Claude session on each machine exchanged a message and
+  a reply through the relay in a shared public repository, and both
+  delivered inbox refs were deleted.
+- **No workflow runs.** The relay's pushes started no workflow run.
+- **No idle turns.** An idle registered agent started no turn in 10
+  minutes.
+- **Cleanup.** After the sessions closed, their presence refs were deleted,
+  about 4 minutes into the watch.
+
+The check found one fault. One machine's watch daemon died once without
+logging a stop. Its outbox was empty, so nothing queued was lost, and the
+one-hour lease remains the fallback that deletes the refs of a daemon that
+dies. Cleaning up on an orderly idle exit is a possible follow-up.
+
 Review of the relay settled these details:
 
 - **Untrusted JSON nests at most 8 deep.** A job counts the brackets
