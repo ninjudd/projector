@@ -1,0 +1,57 @@
+{
+ "version": 1,
+ "name": "Typed request tool hooks",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 533,
+  "title": "Register the ready and block tools one at a time, so the hooks typecheck passes against typed tool inputs",
+  "head": "7bd2dffbcca943630e9e530083b36accedf2152a",
+  "headRef": "fix/register-tool-overloads",
+  "base": "672d1383d18fc79762281fa6346ea10224eca430",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s ready and block tools let an agent update a request after the person starts it. Claude Code describes each connected tool’s arguments in generated TypeScript declarations. Those declarations require a hook matcher to name one tool, so the shared loop that registers both tools fails to type-check when their inputs are known.",
+   "This change registers each tool by its own literal name and moves the shared CLI and panel-update work into <code>report</code>. The ready and blocked results, refusal messages, CLI arguments, and immediate panel updates retain their behavior."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation and scope",
+    "html": "<ul><li>The configured gate and exact-head CI pass, including 237 hook tests.</li><li>Isolated schema-derived declarations reproduce the base’s four errors and type-check the reviewed head.</li><li>The typed declaration test uses copies of the host declarations with inputs generated from the eight tool schemas. It does not recreate a connected interactive Claude Code session.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "request-tools",
+   "title": "Register each request tool separately",
+   "kicker": "Literal tool matchers preserve argument types while one helper keeps behavior shared.",
+   "intro": [
+    "A tool-call matcher tells Claude Code which tool a hook handles. With generated MCP input types, a union of the ready and block names does not select a single overload. Separate registrations let the ready callback access its request number and the block callback access both the number and reason.",
+    "The <code>report</code> helper turns those inputs into the existing CLI command, handles refusal, replaces the request in panel state, and formats the tool result. Each registration retains its own failure message."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Splits the ready/block registrations and shares their CLI and panel-update result path.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1567,
+       "text": "Schema-derived declarations for all eight tools type-check at this head. The same declarations reproduce the base’s union-matcher error and three missing-input-property errors."
+      },
+      {
+       "kind": "verify",
+       "line": 1484,
+       "text": "Traced the shared helper against the original handlers: CLI arguments, refusal propagation, panel replacement, and result text are preserved. All 237 hook tests pass, including the ready/block panel test."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
