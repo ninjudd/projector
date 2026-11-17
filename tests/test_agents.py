@@ -632,6 +632,109 @@ class SubscriberTests(AgentCase):
         self.assertEqual("Reviewing acme/app pull requests; fixing 39 pull requests", self.summary())
 
 
+class UnregisterTests(AgentCase):
+    """A session that unregisters stops being reachable while it still runs, and stays so until it registers."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.git_checkout()
+        self.claude(A)
+        self.codex(B)
+        self.register(A, "--name", "parser-refactor", "--summary", "Refactoring the parser")
+        self.register(B, "--name", "test-writer", "--summary", "Writing the parser's tests")
+
+    def unregister(self, session: str, *args: str) -> tuple[int, str, str]:
+        return self.project("unregister", "--session", session, *args)
+
+    def watch(self, *args: str) -> None:
+        with contextlib.chdir(self.work), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), \
+                mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": C}), \
+                mock.patch("time.time", return_value=self.now):
+            self.assertEqual(0, cli.main(["watch", *args]))
+
+    def test_an_unregistered_session_is_neither_listed_nor_reachable(self) -> None:
+        code, out, err = self.unregister(B)
+
+        listed = json.loads(self.project("list", "--all", "--json", claude=A)[1])
+        sent, _, refused = self.send(A, "test-writer", "Still there?")
+        self.assertEqual((0, "unregistered test-writer; relay: no refs to delete\n"), (code, out), err)
+        self.assertEqual([A], [row["session"] for row in listed["agents"]])
+        self.assertEqual(65, sent)
+        self.assertIn("no registered session is named test-writer", refused)
+        self.assertEqual([], self.message_ids(B))
+
+    def test_an_unregistered_sessions_name_is_free_for_another_session(self) -> None:
+        self.claude(C)
+        self.unregister(A)
+
+        self.register(C, "--name", "parser-refactor", "--summary", "Taking the parser over")
+
+        self.assertEqual("parser-refactor", agents.record(self.root, C)["name"])
+
+    def test_subscribing_does_not_register_a_session_that_unregistered(self) -> None:
+        self.claude(C)
+        self.watch("add", "acme/app#12")
+        registered = agents.record(self.root, C)
+        self.unregister(C)
+
+        self.watch("add", "acme/app#12")
+        self.watch("add", "acme/app#13")
+
+        self.assertEqual("Fixing acme/app#12", (registered or {}).get("summary"))
+        self.assertIsNone(agents.record(self.root, C))
+
+    def test_an_explicit_register_after_unregister_registers_again_and_stops_marking_it_unregistered(self) -> None:
+        self.unregister(B)
+
+        code, _, err = self.project("register", "--name", "test-writer", "--summary", "Back on the parser's tests",
+                                    "--session", B)
+
+        listed = json.loads(self.project("list", "--json", claude=A)[1])
+        self.assertEqual(0, code, err)
+        self.assertEqual(["parser-refactor", "test-writer"], [row["name"] for row in listed["agents"]])
+        self.assertFalse((self.folder(B) / "unregistered.json").exists())
+
+    def test_unregistering_twice_or_a_session_never_registered_succeeds_and_says_so(self) -> None:
+        self.unregister(B)
+
+        twice = self.unregister(B, "--json")
+        never = self.unregister(C)
+
+        expected = {"session": B, "registered": False, "name": None, "relay_refs_queued": 0}
+        shown = json.loads(twice[1])
+        self.assertEqual((0, expected), (twice[0], {key: shown[key] for key in expected}))
+        self.assertEqual((0, "this session is not registered; subscribing will not register it\n", ""), never)
+
+    def test_a_message_delivered_before_unregister_stays_readable_and_a_reply_from_it_is_refused(self) -> None:
+        self.send(A, "test-writer", "Which error type should the parser raise?")
+        [first] = self.message_ids(B)
+        self.unregister(B)
+
+        code, out, err = self.project("read", first, "--session", B)
+        replied, _, refused = self.project("reply", first, "ValueError.", "--session", B)
+
+        self.assertEqual(0, code, err)
+        self.assertTrue(out.endswith("Which error type should the parser raise?\n"), out)
+        self.assertEqual(65, replied)
+        self.assertIn("this session is not registered", refused)
+
+    def test_a_send_whose_recipient_unregisters_after_it_is_chosen_stores_and_counts_nothing(self) -> None:
+        recent = agents.recent
+
+        def unregistering(folder: Path, now: float) -> list[dict]:
+            """The sender's recent sends, read once the recipient is chosen, as the recipient unregisters."""
+            agents.unregister(self.root, B, self.now)
+            return recent(folder, now)
+
+        with mock.patch.object(agents, "recent", side_effect=unregistering):
+            code, _, err = self.send(A, "test-writer", "Which error type should the parser raise?")
+
+        self.assertEqual(65, code)
+        self.assertIn("no registered session is named test-writer", err)
+        self.assertEqual(([], []), (self.message_ids(B), self.events(B)))
+        self.assertFalse((self.folder(A) / "sent.json").exists())
+
+
 class DaemonTests(AgentCase):
     def test_an_idle_registered_codex_session_keeps_the_daemon_running_past_its_idle_stop(self) -> None:
         self.codex(B)

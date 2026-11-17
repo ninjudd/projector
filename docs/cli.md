@@ -220,7 +220,7 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "agent", ["list", "read", "register", "reply", "send"]],
+      pattern = ["project", "agent", ["list", "read", "register", "reply", "send", "unregister"]],
       decision = "allow",
   )
   prefix_rule(
@@ -847,7 +847,7 @@ reads, which are these:
 | `watch.review_stall` | whole number | `1800` | the watch daemon, from `~/.projector.toml` only, as the seconds a review's lock can go unchanged before the daemon treats the review as stalled |
 | `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
 | `agent.message_limit` | whole number | `12` | `project agent send` and `reply`, from the checkout the sending session works in, as the most messages one session sends to one other session in a rolling hour; at least `1` |
-| `agent.auto_register` | boolean | `true` | `project watch add` and the Codex hooks, from the checkout the session works in, to register a session that subscribes to a pull request for agent messages, with a generated summary; `false` subscribes it without registering it, as [Registered when it subscribes](#registered-when-it-subscribes) describes |
+| `agent.auto_register` | boolean | `true` | `project watch add` and the Codex hooks, from the checkout the session works in, to register a session that subscribes to a pull request for agent messages, with a generated summary; `false` subscribes it without registering it, as [Registered when it subscribes](#registered-when-it-subscribes) describes. A session that ran `project agent unregister` is never registered this way, whatever the setting says |
 | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or the inline fallback, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key import`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
 | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
 | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
@@ -3235,13 +3235,63 @@ the generated summary.
 
 The registration is skipped, and `add` still succeeds with the same output,
 when `agent.auto_register` is `false` in the checkout's configuration, when
-nothing delivers the session's events, when `gh` is not signed in, or when
+the session unregistered, as
+[Unregister a session](#unregister-a-session) describes, when nothing
+delivers the session's events, when `gh` is not signed in, or when
 any other step of the registration fails. A later `add` tries again, even
 for a line the session has, so a session that nothing delivered to when it
 first subscribed, such as one that starts `project watch stream` after `add`
 prints `events: none`, registers on its next `add`. A running watch daemon
 supplies the GitHub login, so the registration asks `gh` for it only when no
 daemon has read it yet.
+
+### Unregister a session
+
+`unregister` stops a session that is still running from being reachable. It
+removes the session's registration, so `list` no longer shows it, `send` and
+`reply` to it refuse as they do for any session that is not registered, and
+its name is free for another session to take:
+
+```console
+$ project agent unregister
+unregistered parser-refactor; relay: 1 ref queued for deletion
+```
+
+Without it, a session leaves only by ending: it lapses, and the daemon's
+cleanup removes its folder 7 days later. `unregister` also keeps a later
+subscription from registering the session again. It leaves
+`unregistered.json` in the session's folder, and while that file is there,
+`project watch add` and the Codex hooks subscribe the session without
+registering it, whatever `agent.auto_register` says. A later
+`project agent register` registers the session again and removes the file.
+That registration is a first one, so it needs `--name`, `--summary`, or
+both.
+
+Messages the session received before it unregistered stay in its folder,
+and `read` still prints them until the daemon's cleanup removes the folder.
+The session cannot `send` or `reply` while it is not registered.
+
+The relay deletes the session's refs on its next pass, as it does for a
+session that lapsed. `unregister` never pushes. It queues the deletion of
+the session's presence ref, and of each message ref addressed to it that the
+relay's cache knows of, in the repository's outbox, and starts the watch
+daemon when none runs. The line ends with how many refs it queued, or
+`relay: no refs to delete` when origin holds none. A message that another
+machine sends before its next poll is deleted unread on the following pass.
+Each other machine drops the session from its `list` once its next poll
+finds the presence ref gone.
+
+Unregistering a session that is not registered changes nothing in the
+registry and exits 0:
+
+```console
+$ project agent unregister
+this session is not registered; subscribing will not register it
+```
+
+With `--json`, `unregister` prints the `session`, whether it was
+`registered`, its `name` or `null`, and `relay_refs_queued`, the number of
+refs it queued for deletion.
 
 ### List the sessions
 
@@ -3349,6 +3399,7 @@ files, and the daemon's cleanup of a session lapsed for 7 days removes them:
 | Path | Holds |
 | --- | --- |
 | `sessions/<id>/agent.json` | The session's registration |
+| `sessions/<id>/unregistered.json` | The mark `unregister` leaves, with the relay ID of the refs the daemon deletes, until the session registers again |
 | `sessions/<id>/messages/<message>.json` | A message to the session. `send` removes the session's messages older than 7 days |
 | `sessions/<id>/sent.json` | The messages the session sent in the last hour, which the limit counts |
 | `machine.json` | This machine's ID |
@@ -3439,7 +3490,8 @@ holds up another session's events. On each pass, a job:
 3. Delivers each message for a live session on this machine as a local
    message, once, and deletes its ref.
 4. Renews each live agent's one-hour lease every 30 minutes, and deletes the
-   refs of an agent that lapsed or whose key this machine no longer holds.
+   refs of an agent that lapsed, unregistered, or whose key this machine no
+   longer holds.
    On each full pass it also deletes presence whose lease expired and
    messages to an expired agent, whichever machine left them.
 5. Writes every queued record as a parentless commit and pushes all of them

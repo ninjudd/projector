@@ -20,6 +20,7 @@ Layout of the state root, `$XDG_STATE_HOME/projector/watch/`:
     sessions/<session>/events                   event lines not yet delivered
     sessions/<session>/state.json               what the daemon announced to the session, and when
     sessions/<session>/agent.json               its `project agent` registration, live while delivery reaches it
+    sessions/<session>/unregistered.json        the mark `project agent unregister` leaves, until it registers again
     cache/<owner>/<repo>/pulls/<number>.json    a pull request's ETags and last result
     cache/<owner>/<repo>/branches/<base>.json   a base branch's ETag
     cache/<owner>/<repo>/open/<page>.json       a page of the repository's open pull requests

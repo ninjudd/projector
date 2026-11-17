@@ -134,8 +134,9 @@ CODEX_ALLOW = (
                   "version", "watch", "worktree"]],
      "Runs a Projector command that works on plans, loops, watches, or pull request summaries, finds a branch's "
      "worktree, or prints its version or help."),
-    (["project", "agent", ["list", "read", "register", "reply", "send"]],
-     "Registers the session, lists your registered sessions, or sends, reads, or answers a message between them."),
+    (["project", "agent", ["list", "read", "register", "reply", "send", "unregister"]],
+     "Registers or unregisters the session, lists your registered sessions, or sends, reads, or answers a message "
+     "between them."),
     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
     (["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore",
                            "revise", "show", "tell", "watch", "withdraw"]],

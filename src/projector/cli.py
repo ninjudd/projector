@@ -1303,6 +1303,8 @@ def add_agent_parser(subcommands) -> None:
     register.add_argument("--summary", help=f"what the session is doing, one line of at most {agents.MAX_SUMMARY} "
                                             "characters")
     register.add_argument("--model", help="the model ID the session runs")
+    command("unregister", "stop the session being reachable: remove its registration, delete its relay refs, and "
+                          "keep subscribing from registering it until it registers again")
     listed = command("list", "list your live registered sessions")
     listed.add_argument("--all", action="store_true", dest="everyone", help="list lapsed sessions too")
     send = command("send", "send a message to another of your registered sessions")
@@ -1421,6 +1423,19 @@ def run_agent(arguments: argparse.Namespace) -> int:
             relayed = "queued for the relay" if found["relay"] == "pending" else f"local only: {off}"
             print(f"registered {agents.label(found, session)} ({agents.describe(found['host'], found.get('model'))}) "
                   f"in {place}; delivery: {way}; {relayed}")
+        return 0
+    if command == "unregister":
+        found, queued = agents.unregister(root, session, now)
+        if queued:
+            ensure()
+        if arguments.json_output:
+            print(json_text({"session": session, "registered": found is not None,
+                             "name": found.get("name") if found else None, "relay_refs_queued": queued}))
+        elif found is None:
+            print("this session is not registered; subscribing will not register it")
+        else:
+            refs = f"{queued} ref{'' if queued == 1 else 's'} queued for deletion" if queued else "no refs to delete"
+            print(f"unregistered {agents.label(found, session)}; relay: {refs}")
         return 0
     text = sys.stdin.read().rstrip("\n") if arguments.text == "-" else arguments.text
     limit = agents.message_limit(here)
