@@ -2355,6 +2355,18 @@ def print_choices(question: dict) -> None:
     print(f"{inbox.typed_letter(question)}. type an answer with --text")
 
 
+def wake_codex_delivery(session: Optional[str], item: dict) -> None:
+    """Start the watch daemon when the line the item now owes goes to a Codex session, whose delivery stops
+    with the daemon while the session sits idle."""
+    if not inbox.owes_a_line(item):
+        return
+    root, now = watch.state_root(), time.time()
+    names = [session] if session else [name for name in inbox.sessions()
+                                       if inbox.item_file(inbox.store_root() / name, item["ref"]).is_file()]
+    if any(watch.delivery(root, name, now) == "codex" for name in names):
+        watch.ensure_daemon(root, distribution_version(), newer_release)
+
+
 def run_inbox(arguments: argparse.Namespace) -> int:
     command = arguments.inbox_command
     json_output = arguments.json_output
@@ -2395,11 +2407,14 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         session = inbox_session(arguments, False)
         item = (inbox.answer(session, ref, letter, arguments.text) if command == "answer"
                 else inbox.dismiss(session, ref, withdrawn=command == "withdraw"))
+        wake_codex_delivery(session, item)
         done = {"answer": "answered", "dismiss": "dismissed", "withdraw": "withdrew"}[command]
         print(json_text({"item": item}) if json_output else f"{done} {inbox.answer_ref(item)}")
     elif command in ("done", "decline"):
         record = inbox.done if command == "done" else inbox.decline
-        item = record(inbox_session(arguments, False), ref, arguments.text)
+        session = inbox_session(arguments, False)
+        item = record(session, ref, arguments.text)
+        wake_codex_delivery(session, item)
         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
     elif command in ("start", "ready", "block", "unclear"):
         session = inbox_session(arguments, False)
@@ -2411,6 +2426,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
             item = inbox.ready(session, ref)
         else:
             item = inbox.block(session, ref, arguments.reason)
+        wake_codex_delivery(session, item)
         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
     elif command == "revise":
         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
@@ -2423,7 +2439,9 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
     elif command == "restore":
-        item = inbox.restore(inbox_session(arguments, False), ref)
+        session = inbox_session(arguments, False)
+        item = inbox.restore(session, ref)
+        wake_codex_delivery(session, item)
         print(json_text({"item": item}) if json_output else f"restored {item['ref']}")
     elif command == "claim":
         item = inbox.claim(inbox_session(arguments, False), ref, arguments.renew)

@@ -2558,8 +2558,13 @@ RESTORED 2 Run project init to add the publish rule?
 
 `RESTORED` tells the agent that you brought back a question it already heard
 `DISMISSED` for, so the question is open again, as `restore` below describes.
-`watch --once` makes one pass and exits. A view that delivers answers itself,
-such as Projector's panel in Claude Code, uses the steps `watch` takes:
+`watch --once` makes one pass and exits. A Codex session needs no watcher:
+the watch daemon claims each line its inbox owes and sends it with the
+session's pull request events, as [Codex delivery](#deliver-events-to-codex)
+describes. Recording an answer, outcome, dismissal, start, restore, or
+`unclear` for a Codex session starts the daemon when it is not running. A
+view that delivers answers itself, such as Projector's panel in Claude Code,
+uses the steps `watch` takes:
 
 | Command | What it does |
 | --- | --- |
@@ -2903,6 +2908,17 @@ Codex receives one batch at a time, with standing work IDs that coalesce
 reminders even when their text differs. An acknowledgment marks a batch
 consumed. An idle session starts no model turn until an event arrives.
 The registration expires after 24 hours without host activity.
+
+The same batches carry the session's inbox lines, such as `ANSWER 3.a …`.
+The daemon claims each line before it queues it and renews the claim until
+Codex takes the batch, so no other deliverer sends the line too, and it
+marks the line delivered when the batch is consumed. A line whose item
+changed first, through a restore, another answer, or a revision, leaves
+the queue, and the line the item owes now goes out instead. A failed send
+keeps the claim and retries, so your answer stays recorded. A typed answer
+longer than a batch goes out in a batch of its own. When delivery
+disconnects, the daemon stops renewing those claims, and the session's
+next deliverer sends the lines once the claims lapse a minute later.
 
 Codex unloads a conversation that sits idle and unopened for 30 minutes,
 and sends `SessionEnd` when it does. Projector keeps delivery enabled
