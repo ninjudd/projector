@@ -1,0 +1,131 @@
+{
+ "version": 1,
+ "name": "Stable agent session labels",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 506,
+  "title": "Show and address an unnamed agent session by the last group of its ID",
+  "head": "e3decc1d8982361103b6a25b653f6926f0412eda",
+  "headRef": "agent-unique-short-ids",
+  "base": "0bddd09d7e5188db8fe66d58185da13ee2f8af05",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector lets agent sessions find and message one another. An unnamed session needs a display label so you can tell which session sent or received a message.",
+   "Codex uses time-ordered session IDs. Their first eight characters can match for sessions started close together. This change displays the final 12-character group instead, through one shared helper. You can send to that short ID in either case; a name or full ID takes precedence, and an ambiguous short ID is refused."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Review validation",
+    "html": "<ul class=\"tight\"><li>The configured gate and exact-head CI passed.</li><li>All 48 focused agent and relay lifecycle tests passed on Python 3.12.5.</li><li>The earlier full review reproduced an existing keychain test error at the merge base on Python 3.15.2. That test remains unchanged.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "labels",
+   "title": "Use one stable label for unnamed sessions",
+   "kicker": "Display a random session-ID suffix wherever an agent is named",
+   "intro": [
+    "A session ID is the full value that identifies an agent conversation. Its display label is shorter. <code>short_id</code> takes the last UUID group, or the last 12 characters of another ID, without consulting other sessions.",
+    "The shared label logic reaches list and registration output, message previews, read headers, send confirmations, and errors. Messages keep their full sender IDs, so stored messages need no migration."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/agents.py",
+     "note": "Centralizes suffix labels and applies them to sender displays.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 84,
+       "text": "Traced every label caller: names still win in display output, while JSON and stored messages retain full session IDs."
+      },
+      {
+       "kind": "verify",
+       "line": 488,
+       "text": "Traced name/full-ID precedence and reply handling, then ran local and relay regressions. Short-ID collisions refuse before message or event files are written."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "routing",
+   "title": "Resolve short IDs before sending a message",
+   "kicker": "Keep name and full-ID precedence, and refuse ambiguous suffixes",
+   "intro": [
+    "When you send a new message, Projector now tries the recipient’s name, full session ID, and short ID in that order. Short-ID matching ignores case. The existing recipient checks still require one live session signed in to the same GitHub login.",
+    "When two eligible live sessions share a short ID, the command lists both full IDs and writes no message. Replies use the original sender’s full ID and never fall back to a short-ID match."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds short IDs to the recipient argument’s help text.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1309,
+       "text": "Read the agent command parser and dispatch together: the argument reaches the shared send implementation without a separate lookup path."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "regressions",
+   "title": "Keep display labels distinct and consistent",
+   "kicker": "Exercise stable labels, recipient precedence, ambiguity, and relay delivery",
+   "intro": [
+    "The tests create two Codex sessions with the same time prefix and check that their display labels differ. They also check that previews agree with later list and read output.",
+    "The added routing regressions send through lowercase and uppercase short IDs, preserve name precedence, refuse ambiguous or lapsed recipients without writing state, and deliver a message to a session on another machine."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_agents.py",
+     "note": "Tests stable labels and short-ID recipient selection through the CLI.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Ran the agent tests and relay lifecycle tests with Python 3.12.5: 48 passed."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_relay.py",
+     "note": "Adds delivery through a remote session’s short ID and retains generated-summary checks.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The unchanged keychain fallback test starts one mock patch twice. It raises “Patch is already started” on Python 3.15.2 and 3.12.16; the merge-base reproduction confirms this predates the label change."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Explain short IDs and address precedence",
+   "kicker": "Document suffix labels, short-ID input, and collision recovery",
+   "intro": [
+    "The CLI reference explains why time-based prefixes collide and shows distinguishable suffixes. The reference, command help, and agent messaging skill now accept the short ID as a recipient and explain how to recover from ambiguity by using a name or full ID."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describes suffix labels, non-UUID fallback, address precedence, and collision errors."
+    },
+    {
+     "path": "skills/message-agent/SKILL.md",
+     "note": "Updates peer discovery and send instructions for short-ID addressing."
+    }
+   ]
+  }
+ ]
+}
