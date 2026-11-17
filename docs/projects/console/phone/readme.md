@@ -8,7 +8,8 @@ priority: later
 A Projector iPhone app shows the console's sessions, pull requests, and
 inbox items, and lets you answer and discuss them. It needs only your
 GitHub credentials and your relay key, and it reaches your machines through
-the relay's hidden refs, with no Projector server.
+the relay's hidden refs. A small push service, which never sees what an
+item says, wakes the phone when an agent needs you.
 
 ## 1. Problem
 
@@ -51,9 +52,16 @@ answers back as signed records. Three changes make that safe:
   checks each signature, and applies it with the same inbox functions the
   console calls. The session's own deliverer then brings it in: the panel
   for Claude Code, and the Codex adapter for Codex.
+- **A push service wakes the phone.** When a session posts an item, the
+  daemon seals a notification to the phone's key and asks the push service
+  to forward it. The service holds Apple's push credentials and an opaque
+  push ID for the phone, and nothing else. The phone's notification service
+  extension opens the sealed text on the device, so the service never sees
+  what the item says.
 
-The app is a SwiftUI app in its own public repository, so anyone can read
-the code that holds their GitHub token and their keys.
+The app and the push service are open source in their own public
+repositories, so anyone can read the code that holds their GitHub token and
+their keys, and anyone can run the push service themselves.
 
 ### 2.1 Flow
 
@@ -65,33 +73,45 @@ the code that holds their GitHub token and their keys.
       `project agent key grant …` command and a fingerprint, exactly as
       `key join` does. You run the command on a machine that has the key,
       check the fingerprint, and paste its one-line answer into the app.
-   3. Make the phone's signing key, and register it. The app shows its
-      public key as a `project agent phone add …` command with a
-      fingerprint. You run it in a terminal on each machine whose agents
-      the phone may answer. The command refuses without a terminal, as
-      `key grant` does.
+   3. Register with the push service. The app sends Apple's device token
+      to the service, which answers with a random push ID.
+   4. Make the phone's keys, and register them. The phone makes a signing
+      key, which signs your answers, and an X25519 push key, which opens
+      notifications. The app shows both public keys and the push ID as one
+      `project agent phone add …` command with a fingerprint. You run it in
+      a terminal on each machine whose agents the phone may answer. The
+      command refuses without a terminal, as `key grant` does.
 2. **The daemon publishes.** On each relay pass, for each live session with
    a relay presence, the daemon writes one sealed record per open inbox
    item, and one sealed record of the session's subscriptions with their
    roles. It deletes a record once its item resolves or its session lapses.
-3. **The app reads.** When you open it, and on background refresh, the app
+3. **The daemon notifies.** For each item it publishes for the first time,
+   and each agent reply to a discussion, the daemon posts one notification
+   to the push service for each registered phone. The notification's text,
+   the session's label and the item's subject, is sealed to that phone's
+   push key. The service forwards it to Apple's push service with the
+   `mutable-content` flag, and the phone's notification service extension
+   opens it, so the lock screen shows the subject and the service never
+   sees it.
+4. **The app reads.** When you open it, and on background refresh, the app
    lists the key's refs in each repository it knows, opens the records, and
    asks GitHub directly for each subscribed pull request's state, checks,
    and unresolved threads. It turns those into rows with the same rules as
-   the console, and draws the home list and each session's panel.
-4. **You answer.** The app writes your choice as an answer record, signed
+   the console, and draws the home list and each session's panel. Opening
+   a notification opens that item's drawer.
+5. **You answer.** The app writes your choice as an answer record, signed
    with the phone's key and then sealed. It holds one action: an answer,
    `done`, `decline`, `dismiss`, `snooze`, `restore`, `start`, `unclear`,
    `read`, or a `discuss` message, with the item's reference and the
    item's content digest, so an answer to an item that has since changed
    is refused.
-5. **The daemon imports.** On its next pass, the daemon on the session's
+6. **The daemon imports.** On its next pass, the daemon on the session's
    machine fetches the record, checks the seal, then the signature against
    the registered phone keys, and then that the record is fresh and was not
    seen before. It applies the action with the inbox function the console
    calls, deletes the ref, and republishes the item. A record that fails a
    check is rejected and logged, as the relay logs rejections today.
-6. **The session hears it.** The session's deliverer claims the new line
+7. **The session hears it.** The session's deliverer claims the new line
    and brings it in as a new turn, as it does for an answer from the
    console.
 
@@ -116,18 +136,37 @@ An answer record also carries, inside the seal:
 | `nonce` | A random ID. The daemon remembers the IDs it applied for 7 days and rejects a repeat |
 | `signature` | The phone key's signature over every field above |
 
-### 2.3 Changes by repository
+### 2.3 The push service
+
+The push service is a small HTTPS service with two calls and one table.
+
+| Call | Sent by | Body | What the service does |
+| --- | --- | --- | --- |
+| `POST /v1/register` | The app | Apple's device token | Stores the token under a new random 128-bit push ID and returns the ID. A later call with the same token returns the same ID |
+| `POST /v1/push` | The daemon | The push ID and the sealed notification, at most 2 KiB | Forwards the sealed text to the token's device through Apple's push service, and answers `202`. It answers `404` for an unknown ID and `429` past 60 notifications an hour for one ID |
+
+The table maps each push ID to its device token and the time it was last
+used. The service drops an ID that Apple reports as unregistered, or that
+went unused for 90 days. It stores no notification and logs no body. A
+push ID reaches the daemon only inside `project agent phone add`, so knowing
+one is the only credential `POST /v1/push` asks for, and the rate limit
+caps what a leaked ID can do. `phone.push_url` in `~/.projector.toml` names
+the service, so anyone can run their own.
+
+### 2.4 Changes by repository
 
 | Where | Change |
 | --- | --- |
 | `src/projector/relay.py` | Publishes item and subscription records, and fetches, checks, and applies answer records |
-| `src/projector/phone.py` | New. Registered phone keys, `project agent phone add`, `list`, and `remove`, and signature checks |
-| `src/projector/crypto.py` | The signature check, in pure Python like the rest of the module (§ 5) |
+| `src/projector/phone.py` | New. Registered phones, each with its signing key, push key, and push ID, `project agent phone add`, `list`, and `remove`, and signature checks |
+| `src/projector/push.py` | New. Seals a notification to a phone's push key and posts it with `urllib.request`, off the daemon's delivery loop, with a 10-second timeout |
+| `src/projector/crypto.py` | The signature check, in pure Python like the rest of the module (§ 6) |
 | `src/projector/console.py` | Moves the console's "record an action for a session" calls into a function the relay import shares |
 | `src/projector/permissions.py` | Asks before `project agent phone add` and `remove` in Claude Code, and leaves both to Codex's approval |
 | `tests/fixtures/relay/` | New. Sealed and signed records with their plaintexts, which the Python tests and the app's tests both check |
 | `docs/cli.md` | Describes the phone records, the commands, and what a leaked key exposes |
-| The app's repository | The SwiftUI app: GitHub sign-in, key join, the phone key, ref reading and writing through GitHub's API, the seal, the row model, the home list, the panels, and background refresh |
+| The app's repository | The SwiftUI app: GitHub sign-in, key join, the phone's keys, push registration, the notification service extension, ref reading and writing through GitHub's API, the seal, the row model, the home list, the panels, and background refresh |
+| The push service's repository | The two calls, the table, Apple push credentials from its environment, and a deploy recipe for one small host |
 
 ## 3. Why this design
 
@@ -136,10 +175,16 @@ An answer record also carries, inside the seal:
   says nothing about who wrote it. A key that exists only on the phone, and
   that you register in a terminal, keeps the rule that agents cannot answer
   for you.
-- **No Projector server.** The relay already moves records through GitHub.
-  A server would need hosting, an account system, and its own security
-  review, and it would see when you answer even if it could not read what
-  you said.
+- **GitHub carries the records, and the push service only wakes the
+  phone.** The relay already moves records through GitHub, so a server that
+  stored items or answers would add hosting, accounts, and a second place
+  your data lives. Instant notifications need Apple's push service, which
+  only a server holding Apple's credentials can call. The push service is
+  the smallest server that can: it learns that some phone got a
+  notification, when, and from which address, but never what it says,
+  because the daemon seals the text to the phone. Without it, the app could
+  only refresh when iOS grants background time, which can be many minutes
+  apart, and a waiting agent stalls that long.
 - **The daemon imports answers, not the deliverers.** Applying an action
   with the console's inbox functions means the phone, the console, and the
   terminal all record the same thing, and the panel and the Codex adapter
@@ -150,11 +195,13 @@ An answer record also carries, inside the seal:
 - **An answer names the item's digest.** An agent can revise an item while
   your answer is on its way. The digest makes the daemon refuse an answer
   to text you never saw, as `unclear` already checks the text you read.
-- **The app is open source.** It holds your GitHub token, your relay key,
-  and the key that answers for you. Users can trust it only if they can
-  read it and build it themselves. A separate repository keeps Swift, Xcode,
-  and App Store releases out of this repository's Python and TypeScript
-  gate, while the protocol and its test vectors stay here.
+- **The app and the push service are open source.** The app holds your
+  GitHub token, your relay key, and the key that answers for you, and the
+  service sees when you are notified. Users can trust them only if they can
+  read them, build the app, and run the service themselves. Separate
+  repositories keep Swift, Xcode, App Store releases, and a deployed service
+  out of this repository's Python and TypeScript gate, while the protocol
+  and its test vectors stay here.
 - **The row model is shared again.** The app computes rows from GitHub's
   answers, as the console computes them from the daemon's cache. The
   fixtures in `tests/fixtures/rows/` run through the app's model too, so a
@@ -173,6 +220,9 @@ An answer record also carries, inside the seal:
 | Run `project agent phone add` without a terminal | Exit 69, nothing registered | An agent that registers its own key |
 | Seal and sign each fixture in `tests/fixtures/relay/` in Python and in the app | Both produce records the other opens and verifies | A seal or signature that only one side can read |
 | Run each fixture in `tests/fixtures/rows/` through the app's row model | The fixture's expected rows | A third row model that drifts |
+| Post a question with a phone registered, against a stand-in push service that records every request | One `POST /v1/push` with the phone's push ID, whose body holds neither the subject nor the session's label in plain text, and the phone's push key opens it to both | A notification that leaks the item to the service, or one the phone cannot open |
+| Make the push service answer `500`, or not answer for 30 seconds | The relay pass and every session's delivery go on, and the daemon logs the failure once | A push failure that stalls the daemon |
+| Send 61 notifications to one push ID in an hour | The service answers `429` to the 61st | A leaked push ID that can flood the phone |
 
 ## 5. Cost
 
@@ -183,6 +233,10 @@ An answer record also carries, inside the seal:
   5,000 requests an hour a token gets.
 - **The daemon's pushes.** Items change rarely, so publishing adds a few
   refs to the one push each relay pass already makes.
+- **The push service.** It handles one request per new item or reply, a
+  few hundred a day for a busy user, and stores one row per phone. One small
+  host or a serverless function covers many users. Apple charges nothing for
+  push, but sending it needs an Apple developer account's push key.
 - **What a leaked relay key exposes.** A deleted ref's commit stays
   readable by its SHA on GitHub. Inbox items hold more detail than presence
   records, so a leaked key exposes every item the relay published. The
@@ -201,12 +255,12 @@ An answer record also carries, inside the seal:
   probing each one. Options: the grant line carries the repositories the
   granting machine relays, or the daemon publishes a roster to a home
   repository you name. Owner: whoever takes this project.
-- **Notifications.** Without a server, the app refreshes when you open it
-  and when iOS grants background refresh, which can be many minutes apart.
-  Instant push needs Apple's push service and so a server. Deferred: the
-  first version has no push.
-- **The app's repository and name.** A separate public repository is the
-  recommendation (§ 3). Owner: the user.
+- **Who runs the push service, and where.** A hosted instance that the app
+  uses by default, with `phone.push_url` for anyone who runs their own, is
+  the recommendation. Its host, its domain, and the Apple push key it
+  holds are the user's. Owner: the user.
+- **The repositories and names.** Separate public repositories for the app
+  and the push service are the recommendation (§ 3). Owner: the user.
 - **App Store distribution.** Publishing needs an Apple developer account
   and App Review. TestFlight can come first. Owner: the user.
 - **Messages to agents.** The phone could also send relay messages to an
