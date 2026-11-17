@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -594,3 +594,24 @@ Checked against `codex-cli 0.169.0` and `openai/codex` at `d8d840d` on
   liveness check can see them. After this project, a Codex session is
   delivered by the adapter, and a Claude Code session by the panel, so
   both are visible.
+
+## 9. Outcome
+
+Shipped, in the four pull requests § 6 lists. `project console` lists every
+live session, Claude Code and Codex alike, and records answers and messages
+that each session's own deliverer brings in. § 2.6 and § 2.7 record the
+details building it settled.
+
+Each row of § 4 has a test that was seen failing against the bug it names:
+the Codex delivery rows in `tests/test_codex_watch.py`, the thread rows in
+`tests/test_inbox.py`, `hooks/inbox.test.ts`, and `hooks/panel.test.tsx`,
+the fixtures in `tests/test_rows.py` and `hooks/rows.test.ts`, the console
+rows in `tests/test_console.py`, and the permission row in
+`tests/test_permissions.py`. A run of the real console in a pseudo-terminal
+answered a question, returned home with Left, and started a discussion
+about the session, with and without `NO_COLOR`.
+
+The cost § 5 asked for: one console with 10 live sessions, 30 pull requests,
+and 50 open questions used 0.71 seconds of CPU in 60 seconds, 1.2% of one
+core, over 30 seconds on the home list and 30 in a panel, on macOS with
+Python 3.12.
