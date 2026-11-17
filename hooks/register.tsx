@@ -3,6 +3,7 @@ import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-
 
 import type {
   Checks,
+  Discussion,
   Item,
   LoopKind,
   Notice,
@@ -42,6 +43,9 @@ import {
   BLOCK_SCHEMA,
   choicesOf,
   forMainLoop,
+  hasUnreadReply,
+  owesMessage,
+  isAnswerable,
   isShownAt,
   isSnoozedAt,
   letterAt,
@@ -54,6 +58,9 @@ import {
   READY_SCHEMA,
   readPrompt,
   relayNote,
+  REPLY_DESCRIPTION,
+  REPLY_SCHEMA,
+  replyArguments,
   replyNote,
   reportArguments,
   REQUEST_DESCRIPTION,
@@ -98,6 +105,7 @@ const BLOCK_TOOL = 'mcp__projector__block'
 const WITHDRAW_TOOL = 'mcp__projector__withdraw'
 const REVISE_TOOL = 'mcp__projector__revise'
 const RESTORE_TOOL = 'mcp__projector__restore'
+const REPLY_TOOL = 'mcp__projector__reply'
 const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 
 const KINDS: readonly LoopKind[] = ['watching', 'reviewing']
@@ -193,6 +201,12 @@ const QUESTION_COLOR = 'permission'
  */
 const NOTICE_COLOR = 'inactive'
 
+/** The color of an open discussion's line: the theme's own text, since you started it and its words are yours. */
+const DISCUSSION_COLOR = 'text'
+
+/** The color of `replied`, the mark of an item whose thread holds a reply you have not read. */
+const REPLIED_COLOR = 'suggestion'
+
 /**
  * The color of an open request's line by the theme it draws on: a pastel
  * peach on a dark one, and a darker orange on a light one, where the peach
@@ -207,7 +221,7 @@ const REQUEST_COLORS: Record<string, string> = {
 const OTHER_REQUEST_COLOR = 'rgb(255,190,140)'
 
 /** The kinds of item, in the order the header counts them. */
-const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice']
+const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice', 'discussion']
 
 /** The sections of pull requests, in their order: your own, then the review requests. */
 const PR_SECTIONS = ['pr', 'review'] as const satisfies readonly Section[]
@@ -233,6 +247,7 @@ const kindColors = (requestColor: string): Record<Item['kind'], string> => ({
   question: QUESTION_COLOR,
   notice: NOTICE_COLOR,
   request: requestColor,
+  discussion: DISCUSSION_COLOR,
 })
 
 /**
@@ -801,7 +816,11 @@ async function closeLeftDrawer($: Engine, time: number): Promise<void> {
  * An item as the CLI prints it, without the session the panel adds. Each kind
  * is its own `Omit`, because one over the union would merge their `kind`s.
  */
-type Printed = Omit<Question, 'session'> | Omit<Notice, 'session'> | Omit<Request, 'session'>
+type Printed =
+  | Omit<Question, 'session'>
+  | Omit<Notice, 'session'>
+  | Omit<Request, 'session'>
+  | Omit<Discussion, 'session'>
 
 /** The item a CLI command printed with `--json`, in the session it belongs to. */
 const itemOf = (stdout: string, session: string): Item => ({
@@ -876,7 +895,7 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
     // subject. A restore's line is not sent again, and its item stays open. A
     // start that did not reach its agent is taken back, so start returns, and
     // so is word that you don't understand an item, so I don't understand
-    // returns.
+    // returns, and a message of yours in its thread, so you send it again.
     const item = (await read($, items)).find(one => one.ref === ref && one.session === session)
     const quoted = item === undefined ? undefined : quoteOf(item)
     const why = reason ? ` (${reason})` : ''
@@ -887,6 +906,8 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
           ? `projector: the start of ${quoted ?? 'a request'} did not reach its agent${why}; press start again`
           : text.startsWith('UNCLEAR ')
           ? `projector: word that you don't understand ${quoted ?? 'an item'} did not reach its agent${why}; press I don't understand again`
+          : text.startsWith('DISCUSS ')
+          ? `projector: your message about ${quoted ?? 'an item'} did not reach its agent${why}; send it again`
           : item?.kind === 'request'
           ? `projector: the outcome of ${quoted ?? 'a request'} did not reach its agent${why}; mark it done or declined again`
           : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
@@ -976,6 +997,7 @@ async function checkInbox($: Engine): Promise<void> {
   try {
     const session = await $.session.id()
     await readStore($, session).catch(() => undefined)
+    await readReplies($).catch(() => undefined)
     await renewClaims($)
     const time = await $.clock.now()
     const pending = await read($, sending)
@@ -987,6 +1009,27 @@ async function checkInbox($: Engine): Promise<void> {
     // The next tick tries again.
   } finally {
     isChecking = false
+  }
+}
+
+/** The items whose replies the panel is marking read, so a tick that comes while one runs starts no second. */
+const reading = new Set<string>()
+
+/**
+ * Marks read the agent's replies in the thread of the item whose drawer is
+ * open, since the drawer shows them: as it opens, and as a reply arrives
+ * while it stays open.
+ */
+async function readReplies($: Engine): Promise<void> {
+  const opened = await read($, drawer)
+  const item = (await read($, items)).find(one => `item:${one.ref}` === opened)
+  if (item === undefined || !hasUnreadReply(item) || reading.has(item.ref)) return
+  reading.add(item.ref)
+  try {
+    const ran = await project($, ['inbox', 'read', item.ref, '--session', item.session, '--json'])
+    if (ran.exitCode === 0) await replace($, itemOf(ran.stdout, item.session))
+  } finally {
+    reading.delete(item.ref)
   }
 }
 
@@ -1486,6 +1529,7 @@ export const register: Register = on => {
       { name: 'withdraw', description: WITHDRAW_DESCRIPTION, inputSchema: WITHDRAW_SCHEMA },
       { name: 'revise', description: REVISE_DESCRIPTION, inputSchema: REVISE_SCHEMA },
       { name: 'restore', description: RESTORE_DESCRIPTION, inputSchema: RESTORE_SCHEMA },
+      { name: 'reply', description: REPLY_DESCRIPTION, inputSchema: REPLY_SCHEMA },
     ]) {
       await $.tool.register({ ...tool, isDeferred: false }).catch(() => undefined)
     }
@@ -1622,8 +1666,8 @@ export const register: Register = on => {
     const { ref } = item
     return {
       result:
-        item.kind === 'notice'
-          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it.${whenUnclear('notice', ref)} Nothing else comes back to you.`
+        !isAnswerable(item)
+          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it.${whenUnclear(item.kind, ref)} Nothing else comes back to you.`
           : item.kind === 'request'
             ? `Restored ${ref}. It is open in Projector’s panel again. An agent that already heard DECLINED ${ref} hears RESTORED ${ref} first.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
             : `Restored ${ref}. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
@@ -1631,6 +1675,19 @@ export const register: Register = on => {
   }).catch(() => ({
     deny: 'Projector could not restore the item; tell the person in the conversation that it could not be restored',
   }))
+
+  // The panel takes the item from the CLI at once, so its line reads
+  // `replied` before the next read of the store.
+  on('tool.call', { tool: REPLY_TOOL }, async ($, e) => {
+    const session = await $.session.id()
+    const ran = await runTool($, replyArguments(e, session), 'answer in the conversation instead')
+    if ('deny' in ran) return ran
+    const item = itemOf(ran.stdout, session)
+    await replace($, item)
+    return {
+      result: `Replied in ${item.ref}’s thread. Projector’s panel shows your reply in the item’s drawer; answer in the conversation as well. Projector’s panel never shows this number, so name the item to the person by what it is about.`,
+    }
+  }).catch(() => ({ deny: 'Projector could not record the reply; answer in the conversation instead' }))
 
   // These hooks only watch: the catch hands back what the event settled to,
   // so a failure here never runs a tool twice or refuses anything. A push's
@@ -1697,7 +1754,7 @@ export const register: Register = on => {
     const { answers, outcomes, replies, unclears } = readPrompt(e.text, mine, isYours ? proposed : [])
     // An open question or request is done only when the prompt resolves or
     // replies to it, so a quote two of them share closes one drawer, not both.
-    const isOpenAnswerable = (item: Item) => item.kind !== 'notice' && item.answer === undefined
+    const isOpenAnswerable = (item: Item) => isAnswerable(item) && item.answer === undefined
     const done = new Set([
       ...mine.filter(item => !isOpenAnswerable(item) && e.text.includes(quoteOf(item))).map(item => item.ref),
       ...answers.map(one => one.question.ref),
@@ -1862,11 +1919,12 @@ export const register: Register = on => {
     // A line's press opens or closes its drawer, and the ring goes onto the
     // drawer's first control or back onto the line. A drawer always opens on
     // its actions, never on a question it asked before. A pull request's
-    // drawer reads its threads as it opens.
+    // drawer reads its threads as it opens, and an item's marks the agent's
+    // replies in its thread read.
     const toggle = (key: string, line: string, onto?: string) => {
       collapseFilesFor(key)
       update($, drawer, was => (was === key ? null : key))
-        .then(() => loadThreads($))
+        .then(() => Promise.all([loadThreads($), readReplies($)]))
         .catch(() => undefined)
       ask(key, null)
       carry(line, onto)
@@ -2252,7 +2310,7 @@ export const register: Register = on => {
           label: 'Discuss',
           hotkey: '7',
           onPress: () => {
-            if (item.kind !== 'notice') propose(item, '')
+            if (isAnswerable(item)) propose(item, '')
             fill(`${quoteOf(item)}\n\n`)
           },
         },
@@ -2322,8 +2380,10 @@ export const register: Register = on => {
               ? `outcome:${ref}.${letterAt(0)}`
               : `start:${ref}`
             : `discuss:${ref}`
-      const isSending = !isOpen && item.deliveredAt === undefined
+      const thread = item.thread ?? []
+      const isSending = (!isOpen && item.deliveredAt === undefined) || owesMessage(item)
       const isUnclear = isOpen && item.unclear !== undefined
+      const isReplied = hasUnreadReply(item)
       const stage = item.kind === 'request' && isOpen ? stageOf(item) : undefined
 
       return (
@@ -2352,6 +2412,15 @@ export const register: Register = on => {
             {isSending && (
               <Box flexShrink={0}>
                 <Text color="subtle">sending</Text>
+              </Box>
+            )}
+            {/* An item whose thread holds a reply you have not read reads
+                `replied` until its drawer opens. */}
+            {isReplied && (
+              <Box flexShrink={0}>
+                <Text key={`replied:${ref}`} color={REPLIED_COLOR}>
+                  replied
+                </Text>
               </Box>
             )}
             {/* An item you don't understand reads `unclear` until its agent
@@ -2386,6 +2455,14 @@ export const register: Register = on => {
                   above. */}
               {item.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
+              {/* The thread follows, oldest first, each message after who wrote it. */}
+              {thread.length > 0 && <Text key={`before-thread:${ref}`}> </Text>}
+              {thread.map((said, at) => (
+                <Text key={`said:${ref}.${at}`}>
+                  <Text color="subtle">{said.from === 'person' ? 'you: ' : 'agent: '}</Text>
+                  {said.text}
+                </Text>
+              ))}
               {item.kind === 'question' && !isChoosingLength && drawAnswers(item)}
               {item.kind === 'request' && !isChoosingLength && drawOutcomes(item)}
               <Text key={`before-buttons:${ref}`}> </Text>

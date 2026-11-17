@@ -6,6 +6,7 @@ import {
   ASK_SCHEMA,
   askArguments,
   forMainLoop,
+  hasUnreadReply,
   isShownAt,
   isSnoozedAt,
   liveAgent,
@@ -19,8 +20,10 @@ import {
   REQUEST_DESCRIPTION,
   REQUEST_SCHEMA,
   requestArguments,
+  REPLY_DESCRIPTION,
   RESTORE_DESCRIPTION,
   RESTORE_SCHEMA,
+  replyArguments,
   restoreArguments,
   REVISE_DESCRIPTION,
   REVISE_SCHEMA,
@@ -125,6 +128,7 @@ test('every inbox tool tells the agent to name an item to the person by its text
     WITHDRAW_DESCRIPTION,
     REVISE_DESCRIPTION,
     RESTORE_DESCRIPTION,
+    REPLY_DESCRIPTION,
   ]) {
     expect(description).toMatch(
       / The panel never shows an item’s number, so name the item to the person by what it asks, tells, or requests, never by its number\.$/,
@@ -978,4 +982,45 @@ test('the main loop is told which subagent posted an item it receives UNCLEAR fo
     `UNCLEAR 3 Test the gutters${note('agent-1')}`,
   )
   expect(forMainLoop('UNCLEAR 2 Force-pushed #7', notice(), [])).toBe('UNCLEAR 2 Force-pushed #7')
+  // A message of yours is a message, not the answer the subagent asked for.
+  expect(forMainLoop('DISCUSS 1 Decline the finding? → Why?', question({ agentId: 'gone' }), [])).toBe(
+    `DISCUSS 1 Decline the finding? → Why?${note('gone')}`,
+  )
+})
+
+test('a message of yours in a thread waits for a deliverer until DISCUSS is delivered, whatever became of the item', () => {
+  const said = { from: 'person' as const, text: 'Why decline?', at: NOW - 1_000 }
+  const dismissed = { dismissed: true as const, answeredAt: NOW }
+  for (const item of [question({ thread: [said] }), notice({ thread: [said], answer: dismissed, deliveredAt: NOW })]) {
+    expect(needsDelivery(item, NOW)).toBe(true)
+    const claim = { token: 't', renewedAt: NOW - 5_000, line: 'discuss' as const, entry: 0 }
+    expect(needsDelivery({ ...item, claim }, NOW)).toBe(false)
+    expect(needsDelivery({ ...item, thread: [{ ...said, deliveredAt: NOW }] }, NOW)).toBe(false)
+  }
+  // The agent's own reply goes to no one: you read it in the drawer.
+  expect(needsDelivery(question({ thread: [{ from: 'agent', text: 'The cap bounds it.', at: NOW }] }), NOW)).toBe(false)
+})
+
+test('a reply reads as unread until its readAt, and your own messages never do', () => {
+  const said = { from: 'person' as const, text: 'Why decline?', at: NOW - 1_000 }
+  const replied = { from: 'agent' as const, text: 'The cap bounds retries.', at: NOW - 500 }
+  expect(
+    [[said], [said, replied], [said, { ...replied, readAt: NOW }]].map(thread => hasUnreadReply(question({ thread }))),
+  ).toEqual([false, true, false])
+})
+
+test('a call of the reply tool becomes `project inbox reply`, text kept as text, and only a whole number names an item', () => {
+  expect(replyArguments({ number: 3, text: '-- the cap bounds it' }, 's1')).toEqual([
+    'inbox',
+    'reply',
+    '3',
+    '--text=-- the cap bounds it',
+    '--session',
+    's1',
+    '--json',
+  ])
+  expect(replyArguments({ number: '3', text: 'x' }, 's1')).toEqual({
+    error: '`number` must be the whole number the `DISCUSS` message gave, such as 3',
+  })
+  expect(replyArguments({ number: 3 }, 's1')).toEqual({ error: '`text` must be a string' })
 })

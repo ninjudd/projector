@@ -90,6 +90,13 @@ export type Outcome =
   | { dismissed: true; declined: true; text?: string; answeredAt: number }
   | Dismissal
 
+/**
+ * One message in an item's thread: yours, which reaches the agent as
+ * `DISCUSS` and has `deliveredAt` once it did, or the agent's, which has
+ * `readAt` once you opened the item's drawer.
+ */
+export type ThreadEntry = { from: 'person' | 'agent'; text: string; at: number; deliveredAt?: number; readAt?: number }
+
 /** What every item has, as `project inbox list --json` gives it, with the session whose store holds it. */
 export type Posted = {
   /** The item's number in its session, as a string such as `"3"`: what the CLI prints and takes. */
@@ -118,7 +125,15 @@ export type Posted = {
    * A deliverer's hold on the line the item owes its agent: `line` says
    * which, the answer or outcome, `RESTORED`, `STARTED`, or `UNCLEAR`.
    */
-  claim?: { token: string; renewedAt: number; line?: 'answer' | 'restored' | 'started' | 'unclear' }
+  claim?: {
+    token: string
+    renewedAt: number
+    line?: 'answer' | 'restored' | 'started' | 'unclear' | 'discuss'
+    /** The thread entry a `DISCUSS` claim delivers, by its index. */
+    entry?: number
+  }
+  /** The messages you and the agent exchanged about the item, oldest first; absent until the first. */
+  thread?: ThreadEntry[]
   deliveredAt?: number
   session: string
 }
@@ -158,7 +173,17 @@ export type Request = Posted & {
   restoredAt?: number
 }
 
-export type Item = Question | Notice | Request
+/**
+ * A discussion you started about a pull request or about the session itself,
+ * whose thread holds your messages and the agent's replies. It takes no
+ * answer, and dismissing it delivers it.
+ */
+export type Discussion = Posted & {
+  kind: 'discussion'
+  answer?: Dismissal
+}
+
+export type Item = Question | Notice | Request | Discussion
 
 /** An item whose answer or outcome goes back to the agent that posted it. */
 export type Answerable = Question | Request

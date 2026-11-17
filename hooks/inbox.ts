@@ -47,15 +47,29 @@ export const isStarting = (request: Request) =>
 const isUnclearOwed = (item: Item) =>
   item.answer === undefined && item.unclear !== undefined && item.unclear.deliveredAt === undefined
 
+/** Whether an item's answer or outcome goes back to its agent: a question's or a request's. */
+export const isAnswerable = (item: Item): item is Answerable => item.kind === 'question' || item.kind === 'request'
+
+/**
+ * Whether one of your messages in an item's thread waits for `DISCUSS` to
+ * reach the agent, whatever became of the item since, as the CLI owes it.
+ */
+export const owesMessage = (item: Item) => item.thread?.some(said => said.from === 'person' && said.deliveredAt === undefined) === true
+
+/** Whether the agent replied in an item's thread since you last opened its drawer. */
+export const hasUnreadReply = (item: Item) =>
+  item.thread?.some(said => said.from === 'agent' && said.readAt === undefined) === true
+
 /**
  * Whether an item's line waits for a deliverer: a question's answer or a
  * request's outcome recorded and undelivered, word of a restore, a request's
- * start, or word that you don't understand an open item of any kind, and
- * claimed by none that is live.
+ * start, word that you don't understand an open item of any kind, or a
+ * message of yours in its thread, and claimed by none that is live.
  */
 export const needsDelivery = (item: Item, time: number): boolean =>
   (isUnclearOwed(item) ||
-    (item.kind !== 'notice' &&
+    owesMessage(item) ||
+    (isAnswerable(item) &&
       (item.restoredAt !== undefined ||
         (item.answer !== undefined && item.deliveredAt === undefined) ||
         (item.kind === 'request' && isStarting(item))))) &&
@@ -156,7 +170,7 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
 export function readPrompt(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Read {
   const byAge = (one: Item, other: Item) => one.postedAt - other.postedAt
   const open = items
-    .filter((item): item is Answerable => item.kind !== 'notice' && item.answer === undefined)
+    .filter((item): item is Answerable => isAnswerable(item) && item.answer === undefined)
     .sort(byAge)
   const markable = items.filter(item => item.answer === undefined && item.unclear === undefined).sort(byAge)
   const quotes = [...new Set([...items.map(quoteOf), ...proposed.map(one => one.quote)])]
@@ -300,7 +314,7 @@ export function liveAgent(item: Item, agents: readonly AgentInfo[]): string | un
  */
 export function forMainLoop(text: string, item: Item, agents: readonly AgentInfo[]): string {
   if (item.agentId === undefined) return text
-  if (text.startsWith('UNCLEAR ') || item.kind === 'notice') {
+  if (text.startsWith('UNCLEAR ') || text.startsWith('DISCUSS ') || !isAnswerable(item)) {
     return `${text}\n\nThe subagent ${whoAsked(item, agents)} posted this, and the message could not reach it; send it this message, or revise the item yourself.`
   }
   const { posted, result } = wording(item)
@@ -627,6 +641,32 @@ export const RESTORE_SCHEMA = ITEM_SCHEMA
 
 /** The arguments of `project inbox restore` for one call of the tool, or why the call cannot be one. */
 export const restoreArguments = itemArguments('restore')
+
+export const REPLY_DESCRIPTION = described([
+  'Answer the person in the thread of an open item, when a message that starts `DISCUSS 3` arrives with their words.',
+  'Your reply appears in the item’s drawer in Projector’s panel, where they read it; answer in the conversation as',
+  'well, because they may be reading either one. Name the item by the number `DISCUSS` gave. Write one paragraph of',
+  'at most 4 KiB, with no line breaks. Nothing comes back to you. Then withdraw the item if the discussion settles it,',
+  'revise it if the discussion changed the choice, or leave it open while it still needs them.',
+])
+
+export const REPLY_SCHEMA = {
+  type: 'object',
+  properties: {
+    number: { type: 'integer', minimum: 1, description: 'The item’s number, as the `DISCUSS` message gave it, such as 3.' },
+    text: { type: 'string', description: 'Your reply, one paragraph of at most 4 KiB, with no line breaks.' },
+  },
+  required: ['number', 'text'],
+  additionalProperties: false,
+}
+
+/** The arguments of `project inbox reply` for one call of the tool, or why the call cannot be one. */
+export function replyArguments(input: Readonly<Record<string, unknown>>, session: string): string[] | { error: string } {
+  const { number, text } = input
+  if (!isNumber(number)) return { error: '`number` must be the whole number the `DISCUSS` message gave, such as 3' }
+  if (!isText(text)) return { error: '`text` must be a string' }
+  return ['inbox', 'reply', String(number), `--text=${text}`, '--session', session, '--json']
+}
 
 export const REVISE_DESCRIPTION = described([
   'Revise a question, notice, or request you posted that is still open, keeping its number, when the person’s reply',
