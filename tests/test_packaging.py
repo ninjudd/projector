@@ -120,7 +120,10 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual("./hooks/types.d.ts", self.manifest("claude")["types"])
         self.assertTrue((ROOT / "hooks" / "types.d.ts").is_file())
         self.assertNotIn("types", self.manifest("codex"))
-        self.assertNotIn("hooks", self.manifest("codex"))
+        # Codex reads hooks/hooks.json too unless the manifest names its hooks, and it
+        # cannot parse the module manifest. A real hook here would also need trusting
+        # again after every release, so the root plugin names an empty set.
+        self.assertEqual({}, self.manifest("codex")["hooks"]["hooks"])
         hooks_plugin = json.loads((ROOT / "codex-hooks" / ".codex-plugin" / "plugin.json").read_text())
         codex_hooks = json.loads((ROOT / "codex-hooks" / hooks_plugin["hooks"]).read_text())
         self.assertNotIn("modules", codex_hooks)
