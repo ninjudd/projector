@@ -1,0 +1,108 @@
+{
+ "version": 1,
+ "name": "Review label colors",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 498,
+  "title": "Color the review labels as the panel draws their states, and have init bring Projector's labels up to date",
+  "head": "8492817358104d0c2122380e708a69f85afc7886",
+  "headRef": "reviewing-label-orange",
+  "base": "08a556b9d501bd199ab2d634a5e4bda271db958e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector puts two labels on a pull request while it reviews it: <code>reviewing</code> while a review runs, and <code>clean</code> once the newest review of the head found nothing. The review commands create each label the first time a repository needs it, and Projector's panel in Claude Code shows the same two states and, in its drawer, each pull request's labels in their GitHub colors.",
+   "The label colors did not match the panel. The panel draws <code>reviewing</code> in Claude's orange and <code>clean</code> in the theme's <code>success</code> green, but the labels were created yellow (<code>fbca04</code>) and a darker green (<code>0e8a16</code>). This change gives the labels the panel's dark-theme colors, <code>d77757</code> and <code>4eba65</code>.",
+   "A new default alone reaches only repositories that do not have the labels yet, because the review commands never change a label that exists. So <code>project init</code> gains a step that brings the labels up to date:",
+   "<ul><li><b>A missing label</b> is created with Projector's color and description.</li><li><b>A label that still has an old Projector color and Projector's description</b> is recolored, because nobody chose that color.</li><li><b>Any other label</b>, one whose color or description someone changed, stays as it is.</li></ul>",
+   "The step runs whatever the answer to <code>init</code>'s required-check question, prints a line for each change, warns rather than fails when GitHub refuses, and does nothing when <code>review.labels</code> is <code>false</code>."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review found that the existing <code>InitSiteTests</code> ran the real <code>gh api</code> label listing, 38 calls per run. The tests now fake those calls, and <code>SiteRepoCase</code> fails any <code>gh</code> call a test does not fake. A full-suite run with a logging stub <code>gh</code> recorded no calls.</li><li>Its three suggestions were taken: a clearer test comment, a plural in the docs, and a rewrapped paragraph.</li><li>The review of this head is clean, and the gate passed, including CI's <code>check</code> job.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "labels",
+   "title": "The label colors and the update step",
+   "kicker": "The new colors, the colors an earlier release used, and the step that moves one to the other",
+   "intro": [
+    "<code>review.LABELS</code> holds each label's color and description, and the review commands create a label from it the first time a pull request needs one. <code>FORMER_LABEL_COLORS</code> lists the colors an earlier release created each label with, so <code>sync_labels</code> can tell a color Projector chose from one a person chose.",
+    "<code>init_labels</code> in the CLI runs <code>sync_labels</code> as the last step of <code>project init</code>, after the required-check step, and only when the checkout's origin is on GitHub."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A label counts as Projector's own only while both its color is an old Projector color and its description is Projector's exact text. Changing either one makes it the repository's label, which <code>init</code> never touches."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "The new colors, the list of former colors, and <code>sync_labels</code>, which lists a repository's labels and creates or recolors Projector's.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The name is matched lowercased, the color is compared lowercased, and the description is compared exactly, so a label GitHub reports as <code>FBCA04</code> is recolored and one renamed <code>Reviewing</code> with another description is left. <code>LabelSyncTests</code> covers both, and passed at this head."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>init_labels</code>, which skips a checkout without a GitHub origin and a repository with <code>review.labels = false</code>, and turns a refusal from GitHub into a warning."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "A fake GitHub that keeps labels, the label step's three rules, and site tests kept off GitHub",
+   "intro": [
+    "<code>RulesetGitHub</code>, the fake <code>gh</code> the required-check tests already use, now keeps a list of labels and answers the list, create, and update calls. <code>LabelSyncTests</code> runs <code>project init</code> against it.",
+    "<code>project init</code> now calls <code>review.run_gh</code>, so the site tests that run <code>init</code> fake it too. <code>SiteRepoCase</code>, the base of the site tests, also replaces every <code>gh</code> entry point with a guard that fails the test, so a call no test fakes cannot reach GitHub with the signed-in account's token."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_projector.py",
+     "note": "<code>LabelSyncTests</code>: a recolor of an untouched label but not of one a person changed, a create of both labels that a rerun does not repeat, and the <code>review.labels = false</code> and refused cases. The required-check tests now leave the label calls out of their \"asks GitHub nothing\" assertions."
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "The label that the first review in a repository creates now carries the new orange."
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "The guard on <code>summary.gh</code>, <code>summary.gh_lookup</code>, and <code>review.run_gh</code>, a fake <code>run_gh</code> on <code>FakeGitHub</code> that lists Projector's labels at their current colors, and a stub of <code>summary.base_pr</code> for the one build test that looked up a stacked pull request.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The full suite, run with a logging stub <code>gh</code> first on <code>PATH</code>, passed and recorded no <code>gh</code> calls at this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The new init step and the new colors in the CLI reference",
+   "intro": [
+    "<code>docs/cli.md</code> gains the section \"Keep the review labels current\" under <code>init</code>, and the labels table under \"Review a pull request\" gives the new colors and the reason for them."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The new <code>init</code> section, a note that <code>init</code> without a terminal now changes the labels, and the labels table with its new colors."
+    }
+   ]
+  }
+ ]
+}
