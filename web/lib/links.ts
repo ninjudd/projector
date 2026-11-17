@@ -33,7 +33,7 @@ export const PROJECTOR_SITE = "https://ninjudd.com/projector/";
 
 // The summary the front page shows, on Projector's own site.
 export const SUMMARY_EXAMPLE = {
-  page: `${PROJECTOR_SITE}reviews/497/`,
+  page: `${PROJECTOR_SITE}reviews/456/`,
   index: `${PROJECTOR_SITE}reviews/`,
 };
 

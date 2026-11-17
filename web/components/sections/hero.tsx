@@ -26,23 +26,14 @@ export function Hero() {
   return (
     <section>
       <div className="mx-auto max-w-6xl px-6 pb-20 pt-16 lg:pb-24 lg:pt-20">
-        <div className="grid gap-10 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:items-end lg:gap-16">
-          <h1 className="font-display text-6xl leading-[0.98] tracking-tight text-fg sm:text-7xl">
-            Agents plan, build, and review.
-            <br />
-            <em className="text-accent">You make the calls.</em>
-          </h1>
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:items-start lg:gap-16">
           <div className="min-w-0">
-            <p className="text-lg leading-relaxed text-muted">
-              Projector gives Claude Code and Codex a workflow for projects.
-              Agents write the plan into the repository, build it, review each
-              other&rsquo;s pull requests, and fix what the reviews find. You
-              review the plan, answer the questions only you can, and decide
-              what merges. Every question waits for you in a panel above your
-              prompt, and every pull request comes with a summary that walks you
-              through the change.
-            </p>
-            <div className="mt-6">
+            <h1 className="font-display text-6xl leading-[0.98] tracking-tight text-fg sm:text-7xl">
+              Agents plan, build, and review.
+              <br />
+              <em className="text-accent">You make the calls.</em>
+            </h1>
+            <div className="mt-8 max-w-xl">
               <Command text={INSTALL.script} />
             </div>
             <p className="mt-3 font-mono text-xs text-faint">
@@ -76,6 +67,15 @@ export function Hero() {
               </a>
             </div>
           </div>
+          <p className="min-w-0 text-lg leading-relaxed text-muted lg:pt-2">
+            Projector gives Claude Code and Codex a workflow for projects.
+            Agents write the plan into the repository, build it, review each
+            other&rsquo;s pull requests, and fix what the reviews find. You
+            review the plan, answer the questions only you can, and decide what
+            merges. Every question waits for you in a panel above your prompt,
+            and every pull request comes with a summary that walks you through
+            the change.
+          </p>
         </div>
 
         <div className="mt-14 grid gap-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-10">

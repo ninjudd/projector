@@ -49,6 +49,15 @@ const parts: { title: string; body: ReactNode }[] = [
     ),
   },
   {
+    title: "Stacks read as one change",
+    body: (
+      <>
+        A pull request that is one layer of a stack lists every layer in its sidebar, so you can
+        read the plan, the change, and what builds on it in order.
+      </>
+    ),
+  },
+  {
     title: "What the reviews found so far",
     body: (
       <>
@@ -110,7 +119,7 @@ export function Summaries() {
         <Shot
           light={overviewLight}
           dark={overviewDark}
-          alt="The top of a Projector summary: what the pull request does, its size by kind of line, the files changed, and what the reviews found so far"
+          alt="The top of a Projector summary: the stack the pull request sits in, what it does, its size by kind of line, and the files it changes"
           sizes="(min-width: 1152px) 1104px, 100vw"
         />
         <figcaption className="mt-3 text-sm text-muted">
@@ -121,9 +130,10 @@ export function Summaries() {
             rel="noreferrer"
             className="underline decoration-line-strong underline-offset-4 transition-colors hover:text-fg"
           >
-            ninjudd/projector#497
+            ninjudd/projector#456
           </a>
-          , the pull request that added <Code>project worktree</Code>.
+          , which added <Code>project ios</Code>. Its sidebar lists the stack it sits in: the plan
+          in #450, this change, and the skill change in #457 that uses it.
         </figcaption>
       </figure>
 
@@ -155,11 +165,11 @@ export function Summaries() {
           <Shot
             light={sectionLight}
             dark={sectionDark}
-            alt="A section of a Projector summary: its explanation, a context note, and a diff with a context note and a verified note under the lines they concern"
+            alt="Part of a Projector summary's diff, with two context notes under the lines they concern"
             sizes="(min-width: 1152px) 700px, 100vw"
           />
           <figcaption className="mt-3 text-sm text-muted">
-            Section 1 of the same summary. The notes sit under the lines they concern.
+            Part of section 1 of the same summary. Each note sits under the lines it concerns.
           </figcaption>
         </figure>
       </div>
