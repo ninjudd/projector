@@ -59,9 +59,20 @@ export default async function Image() {
               You make the calls.
             </div>
           </div>
-          <div style={{ fontSize: 30, color: "#a5a094" }}>
-            You review the plan, answer what only you can, and decide what
-            merges.
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              fontSize: 30,
+              lineHeight: 1.4,
+              color: "#a5a094",
+            }}
+          >
+            <div>A framework for building in Claude Code or Codex.</div>
+            <div>
+              You review the plan, answer what only you can, and decide what
+              merges.
+            </div>
           </div>
         </div>
         <div
