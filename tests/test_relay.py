@@ -780,9 +780,9 @@ class KeyTests(RelayCase):
         self.assertEqual(other.id, self.one.status()["key"]["id"])
 
     def test_the_linux_backend_stores_through_standard_input_and_init_stores_nothing_when_it_cannot(self) -> None:
-        tool = mock.patch.object(keychain, "SECRET_TOOL", str(self.bin / "secret-tool"))
-        tool.start()
-        code, out, err = self.one.project("agent", "key", "init")
+        installed = lambda: mock.patch.object(keychain, "SECRET_TOOL", str(self.bin / "secret-tool"))
+        with installed():
+            code, out, err = self.one.project("agent", "key", "init")
         [(name, secret)] = self.keychain_items().items()
         stored = self.config()
         calls = self.keychain_calls()
@@ -790,17 +790,13 @@ class KeyTests(RelayCase):
         for mode, reason in (("missing", "secret-tool: not installed"), ("fail", "no secret service"),
                              ("hang", "secret-tool: keychain locked or not answering")):
             (self.one.home / ".projector.toml").unlink(missing_ok=True)
-            if mode == "missing":
-                tool.stop()
-            else:
-                tool.start()
-                self.keychain_mode(mode)
+            self.keychain_mode(mode)
             started = time.monotonic()
-            with mock.patch.object(keychain, "TIMEOUT", 0.2):
+            with installed() if mode != "missing" else contextlib.nullcontext(), \
+                    mock.patch.object(keychain, "TIMEOUT", 0.2):
                 result = self.one.project("agent", "key", "init")
             outcomes[mode] = (result[0], reason in result[2], "pass --inline" in result[2],
                               (self.one.home / ".projector.toml").exists(), time.monotonic() - started < 10)
-        tool.stop()
 
         self.assertEqual(0, code, err)
         self.assertTrue(name.startswith("projector-agent/"), name)
