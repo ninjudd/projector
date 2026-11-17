@@ -1,0 +1,63 @@
+{
+ "version": 1,
+ "name": "Agent messaging validation",
+ "project": "agent-messages",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 509,
+  "title": "Record the agent-messages check run after merge",
+  "head": "6892aec90e12e946eb5438c1ade73b0aa9e26f80",
+  "headRef": "agent-messages-check-result",
+  "base": "68187aee37452e9f484bba66923739ee1e03e448",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector lets agent sessions discover each other and exchange messages, on one machine or through encrypted Git refs between machines. The completed plan left a real-session check for after the merge.",
+   "This change records that check’s reported results: messaging and replies worked, delivered message refs and closed-session presence refs were removed, and idle sessions and relay pushes started no unexpected work. It also records one unexplained daemon exit as a follow-up."
+  ],
+  "cards": [
+   {
+    "id": "scope",
+    "title": "Documentation only",
+    "html": "<p>The change adds a dated result to the completed plan. It changes no runtime code, project status, or section numbering.</p>"
+   },
+   {
+    "id": "validation",
+    "title": "Review validation",
+    "html": "<p>The configured gate and exact-head CI passed. Project metadata is valid. The review did not repeat the manual session check.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "outcome",
+   "title": "Record the deferred check’s result",
+   "kicker": "The completed plan gains its manual validation outcome",
+   "intro": [
+    "The plan’s acceptance criteria asked for real Claude Code and Codex sessions to wake and reply, then for two machines to exchange messages through a disposable repository. Section 11 now records the reported check and its cleanup observations.",
+    "A daemon exited without a stop log during the check. The record keeps that limitation visible and identifies orderly idle-exit cleanup as a possible follow-up; it does not change the implementation."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/readme.md",
+     "collapsed": false,
+     "note": "Section 11 gains the dated check result while preserving the completed plan’s design and status.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 922,
+       "text": "The completed plan explicitly deferred this check in its outcome, and the repository permits recording that result after merge. Project validation passes and the status remains completed."
+      },
+      {
+       "kind": "context",
+       "line": 940,
+       "text": "The daemon-exit observation is reported by the manual check. This review did not reproduce that exit; relay code confirms a one-hour presence lease and expiry cleanup."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
