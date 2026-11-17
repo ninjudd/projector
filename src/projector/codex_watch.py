@@ -18,7 +18,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Optional
 
-from .core import UsageError
+from . import inbox
+from .core import ProjectorError, UsageError
 from .inbox import locked, read_json, try_lock, unlock, write_json
 
 LEASE = 24 * 3600
@@ -32,6 +33,9 @@ UNCERTAIN = "submission outcome unknown; Projector resends it in 30 minutes unle
 CONFIRM_EVERY = 30
 MARKER = re.compile(r"^PROJECTOR WATCH ([0-9a-f-]{36})\n")
 TERMINAL = {"MERGED", "CLOSED", "MISSING", "MOVED"}
+# A claim lapses a minute after its last renewal, so renewing a third of the way through keeps a line that
+# waits in Codex's queue claimed through a send that runs to TIMEOUT.
+RENEW_AFTER_MS = 20_000
 
 
 def digest(value: object) -> str:
@@ -85,7 +89,88 @@ def save_queue(folder: Path, items: list[dict]) -> None:
 
 def has_work(folder: Path) -> bool:
     from .watch import subscriptions
-    return any(not line.excluded for line in subscriptions(folder)) or bool(queued(folder) or pending(folder))
+    return (any(not line.excluded for line in subscriptions(folder)) or bool(queued(folder) or pending(folder))
+            or any(inbox.owes_a_line(item) for item in inbox_items(folder.name)))
+
+
+SCANNED: dict[str, tuple[int, list[dict]]] = {}
+
+
+def inbox_items(session: str) -> list[dict]:
+    """The session's inbox items, read again only when its folder changed. Every inbox write replaces a file,
+    which changes the folder's modification time, and the daemon asks once a second."""
+    try:
+        folder = inbox.session_dir(session)
+        stamp = folder.stat().st_mtime_ns
+    except (ProjectorError, OSError):
+        return []
+    seen = SCANNED.get(str(folder))
+    if seen is None or seen[0] != stamp:
+        seen = SCANNED[str(folder)] = (stamp, inbox.load_items(folder))
+    return seen[1]
+
+
+def inbox_key(item: dict) -> Optional[list]:
+    """An inbox event's key, `["inbox", ref, line, token]`, or None for any other event."""
+    key = json.loads(item["key"])
+    return key if key[:1] == ["inbox"] and len(key) == 4 else None
+
+
+def claim_of(session: str, ref: str) -> dict:
+    try:
+        return (read_json(inbox.item_file(inbox.session_dir(session), ref)) or {}).get("claim") or {}
+    except (ProjectorError, OSError, ValueError):
+        return {}
+
+
+def offer(folder: Path) -> None:
+    """Claim each line the session's inbox owes and queue it, so this adapter is its one deliverer."""
+    lines = []
+    for item in inbox_items(folder.name):
+        if not inbox.owes_a_line(item) or inbox.live_claim(item):
+            continue
+        try:
+            claimed = inbox.claim(folder.name, item["ref"])
+        except inbox.InboxBusy:
+            break
+        except ProjectorError:
+            continue
+        held = claimed["claim"]
+        lines.append(Event(inbox.message(claimed), ["inbox", claimed["ref"], held["line"], held["token"]]))
+    if lines:
+        append(folder, lines)
+
+
+def unsettled(folder: Path) -> list[list]:
+    return (read_json(folder / "codex-unsettled.json") or {}).get("keys") or []
+
+
+def renew(folder: Path) -> None:
+    """Renew the claim of every inbox line that waits in the queue, in a batch, or for its settle, so no other
+    deliverer claims it while Codex has yet to take it."""
+    lines = queued(folder) + [item for _, batch in pending(folder) for item in batch["items"]]
+    for _, ref, _, token in [key for item in lines if (key := inbox_key(item))] + unsettled(folder):
+        claim = claim_of(folder.name, ref)
+        if claim.get("token") == token and inbox.now_ms() - int(claim.get("renewedAt", 0)) >= RENEW_AFTER_MS:
+            with contextlib.suppress(ProjectorError):
+                inbox.claim(folder.name, ref, renew=token)
+
+
+def settle(folder: Path, keys: list[list]) -> None:
+    """Mark each inbox line delivered. A claim that a restore, an answer, or a revision replaced settles
+    nothing, and the line the item owes now goes out next. A line a busy inbox kept from settling waits for
+    the next tick."""
+    left = []
+    for key in keys:
+        try:
+            inbox.settle(folder.name, key[1], key[3], delivered=True)
+        except inbox.InboxBusy:
+            left.append(key)
+        except ProjectorError:
+            pass
+    waiting = [key for key in unsettled(folder) if key not in keys] + left
+    if waiting or (folder / "codex-unsettled.json").exists():
+        write_json(folder / "codex-unsettled.json", {"schema_version": 1, "keys": waiting})
 
 
 @contextlib.contextmanager
@@ -151,6 +236,8 @@ def eligible(folder: Path, item: dict) -> bool:
     if item["line"].split(" ", 1)[0] in TERMINAL:
         return True
     key = json.loads(item["key"])
+    if key[:1] == ["inbox"]:
+        return len(key) == 4 and claim_of(folder.name, key[1]).get("token") == key[3]
     if key[:1] == ["message"]:
         from .agents import message_file
         path = message_file(folder, key[1]) if len(key) == 2 and isinstance(key[1], str) else None
@@ -181,6 +268,9 @@ def prepare(folder: Path, now: float) -> Optional[dict]:
             break
         chosen.append(item)
         size += length
+    if not chosen and items and inbox_key(items[0]):
+        # A typed answer can be longer than a batch. Alone in a batch of its own, it cannot hold back the queue.
+        chosen = items[:1]
     if not chosen:
         if items != queued(folder):
             save_queue(folder, items)
@@ -199,7 +289,7 @@ def prepare(folder: Path, now: float) -> Optional[dict]:
 
 def message(session: str, batch: dict) -> str:
     return (f"PROJECTOR WATCH {batch['batch_id']}\nsession={session}\n"
-            "Recheck current subscriptions and PR state before acting.\n"
+            "Recheck current subscriptions, pull request state, and inbox items before acting.\n"
             + "\n".join(item["line"].replace("\0", "\\0") for item in batch["items"]))
 
 
@@ -230,12 +320,21 @@ def acknowledge(folder: Path, session: str, prompt: str, now: float) -> tuple[bo
 
 
 def consume(folder: Path, batch_id: str, now: float) -> None:
+    path = folder / "codex-pending" / f"{batch_id}.json"
+    keys = [key for item in (read_json(path) or {}).get("items") or [] if (key := inbox_key(item))]
+    # Record the keys as waiting to settle before the receipt and the unlink, so a stop anywhere after this
+    # leaves them where the next tick renews their claims and settles them, rather than nowhere.
+    waiting = unsettled(folder)
+    if any(key not in waiting for key in keys):
+        write_json(folder / "codex-unsettled.json",
+                   {"schema_version": 1, "keys": waiting + [key for key in keys if key not in waiting]})
     receipt = folder / "codex-receipts" / f"{batch_id}.json"
     receipt.parent.mkdir(exist_ok=True)
     write_json(receipt, {"batch_id": batch_id, "consumed_at": now})
     # A command result can race this. The receipt wins over that result.
-    (folder / "codex-pending" / f"{batch_id}.json").unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
     write_json(folder / "codex-last.json", {"batch_id": batch_id, "state": "consumed", "last_error": ""})
+    settle(folder, keys)
 
 
 def delivered(folder: Path, path: Path, batch: dict) -> bool:
@@ -290,11 +389,13 @@ def drain(folder: Path) -> None:
     from .watch import write_text
     recover(folder)
     items = queued(folder)
-    lines = [item["line"] for item in items if eligible(folder, item)]
+    # The plain events file has no reader that settles an inbox claim, so an inbox line stays out of it. Its
+    # claim lapses once nothing renews it, and the session's next deliverer sends the line.
+    lines = [item["line"] for item in items if not inbox_key(item) and eligible(folder, item)]
     removable = []
     for path, batch in pending(folder):
         if batch["state"] in ("prepared", "failed"):
-            lines.extend(item["line"] for item in batch["items"] if eligible(folder, item))
+            lines.extend(item["line"] for item in batch["items"] if not inbox_key(item) and eligible(folder, item))
             removable.append(path)
     if lines:
         events = folder / "events"
@@ -517,12 +618,14 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
         return {"decision": "block", "reason": "This watch batch is already consumed or its work was removed."}
     if name != "SessionStart" and not consumed:
         return {}
-    context = (f"Use --session {session} for project watch commands and pass this parent ID to workers. "
-               + ("Codex watch delivery handles this session; do not start a stream. " if record.get("enabled") else
+    context = (f"Use --session {session} for project watch and project inbox commands and pass this parent ID "
+               "to workers. "
+               + ("Codex watch delivery handles this session, its inbox answers included; do not start a stream "
+                  "or project inbox watch. " if record.get("enabled") else
                   "Automatic Codex delivery is disconnected; inspect watch status before starting a stream. ") +
-               "Recheck subscriptions and current PR state before acting on events.")
+               "Recheck subscriptions, current pull request state, and inbox items before acting on events.")
     if consumed:
-        context += " Process only these still-subscribed events:\n" + "\n".join(lines)
+        context += " Process only these still-current events:\n" + "\n".join(lines)
     return {"hookSpecificOutput": {"hookEventName": name, "additionalContext": context}}
 
 
@@ -555,15 +658,22 @@ class Dispatcher:
 
     def tick(self, folders: list[Path]) -> None:
         self.jobs = {folder: job for folder, job in self.jobs.items() if not job.done()}
+        folders = [folder for folder in folders if active(folder, self.wall())]
+        # Renewal skips no folder, not even one whose batch is being sent, so a claim outlives the send.
+        for folder in folders:
+            renew(folder)
         for folder in folders:
             if len(self.jobs) >= 4:
                 break
-            if folder in self.jobs or not active(folder, self.wall()):
+            if folder in self.jobs:
                 continue
             with locked(folder):
                 if self.wall() - self.cleaned.get(folder, float("-inf")) >= 3600:
                     prune_receipts(folder, self.wall())
                     self.cleaned[folder] = self.wall()
+                if unsettled(folder):
+                    settle(folder, unsettled(folder))
+                offer(folder)
                 batches = pending(folder)
                 waiting = batches[0][1] if batches else {}
                 if (waiting.get("state") in ("queued", "uncertain") and not self.confirm(folder, *batches[0])

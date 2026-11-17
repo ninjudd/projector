@@ -59,8 +59,11 @@ with `--session`, as `../cleanup/SKILL.md` describes under "Find the
 session's id".
 
 Where the host has the tools, Projector's panel delivers the user's answers
-to the session. Where it has none, nothing does until you start their
-deliverer, because `project watch stream` prints only pull request events.
+to the session. In Codex, when the session-start context says that Codex
+watch delivery handles the session, the watch daemon delivers them as new
+turns, so start no deliverer. Otherwise nothing delivers them until you
+start their deliverer, because `project watch stream` prints only pull
+request events.
 Start `project inbox watch --session <id>` once, under the host's
 persistent process or monitor facility, where it runs until stopped and
 prints each answer as one of the lines below. Where the host has no such

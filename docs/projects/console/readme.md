@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -112,7 +112,9 @@ following for each active Codex session before it calls `prepare`:
    deliverer from sending the same line.
 2. It renews the claim of every inbox event that is still queued or in a
    pending batch, so a batch can wait in Codex's queue longer than the
-   claim's one-minute lapse.
+   claim's one-minute lapse. A claim is renewed once it is 20 seconds old,
+   in every active session, including one whose batch is being sent, so a
+   send that runs to its 60-second timeout cannot outlast the claim.
 3. `prepare` builds the batch as it does today. Inbox events and watch
    events share the one outstanding batch per session, the 8 KiB limit, and
    the `PROJECTOR WATCH <uuid>` marker. An inbox event larger than the limit
@@ -123,7 +125,10 @@ following for each active Codex session before it calls `prepare`:
    the next tick claims the line the item now owes.
 5. When Codex acknowledges the batch, through the `UserPromptSubmit` hook
    or the transcript scan in `confirm`, `consume` settles each inbox event
-   with `inbox.settle(session, ref, token, delivered=True)`.
+   with `inbox.settle(session, ref, token, delivered=True)`. When the inbox
+   stays locked through the settle's 5-second wait, the event waits in
+   `codex-unsettled.json`, keeps its claim renewed, and settles on a later
+   tick.
 6. A failed `codex queue` call keeps the claims and retries with the
    adapter's existing backoff. It never settles with `delivered=False`,
    because that deletes the person's answer.

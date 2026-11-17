@@ -7,12 +7,13 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from concurrent import futures
 from pathlib import Path
 from unittest import mock
 
-from projector import cli, codex_watch as codex, watch
+from projector import cli, codex_watch as codex, inbox, watch
 from projector.core import UsageError
 from projector.inbox import locked, read_json, write_json
 
@@ -498,6 +499,175 @@ else:
 
 
 from tests.test_watch import WatchCase, SHA_A, SHA_B, MODEL, thread
+
+
+class InboxDeliveryTests(unittest.TestCase):
+    """The adapter delivers a Codex session's inbox lines, the way the panel delivers a Claude Code session's."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="codex inbox ")
+        self.addCleanup(self.temp.cleanup)
+        state = Path(self.temp.name).resolve()
+        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(state)})
+        environ.start()
+        self.addCleanup(environ.stop)
+        self.root = watch.state_root()
+        self.folder = watch.session_folder(self.root, "session-A")
+        self.folder.mkdir(parents=True)
+        # `delivery()` reads the wall clock, so the registration has to be live by it.
+        self.now = time.time()
+        self.ms = int(self.now * 1000)
+        clock = mock.patch.object(inbox, "now_ms", side_effect=lambda: self.ms)
+        clock.start()
+        self.addCleanup(clock.stop)
+        self.executable = state / "codex"
+        self.executable.write_text(f"#!{sys.executable}\n" + '''import json, pathlib, sys
+root = pathlib.Path(__file__).parent
+if sys.argv[1:] == ["queue", "--help"]:
+    print("--thread --message --resume")
+else:
+    with (root / "calls.jsonl").open("a") as stream:
+        stream.write(json.dumps({"args": sys.argv[1:]}) + "\\n")
+    if (root / "fail").exists():
+        sys.exit(1)
+''')
+        self.executable.chmod(0o755)
+        which = mock.patch("shutil.which", return_value=str(self.executable))
+        which.start()
+        self.addCleanup(which.stop)
+        codex.register(self.folder, "session-A", str(state), self.now)
+        self.dispatcher = codex.Dispatcher(wall=lambda: self.now)
+        self.addCleanup(self.dispatcher.close)
+        self.question = inbox.ask("session-A", "Decline the finding?", "Decline it", ["Fix it"])
+
+    def tick(self):
+        self.dispatcher.tick([self.folder])
+        for job in list(self.dispatcher.jobs.values()):
+            job.result()
+
+    def sent(self):
+        path = self.executable.parent / "calls.jsonl"
+        return [json.loads(line)["args"][4] for line in path.read_text().splitlines()] if path.exists() else []
+
+    def acknowledge(self):
+        batch = codex.pending(self.folder)[0][1]
+        consumed, _ = codex.acknowledge(self.folder, "session-A", codex.message("session-A", batch), self.now)
+        self.assertTrue(consumed)
+
+    def item(self):
+        return inbox.read_item(inbox.session_dir("session-A"), self.question["ref"])
+
+    def hold_the_queue(self):
+        """Send a watch event and leave its batch unacknowledged, so the lines queued next wait behind it."""
+        watch.append_events(self.folder, [codex.Event("MERGED Acme/App#14", ["acme/app", 14, "fix", "merged"])])
+        self.tick()
+
+    def test_an_answer_wakes_the_session_and_is_delivered_once_codex_takes_it(self):
+        # Catches an adapter that never claims inbox lines, or one that marks them delivered before Codex has them.
+        inbox.answer("session-A", "1", "a")
+        self.assertTrue(codex.has_work(self.folder))
+        self.tick()
+        self.assertEqual(1, len(self.sent()))
+        self.assertIn("ANSWER 1.a Decline the finding? → Decline it", self.sent()[0])
+        self.assertIsNone(self.item().get("deliveredAt"))
+        self.acknowledge()
+        self.assertIsNotNone(self.item().get("deliveredAt"))
+        self.tick()
+        self.assertEqual(1, len(self.sent()))
+
+    def test_a_line_waiting_in_codex_keeps_its_claim_from_another_deliverer(self):
+        # Catches a claim that lapses while its batch waits, so another deliverer, or this one, sends it again.
+        inbox.answer("session-A", "1", "a")
+        self.tick()
+        for _ in range(9):
+            self.ms += 20_000
+            self.tick()
+        printed = []
+        inbox.deliver_pass("session-A", printed.append)
+        self.assertEqual([], printed)
+        self.acknowledge()
+        self.tick()
+        self.assertEqual(1, len(self.sent()))
+        self.assertIsNotNone(self.item().get("deliveredAt"))
+
+    def test_an_answer_codex_took_is_not_sent_again_after_an_interrupted_settle(self):
+        # Catches a consumed batch whose inbox keys live only in memory, so a stop before they settle lets the
+        # claim lapse and the next daemon claims and sends the same answer again.
+        inbox.answer("session-A", "1", "a")
+        self.tick()
+        with mock.patch.object(codex, "settle", side_effect=RuntimeError("stopped")):
+            with self.assertRaises(RuntimeError):
+                self.acknowledge()
+        self.assertEqual([], codex.pending(self.folder))
+        self.dispatcher = codex.Dispatcher(wall=lambda: self.now)
+        self.addCleanup(self.dispatcher.close)
+        self.now += 61
+        self.ms += 61_000
+        self.tick()
+        self.tick()
+        self.assertEqual(1, len(self.sent()))
+        self.assertIsNotNone(self.item().get("deliveredAt"))
+        self.assertEqual([], codex.unsettled(self.folder))
+
+    def test_a_restore_replaces_a_dismissal_that_has_not_gone_out(self):
+        # Catches a stale DISMISSED sent after the restore that dropped its claim.
+        self.hold_the_queue()
+        inbox.dismiss("session-A", "1")
+        self.tick()
+        inbox.restore("session-A", "1")
+        self.acknowledge()
+        self.tick()
+        self.assertEqual(2, len(self.sent()))
+        self.assertIn("RESTORED 1 Decline the finding?", self.sent()[1])
+        self.assertNotIn("DISMISSED", self.sent()[1])
+
+    def test_a_failed_send_keeps_the_answer_and_retries(self):
+        # Catches a failure settled as undelivered, which deletes the person's answer.
+        (self.executable.parent / "fail").touch()
+        inbox.answer("session-A", "1", "a")
+        self.tick()
+        self.assertEqual("failed", codex.pending(self.folder)[0][1]["state"])
+        self.assertEqual("a", self.item()["answer"]["letter"])
+        (self.executable.parent / "fail").unlink()
+        self.now += 31
+        self.ms += 31_000
+        self.tick()
+        self.assertEqual(2, len(self.sent()))
+        self.assertIn("ANSWER 1.a", self.sent()[1])
+
+    def test_a_disconnected_session_leaves_its_line_to_the_next_deliverer(self):
+        # Catches an inbox line drained into the events file, whose reader never settles its claim.
+        self.hold_the_queue()
+        inbox.answer("session-A", "1", "a")
+        self.tick()
+        codex.disconnect(self.folder)
+        with locked(self.folder):
+            codex.drain(self.folder)
+        events = self.folder / "events"
+        self.assertNotIn("ANSWER", events.read_text() if events.exists() else "")
+        self.assertEqual([], inbox.undelivered("session-A"))
+        self.ms += 61_000
+        self.assertEqual(["1"], [item["ref"] for item in inbox.undelivered("session-A")])
+
+    def test_an_answer_longer_than_a_batch_goes_out_alone(self):
+        # Catches an oversized typed answer that wedges the queue for every event behind it.
+        self.hold_the_queue()
+        inbox.answer("session-A", "1", "c", "x" * (9 * 1024))
+        self.tick()
+        watch.append_events(self.folder, [codex.Event("CLOSED Acme/App#15", ["acme/app", 15, "fix", "closed"])])
+        self.acknowledge()
+        self.tick()
+        self.assertIn("ANSWER 1.c", self.sent()[1])
+        self.assertNotIn("CLOSED", self.sent()[1])
+        self.acknowledge()
+        self.tick()
+        self.assertIn("CLOSED Acme/App#15", self.sent()[2])
+
+    def test_recording_an_answer_starts_the_daemon_for_a_codex_session(self):
+        # Catches an answer that waits for the session's next hook while the daemon is down.
+        with mock.patch.object(watch, "ensure_daemon") as ensure, mock.patch("sys.stdout", io.StringIO()):
+            cli.main(["inbox", "answer", "1.a", "--session", "session-A"])
+        ensure.assert_called_once()
 
 
 class RoutingTests(WatchCase):
