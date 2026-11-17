@@ -1,0 +1,31 @@
+diff --git a/.codex-plugin/plugin.json b/.codex-plugin/plugin.json
+index 05b2a8bb..8534fff2 100644
+--- a/.codex-plugin/plugin.json
++++ b/.codex-plugin/plugin.json
+@@ -11,6 +11,10 @@
+   "license": "MIT",
+   "keywords": ["projects", "planning", "git", "agents", "code-review"],
+   "skills": "./skills/",
++  "hooks": {
++    "description": "Projector's Codex hooks ship in the projector-hooks plugin. This empty set stops Codex from reading hooks/hooks.json, which is Claude Code's hooks module.",
++    "hooks": {}
++  },
+   "interface": {
+     "displayName": "Projector",
+     "shortDescription": "Plan, implement, and review Git projects",
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index 1a46d18d..9a20d69c 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -120,7 +120,10 @@ def test_only_claude_code_loads_the_hooks_module(self) -> None:
+         self.assertEqual("./hooks/types.d.ts", self.manifest("claude")["types"])
+         self.assertTrue((ROOT / "hooks" / "types.d.ts").is_file())
+         self.assertNotIn("types", self.manifest("codex"))
+-        self.assertNotIn("hooks", self.manifest("codex"))
++        # Codex reads hooks/hooks.json too unless the manifest names its hooks, and it
++        # cannot parse the module manifest. A real hook here would also need trusting
++        # again after every release, so the root plugin names an empty set.
++        self.assertEqual({}, self.manifest("codex")["hooks"]["hooks"])
+         hooks_plugin = json.loads((ROOT / "codex-hooks" / ".codex-plugin" / "plugin.json").read_text())
+         codex_hooks = json.loads((ROOT / "codex-hooks" / hooks_plugin["hooks"]).read_text())
+         self.assertNotIn("modules", codex_hooks)

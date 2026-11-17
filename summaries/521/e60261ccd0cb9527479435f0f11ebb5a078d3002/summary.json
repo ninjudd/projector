@@ -1,0 +1,57 @@
+{
+ "version": 1,
+ "name": "Codex hook discovery",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 521,
+  "title": "Stop Codex from parsing Claude Code's hooks module as a hooks file",
+  "head": "e60261ccd0cb9527479435f0f11ebb5a078d3002",
+  "headRef": "fix/codex-plugin-hooks-path",
+  "base": "8edc311493dfdbc66fdb0eebc6c3743d0d16d710",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector shares its skills between Claude Code and Codex. Its root <code>hooks/hooks.json</code> contains a Claude Code module, which Codex cannot parse as command hooks.",
+   "The Codex manifest now supplies an explicit empty hook set. This stops fallback discovery from producing a warning on every session. The separate <code>projector-hooks</code> plugin continues to carry the command hooks used for event delivery."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "discovery",
+   "title": "Keep each host on its own hook format",
+   "kicker": "An empty Codex hook set overrides default file discovery.",
+   "intro": [
+    "When a Codex plugin omits <code>hooks</code>, the host tries <code>hooks/hooks.json</code>. That conventional file belongs to Claude Code here and contains a <code>modules</code> field, so the host emits a parse warning.",
+    "The inline empty set tells Codex there are no root-plugin command hooks. The packaging test also rejects removal of that override or addition of real root hooks, which would require users to trust them again after releases."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".codex-plugin/plugin.json",
+     "note": "Declare an explicit empty hook set so Codex does not parse Claude Code’s module manifest.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 16,
+       "text": "With isolated temporary installs and Codex 0.169.0, the base manifest emits the modules-field warning. This manifest returns no hooks, warnings, or errors from hooks/list."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Protect the host-specific discovery boundary while keeping actual command hooks in the separate plugin.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 126,
+       "text": "All 31 packaging and release tests pass. This updated test rejects the base manifest without the hook override, and the existing checks still validate the separate command-hook plugin."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
