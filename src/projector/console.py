@@ -13,6 +13,7 @@ text. `main` puts it in a terminal with curses, which only `main` imports, so te
 
 from __future__ import annotations
 
+import base64
 import os
 import signal
 import sys
@@ -22,7 +23,7 @@ import time
 import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TextIO
 
 from . import agents, codex_watch, conversation, inbox, rows, watch
 from .core import ProjectorError
@@ -41,9 +42,9 @@ NOUNS = {"pr": "pull request", "review": "review request", **{kind: kind for kin
 SNOOZES = (("15 min", 15), ("1 hour", 60), ("4 hours", 240), ("1 day", 1440))
 SUBSCRIPTION_ROLE = {held: role for role, held in rows.ROLE_OF.items()}
 DRAWER_INDENT = 4
-# Page Down or Space, Page Up or `b`, End, and Home: Space and `b` for a terminal that keeps the page keys for its own
-# scrollback. `g` opens a pull request in GitHub, so it is no alias for Home, nor `G` for End.
-SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "home")
+# Page Down or Space, Page Up or `b`, End or `G`, and Home or `g`: the second of each pair for a terminal that keeps
+# the first for its own scrollback.
+SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "G", "home", "g")
 # The variables an SSH server sets in a session's environment. mosh's server starts over SSH, so its shells have
 # them too.
 SSH_VARIABLES = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
@@ -311,6 +312,17 @@ def is_remote(environ: Optional[dict] = None) -> bool:
     return any(environ.get(name) for name in SSH_VARIABLES)
 
 
+def clipboard_sequence(text: str, environ: Optional[dict] = None) -> str:
+    """The OSC 52 escape sequence that asks the terminal to put `text` on the clipboard of the machine the person sits
+    at. Under tmux, which `TMUX` names, it is wrapped in tmux's passthrough, each Esc doubled, so tmux hands it on to
+    the terminal. Nothing comes back to say whether the terminal allowed it."""
+    environ = os.environ if environ is None else environ
+    sequence = f"\x1b]52;c;{base64.b64encode(text.encode('utf-8')).decode('ascii')}\x07"
+    if environ.get("TMUX"):
+        return "\x1bPtmux;" + sequence.replace("\x1b", "\x1b\x1b") + "\x1b\\"
+    return sequence
+
+
 def pull_key(pull: rows.Pull) -> str:
     return f"pr:{pull.repo}#{pull.number}"
 
@@ -348,9 +360,10 @@ class Console:
         self.reveal = False
         # When a panel's first Ctrl-C asked for a second, by `clock`.
         self.exit_at: Optional[float] = None
-        # The open drawer's key, the action's key, and the URL that action showed rather than opened, until the
-        # next key.
-        self.link: Optional[tuple[str, str, str]] = None
+        # The open drawer's key, the action's key, the URL that action showed rather than opened, until the next key,
+        # and whether it was sent to the clipboard; and the text `Screen` still has to send there.
+        self.link: Optional[tuple[str, str, str, bool]] = None
+        self.clipboard: Optional[str] = None
         self.offset = 0
         self.room = 1
         # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
@@ -542,7 +555,7 @@ class Console:
             self.offset += page
         elif name in ("pageup", "b"):
             self.offset -= page
-        elif name == "end":
+        elif name in ("end", "G"):
             self.offset = sys.maxsize
         else:
             self.offset = 0
@@ -694,7 +707,7 @@ class Console:
         reference = f"{pull.repo}#{pull.number}"
         controls = [Control("7", "Discuss", lambda: self.open_field("pr", reference, f"Discuss {reference}: ")),
                     Control("8", "Dismiss", lambda: self.ask("dismiss")),
-                    Control("g", "Open in GitHub", lambda: self.visit("g", pull.url))]
+                    Control("o", "Open in GitHub", lambda: self.visit("o", pull.url))]
         if pull.summary_url is not None:
             summary = pull.summary_url
             controls.append(Control("p", "Open in Projector", lambda: self.visit("p", summary)))
@@ -702,15 +715,24 @@ class Console:
 
     def visit(self, key: str, url: str) -> None:
         """Open `url` in a browser, or, on a remote machine or when nothing opened, show it under the action at `key`
-        for the person's terminal to make clickable."""
-        if not is_remote():
+        for the person's terminal to make clickable. A remote machine also sends it to the person's clipboard."""
+        remote = is_remote()
+        if not remote:
             try:
                 if self.open_url(url) is not False:
                     return
             except (webbrowser.Error, OSError):
                 pass
+        if remote:
+            self.clipboard = url
         if self.drawer is not None:
-            self.link = (self.drawer, key, url)
+            self.link = (self.drawer, key, url, remote)
+
+    def take_clipboard(self) -> Optional[str]:
+        """The text an action asked to send to the clipboard, once."""
+        with self.lock:
+            text, self.clipboard = self.clipboard, None
+            return text
 
     def item_controls(self, item: dict) -> list[Control]:
         ref, now = item["ref"], self.now_ms()
@@ -1036,8 +1058,11 @@ class Console:
         lines = [Line(said), self.controls_line(self.controls())]
         if self.link is not None and self.link[0] == self.drawer:
             # The whole URL from the first column, a window's width to a line, so a terminal can find it to click.
-            url = self.link[2]
+            _, _, url, copied = self.link
             lines += [Line([(url[start:start + width], "")]) for start in range(0, len(url), max(1, width))]
+            if copied:
+                lines.append(Line([(" " * DRAWER_INDENT + "Sent to your clipboard where your terminal allows it",
+                                    "subtle")]))
         if pull.open_threads and self.threads is None:
             lines.append(Line([(f"{indent}loading threads…", "subtle")]))
         for path, threads in rows.threads_by_file(self.threads or []):
@@ -1249,8 +1274,10 @@ def printable(text: str) -> str:
 class Screen:
     """Draws a `Console` with curses and feeds it keys."""
 
-    def __init__(self, window: Any, console: Console, curses: Any) -> None:
+    def __init__(self, window: Any, console: Console, curses: Any, out: Optional[TextIO] = None) -> None:
         self.window, self.console, self.curses = window, console, curses
+        # Where escape sequences that curses does not draw, such as the clipboard's, go to the terminal.
+        self.out = sys.stdout if out is None else out
         self.styles = styles(curses)
         # What `read_key` read past the end of an escape sequence, to hand over next.
         self.pending: list[object] = []
@@ -1297,6 +1324,11 @@ class Screen:
         except self.curses.error:
             pass
         self.window.refresh()
+        # After curses has written the screen, so the sequence reaches the terminal whole and is never drawn as text.
+        copied = self.console.take_clipboard()
+        if copied is not None:
+            self.out.write(clipboard_sequence(copied))
+            self.out.flush()
 
     def read_key(self) -> Optional[str]:
         """The next key's name, or None for one the console does not use. An escape sequence curses did not name

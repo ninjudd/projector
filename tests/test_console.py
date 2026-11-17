@@ -308,17 +308,14 @@ class PullRequests(ConsoleCase):
         self.cache("acme/app", 12)
         self.open_entry("s1", "pr:acme/app#12")
 
-    def test_g_opens_the_pull_request_in_a_browser_and_o_does_nothing(self) -> None:
-        # Catches `g` still read as Home, or `o` still opening the pull request.
+    def test_o_opens_the_pull_request_in_a_browser_and_shows_no_url_on_a_local_machine(self) -> None:
+        # Catches a local console that shows the URL even though the browser opened it.
         self.open_pull()
 
         self.press("o")
-        after_o = list(self.opened)
-        self.press("g")
 
-        self.assertEqual(([], ["https://github.com/acme/app/pull/12"], False),
-                         (after_o, self.opened, "https://github.com" in self.screen()))
-        self.assertIn("g: Open in GitHub", self.screen())
+        self.assertEqual((["https://github.com/acme/app/pull/12"], False),
+                         (self.opened, "https://github.com" in self.screen()))
 
     def test_a_remote_console_shows_the_whole_url_under_the_actions_until_the_next_key(self) -> None:
         # Catches a remote console opening a browser on the far machine, a URL cut at the window's edge, or one
@@ -331,10 +328,10 @@ class PullRequests(ConsoleCase):
                 self.console = self.new_console()
                 self.open_pull()
                 with mock.patch.dict(os.environ, {"PROJECTOR_REMOTE": "", **environ}):
-                    self.press("g")
+                    self.press("o")
                 body = self.console.lines(20)[0]
                 under = [line.text for line in body[[index for index, line in enumerate(body)
-                                                     if "g: Open in GitHub" in line.text][0] + 1:]]
+                                                     if "o: Open in GitHub" in line.text][0] + 1:]]
                 shown = "".join(under[:2])
                 self.press("down")
 
@@ -346,10 +343,34 @@ class PullRequests(ConsoleCase):
         # open where they sit.
         self.open_pull()
         with mock.patch.dict(os.environ, {"PROJECTOR_REMOTE": "0", "SSH_CONNECTION": "10.0.0.2 52000 10.0.0.1 22"}):
-            self.press("g")
+            self.press("o")
 
         self.assertEqual((["https://github.com/acme/app/pull/12"], False),
                          (self.opened, "https://github.com" in self.screen()))
+
+    def test_a_remote_console_sends_the_url_to_the_clipboard_with_osc_52_and_a_local_one_sends_nothing(self) -> None:
+        # Catches a sequence the terminal would not read, the wrong base64, a tmux passthrough that tmux would swallow,
+        # a sequence sent again on the next draw, or any bytes a local console writes.
+        encoded = "aHR0cHM6Ly9naXRodWIuY29tL2FjbWUvYXBwL3B1bGwvMTI="
+        plain = f"\x1b]52;c;{encoded}\x07"
+        for environ, expected in (({"PROJECTOR_REMOTE": "1", "TMUX": ""}, plain),
+                                  ({"PROJECTOR_REMOTE": "1", "TMUX": "/tmp/tmux-501/default,1234,0"},
+                                   f"\x1bPtmux;\x1b\x1b]52;c;{encoded}\x07\x1b\\"),
+                                  ({"PROJECTOR_REMOTE": "0", "TMUX": ""}, "")):
+            with self.subTest(environ=environ):
+                self.opened.clear()
+                self.console = self.new_console()
+                out = io.StringIO()
+                screen = console.Screen(FakeWindow(30, 100), self.console, FakeCurses, out)
+                self.open_pull()
+                with mock.patch.dict(os.environ, environ):
+                    self.press("o")
+                    screen.draw()
+                    screen.draw()
+
+                self.assertEqual((expected, bool(expected)),
+                                 (out.getvalue(),
+                                  "Sent to your clipboard where your terminal allows it" in self.screen()))
 
     def test_a_local_open_that_fails_shows_the_url(self) -> None:
         # Catches a failed open, which `webbrowser.open` reports by returning False or raising, leaving the person
@@ -358,7 +379,7 @@ class PullRequests(ConsoleCase):
             with self.subTest(fails=fails):
                 self.console = console.Console(self.root, clock=self.clock, gh=self.gh, open_url=fails)
                 self.open_pull()
-                self.press("g")
+                self.press("o")
 
                 self.assertIn("https://github.com/acme/app/pull/12", self.screen())
 
@@ -574,7 +595,7 @@ class Ring(ConsoleCase):
             self.press("down")
             seen.append(self.focused())
 
-        self.assertEqual([["#12"], ["7: Discuss"], ["8: Dismiss"], ["g: Open in GitHub"], ["- Decline the finding?"]],
+        self.assertEqual([["#12"], ["7: Discuss"], ["8: Dismiss"], ["o: Open in GitHub"], ["- Decline the finding?"]],
                          seen)
         self.assertEqual("pr:acme/app#12", self.console.drawer)
 
@@ -742,15 +763,13 @@ class Scrolling(TerminalCase):
 
         self.press_terminal(FakeCurses.KEY_END)
         at_end = self.draw()
-        # `g` opens a pull request in GitHub, so it no longer scrolls a drawer back to its row.
         self.press("g")
-        after_g = self.draw()
-        self.press_terminal(FakeCurses.KEY_HOME)
+        self.terminal.draw()
         self.press(" ", "b")
         at_top = self.draw()
 
-        self.assertEqual((True, False, True, True, False),
-                         ("8: Dismiss" in at_end, "- Decline the finding?" in at_end, after_g == at_end,
+        self.assertEqual((True, False, True, False),
+                         ("8: Dismiss" in at_end, "- Decline the finding?" in at_end,
                           "- Decline the finding?" in at_top, "8: Dismiss" in at_top))
 
     def test_moving_the_highlight_scrolls_it_and_its_note_field_into_a_tall_drawers_view(self) -> None:
@@ -870,7 +889,7 @@ class Conversation(TerminalCase):
         self.clock.now += 1
         self.console.tick()
         stayed = self.draw()
-        self.press_terminal(FakeCurses.KEY_END)
+        self.press_terminal("G")
         self.say(path, ("agent", "One more answer."))
         self.clock.now += 1
         self.console.tick()
