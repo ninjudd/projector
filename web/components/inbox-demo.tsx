@@ -6,7 +6,7 @@ import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 // Its rows, drawers, digits, and colors follow docs/plugins.md, so a click
 // here does what a click does in the real panel, up to the prompt it fills.
 
-const WIDTH = 88;
+const WIDTH = 92;
 
 const color = {
   fg: "text-[#e8e6e3]",
@@ -30,8 +30,10 @@ type Kind = "question" | "request" | "notice";
 
 type ItemState = "open" | "dismissed" | "snoozed";
 
+type StartState = "none" | "starting" | "ready";
+
 type Item = {
-  id: Kind;
+  id: string;
   kind: Kind;
   subject: string;
   pr: string;
@@ -43,7 +45,7 @@ type Item = {
 
 const ITEMS: Item[] = [
   {
-    id: "question",
+    id: "lifetime",
     kind: "question",
     subject: "Decline the finding about the cache's lifetime?",
     pr: "#344",
@@ -59,13 +61,29 @@ const ITEMS: Item[] = [
     ],
   },
   {
-    id: "request",
+    id: "split",
+    kind: "question",
+    subject: "Split #347 into two pull requests?",
+    pr: "#347",
+    age: "9m",
+    detail: [
+      "#347 moves the settings screen into a sheet and also renames the",
+      "keys it stores. The rename touches every reader of the settings,",
+      "so a reviewer would hold two unrelated changes at once.",
+    ],
+    options: [
+      "Split it: move the screen first, rename the keys after",
+      "Keep it as one pull request",
+    ],
+  },
+  {
+    id: "ios",
     kind: "request",
-    subject: "Check the streamed export on your iPhone",
+    subject: "Try #345's build on your iPhone",
     pr: "#345",
     age: "1m",
     detail: [
-      "1. Open the app, then export the largest project you have.",
+      "1. Export the largest project you have.",
       "   The share sheet should appear within a second.",
       "2. Watch the progress bar. It should move steadily, not jump",
       "   from empty to full at the end.",
@@ -74,7 +92,22 @@ const ITEMS: Item[] = [
     start: "Install #345's build of the app on your iPhone and open it",
   },
   {
-    id: "notice",
+    id: "scope",
+    kind: "request",
+    subject: "Let gh push workflow changes",
+    pr: "#347",
+    age: "14m",
+    detail: [
+      "#347 edits .github/workflows/ci.yml, and GitHub refuses that push",
+      "without the workflow scope, which only you can grant.",
+      "",
+      "1. Run gh auth refresh -h github.com -s workflow",
+      "2. Approve the scope in the browser window it opens.",
+    ],
+    options: ["Done"],
+  },
+  {
+    id: "merged",
     kind: "notice",
     subject: "Merged main into #344 to clear a conflict",
     pr: "#344",
@@ -86,7 +119,21 @@ const ITEMS: Item[] = [
     ],
     options: [],
   },
+  {
+    id: "clean",
+    kind: "notice",
+    subject: "#341 came back clean and is ready for you to merge",
+    pr: "#341",
+    age: "22m",
+    detail: [
+      "The review of the head found nothing, so #341 carries the clean",
+      "label. Its two earlier findings were fixed in 9c2e41a.",
+    ],
+    options: [],
+  },
 ];
+
+type Finding = { line: string; who: string; text: string };
 
 type Row = {
   number: string;
@@ -96,16 +143,31 @@ type Row = {
   age: string;
   author?: string;
   draft?: boolean;
+  role: "fixer" | "reviewer";
+  branch: string;
+  add: number;
+  del: number;
+  files: number;
+  checks: [string, Color];
+  labels: [string, Color][];
+  findings: { file: string; threads: Finding[] }[];
 };
 
 const YOURS: Row[] = [
-  { number: "#341", state: "clean", tone: "green", title: "Retry failed webhook deliveries", age: "1h" },
   {
-    number: "#344",
-    state: "findings",
-    tone: "yellow",
-    title: "Cache the parsed config between runs",
-    age: "8m",
+    number: "#347",
+    state: "conflict",
+    tone: "red",
+    title: "Move settings into a sheet",
+    age: "6m",
+    role: "fixer",
+    branch: "settings-sheet",
+    add: 212,
+    del: 140,
+    files: 9,
+    checks: ["checks failing", "red"],
+    labels: [["ui", "blue"]],
+    findings: [],
   },
   {
     number: "#345",
@@ -114,6 +176,70 @@ const YOURS: Row[] = [
     title: "Stream the export instead of buffering",
     age: "2m",
     draft: true,
+    role: "fixer",
+    branch: "stream-export",
+    add: 96,
+    del: 41,
+    files: 4,
+    checks: ["checks passing", "green"],
+    labels: [],
+    findings: [],
+  },
+  {
+    number: "#344",
+    state: "findings",
+    tone: "yellow",
+    title: "Cache the parsed config between runs",
+    age: "8m",
+    role: "fixer",
+    branch: "config-cache",
+    add: 84,
+    del: 12,
+    files: 5,
+    checks: ["checks passing", "green"],
+    labels: [["bug", "red"]],
+    findings: [
+      {
+        file: "src/config/cache.ts",
+        threads: [
+          {
+            line: ":48",
+            who: "grace",
+            text: "P2 · The cache keeps a stale config after an edit",
+          },
+          {
+            line: ":91",
+            who: "grace",
+            text: "P3 · Name the unit of the lifetime setting",
+          },
+        ],
+      },
+      {
+        file: "docs/config.md",
+        threads: [
+          {
+            line: ":12",
+            who: "grace",
+            text: "P3 · Say where the cache file lives",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    number: "#341",
+    state: "clean",
+    tone: "green",
+    title: "Retry failed webhook deliveries",
+    age: "22m",
+    role: "fixer",
+    branch: "webhook-retry",
+    add: 142,
+    del: 18,
+    files: 6,
+    checks: ["checks passing", "green"],
+    labels: [["clean", "green"]],
+    findings: [],
   },
 ];
 
@@ -125,16 +251,43 @@ const THEIRS: Row[] = [
     title: "Add a dry-run flag to the importer",
     age: "20m",
     author: "ada",
+    role: "reviewer",
+    branch: "importer-dry-run",
+    add: 61,
+    del: 3,
+    files: 3,
+    checks: ["checks passing", "green"],
+    labels: [["reviewing", "orange"]],
+    findings: [],
   },
 ];
 
+// The inbox lists its items newest first, whatever their kind.
+const NEWEST_FIRST = [...ITEMS].sort(
+  (a, b) => parseInt(a.age, 10) - parseInt(b.age, 10),
+);
+
 const SNOOZE = ["15 min", "1 hour", "4 hours", "1 day"];
 
-type Open = { type: "pr"; number: string } | { type: "item"; id: Kind } | null;
+type Open =
+  { type: "pr"; number: string } | { type: "item"; id: string } | null;
 
-type StartState = "none" | "starting" | "ready";
+type Press = {
+  digit: string;
+  label: string;
+  recommended?: boolean;
+  onPress: () => void;
+};
 
-function Seg({ tone = "fg", className = "", children }: { tone?: Color; className?: string; children: ReactNode }) {
+function Seg({
+  tone = "fg",
+  className = "",
+  children,
+}: {
+  tone?: Color;
+  className?: string;
+  children: ReactNode;
+}) {
   return <span className={`${color[tone]} ${className}`}>{children}</span>;
 }
 
@@ -155,7 +308,7 @@ function Action({
     <button
       type="button"
       onClick={onPress}
-      className="rounded-[2px] text-left hover:bg-[#e8e6e3] hover:text-[#141414] focus-visible:bg-[#e8e6e3] focus-visible:text-[#141414] focus-visible:outline-none [&:hover>span]:text-[#141414] [&:focus-visible>span]:text-[#141414]"
+      className="rounded-[2px] text-left hover:bg-[#e8e6e3] focus-visible:bg-[#e8e6e3] focus-visible:outline-none [&:focus-visible>span]:text-[#141414] [&:hover>span]:text-[#141414]"
     >
       <span className={color.accent}>{digit}</span>
       <span className={color.fg}>: {label}</span>
@@ -167,25 +320,30 @@ function quote(subject: string): string {
   return `"${subject}"`;
 }
 
+const FRESH: Record<string, ItemState> = Object.fromEntries(
+  ITEMS.map((item) => [item.id, "open" as ItemState]),
+);
+
+const lineButton =
+  "block w-full text-left hover:bg-white/5 focus-visible:bg-white/10 focus-visible:outline-none";
+
 export function InboxDemo() {
-  const [open, setOpen] = useState<Open>({ type: "item", id: "question" });
-  const [states, setStates] = useState<Record<Kind, ItemState>>({
-    question: "open",
-    request: "open",
-    notice: "open",
-  });
+  const [open, setOpen] = useState<Open>(null);
+  const [states, setStates] = useState<Record<string, ItemState>>(FRESH);
   const [snoozing, setSnoozing] = useState(false);
   const [confirmDismiss, setConfirmDismiss] = useState(false);
   const [dismissedRows, setDismissedRows] = useState<string[]>([]);
-  const [files, setFiles] = useState<Record<string, boolean>>({ cache: true, docs: false });
+  const [openFiles, setOpenFiles] = useState<string[]>(["src/config/cache.ts"]);
   const [start, setStart] = useState<StartState>("none");
   const [prompt, setPrompt] = useState("");
-  // A started request reads starting until the agent is done, then ready.
+
+  // A started request reads starting until the agent has installed the
+  // build, then ready.
   useEffect(() => {
     if (start !== "starting") return;
     const timer = setTimeout(() => {
       setStart("ready");
-    }, 1600);
+    }, 1800);
     return () => {
       clearTimeout(timer);
     };
@@ -197,59 +355,56 @@ export function InboxDemo() {
     setConfirmDismiss(false);
   }
 
-  function toggle(next: Open) {
+  function toggle(next: Exclude<Open, null>) {
     setSnoozing(false);
     setConfirmDismiss(false);
-    if (open && next && open.type === next.type) {
-      if (
-        (open.type === "pr" && next.type === "pr" && open.number === next.number) ||
-        (open.type === "item" && next.type === "item" && open.id === next.id)
-      ) {
-        setOpen(null);
-        return;
-      }
-    }
-    setOpen(next);
+    const same =
+      open !== null &&
+      ((open.type === "pr" &&
+        next.type === "pr" &&
+        open.number === next.number) ||
+        (open.type === "item" && next.type === "item" && open.id === next.id));
+    setOpen(same ? null : next);
   }
 
-  function setState(id: Kind, state: ItemState) {
+  function setState(id: string, state: ItemState) {
     setStates((current) => ({ ...current, [id]: state }));
   }
 
   function reset() {
-    setOpen({ type: "item", id: "question" });
-    setStates({ question: "open", request: "open", notice: "open" });
+    setOpen(null);
+    setStates(FRESH);
     setSnoozing(false);
     setConfirmDismiss(false);
     setDismissedRows([]);
-    setFiles({ cache: true, docs: false });
+    setOpenFiles(["src/config/cache.ts"]);
     setStart("none");
     setPrompt("");
   }
 
-  const openItem = open?.type === "item" ? ITEMS.find((item) => item.id === open.id) : undefined;
-  const counts = {
-    question: states.question === "open" ? 1 : 0,
-    request: states.request === "open" ? 1 : 0,
-    notice: states.notice === "open" ? 1 : 0,
-  };
+  const openItem =
+    open?.type === "item"
+      ? ITEMS.find((item) => item.id === open.id)
+      : undefined;
   const yours = YOURS.filter((row) => !dismissedRows.includes(row.number));
+  const theirs = THEIRS.filter((row) => !dismissedRows.includes(row.number));
+  const count = (kind: Kind) =>
+    ITEMS.filter((item) => item.kind === kind && states[item.id] === "open")
+      .length;
+  const plural = (n: number, word: string) =>
+    n ? `${String(n)} ${word}${n === 1 ? "" : "s"}` : "";
   const header = [
-    `${String(yours.length)} pull request${yours.length === 1 ? "" : "s"}`,
-    "1 review request",
-    counts.question ? "1 question" : "",
-    counts.request ? "1 request" : "",
-    counts.notice ? "1 notice" : "",
+    plural(yours.length, "pull request"),
+    plural(theirs.length, "review request"),
+    plural(count("question"), "question"),
+    plural(count("request"), "request"),
+    plural(count("notice"), "notice"),
   ]
     .filter(Boolean)
     .join(" · ");
 
-  // The options an item's drawer offers, and what each does when pressed.
-  function itemOptions(
-    item: Item,
-  ): { digit: string; label: string; recommended?: boolean; onPress: () => void }[] {
-    const state = states[item.id];
-    if (state !== "open") return [];
+  function itemOptions(item: Item): Press[] {
+    if (states[item.id] !== "open") return [];
     if (snoozing) {
       return SNOOZE.map((length, index) => ({
         digit: String(index + 1),
@@ -260,8 +415,7 @@ export function InboxDemo() {
         },
       }));
     }
-    const list: { digit: string; label: string; recommended?: boolean; onPress: () => void }[] =
-      [];
+    const list: Press[] = [];
     let digit = 1;
     if (item.start && start === "none") {
       list.push({
@@ -285,16 +439,46 @@ export function InboxDemo() {
     return list;
   }
 
-  function itemActions(item: Item): { digit: string; label: string; onPress: () => void }[][] {
+  function itemActions(item: Item): Press[][] {
     const state = states[item.id];
     if (snoozing) {
-      return [[{ digit: "9", label: "Cancel", onPress: () => { setSnoozing(false); } }]];
+      return [
+        [
+          {
+            digit: "9",
+            label: "Cancel",
+            onPress: () => {
+              setSnoozing(false);
+            },
+          },
+        ],
+      ];
     }
     if (state === "dismissed") {
-      return [[{ digit: "8", label: "Restore", onPress: () => { setState(item.id, "open"); } }]];
+      return [
+        [
+          {
+            digit: "8",
+            label: "Restore",
+            onPress: () => {
+              setState(item.id, "open");
+            },
+          },
+        ],
+      ];
     }
     if (state === "snoozed") {
-      return [[{ digit: "9", label: "Unsnooze", onPress: () => { setState(item.id, "open"); } }]];
+      return [
+        [
+          {
+            digit: "9",
+            label: "Unsnooze",
+            onPress: () => {
+              setState(item.id, "open");
+            },
+          },
+        ],
+      ];
     }
     return [
       [
@@ -340,8 +524,8 @@ export function InboxDemo() {
       event.preventDefault();
       return;
     }
-    const actions = [...itemOptions(openItem), ...itemActions(openItem).flat()];
-    const match = actions.find((action) => action.digit === event.key);
+    const presses = [...itemOptions(openItem), ...itemActions(openItem).flat()];
+    const match = presses.find((press) => press.digit === event.key);
     if (match) {
       match.onPress();
       event.preventDefault();
@@ -353,31 +537,48 @@ export function InboxDemo() {
     return item.kind === "notice" ? "inactive" : item.kind;
   }
 
-  function itemTail(item: Item): string {
-    const status = item.start && start !== "none" ? `${start}  ` : "";
-    return `${status}${item.pr}  ${item.age}`;
+  function statusOf(item: Item): string {
+    return item.start && start !== "none" ? start : "";
   }
 
-  function itemLine(item: Item, bullet: string): ReactNode {
-    const left = `   ${bullet} ${item.subject}`;
-    const tail = itemTail(item);
+  function tail(item: Item): ReactNode {
+    const status = statusOf(item);
+    return (
+      <>
+        {status ? (
+          <Seg tone={start === "ready" ? "green" : itemTone(item)}>
+            {status}{" "}
+          </Seg>
+        ) : null}
+        <Seg tone={itemTone(item)}>{`${item.pr}  ${item.age}`}</Seg>
+      </>
+    );
+  }
+
+  function tailLength(item: Item): number {
+    const status = statusOf(item);
+    return (
+      (status ? status.length + 1 : 0) + item.pr.length + 2 + item.age.length
+    );
+  }
+
+  function itemLine(item: Item) {
+    const left = `   - ${item.subject}`;
     const struck = states[item.id] === "dismissed";
-    const startTone: Color = start === "ready" ? "green" : itemTone(item);
-    const status = item.start && start !== "none" ? start : "";
     return (
       <button
+        key={item.id}
         type="button"
         onClick={() => {
           toggle({ type: "item", id: item.id });
         }}
-        className="block w-full text-left hover:bg-white/5 focus-visible:bg-white/10 focus-visible:outline-none"
+        className={lineButton}
       >
         <Seg tone={itemTone(item)} className={struck ? "line-through" : ""}>
           {left}
         </Seg>
-        {spaces(WIDTH - left.length - tail.length)}
-        {status ? <Seg tone={startTone}>{status}  </Seg> : null}
-        <Seg tone={itemTone(item)}>{`${item.pr}  ${item.age}`}</Seg>
+        {spaces(WIDTH - left.length - tailLength(item))}
+        {tail(item)}
       </button>
     );
   }
@@ -393,13 +594,15 @@ export function InboxDemo() {
           onClick={() => {
             toggle({ type: "pr", number: row.number });
           }}
-          className="block w-full text-left hover:bg-white/5 focus-visible:bg-white/10 focus-visible:outline-none"
+          className={lineButton}
           aria-expanded={isOpen}
         >
           {"   "}
-          <Seg className={`${row.draft ? "italic" : ""} ${isOpen ? "bg-[#e8e6e3] !text-[#141414]" : ""}`}>
+          <span
+            className={`${row.draft ? "italic" : ""} ${isOpen ? "bg-[#e8e6e3] text-[#141414]" : color.fg}`}
+          >
             {row.number}
-          </Seg>{" "}
+          </span>{" "}
           <Seg tone={row.tone} className={row.draft ? "italic" : ""}>
             {row.state}
           </Seg>{" "}
@@ -408,134 +611,115 @@ export function InboxDemo() {
           {spaces(WIDTH - left.length - row.age.length)}
           <Seg tone="subtle">{row.age}</Seg>
         </button>
-        {isOpen && row.number === "#344" ? prDrawer(row) : null}
-        {isOpen && row.number !== "#344" ? simpleDrawer(row) : null}
+        {isOpen ? prDrawer(row) : null}
       </div>
-    );
-  }
-
-  function drawerActions(row: Row) {
-    const pad = "        ";
-    if (confirmDismiss) {
-      return (
-        <span className="block">
-          {pad}
-          <Action
-            digit="8"
-            label="Yes, dismiss it"
-            onPress={() => {
-              setDismissedRows((current) => [...current, row.number]);
-              close();
-            }}
-          />
-          {"  "}
-          <Action
-            digit="9"
-            label="No, keep it"
-            onPress={() => {
-              setConfirmDismiss(false);
-            }}
-          />
-        </span>
-      );
-    }
-    return (
-      <span className="block">
-        {pad}
-        <Action
-          digit="7"
-          label="Discuss"
-          onPress={() => {
-            setPrompt(`${row.number} `);
-          }}
-        />
-        {"  "}
-        <Action
-          digit="8"
-          label="Dismiss"
-          onPress={() => {
-            setConfirmDismiss(true);
-          }}
-        />
-      </span>
-    );
-  }
-
-  function links() {
-    return (
-      <span className="block">
-        {"        "}
-        <Seg className="underline decoration-white/30 underline-offset-2">open in github</Seg>
-        {"  "}
-        <Seg className="underline decoration-white/30 underline-offset-2">open in projector</Seg>
-      </span>
     );
   }
 
   function prDrawer(row: Row) {
+    const pad = "        ";
     return (
       <div>
         <span className="block">
-          {"        "}
-          <Seg tone="fixer">fixer</Seg> · <Seg tone="cyan">config-cache</Seg> ·{" "}
-          <Seg tone="green">+84</Seg> <Seg tone="red">−12</Seg> in 5 files ·{" "}
-          <Seg tone="green">checks passing</Seg> · <Seg tone="red">bug</Seg>
+          {pad}
+          <Seg tone={row.role === "fixer" ? "fixer" : "accent"}>
+            {row.role}
+          </Seg>{" "}
+          · <Seg tone="cyan">{row.branch}</Seg> ·{" "}
+          <Seg tone="green">+{row.add}</Seg> <Seg tone="red">−{row.del}</Seg> in{" "}
+          {row.files} files · <Seg tone={row.checks[1]}>{row.checks[0]}</Seg>
+          {row.labels.map(([name, tone]) => (
+            <span key={name}>
+              {" "}
+              · <Seg tone={tone}>{name}</Seg>
+            </span>
+          ))}
         </span>
-        {drawerActions(row)}
-        {links()}
-        <button
-          type="button"
-          onClick={() => {
-            setFiles((current) => ({ ...current, cache: !current.cache }));
-          }}
-          className="block w-full text-left hover:bg-white/5"
-        >
-          {"        "}
-          {files.cache ? "-" : "+"} src/config/cache.ts <Seg tone="yellow">2 findings</Seg>
-        </button>
-        {files.cache ? (
-          <>
-            <span className="block">
-              {"          "}:48 · grace · P2 · The cache keeps a stale config after an edit
-            </span>
-            <span className="block">
-              {"          "}:91 · grace · P3 · Name the unit of the lifetime setting
-            </span>
-          </>
-        ) : null}
-        <button
-          type="button"
-          onClick={() => {
-            setFiles((current) => ({ ...current, docs: !current.docs }));
-          }}
-          className="block w-full text-left hover:bg-white/5"
-        >
-          {"        "}
-          {files.docs ? "-" : "+"} docs/config.md <Seg tone="yellow">1 finding</Seg>
-        </button>
-        {files.docs ? (
-          <span className="block">
-            {"          "}:12 · grace · P3 · Say where the cache file lives
-          </span>
-        ) : null}
-      </div>
-    );
-  }
-
-  function simpleDrawer(row: Row) {
-    const role = row.author ? "reviewer" : "fixer";
-    return (
-      <div>
         <span className="block">
-          {"        "}
-          <Seg tone={row.author ? "accent" : "fixer"}>{role}</Seg> ·{" "}
-          <Seg tone="cyan">{row.author ? "importer-dry-run" : "webhook-retry"}</Seg> ·{" "}
-          <Seg tone="green">+{row.author ? "61" : "142"}</Seg>{" "}
-          <Seg tone="red">−{row.author ? "3" : "18"}</Seg> in {row.author ? "3" : "6"} files ·{" "}
-          <Seg tone="green">checks passing</Seg>
+          {pad}
+          {confirmDismiss ? (
+            <>
+              <Action
+                digit="8"
+                label="Yes, dismiss it"
+                onPress={() => {
+                  setDismissedRows((current) => [...current, row.number]);
+                  close();
+                }}
+              />
+              {"  "}
+              <Action
+                digit="9"
+                label="No, keep it"
+                onPress={() => {
+                  setConfirmDismiss(false);
+                }}
+              />
+            </>
+          ) : (
+            <>
+              <Action
+                digit="7"
+                label="Discuss"
+                onPress={() => {
+                  setPrompt(`${row.number} `);
+                }}
+              />
+              {"  "}
+              <Action
+                digit="8"
+                label="Dismiss"
+                onPress={() => {
+                  setConfirmDismiss(true);
+                }}
+              />
+            </>
+          )}
         </span>
-        {drawerActions(row)}
-        {links()}
+        <span className="block">
+          {pad}
+          <Seg className="underline decoration-white/30 underline-offset-2">
+            open in github
+          </Seg>
+          {"  "}
+          <Seg className="underline decoration-white/30 underline-offset-2">
+            open in projector
+          </Seg>
+        </span>
+        {row.findings.map((group) => {
+          const shown = openFiles.includes(group.file);
+          const n = group.threads.length;
+          return (
+            <div key={group.file}>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenFiles((current) =>
+                    shown
+                      ? current.filter((file) => file !== group.file)
+                      : [...current, group.file],
+                  );
+                }}
+                className={lineButton}
+              >
+                {pad}
+                {shown ? "-" : "+"} {group.file}{" "}
+                <Seg tone="yellow">
+                  {n} finding{n === 1 ? "" : "s"}
+                </Seg>
+              </button>
+              {shown
+                ? group.threads.map((thread) => (
+                    <span key={thread.line} className="block">
+                      {pad}
+                      {"  "}
+                      {thread.line} · {thread.who} · {thread.text}
+                    </span>
+                  ))
+                : null}
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -544,6 +728,12 @@ export function InboxDemo() {
     const options = itemOptions(item);
     const actions = itemActions(item);
     const state = states[item.id];
+    const label =
+      start === "none"
+        ? "Start:"
+        : start === "starting"
+          ? "Starting:"
+          : "Ready:";
     return (
       <div>
         <span className="block">
@@ -551,22 +741,20 @@ export function InboxDemo() {
           <button
             type="button"
             onClick={close}
-            className="hover:bg-[#e8e6e3] hover:text-[#141414] focus-visible:outline-none"
+            aria-label="Close the drawer"
+            className="hover:bg-[#e8e6e3] focus-visible:outline-none"
           >
             <Seg tone="accent">0</Seg>
           </button>
           <Seg tone={itemTone(item)}>: {item.subject}</Seg>
-          {spaces(WIDTH - 5 - item.subject.length - itemTail(item).length)}
-          {item.start && start !== "none" ? (
-            <Seg tone={start === "ready" ? "green" : itemTone(item)}>{start}  </Seg>
-          ) : null}
-          <Seg tone={itemTone(item)}>{`${item.pr}  ${item.age}`}</Seg>
+          {spaces(WIDTH - 5 - item.subject.length - tailLength(item))}
+          {tail(item)}
         </span>
         <span className="block"> </span>
         {item.detail.map((line, index) => (
           <span key={index} className="block">
             {"      "}
-            {line}
+            {line || " "}
           </span>
         ))}
         {item.start ? (
@@ -574,9 +762,7 @@ export function InboxDemo() {
             <span className="block"> </span>
             <span className="block">
               {"      "}
-              <Seg tone={start === "ready" ? "green" : "fg"}>
-                {start === "none" ? "Start:" : start === "starting" ? "Starting:" : "Ready:"}
-              </Seg>{" "}
+              <Seg tone={start === "ready" ? "green" : "fg"}>{label}</Seg>{" "}
               {item.start}
             </span>
           </>
@@ -591,7 +777,11 @@ export function InboxDemo() {
         {options.map((option) => (
           <span key={option.digit + option.label} className="block">
             {"      "}
-            <Action digit={option.digit} label={option.label} onPress={option.onPress} />
+            <Action
+              digit={option.digit}
+              label={option.label}
+              onPress={option.onPress}
+            />
             {option.recommended ? (
               <span className="block">
                 {"      "}
@@ -604,10 +794,14 @@ export function InboxDemo() {
         {actions.map((line, index) => (
           <span key={index} className="block">
             {"      "}
-            {line.map((action, position) => (
-              <span key={action.label}>
+            {line.map((press, position) => (
+              <span key={press.label}>
                 {position > 0 ? "  " : ""}
-                <Action digit={action.digit} label={action.label} onPress={action.onPress} />
+                <Action
+                  digit={press.digit}
+                  label={press.label}
+                  onPress={press.onPress}
+                />
               </span>
             ))}
           </span>
@@ -635,7 +829,7 @@ export function InboxDemo() {
             Reset
           </button>
         </div>
-        <div className="overflow-x-auto p-4 font-mono text-[12px] leading-6 whitespace-pre sm:px-5">
+        <div className="overflow-x-auto whitespace-pre p-4 font-mono text-[12px] leading-6 sm:px-5">
           <div className="w-max min-w-full">
             {openItem ? (
               itemDrawer(openItem)
@@ -644,15 +838,13 @@ export function InboxDemo() {
                 <span className="block">
                   <Seg tone="subtle">{"  /projector"}</Seg>
                   {spaces(WIDTH - 12 - header.length - 5)}
-                  <Seg tone="subtle">{header}  12s</Seg>
+                  <Seg tone="subtle">{header} 12s</Seg>
                 </span>
                 {yours.map(prRow)}
+                {theirs.length > 0 ? <span className="block"> </span> : null}
+                {theirs.map(prRow)}
                 <span className="block"> </span>
-                {THEIRS.map(prRow)}
-                <span className="block"> </span>
-                {ITEMS.map((item) => (
-                  <div key={item.id}>{itemLine(item, "-")}</div>
-                ))}
+                {NEWEST_FIRST.map(itemLine)}
               </>
             )}
             <span className="block">
@@ -669,7 +861,8 @@ export function InboxDemo() {
               prompt
             ) : (
               <span className="text-[#6b6b6b]">
-                Pick an option or Discuss, and the panel fills the prompt for you to send.
+                Pick an option or Discuss, and the panel fills the prompt for
+                you to send.
               </span>
             )}
             <span className="ml-px inline-block h-4 w-2 translate-y-0.5 animate-pulse bg-[#e8e6e3]/70" />
