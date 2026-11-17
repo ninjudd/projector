@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "Projector — project plans that live in Git";
+export const alt = "Projector — agents plan, build, and review. You merge.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -39,11 +39,11 @@ export default function Image() {
               maxWidth: 1000,
             }}
           >
-            Project plans that live in Git.
+            Agents plan, build, and review. You merge.
           </div>
           <div style={{ fontSize: 30, color: "#a5a094", maxWidth: 960 }}>
-            Each plan is a Markdown file under docs/projects/. Developers and
-            coding agents update it with the same CLI.
+            Plans live in the repository. Agents build them, review each
+            other&rsquo;s pull requests, and fix what the reviews find.
           </div>
         </div>
         <div

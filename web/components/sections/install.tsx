@@ -11,7 +11,8 @@ const rows: { title: string; body: ReactNode; commands: string[] }[] = [
     body: (
       <>
         Installs the <Code>project</Code> command from the newest release, and the plugin for
-        Claude Code and Codex, whichever you have. It needs Python 3.11 or newer, and no git. Run{" "}
+        Claude Code and Codex, whichever you have. It needs Python 3.11 or newer, Codex 0.107 or
+        newer if you use Codex, and no git. Run{" "}
         <Code>{INSTALL.upgrade}</Code> later to move everything to the newest release.
       </>
     ),

@@ -25,8 +25,8 @@ export function SiteFooter() {
         <div>
           <Logo />
           <p className="mt-4 max-w-sm text-sm leading-relaxed text-muted">
-            Git-native project plans for people and coding agents. Open source under the MIT
-            license.
+            Plans in Git, and coding agents that build them, review each other, and leave the
+            merge to you. Open source under the MIT license.
           </p>
           {version ? <p className="mt-4 font-mono text-xs text-faint">v{version}</p> : null}
         </div>
@@ -35,6 +35,7 @@ export function SiteFooter() {
           <FooterLink href={DOCS.convention}>Project convention</FooterLink>
           <FooterLink href={DOCS.cli}>CLI reference</FooterLink>
           <FooterLink href={DOCS.plugins}>Plugin guide</FooterLink>
+          <FooterLink href={DOCS.site}>Site guide</FooterLink>
           <FooterLink href={DOCS.reviewRepo}>review-repo</FooterLink>
           <FooterLink href={DOCS.fixPr}>fix-pr</FooterLink>
         </div>

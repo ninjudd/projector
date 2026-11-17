@@ -7,6 +7,18 @@ export const DOCS = {
   cli: `${GITHUB}/blob/main/docs/cli.md`,
   plugins: `${GITHUB}/blob/main/docs/plugins.md`,
   site: `${GITHUB}/blob/main/docs/site.md`,
+  panel: `${GITHUB}/blob/main/docs/plugins.md#see-your-sessions-pull-requests-in-projectors-panel`,
+  inbox: `${GITHUB}/blob/main/docs/cli.md#use-the-inbox`,
+  watch: `${GITHUB}/blob/main/docs/cli.md#watch-pull-requests`,
+  agents: `${GITHUB}/blob/main/docs/cli.md#message-other-agents`,
+  worktree: `${GITHUB}/blob/main/docs/cli.md#find-a-branchs-worktree`,
+  ios: `${GITHUB}/blob/main/docs/cli.md#put-an-ios-app-on-a-device`,
+  requireReview: `${GITHUB}/blob/main/docs/cli.md#require-a-clean-review-before-merge`,
+  work: `${GITHUB}/blob/main/skills/work/SKILL.md`,
+  cleanup: `${GITHUB}/blob/main/skills/cleanup/SKILL.md`,
+  reviewPr: `${GITHUB}/blob/main/skills/review-pr/SKILL.md`,
+  writing: `${GITHUB}/blob/main/skills/writing.md`,
+  testing: `${GITHUB}/blob/main/skills/testing.md`,
   convention: `${GITHUB}/blob/main/docs/projects/README.md`,
   reviewRepo: `${GITHUB}/blob/main/skills/review-repo/SKILL.md`,
   fixPr: `${GITHUB}/blob/main/skills/fix-pr/SKILL.md`,
@@ -17,14 +29,14 @@ export const DOCS = {
 // Projector's own Projector site, which its repository deploys from main.
 export const PROJECTOR_SITE = "https://ninjudd.com/projector/";
 
-// The example on the front page is a real project in ninjudd/trip.
-const TRIP = "https://github.com/ninjudd/trip";
+// The example on the front page is a real project in audiofield/field.
+const FIELD = "https://github.com/audiofield/field";
 
 export const EXAMPLE = {
-  repo: TRIP,
-  projects: `${TRIP}/tree/main/docs/projects`,
-  plan: `${TRIP}/blob/main/docs/projects/session-switcher/readme.md`,
-  pr: (number: number) => `${TRIP}/pull/${number}`,
+  repo: FIELD,
+  projects: `${FIELD}/tree/main/docs/projects`,
+  plan: `${FIELD}/blob/main/docs/projects/recording/readme.md`,
+  pr: (number: number) => `${FIELD}/pull/${number}`,
 };
 
 export const INSTALL = {
