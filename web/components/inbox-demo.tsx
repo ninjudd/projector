@@ -769,7 +769,6 @@ export function InboxDemo() {
           {spaces(WIDTH - 6 - item.subject.length - tailLength(item))}
           {tail(item)}
         </button>
-        <span className="block"> </span>
         {item.detail.map((line, index) => (
           <span key={index} className="block">
             {"      "}
