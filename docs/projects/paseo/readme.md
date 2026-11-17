@@ -56,14 +56,18 @@ session's deliverer, under a new deliverer value `paseo`. Every 5 seconds,
 and when an agent's turn ends, it takes the session's pull request events,
 claims the inbox lines the session is owed, sends them in one prompt with
 `agents.ref(id).send`, and marks them delivered. Agents keep posting
-through `project inbox`. The plugin needs no MCP server and changes nothing
-in Claude Code or Codex.
+through `project inbox`. The plugin needs no MCP server, and nothing in
+Claude Code or Codex changes beyond the CLI additions in § 2.5.
 
 ### 2.1 The flow
 
 1. An agent in Paseo posts an item with `project inbox ask`, `tell`, or
    `request`. The CLI finds the session in `--session`,
-   `PROJECTOR_SESSION`, or `CLAUDE_CODE_SESSION_ID`, as it does today.
+   `PROJECTOR_SESSION`, or `CLAUDE_CODE_SESSION_ID`. Today `project inbox`
+   reads only the first two, though `project watch` reads all three, so a
+   Claude agent's bare `ask` fails with `needs the posting session`; § 2.5
+   adds the third. A Codex agent passes its thread ID with `--session`, as
+   it does today.
 2. On its tick, the daemon side lists Paseo's agents, maps each one to its
    session (§ 2.4), and runs one `project inbox list --json` for every
    session's open items. It caches the result and serves it to the app
@@ -71,11 +75,17 @@ in Claude Code or Codex.
 3. The app shows the item as a pill on that agent's composer track, as
    § 2.2 describes. You open the pill's popover and then the item's drawer,
    and you press an option, Discuss, dismiss, or snooze.
-4. The app calls the RPC `projector.act`, and the daemon side runs the
-   matching command with the agent's session: `project inbox answer`,
-   `done`, `decline`, `unclear`, `start`, `discuss`, `dismiss`, `snooze`, or
-   `restore`. These are the same commands the console runs. The item shows
-   `sending`.
+4. The app calls the RPC `projector.act` with the item as the drawer showed
+   it, and the daemon side runs the matching command with the agent's
+   session: `project inbox answer`, `done`, `decline`, `unclear`, `start`,
+   `discuss`, `dismiss`, `snooze`, or `restore`. These record what the
+   console records. An answer or a request's outcome passes the subject and
+   choices the drawer showed as `--subject` and `--choices` (§ 2.5), as the
+   console passes them to the store, so an agent's revision after the
+   drawer drew the item records nothing: the command exits 65, and the app
+   redraws the item for you to choose again. `unclear` passes `--subject`
+   and `--detail`, and `start` passes `--action`, as they do today. The item
+   shows `sending`.
 5. The deliverer (§ 2.3) claims the line on its next tick, or as soon as the
    agent's turn ends, sends it as a prompt, and marks it delivered. The
    agent hears `ANSWER 3.a …` as a new turn, exactly as it does in Claude
@@ -149,13 +159,13 @@ is listed.
 | `paseo/server/cli.ts` | Runs `project` with arguments, never through a shell, and parses its JSON. |
 | `paseo/server/deliverer.ts` | § 2.3, with its claims and pending events per agent. |
 | `paseo/server/sessions.ts` | § 2.4. |
-| `paseo/shared/rpc.ts` | `projector.items`, `projector.rows`, and `projector.act` contracts, in Zod. |
+| `paseo/shared/rpc.ts` | `projector.items`, `projector.rows`, and `projector.act` contracts, in Zod. `projector.act` carries the item's subject, detail, choices, and start action as the app drew them. |
 | `paseo/index.client.tsx`, `paseo/client/*.tsx` | The surfaces in § 2.2, styled with `theme.colors` so they work in light and dark themes. |
 | `paseo/test/*.test.ts` | The deliverer and session mapping against a fake Paseo API and a fake `project`. |
 | `src/projector/watch.py` | Adds `paseo` to `DELIVERERS`, and a `renew` mode that refuses while another deliverer's renewal is live. |
-| `src/projector/cli.py` | Adds `--if-free` to `project watch renew`. Adds `project inbox owed [--session] --json`, which prints each owed line's reference and text from `inbox.undelivered`, for every session when no session is given. Adds `project watch rows --session --json`, which prints `rows.rows_for`, the pull request rows the console shows. |
+| `src/projector/cli.py` | Makes `inbox_session` fall back on `CLAUDE_CODE_SESSION_ID` for the `inbox` commands that require a session (`ask`, `tell`, `request`, `watch`, and `discuss` without a number), as `watch.session_for` does, while `list`, `answer`, and the others that look a number up in every session keep reading only `--session` and `PROJECTOR_SESSION`. Adds `--subject` and `--choices`, a JSON array, to `project inbox answer` and `done`, which pass them to `inbox.answer` and `inbox.done` so `refuse_changed` checks them under the inbox lock. Adds `--if-free` to `project watch renew`. Adds `project inbox owed [--session] --json`, which prints each owed line's reference and text from `inbox.undelivered`, for every session when no session is given. Adds `project watch rows --session --json`, which prints `rows.rows_for`, the pull request rows the console shows. |
 | `.github/workflows/check.yml` | Runs `npm ci`, the type check, and the tests in `paseo/`. |
-| `docs/cli.md` | Documents `owed`, `watch rows`, `renew --if-free`, and the `paseo` deliverer, including `events: paseo` in `project watch add`. |
+| `docs/cli.md` | Documents `owed`, `watch rows`, `renew --if-free`, the `CLAUDE_CODE_SESSION_ID` fallback for posting, `answer` and `done`'s `--subject` and `--choices`, and the `paseo` deliverer, including `events: paseo` in `project watch add`. |
 | `paseo/README.md` | Installing, enabling plugins, and developing, as docket's README does. |
 
 ## 3. Why this design
@@ -196,6 +206,7 @@ is listed.
 | --- | --- |
 | A Claude agent in Paseo runs `project inbox ask "Ship it?" --recommend "Yes"` | A `Projector 1` pill appears on that agent's composer within 5 seconds, on desktop and on the phone app. |
 | Press the recommended option in the popover | The agent's next turn starts with `ANSWER <ref>.a Ship it? → Yes`, and `project inbox list` shows the item delivered. |
+| Have the agent revise the question's option a while its drawer is open, then press the old option a | Nothing is recorded, the popover says the item changed, and it shows the revised option a. |
 | Answer while the agent is mid-turn | The answer arrives as the turn after the current one ends, not as an error and not twice. |
 | Answer from `project console` instead | The same agent hears it, through the plugin. |
 | `project watch add --json` a pull request, then push a review to it | `add` reports `"delivery": "paseo"`, and the agent hears the event as a turn. |
@@ -214,6 +225,15 @@ Tests that fail before the change:
   unset maps to `persistence.sessionId`, and a `pi` agent maps to none.
 - `tests/test_inbox.py`: `project inbox owed --json` lists a claimed line
   only after its claim lapses, the same rule `undelivered` enforces.
+- `tests/test_inbox.py`: with only `CLAUDE_CODE_SESSION_ID` set,
+  `project inbox ask` posts under that session, and `project inbox list`
+  still lists every session's items. This catches the bare `ask` that the
+  first acceptance case runs.
+- `tests/test_inbox.py`: after `revise` changes option a,
+  `project inbox answer 3.a --subject <old> --choices <old>` exits 65 and
+  records no answer, and `done` with a revised request's old choices does
+  the same. This catches a press on a stale drawer recording a different
+  answer.
 - `tests/test_watch.py`: `renew --deliverer paseo --if-free` exits 65 and
   leaves `session.json` unchanged while `mod` renewed the session within the
   lapse, and renews once that renewal has lapsed. This catches a plugin
@@ -239,8 +259,9 @@ Tests that fail before the change:
    answers to the first two open questions in § 7, with evidence, in this
    plan's § 8. Move the status to `ready` once they are settled.
 2. **CLI.** `paseo` in `DELIVERERS`, `renew --if-free`,
-   `project inbox owed`, `project watch rows`, their tests, and
-   `docs/cli.md`. Each works alone.
+   `project inbox owed`, `project watch rows`, the inbox's
+   `CLAUDE_CODE_SESSION_ID` fallback, `answer` and `done`'s `--subject` and
+   `--choices`, their tests, and `docs/cli.md`. Each works alone.
 3. **Plugin.** `paseo/`, its tests, the Check workflow step, and its
    README.
 
