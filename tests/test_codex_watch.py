@@ -676,8 +676,8 @@ else:
         self.assertIn("DISCUSS 1 Decline the finding? → Why decline?", self.sent()[0])
         self.assertIn("DISCUSS 1 Decline the finding? → What does the budget cost?", self.sent()[1])
         item = self.item()
-        self.assertEqual((None, None, [True, True]),
-                         (item.get("answer"), item.get("deliveredAt"), ["deliveredAt" in said for said in item["thread"]]))
+        delivered = ["deliveredAt" in said for said in item["thread"]]
+        self.assertEqual((None, None, [True, True]), (item.get("answer"), item.get("deliveredAt"), delivered))
 
     def test_recording_an_answer_starts_the_daemon_for_a_codex_session(self):
         # Catches an answer that waits for the session's next hook while the daemon is down.

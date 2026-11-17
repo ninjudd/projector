@@ -11,10 +11,11 @@ text in place. An item the person dismissed, declined, or snoozed can be restore
 it in place. A discussion is an item the person starts, about a pull request or about the session
 itself, and every item can carry a thread: the person's messages, each of which goes back to the
 agent as `DISCUSS`, and the agent's replies, which the person reads where the item is shown. Each
-session numbers its items 1, 2, 3, and on, in one count across every kind. Its items are JSON files in their own directory, one per item and named by its number, with
-`count.json` holding the last number given. Every write happens under the directory's lock, an
-operating-system lock on its `.lock` file, and lands by renaming a temporary file into place, so
-two writers never lose each other's change and a reader never sees half a file.
+session numbers its items 1, 2, 3, and on, in one count across every kind. Its items are JSON
+files in their own directory, one per item and named by its number, with `count.json` holding the
+last number given. Every write happens under the directory's lock, an operating-system lock on its
+`.lock` file, and lands by renaming a temporary file into place, so two writers never lose each
+other's change and a reader never sees half a file.
 """
 
 from __future__ import annotations
@@ -600,11 +601,11 @@ def record_dismissal(item: dict, withdrawn: bool, said: dict) -> None:
 
 def dismiss(session: Optional[str], ref: str, withdrawn: bool = False) -> dict:
     """Dismiss an item. A dismissed question or request waits for its deliverer to tell the agent; a
-    dismissed notice or discussion has nothing to send, so it is delivered at once. Dismissing a request declines
-    it, with no text. A `withdrawn` item, which the agent that posted it took back, is delivered at
-    once too, because that agent already knows. So is an item dismissed again before any deliverer
-    claimed the `RESTORED` line its restore owes, because the last line its agent heard said
-    `DISMISSED` or `DECLINED`."""
+    dismissed notice or discussion has nothing to send, so it is delivered at once. Dismissing a
+    request declines it, with no text. A `withdrawn` item, which the agent that posted it took back,
+    is delivered at once too, because that agent already knows. So is an item dismissed again before
+    any deliverer claimed the `RESTORED` line its restore owes, because the last line its agent heard
+    said `DISMISSED` or `DECLINED`."""
     return update(session, ref, lambda item: record_dismissal(item, withdrawn, {}), is_open)
 
 

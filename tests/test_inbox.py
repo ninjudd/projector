@@ -1511,7 +1511,8 @@ class ThreadTests(InboxCase):
         # Catches a session discussion missing from the CLI, or a call naming both targets that picks one.
         self.assertEqual("2", self.discuss("--text", "hello"))
         self.assertEqual("3", self.discuss("--pr", "acme/app#12", "--text", "Why the retry?"))
-        self.assertEqual([("discussion", None, "About this session"), ("discussion", "acme/app#12", "About acme/app#12")],
+        self.assertEqual([("discussion", None, "About this session"),
+                          ("discussion", "acme/app#12", "About acme/app#12")],
                          [(self.item(ref)["kind"], self.item(ref)["pr"], self.item(ref)["subject"]) for ref in (2, 3)])
         before = (self.item(3), (self.folder() / "count.json").read_text())
         code, out, err = self.cli("discuss", "3", "--pr", "acme/app#12", "--text", "more")
