@@ -1,0 +1,67 @@
+{
+ "version": 1,
+ "name": "Phone console plan",
+ "project": "console/phone",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 526,
+  "title": "Plan answering agents from an iPhone app over the relay",
+  "head": "ab8d0de0a1b6c0f86e4d4d310d9f0c142ddf14f1",
+  "headRef": "spec/console-phone",
+  "base": "40d89216306ee2e1399d0b9b10de281825cea17e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The terminal console gives you a local view of agents waiting for your answer. This draft plan adds an iPhone view that reads encrypted records from GitHub and sends your signed answers back to each session.",
+   "The phone holds a signing key that stays in its Secure Enclave. A separate push service receives only an encrypted notification and an opaque device identifier. The plan keeps repository discovery, the service domain, and distribution open; its draft status makes no implementation-readiness claim."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Keys and records",
+    "html": "<ul class=\"tight\"><li><b>Relay key:</b> the shared key that encrypts records across your machines. Agents can read it, so it does not prove your authority.</li><li><b>Phone signing key:</b> a private key held by the phone; each machine registers its public key to verify your actions.</li><li><b>Push ID:</b> the device token encrypted by the notification service, so the service needs no registration database.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "phone-plan",
+   "title": "Answer sessions through the relay",
+   "kicker": "Phone authority, encrypted state, and notifications",
+   "intro": [
+    "The plan publishes open inbox items and session subscriptions through the relay, the encrypted records stored in GitHub refs. The phone reads those records and signs actions together with their destination identities, which each receiving machine verifies before importing through the console’s inbox functions.",
+    "A minimal push service wakes the phone without reading notification text. The iPhone app and service share this repository with protocol fixtures; separate workflows and packaging checks keep their build requirements out of the Python CLI."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "This is a draft/later plan. Repository discovery, the hosted service domain, and distribution are explicit open questions, so they do not block this review."
+    },
+    {
+     "kind": "verify",
+     "text": "Project metadata validation, the configured review gate, and exact-head CI passed. The plan introduces no runnable phone or push-service implementation."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/console/phone/readme.md",
+     "collapsed": false,
+     "note": "Sections 2.1 and 2.2 define the action flow and signed fields; section 2.3 isolates the push service; sections 4 and 6 define checks and remaining decisions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 142,
+       "text": "The signed payload now includes repository, key ID, session relay ID, and record ID. The import flow compares them to the fetched destination before applying an action; the cross-session, cross-repository, and changed-record-ID acceptance cases cover the earlier finding."
+      },
+      {
+       "kind": "context",
+       "line": 332,
+       "text": "Repository discovery is deliberately undecided. The draft plan makes no readiness claim, so this question does not block review."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
