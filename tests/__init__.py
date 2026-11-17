@@ -18,6 +18,14 @@ atexit.register(shutil.rmtree, root, ignore_errors=True)
 for name in ("GITHUB_REPOSITORY", "GITHUB_ACTIONS"):
     os.environ.pop(name, None)
 
+# Git runs automatic maintenance in a detached background process after a
+# commit, fetch, or merge, and that process can still be adding and removing
+# files under `objects/` when `scratch.copy_of` copies a fixture, which fails the
+# copy. Command-line configuration outranks every config file, so no test's
+# repository can turn it back on.
+os.environ.update({"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "maintenance.auto", "GIT_CONFIG_VALUE_0": "false",
+                   "GIT_CONFIG_KEY_1": "gc.auto", "GIT_CONFIG_VALUE_1": "0"})
+
 # Claude Code sets this for every command it runs, and project review names it in
 # the signatures it writes, so a test that expects an effort sets one itself.
 os.environ.pop("CLAUDE_EFFORT", None)
