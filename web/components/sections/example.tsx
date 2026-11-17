@@ -148,20 +148,15 @@ export function Example() {
         </div>
       </div>
 
-      {/*
-        Drawn from the description of ninjudd/projector#24, the pull request
-        that planned Projector, and from the completion record in
-        docs/projects/projector/readme.md. Written in Justin's voice for him
-        to edit.
-      */}
+      {/* Written in Justin's voice for him to edit. */}
       <div className="mt-16 max-w-2xl border-t border-line pt-8">
         <h3 className="text-lg font-semibold tracking-tight text-fg">Why I built it</h3>
         <p className="mt-3 text-[15px] leading-relaxed text-muted">
-          Before Projector, the repositories I work in kept their plans in shared{" "}
-          <Code>now.md</Code>, <Code>next.md</Code>, and <Code>later.md</Code> files. Every branch
-          that changed a project&rsquo;s status edited the same three files, so unrelated branches
-          conflicted with each other, and the plans sat next to my personal agent configuration,
-          where nothing about them could be reused. Projector started as a plan for fixing that,
+          My plans used to live wherever I happened to write them: Linear, Apple Notes, Notion,
+          Google Docs, and Sheets. None of those places sat next to the code, so a coding agent
+          could read a plan only when I pasted it in, and nothing kept the plan current as the work
+          changed it. Projector keeps each plan in the repository it describes, where every clone,
+          every review, and every agent session can read it. It started as a plan of its own,
           written in the format it proposed, before the CLI existed.
         </p>
         <p className="mt-3 text-sm text-muted">

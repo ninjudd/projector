@@ -55,7 +55,7 @@ const steps: { title: string; invoke: string; body: ReactNode }[] = [
     ),
   },
   {
-    title: "You merge",
+    title: "You decide what merges",
     invoke: "/projector:finish count-in",
     body: (
       <>
