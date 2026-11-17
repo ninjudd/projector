@@ -59,9 +59,11 @@ answers back as signed records. Three changes make that safe:
   extension opens the sealed text on the device, so the service never sees
   what the item says.
 
-The app and the push service are open source in their own public
-repositories, so anyone can read the code that holds their GitHub token and
-their keys, and anyone can run the push service themselves.
+The app, in `ios/`, and the push service, in `services/push/`, live in this
+repository beside the protocol they share, so one pull request changes the
+daemon, the app, and their test vectors together. Being open source, they
+let anyone read the code that holds their GitHub token and their keys, and
+run the push service themselves.
 
 ### 2.1 Flow
 
@@ -138,20 +140,26 @@ An answer record also carries, inside the seal:
 
 ### 2.3 The push service
 
-The push service is a small HTTPS service with two calls and one table.
+The push service is a small HTTPS service with two calls and no storage.
+It is TypeScript on Node, whose standard library has the HTTP/2 client that
+Apple's push service requires and the ES256 signing its tokens use, so it
+has no runtime dependencies.
 
 | Call | Sent by | Body | What the service does |
 | --- | --- | --- | --- |
-| `POST /v1/register` | The app | Apple's device token | Stores the token under a new random 128-bit push ID and returns the ID. A later call with the same token returns the same ID |
-| `POST /v1/push` | The daemon | The push ID and the sealed notification, at most 2 KiB | Forwards the sealed text to the token's device through Apple's push service, and answers `202`. It answers `404` for an unknown ID and `429` past 60 notifications an hour for one ID |
+| `POST /v1/register` | The app | Apple's device token | Encrypts the token with the service's own secret key and returns the result as the push ID |
+| `POST /v1/push` | The daemon | The push ID and the sealed notification, at most 2 KiB | Decrypts the push ID to the device token and forwards the sealed text to it through Apple's push service, and answers `202`. It answers `404` for a push ID it cannot decrypt or that Apple reports as unregistered, and `429` past 60 notifications an hour for one push ID |
 
-The table maps each push ID to its device token and the time it was last
-used. The service drops an ID that Apple reports as unregistered, or that
-went unused for 90 days. It stores no notification and logs no body. A
-push ID reaches the daemon only inside `project agent phone add`, so knowing
-one is the only credential `POST /v1/push` asks for, and the rate limit
-caps what a leaked ID can do. `phone.push_url` in `~/.projector.toml` names
-the service, so anyone can run their own.
+A push ID is the device token itself, encrypted and authenticated so that
+only the service can read it and no one can forge one. So the service keeps
+no table and needs no database, and losing its host loses nothing but its
+secret key and Apple's push key, both from its environment. It stores no
+notification and logs no body. It counts each push ID's notifications in
+memory for the rate limit, which a restart resets. A push ID reaches the
+daemon only inside `project agent phone add`, so knowing one is the only
+credential `POST /v1/push` asks for, and the rate limit caps what a leaked
+ID can do. `phone.push_url` in `~/.projector.toml` names the service, so
+anyone can run their own.
 
 ### 2.4 Changes by repository
 
@@ -165,8 +173,10 @@ the service, so anyone can run their own.
 | `src/projector/permissions.py` | Asks before `project agent phone add` and `remove` in Claude Code, and leaves both to Codex's approval |
 | `tests/fixtures/relay/` | New. Sealed and signed records with their plaintexts, which the Python tests and the app's tests both check |
 | `docs/cli.md` | Describes the phone records, the commands, and what a leaked key exposes |
-| The app's repository | The SwiftUI app: GitHub sign-in, key join, the phone's keys, push registration, the notification service extension, ref reading and writing through GitHub's API, the seal, the row model, the home list, the panels, and background refresh |
-| The push service's repository | The two calls, the table, Apple push credentials from its environment, and a deploy recipe for one small host |
+| `ios/` | New. The SwiftUI app: GitHub sign-in, key join, the phone's keys, push registration, the notification service extension, ref reading and writing through GitHub's API, the seal, the row model, the home list, the panels, and background refresh. Its tests read `tests/fixtures/rows/` and `tests/fixtures/relay/` in place |
+| `services/push/` | New. The two calls, Apple's push key and the service's secret key from its environment, and a deploy recipe for one small host. It deploys on its own, never with `web/` |
+| `.github/workflows/` | A workflow for `ios/` on a macOS runner and one for `services/push/`, each run only when its directory or `tests/fixtures/` changes. The `check` job keeps its current scope |
+| `tests/test_packaging.py` | Pins that neither the wheel nor either plugin ships `ios/` or `services/` |
 
 ## 3. Why this design
 
@@ -198,10 +208,21 @@ the service, so anyone can run their own.
 - **The app and the push service are open source.** The app holds your
   GitHub token, your relay key, and the key that answers for you, and the
   service sees when you are notified. Users can trust them only if they can
-  read them, build the app, and run the service themselves. Separate
-  repositories keep Swift, Xcode, App Store releases, and a deployed service
-  out of this repository's Python and TypeScript gate, while the protocol
-  and its test vectors stay here.
+  read them, build the app, and run the service themselves.
+- **One repository.** The daemon, the app, and the service share one
+  protocol and one set of test vectors. Separate repositories would make
+  each protocol change a pair of pull requests that have to land in step,
+  and would copy the fixtures between them. In one repository, a change and
+  every side of it get one review, and the app's tests read the fixtures in
+  place. Swift needs macOS runners, so the app and the service get their own
+  workflows, run only when their directories or the fixtures change, and the
+  packaging tests keep both out of everything Projector ships.
+- **The push service stores nothing.** A push ID that is the encrypted
+  device token lets the service run with no database: it can be redeployed,
+  moved, or lost without losing anyone's registration, and it holds nothing
+  worth stealing beyond its two keys. It deploys apart from `web/`, so a
+  change to the marketing site cannot touch the service that sends
+  notifications.
 - **The row model is shared again.** The app computes rows from GitHub's
   answers, as the console computes them from the daemon's cache. The
   fixtures in `tests/fixtures/rows/` run through the app's model too, so a
@@ -234,8 +255,8 @@ the service, so anyone can run their own.
 - **The daemon's pushes.** Items change rarely, so publishing adds a few
   refs to the one push each relay pass already makes.
 - **The push service.** It handles one request per new item or reply, a
-  few hundred a day for a busy user, and stores one row per phone. One small
-  host or a serverless function covers many users. Apple charges nothing for
+  few hundred a day for a busy user, and stores nothing. One small host or
+  a serverless function covers many users. Apple charges nothing for
   push, but sending it needs an Apple developer account's push key.
 - **What a leaked relay key exposes.** A deleted ref's commit stays
   readable by its SHA on GitHub. Inbox items hold more detail than presence
@@ -259,8 +280,6 @@ the service, so anyone can run their own.
   uses by default, with `phone.push_url` for anyone who runs their own, is
   the recommendation. Its host, its domain, and the Apple push key it
   holds are the user's. Owner: the user.
-- **The repositories and names.** Separate public repositories for the app
-  and the push service are the recommendation (§ 3). Owner: the user.
 - **App Store distribution.** Publishing needs an Apple developer account
   and App Review. TestFlight can come first. Owner: the user.
 - **Messages to agents.** The phone could also send relay messages to an
