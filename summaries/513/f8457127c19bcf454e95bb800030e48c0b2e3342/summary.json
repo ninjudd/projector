@@ -1,0 +1,120 @@
+{
+ "version": 1,
+ "name": "Encrypted key pairing",
+ "project": "agent-messages/pairing",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 513,
+  "title": "Copy the relay key between machines with key join and key grant",
+  "head": "f8457127c19bcf454e95bb800030e48c0b2e3342",
+  "headRef": "agent-key-pairing",
+  "base": "8b9e135ee68cf2cf083caaf1f383da83b273d986",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The agent relay moves messages between your machines using one shared private key. Copying that key with the old export command put the secret itself on screen. This change replaces that transfer with an interactive exchange that copies a public request and an encrypted response.",
+   "<ol><li>Run <code>key join</code> on the new machine to create a temporary key held only in memory.</li><li>Run its printed <code>key grant</code> command on a machine that holds the relay key, compare the request fingerprint, and confirm.</li><li>Paste the encrypted response into the waiting join, compare the relay key ID, and confirm storage.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "boundaries",
+    "title": "What protects the key",
+    "html": "<ul class=\"tight\"><li>Both pairing commands require terminal input and output and explicit consent.</li><li>The response must decrypt for this request, and its sender must match the private key it carries.</li><li>Keychain failure stores no inline key unless you pass <code>--inline</code>.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Validation and remaining check",
+    "html": "The gate and exact-head CI passed, along with 83 focused pairing, cryptography, configuration, and permission tests. Another 70 key-storage, relay-exchange, agent, and packaging tests pass on Python 3.12.5. Their first run on Python 3.15.2 hits an existing mock-patch error, reproduced at the merge base. The completed plan defers a manual pairing and message exchange on two real machines until after merge."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "protocol",
+   "title": "Transfer the key inside an authenticated envelope",
+   "kicker": "Pairing formats and storage behavior",
+   "intro": [
+    "A pairing request carries the new machine’s temporary public key. The granting machine encrypts its relay private key to that public key using the existing relay encryption. The accepting machine verifies the authenticated sender matches the key carried inside before storing anything.",
+    "Key storage requires a functioning keychain unless the person explicitly chooses inline storage. Replacement saves the accepted key before deleting a different old keychain item."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/relay.py",
+     "note": "Defines canonical request and response formats, validates the carried key, and controls explicit key storage.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The pairing tests reject tampered responses, another request’s response, a mismatched carried key, and a substituted key whose ID is denied."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/keychain.py",
+     "note": "Exposes a tool/library availability check so join can refuse before printing a request when storage is unavailable."
+    }
+   ]
+  },
+  {
+   "id": "terminal",
+   "title": "Require a person to grant and accept the key",
+   "kicker": "Interactive CLI and regression tests",
+   "intro": [
+    "The command-line interface prints the complete grant command, reads bounded terminal lines with a deadline, and requires confirmation on each machine. The old export and import names now report a usage error directing you to join.",
+    "Tests use temporary homes and fake keychain tools. Pseudo-terminals exercise the interactive round trip, cancellation, and timeout without reading a real relay key."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Wires join and grant, enforces terminal checks, and removes plaintext export/import paths.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Focused tests cover terminal input/output requirements, default-no confirmation, timeout and interruption, and forbidden old key-setting commands."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_relay.py",
+     "note": "Adds pairing regressions and changes keychain-failure expectations to require explicit inline storage.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The existing Linux keychain test starts its mock patch twice without stopping it. That fails on Python 3.15.2 at both base and head, while the 70-test compatibility run passes on Python 3.12.5. The review lists a nonblocking suggestion to fix the test."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "guidance",
+   "title": "Document pairing and close the implementation plan",
+   "kicker": "User steps and agent boundaries",
+   "intro": [
+    "The documentation explains the two-terminal exchange and the meaning of fingerprints, relay key IDs, and inline storage. The message skill directs agents to tell the person which command to run rather than grant access themselves.",
+    "The pairing plan records implementation decisions and maps its acceptance criteria to tests. It is completed, with the real two-machine check explicitly deferred until after merge."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "README.md",
+     "note": "Replaces plaintext-copy instructions with the join/grant flow."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents pairing, explicit inline storage, refusal behavior, and key-command usage."
+    },
+    {
+     "path": "skills/message/SKILL.md",
+     "note": "Forbids agents from running key creation, pairing, grant, or removal commands."
+    },
+    {
+     "path": "docs/projects/agent-messages/pairing/readme.md",
+     "note": "Records implementation choices, test evidence, completion, and the deferred real-machine check."
+    }
+   ]
+  }
+ ]
+}
