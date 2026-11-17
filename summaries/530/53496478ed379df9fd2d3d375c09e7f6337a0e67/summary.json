@@ -1,0 +1,168 @@
+{
+ "version": 1,
+ "name": "Multi-session terminal console",
+ "project": "console",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 530,
+  "title": "Add project console, a terminal list of every live session that answers and discusses its items and pull requests",
+  "head": "53496478ed379df9fd2d3d375c09e7f6337a0e67",
+  "headRef": "console/tui",
+  "base": "396f0bc26e99d009ddf10a08ac1a80abdf7b7c5e",
+  "baseRef": "console/rows",
+  "basePr": 528
+ },
+ "overview": {
+  "summary": [
+   "Projector keeps pull request subscriptions and inbox items for each agent session. This layer adds <code>project console</code>, a terminal interface that lists live sessions and lets you open one session to answer items, send messages, and read its conversation.",
+   "The console records choices through the existing inbox functions and leaves delivery to each session’s own deliverer. Messages are one way: the agent answers in its normal conversation. A collapsed-by-default conversation section reads only human prompts, delivered inbox lines, and assistant text from the host’s local transcript."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "What the console shows",
+    "html": "<ul><li><b>Session:</b> one Claude Code or Codex conversation with live delivery.</li><li><b>Inbox item:</b> a question, request, notice, or one-way message stored for that session.</li><li><b>Drawer:</b> expanded detail and actions below a selected item or pull request.</li><li><b>Transcript:</b> the local JSON Lines file the host writes for its conversation.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Review result",
+    "html": "The configured gate, exact-head CI, metadata checks, and 439 focused tests passed. Both earlier findings are fixed: tall drawers scroll to their controls, and the test-free TerminalCase shares drawing helpers without collecting the scrolling tests twice."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "reader",
+   "title": "Read the host conversation without its internal records",
+   "kicker": "A bounded first read and incremental tail turn transcript entries into speech.",
+   "intro": [
+    "The new reader finds the Claude Code transcript or the Codex rollout registered for a session. It starts with at most the last 2 MiB, waits for incomplete JSON lines to finish, then reads only appended bytes. Replacing or truncating the transcript resets the reader.",
+    "Each host parser keeps the person’s text, the inbox lines sent on their behalf, and assistant text. Tool calls, results, reasoning, host instructions, and Projector pull request events are omitted. Made-up fixtures exercise both host formats without publishing real conversations."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/conversation.py",
+     "note": "Finds and incrementally reads session transcripts, filtering each host’s record format.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Focused tests verify host filtering, split-line buffering, replacement/truncation, tail boundaries, and transcript discovery."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_conversation.py",
+     "note": "Exercises transcript parsing and incremental file lifecycle against temporary files.",
+     "checks": []
+    },
+    {
+     "path": "tests/fixtures/conversation/claude.jsonl",
+     "note": "Made-up Claude Code speech, tools, thinking, plugin messages, and context records.",
+     "checks": []
+    },
+    {
+     "path": "tests/fixtures/conversation/codex.jsonl",
+     "note": "Made-up Codex message metadata, delivered inbox lines, tools, reasoning, and context records.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "console",
+   "title": "Browse sessions and follow a conversation",
+   "kicker": "The terminal model records choices and shows a per-session chat section.",
+   "intro": [
+    "The home list orders sessions by open questions and requests. A session panel shows cached pull requests, inbox items, and a conversation heading. Pressing <code>v</code> expands the conversation for that session, starts at its newest line, and follows new text until you scroll back.",
+    "Conversation reads run in the background only while shown. The console retains the newest 400 speech entries per session. Page keys scroll tall drawers or the conversation without closing them, and ordinary row movement still closes a drawer."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Session refresh, input, recording actions, conversation visibility, follow behavior, and terminal rendering.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The 439-test focused run covers session-specific recording, conversation visibility and follow behavior, delivery integration, and the earlier scrolling regression."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "Exercises the console model and real renderer with temporary state and a fake terminal.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Unittest discovery collects three scrolling tests and five conversation tests without overlap. The 439-test focused run passes and retains every distinct case."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "entry",
+   "title": "Expose the command without granting agents answer authority",
+   "kicker": "Terminal support and permission policy surround the existing recording path.",
+   "intro": [
+    "<code>project console</code> requires a terminal and Python’s curses module. It records through the inbox functions already used by the CLI, and wakes Codex delivery through the existing helper.",
+    "Because the console records the person’s answers and messages, Claude Code asks before an agent starts it. Codex’s automatic allow list leaves it to normal approval. The revised policy no longer carries the removed reply/read command surface."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Registers the command, checks terminal support, and passes the delivery wake helper.",
+     "checks": []
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds console ask rules while keeping it outside automatic Codex permission.",
+     "checks": []
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Verifies the console command asks or remains outside the host’s automatic allow rules.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Document messaging, conversation, and completion",
+   "kicker": "Guidance and website links describe the complete terminal workflow.",
+   "intro": [
+    "The CLI guide explains the home list, item drawers, one-way messages, conversation visibility and transcript sources, scrolling keys, delivery, and terminal requirements. The website and plugin guide point terminal and Codex users to the console.",
+    "The plan records the final implementation decisions and completion outcome, including transcript filtering and conversation acceptance cases. The reported real-terminal and CPU measurements are recorded evidence, not checks rerun in this review."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the console, one-way messages, conversation toggle, transcript readers, and permission rules.",
+     "checks": []
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Points terminal and Codex users to the console.",
+     "checks": []
+    },
+    {
+     "path": "docs/projects/console/readme.md",
+     "note": "Records conversation-reading decisions, acceptance cases, and the completed project outcome.",
+     "checks": []
+    },
+    {
+     "path": "web/components/sections/panel.tsx",
+     "note": "Names the console as the terminal counterpart of the panel.",
+     "checks": []
+    },
+    {
+     "path": "web/lib/links.ts",
+     "note": "Links the website to the console section in the CLI guide.",
+     "checks": []
+    }
+   ]
+  }
+ ]
+}

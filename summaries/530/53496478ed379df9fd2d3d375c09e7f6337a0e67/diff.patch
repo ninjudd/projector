@@ -1,0 +1,2623 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 75235950..261bdf78 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -111,6 +111,9 @@ what it did to each:
+     "Bash(project inbox decline *)",
+     "Bash(project inbox start *)",
+     "Bash(project inbox unclear *)",
++    "Bash(project inbox discuss *)",
++    "Bash(project console)",
++    "Bash(project console *)",
+     "Bash(project ios *allow-untrusted*)"
+   ]
+   ```
+@@ -133,7 +136,8 @@ what it did to each:
+   that you don't understand an item, or your choice to dismiss or put it
+   off, so an agent running one could answer its own question, mark its own
+   request done, consent to its own start action, or mark its own item
+-  unclear.
++  unclear. `discuss` sends the agent a message in your words, and
++  `project console` records all of these from a terminal, so they ask too.
+   Projector's panel runs them itself, not through an agent's shell, so
+   answering from the panel never asks. Claude Code checks ask rules before
+   allow rules, so an ask rule prompts for a command that `Bash(project *)`
+@@ -275,8 +279,9 @@ what it did to each:
+   drive, `project review gate`, `project site build` or `serve`,
+   `project ios build` or `logs`, which run the repository's build scripts or
+   `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,
+-  or `unclear`, which record your choice, or a command line that starts with an
+-  option, so Codex's usual approval
++  `unclear`, or `discuss`, which record your choice or words,
++  `project console`, whose terminal an agent could type answers into, or a
++  command line that starts with an option, so Codex's usual approval
+   decides them, in its sandbox. A command added to Projector later reaches
+   Codex once Projector names it and you run `init` again. To see what the
+   rules allow, run
+@@ -2867,6 +2872,129 @@ dismissed, withdrawn, or delivered too. `discuss` refuses a number together
+ with `--pr` and records nothing, and it needs `--session` to write about a
+ pull request or the session.
+ 
++## Use the console
++
++`project console` shows every live session in one terminal, and opens any one
++of them as a panel, where you answer its items, send it messages about its
++items and pull requests, and read its conversation.
++It works the same for Claude Code and Codex sessions, so it is how you answer
++a Codex session, which has no panel of its own. Run it in a split or a window
++of its own:
++
++```console
++$ tmux split-window -h project console
++```
++
++The console opens on the home list, one entry per live session. A session is
++live while its deliverer renews it: Projector's panel in Claude Code, shown
++as `claude`, or the watch daemon's Codex adapter, shown as `codex`. Each
++entry shows the session's name, or its short ID when it has none, its host,
++its repository and branch, and its summary, as `project agent list` shows
++them. Then come the counts of its pull requests, review requests, and open
++items, and the subject of its newest open item. The sessions that need you
++come first: those with open questions and requests, the most first, then the
++rest. Ties go to the session whose newest item is newest, then to the name.
++
++Press Enter on a session to open its panel. The panel lists the pull
++requests the session subscribes to, as Projector's panel does, then its
++inbox items, newest first, then its conversation. Each item line shows its
++subject, its state words (`sending`, `unclear`, and a request's `starting`,
++`ready`, or `blocked`), its pull request, and its age. Press Enter on a row
++to open its drawer:
++
++- **An item's drawer** shows the item's detail and each message you sent
++  about it, after `you:`, then its controls. A question offers `1` and on
++  for its options, the first marked `(recommended)`, and `t` to type an
++  answer of your own. A request offers `1: Start`, or `1: Retry` once its
++  agent reports it blocked, when it has a start action, and then its
++  outcomes, or `Done`. Every open item offers `6: I don't understand`,
++  `7: Discuss`, `8: Dismiss`, and `9: Snooze`, which asks for 15 minutes,
++  1 hour, 4 hours, or 1 day. A dismissed item offers `8: Restore`.
++- **A pull request's drawer** shows the session's role, the branch, the size,
++  the checks, and the labels, then the unresolved review threads by file.
++  `7` sends the session a message about the pull request, `8` asks before it
++  stops this session watching the pull request, `o` opens the pull request
++  on GitHub, and `p` opens its Projector summary when its description links
++  one.
++
++With no drawer open, `7` sends a message about the session itself, so you can
++talk to a session that has no item and no pull request. Discuss and `t` open a
++one-line text field at the bottom of the screen. A message is one way: the
++agent hears it as a `DISCUSS` line and answers in its own conversation. A
++message about a pull request or the session is an item of kind `message`,
++which asks nothing of you, reads `sending` until its line is delivered, and
++then leaves the list 30 seconds later. A message about an item stays in that
++item's drawer.
++
++The conversation sits at the bottom of the panel, collapsed to its heading.
++Press `v`, or Enter on its heading, to show it, and `v` again to hide it. The
++console remembers which sessions show it until you quit. It lists what you
++said and what the agent said, newest last, and leaves out tool calls, tool
++results, thinking, and the instructions the host adds. What you said includes
++the prompts you typed and the inbox lines Projector delivered for you, such as
++`ANSWER 3.a` and `DISCUSS 5`, but not pull request events. Showing it moves
++the cursor to it and starts at its newest line, which stays in view as the
++agent writes, until you scroll back with the page keys. Collapsed suits a
++split whose other half shows the session's own chat; shown suits a session
++whose chat is not on screen.
++
++The console reads the conversation from the transcript the session's host
++writes: for Claude Code, `projects/<project>/<session>.jsonl` under
++`CLAUDE_CONFIG_DIR`, or under `~/.claude` when it is unset; for Codex, the
++rollout that the session's `codex.json` names. It reads the last 2 MiB of the
++transcript when you show the conversation, then only what was added, each
++second while it stays shown, and never while it is hidden. A transcript holds
++whatever the conversation held, including any secret an agent quoted there, so
++the console shows only what the session's own chat already shows you.
++
++| Key | Effect |
++| --- | --- |
++| Up and down, or `k` and `j` | Move between rows |
++| Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
++| Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
++| Left | Returns to the home list from a panel, closing any open drawer |
++| `7` in a panel with no drawer open | Sends a message about the session |
++| `v` in a panel | Shows or hides the session's conversation |
++| Page Down or Space, Page Up or `b` | Scrolls a drawer or the conversation, when taller than the screen, a page down or up |
++| End or `G`, Home or `g` | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
++| Enter in a text field | Sends the message. Esc cancels it, and Left and Right move the cursor |
++| `q` | Quits |
++
++The console records each choice with the same functions `project inbox`
++runs, for the session on screen: an option is `project inbox answer`, `7` is
++`project inbox discuss`, and so on. So two sessions that each have an item 3
++never mix up, and a refusal, such as an answer to an item its agent just
++withdrew, shows at the bottom of the screen. The console never sends a line
++to a session itself. The session's deliverer brings each line in: Projector's
++panel in Claude Code within 5 seconds, or the Codex adapter, which the
++console wakes by starting the watch daemon when it is not running. An item
++reads `sending` until its line is delivered, and an answered item leaves the
++list 30 seconds later. A discussed item stays open, and the agent answers in
++its conversation.
++
++Dismissing a pull request appends the `!` lines `project watch drop` appends,
++for each role the viewed session holds on it, so another session that watches
++the same pull request keeps it. The console lists only the pull requests a
++session subscribes to. Projector's panel also lists those that an older
++`watch-prs.sh` or `watch-threads.sh` watcher tracks, which the console cannot
++see.
++
++The console reads the inbox store each second, and reloads a session's items
++only when its directory changed. It reads the pull request rows from the
++watch daemon's cache every 5 seconds, so they cost no GitHub query. An open
++pull request drawer asks GitHub for its threads when it opens and every 30
++seconds while it stays open, at about one point of your hourly GraphQL quota
++each, and asks nothing when the cache counts no unresolved thread. The console
++draws in your terminal's own colors, and draws none when `NO_COLOR` is set.
++
++Without a terminal on standard input and standard output, `project console`
++exits with code 69 and says it needs one. On a Python without the `curses`
++module, as on Windows, it exits with code 69 and points you to
++`project inbox list` and `project watch list`. The permission rules
++`project init` adds ask you before an agent runs `project console` in Claude
++Code, and leave it to Codex's usual approval, because the console records
++your answers.
++
+ ## Watch pull requests
+ 
+ `project watch` subscribes an agent session to the pull requests it fixes and
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 54029464..fdeb7f14 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -534,7 +534,9 @@ events. Taking events runs a whole poll, so `panel.background` and an
+ earlier watcher's query run then too. The daemon writes its cache before its
+ events, so the panel reloads its lines then as well. It skips the threads
+ call when the pull request has no unresolved thread. The skills never
+-depend on the panel, and Codex has no equivalent.
++depend on the panel. In Codex or a terminal, `project console` shows the
++same pull requests and items for every live session, as
++[Use the console](cli.md#use-the-console) describes.
+ 
+ A session that started a `watch-threads.sh` or `watch-prs.sh` watcher under
+ an earlier release keeps it until the session ends, and the panel lists the
+diff --git a/docs/projects/console/readme.md b/docs/projects/console/readme.md
+index 61ec06a2..a0c3cd4f 100644
+--- a/docs/projects/console/readme.md
++++ b/docs/projects/console/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: in-progress
++status: completed
+ priority: now
+ ---
+ 
+@@ -233,6 +233,14 @@ session itself (§ 2.6), whichever row the cursor is on. It works in a panel
+ with no rows, such as an idle session's or a new one's. To write about a
+ particular item or pull request, open its drawer and press `7` there.
+ 
++The panel ends with the session's conversation, a section collapsed to its
++heading by default. `v` shows or hides it, and so does Enter on its heading.
++Shown, it lists what you said and what the agent said, newest last, and
++nothing else: no tool calls, tool results, thinking, or host instructions.
++§ 2.9 describes how the console reads it. You often run the console in a
++split above the session's own chat, so collapsed is the right default there.
++Shown serves a session whose chat is not on screen, and later the phone.
++
+ ### 2.6 Discussing an item, a pull request, or the session
+ 
+ A message is one way: it carries your words to the agent, and the agent
+@@ -339,6 +347,9 @@ $ project console
+ | Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
+ | Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
+ | `7` in a panel with no drawer open | Sends a message about the session (§ 2.5) |
++| `v` in a panel | Shows or hides the session's conversation (§ 2.5) |
++| Page Down or Space, Page Up or `b` | Scrolls a drawer or the conversation, when taller than the screen, a page down or up |
++| End or `G`, Home or `g` | Scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
+ | Left | Returns to the home list from a session's panel, closing any open drawer. In a text field, it moves the cursor instead |
+ | Enter in a text field | Sends the message. Esc cancels it |
+ | `q` | Quits |
+@@ -355,6 +366,64 @@ Without a terminal, `project console` exits with code 69 and the message
+ Without `curses`, it also exits with code 69 and points you to
+ `project inbox list` and `project watch list`.
+ 
++Building the console settled these details:
++
++- **A key records at once.** The panel fills Claude Code's prompt, and
++  sending it records the choice. The console has no prompt, so an option,
++  Start, a request's outcome, I don't understand, Dismiss, and a snooze
++  length each record when you press them. A pull request's Dismiss still
++  asks first, as the panel's does. A request's option records `done` with
++  the option's words as its text, and a request with no options offers
++  `Done`, which records no text.
++- **`t` types an answer.** A question can carry five choices, which take
++  `1` to `5`, and `6` is I don't understand, so the typed answer takes `t`
++  rather than the next digit. A refused send keeps the text field and what
++  you typed, and shows the refusal at the bottom of the screen.
++- **A home entry takes up to three lines.** The first holds the label, the
++  host, the repository and branch, and the counts. The summary and the
++  newest open item's subject follow, each on its own line, so a narrow
++  terminal cuts neither. The counts include messages, as the panel's
++  header does. A session that `project watch stream` delivers shows the host
++  its `agent.json` names, or `other`.
++- **The cursor closes a drawer.** Up and down move to the next row and close
++  any open drawer. A drawer opens under its row, and the screen scrolls to
++  keep the row and its drawer in view. Sending a message about a pull
++  request or the session moves the cursor to the new `message` item, which
++  reads `sending` until its line is delivered and then leaves.
++- **One background thread refreshes.** It wakes every quarter second, takes
++  the lock only to decide what is due and to show what it read, and reads
++  the inbox, the rows, and the threads without it. Opening a pull request's
++  drawer wakes it at once. After a key records a choice, the console reads
++  the viewed session's directory again on the spot, so the change shows
++  before the next refresh.
++- **Waking Codex reuses the CLI's helper.** After it records for a Codex
++  session, the console runs `wake_codex_delivery`, the helper the
++  recording subcommands of `project inbox` run, which starts the daemon
++  when the item owes a line.
++- **Page keys scroll a tall drawer.** A drawer taller than the screen
++  opens with its row at the top, and the rest of it, the newest message and
++  the controls included, is below the screen. Up and down still close the
++  drawer, so the page keys scroll it instead: Page Down and Page Up move a
++  page, and End and Home jump to its controls and back to its row. Space,
++  `b`, `G`, and `g` do the same for a terminal that keeps those keys for
++  its own scrollback. The scroll survives each redraw, including the
++  refresh that brings in a new message, and the screen moves only as far
++  as it must to keep the row and its drawer in view.
++- **The conversation is the panel's last row.** The cursor stops on its
++  heading like any other row, so Up and down reach it, and the page keys
++  scroll it once it is taller than the screen. `v` from any row shows it
++  and moves the cursor there, closing an open drawer. It opens at its newest
++  line and keeps that line in view as lines arrive. A scroll key that moves
++  away stops that, and End, `G`, or paging back to the bottom starts it
++  again.
++- **`v` is remembered for each session while the console runs.** Showing
++  one session's conversation leaves every other session's collapsed, and a
++  panel you return to keeps what you chose. The console keeps the choice in
++  memory, so it starts collapsed again after you quit.
++- **Only a shown conversation is read.** The refresh thread reads the
++  viewed session's transcript each second while its conversation is shown,
++  off the drawing thread, and never reads a collapsed one.
++
+ ### 2.8 Changes by file
+ 
+ | File | Change |
+@@ -363,18 +432,55 @@ Without `curses`, it also exits with code 69 and points you to
+ | `src/projector/inbox.py` | Adds `messages`, the `message` kind, `discuss`, and `send`. `owed_line`, `message`, and `settle` handle `DISCUSS` lines, and `settle` resolves a `message` item with nothing left to send |
+ | `src/projector/rows.py` | New. Turns subscriptions and the cache into rows, and queries and parses threads |
+ | `src/projector/console.py` | New. Holds the session set, the model of what is on screen, key handling, and the curses drawing, kept separate so tests drive the model without a terminal |
++| `src/projector/conversation.py` | New. Finds a session's transcript and reads what the person and the agent said in it, a few bytes at a time (§ 2.9) |
+ | `src/projector/cli.py` | Adds `project console` and `project inbox discuss`. `show` prints your messages. The inbox recording subcommands run `ensure_daemon` for a Codex session |
+ | `src/projector/permissions.py` | Adds `Bash(project console)`, `Bash(project console *)`, and `Bash(project inbox discuss *)` to `ASK` and `ASKED`. Leaves `console` and `discuss` to Codex's approval, and updates the docstring and the `CODEX_RULES` header |
+ | `hooks/inbox.ts`, `hooks/register.tsx` | `needsDelivery` counts undelivered messages. The drawer shows your messages, and the item list draws `message` items like notices, without `I don't understand` |
+ | `src/projector/templates/agents-block.md`, `skills/work/SKILL.md` | Describe `DISCUSS` lines. `skills/work/SKILL.md` also tells a session not to run `project inbox watch` when its session-start context says Projector delivers its events |
+ | `tests/fixtures/rows/` | New. Each case is a set of input files plus the rows they must produce |
+ | `hooks/rows.test.ts` | New. Runs the panel's row model over `tests/fixtures/rows/` |
+-| `tests/test_console.py`, `tests/test_rows.py` | New |
++| `tests/test_console.py`, `tests/test_rows.py`, `tests/test_conversation.py` | New |
++| `tests/fixtures/conversation/` | New. Made-up Claude Code and Codex transcripts, one of each, in each host's format |
+ | `tests/test_codex_watch.py`, `tests/test_inbox.py`, `tests/test_permissions.py`, `hooks/inbox.test.ts`, `hooks/panel.test.tsx` | New cases (§ 4) |
+ | `docs/cli.md` | A new "Use the console" section. "Use the inbox" describes `discuss`, the `message` kind, the Codex adapter's delivery, and the permission rules |
+ | `docs/plugins.md` | Describes your messages in the drawer and the `message` kind, and says that `project console` covers Codex and terminals, where it said Codex has no equivalent |
+ | `web/components/sections/panel.tsx` | Names `project console` for Codex and terminals |
+ 
++### 2.9 Reading a session's conversation
++
++`src/projector/conversation.py` reads a session's conversation from the
++transcript its host writes, with the standard library only. A `Reader`
++follows one transcript. Its first read takes the last 2 MiB, so a long
++session opens at once, and each later read takes only the bytes added since.
++It keeps a line that has not ended yet until the rest arrives, and it starts
++over when the transcript is replaced or cut short. It skips a line that does
++not parse, and an entry of a kind it does not know, so a host that adds a
++kind breaks nothing. The console keeps the newest 400 things said for each
++session.
++
++| Host | Transcript | What it keeps |
++| --- | --- | --- |
++| Claude Code | `projects/<project>/<session>.jsonl` under `CLAUDE_CONFIG_DIR`, or under `~/.claude`, the newest when two projects hold one | A `user` entry whose `origin.kind` is `human`, or that has no `origin`, as an older Claude Code writes, with a slash command shown as `/name args`. The inbox lines in a prompt Projector's panel submitted, from its `pluginPrompt.text`. An `assistant` entry's `text` blocks |
++| Codex | The rollout that `codex.json`'s `transcript_path` names | A user `message` item's blocks whose `content_item_kinds` entry is `user.text`, or, in an older rollout that records no kinds, those that do not open with a tag. The inbox lines in a batch Projector's Codex adapter queued. An assistant `message` item's text, whether its phase is `commentary` or `final_answer` |
++
++Both readers leave out tool calls and their results, thinking and reasoning,
++developer and hook context, and entries that are a subagent's, meta, or a
++compaction summary. They also leave out Projector's pull request events, so
++what you said is what you typed and the inbox lines that carried your
++choices and messages, such as `ANSWER 3.a` and `DISCUSS 5`. Codex's
++`agent_message` items are a subagent reporting to its parent, so the Codex
++reader leaves them out too.
++
++Codex's app server can read a thread with `thread/read`, but that needs a
++`codex app-server` process for each read and a handshake. The rollout is a
++file Codex already writes for every thread, and `codex.json` already names
++it, so the reader follows that file instead.
++
++A transcript holds whatever the conversation held, including any secret an
++agent quoted there. The console shows only what the session's own chat
++already shows, to you, in your terminal, and it never writes the
++conversation anywhere.
++
+ ## 3. Why this design
+ 
+ - **Delivery stays with each session's deliverer.** The console could send
+@@ -405,6 +511,11 @@ Without `curses`, it also exits with code 69 and points you to
+   messages to
+   the session, through `project agent send`, were rejected too: they carry
+   none of the person's authority, and your words must.
++- **The conversation comes from the host's transcript.** Both hosts
++  already write one, so reading it needs no change to either host, no
++  process per session, and no network. Tailing it costs a stat and the new
++  bytes each second while the section is shown. The section is collapsed by
++  default because the session's own chat usually sits beside the console.
+ - **`discuss` is a recording command.** It speaks for you, so it gets the
+   permission rules `answer` has, and an agent cannot put words in your
+   mouth.
+@@ -466,6 +577,14 @@ Without `curses`, it also exits with code 69 and points you to
+ | Open a drawer for a pull request with two unresolved threads, and wait 65 seconds | Three thread queries. With no unresolved thread, none | A thread query on every tick, or a drawer that never refreshes |
+ | Dismiss a pull request in one session's panel when another session also holds it | `watch drop` runs for the viewed session's roles only, and the other session keeps it | A dismiss that reaches beyond the viewed session |
+ | Run `project console </dev/null` | Exit 69 with the terminal message | A console that starts without a terminal |
++| Open a session's panel | Its conversation shows only its heading, and the console reads no transcript | A conversation shown, or read, before you ask for it |
++| Press `v` in one session's panel, then open another session's panel, then return | The first session's conversation is shown both times. The second's is collapsed | A choice that leaks to every session, or that is forgotten |
++| Read the made-up Claude Code transcript in `tests/fixtures/conversation/` | Your typed prompt, the slash command, the `DISCUSS` line, and the agent's two text blocks, in order. No thinking, tool call, tool result, subagent, meta, peer, or pull request event | A reader that shows what the session's chat does not |
++| Read the made-up Codex rollout there | Your text, the `ANSWER` line from Projector's batch, and the agent's two messages, in order. No instructions, environment, reasoning, function call, hook context, or subagent report | The same, for Codex |
++| Append to a transcript in two writes that split one line | Each read returns only what was added, and the split line once it ends | A reader that rereads the whole file or parses half a line |
++| Shorten or replace the transcript | The next read starts over from its start | A reader stuck past the end of a new file |
++| Show a conversation taller than the screen, let a line arrive, page up, let another arrive | It opens at its newest line and follows the first, then stays where you paged to | A view that opens at the top or jumps while you read |
++| Press `7` with no drawer open and send `hello` | A `message` item that reads `sending` and offers no `I don't understand`, then `Delivered ✓` once its line is delivered, and gone 30 seconds later | A message the console shows as a question or never lets go |
+ | Decide `project console` and `project inbox discuss` in each host | Both ask in Claude Code and are left to Codex's approval | An agent allowed to drive the console or speak for you |
+ 
+ ## 5. Cost
+@@ -476,6 +595,9 @@ Without `curses`, it also exits with code 69 and points you to
+   each subscribed pull request's cache file for the home list's counts.
+   Measure one console with 10 live sessions and 30 pull requests at under
+   2% of one CPU core.
++- **The conversation's reads.** While a conversation is shown, the console
++  stats its transcript each second and reads only the bytes added. The first
++  read takes at most 2 MiB. A collapsed conversation costs nothing.
+ - **GitHub quota.** The rows cost no GraphQL, because the daemon's cache
+   supplies them. The thread query runs only while a drawer is open. It costs
+   about one point of the account's hourly GraphQL quota per query, the same
+@@ -560,3 +682,31 @@ Checked against `codex-cli 0.169.0` and `openai/codex` at `d8d840d` on
+   liveness check can see them. After this project, a Codex session is
+   delivered by the adapter, and a Claude Code session by the panel, so
+   both are visible.
++
++## 9. Outcome
++
++Shipped, in the four pull requests § 6 lists. `project console` lists every
++live session, Claude Code and Codex alike, and records answers and messages
++that each session's own deliverer brings in. Each panel ends with the
++session's conversation, collapsed by default, read from the host's
++transcript (§ 2.9). § 2.6 and § 2.7 record the details building it settled.
++
++Each row of § 4 has a test that was seen failing against the bug it names:
++the Codex delivery rows in `tests/test_codex_watch.py`, the thread rows in
++`tests/test_inbox.py`, `hooks/inbox.test.ts`, and `hooks/panel.test.tsx`,
++the fixtures in `tests/test_rows.py` and `hooks/rows.test.ts`, the console
++rows in `tests/test_console.py`, the conversation reader's rows in
++`tests/test_conversation.py`, and the permission row in
++`tests/test_permissions.py`. The reader's and the conversation section's
++tests were each seen failing against a copy of the code broken the way the
++row names, one break at a time. A run of the real console in a pseudo-terminal
++answered a question, returned home with Left, and started a discussion
++about the session, with and without `NO_COLOR`. After the one-way messages
++replaced threads, another run sent a message about the session, showed it
++`sending`, and showed and hid the conversation of a session with a
++transcript with `v`.
++
++The cost § 5 asked for: one console with 10 live sessions, 30 pull requests,
++and 50 open questions used 0.71 seconds of CPU in 60 seconds, 1.2% of one
++core, over 30 seconds on the home list and 30 in a panel, on macOS with
++Python 3.12.
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 37d9725c..4219bb22 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -870,6 +870,8 @@ def parser() -> argparse.ArgumentParser:
+                                      "full review, when `project review interdiff` allows one")
+ 
+     add_inbox_parser(subcommands)
++    subcommands.add_parser("console", help="list every live session in a terminal, and answer or discuss each one's "
++                                           "inbox items and pull requests")
+     add_ios_parser(subcommands)
+     add_loop_parser(subcommands)
+     add_watch_parser(subcommands)
+@@ -2376,6 +2378,18 @@ def wake_codex_delivery(session: Optional[str], item: dict) -> None:
+         watch.ensure_daemon(root, distribution_version(), newer_release)
+ 
+ 
++def run_console() -> int:
++    if not (sys.stdin.isatty() and sys.stdout.isatty()):
++        raise EnvironmentError("project console needs a terminal; run it in its own window or split")
++    try:
++        import curses  # noqa: F401
++    except ImportError as error:
++        raise EnvironmentError("project console needs Python's curses module, which this Python lacks; run "
++                               "`project inbox list` and `project watch list` instead") from error
++    from . import console
++    return console.main(wake=wake_codex_delivery)
++
++
+ def run_inbox(arguments: argparse.Namespace) -> int:
+     command = arguments.inbox_command
+     json_output = arguments.json_output
+@@ -3166,6 +3180,8 @@ def run(arguments: argparse.Namespace) -> int:
+         return run_review(arguments)
+     if arguments.command == "inbox":
+         return run_inbox(arguments)
++    if arguments.command == "console":
++        return run_console()
+     if arguments.command == "loop":
+         return run_loop(arguments)
+     if arguments.command == "ios":
+diff --git a/src/projector/console.py b/src/projector/console.py
+new file mode 100644
+index 00000000..6c12a69c
+--- /dev/null
++++ b/src/projector/console.py
+@@ -0,0 +1,1062 @@
++"""`project console`: every live session in one terminal, and each session's panel.
++
++The console opens on the home list, one entry per live session, sorted by what needs the person. Enter opens a
++session's panel: its pull request rows, as `rows.py` reads them, its inbox items, each with a drawer that
++answers, discusses, dismisses, or snoozes it, and a collapsible view of its conversation, as `conversation.py`
++reads it. Every choice and message is recorded with the functions `project inbox` runs, for the session on screen,
++and the session's own deliverer brings it in: Claude Code's panel, or the watch daemon's Codex adapter. The
++console never claims, delivers, or settles a line, so it never races a deliverer.
++
++`Console` holds what is on screen, turns key names into those calls, and lays the screen out as lines of styled
++text. `main` puts it in a terminal with curses, which only `main` imports, so tests drive `Console` without one.
++"""
++
++from __future__ import annotations
++
++import os
++import sys
++import textwrap
++import threading
++import time
++import webbrowser
++from dataclasses import dataclass, field
++from pathlib import Path
++from typing import Any, Callable, Optional
++
++from . import agents, codex_watch, conversation, inbox, rows, watch
++from .core import ProjectorError
++
++INBOX_EVERY = 1.0
++ROWS_EVERY = 5.0
++THREADS_EVERY = 30.0
++CONVERSATION_EVERY = 1.0
++# How long a resolved, delivered, or snoozed item stays listed, as in the panel.
++RESOLVED_MS = 30_000
++# The host each deliverer `watch.delivery` names belongs to.
++HOSTS = {"mod": "claude", "codex": "codex"}
++KINDS = ("question", "request", "notice", "message")
++ASKING_KINDS = ("question", "request")
++NOUNS = {"pr": "pull request", "review": "review request", **{kind: kind for kind in KINDS}}
++SNOOZES = (("15 min", 15), ("1 hour", 60), ("4 hours", 240), ("1 day", 1440))
++SUBSCRIPTION_ROLE = {held: role for role, held in rows.ROLE_OF.items()}
++DRAWER_INDENT = 4
++# Page Down or Space, Page Up or `b`, End or `G`, and Home or `g`: the second of each pair for a terminal that keeps
++# the first for its own scrollback.
++SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "G", "home", "g")
++# The key of the panel's last row, the session's conversation.
++CONVERSATION = "conversation"
++
++
++@dataclass
++class Session:
++    """A live session as the console shows it."""
++
++    name: str
++    host: str
++    label: str
++    place: str
++    summary: str
++    signature: Optional[tuple] = None
++    items: list[dict] = field(default_factory=list)
++    rows: list[rows.Row] = field(default_factory=list)
++
++
++@dataclass
++class Field:
++    """The one-line text field: what sending it records, and the words typed so far with the cursor in them."""
++
++    purpose: str
++    target: Optional[str]
++    prompt: str
++    text: str = ""
++    cursor: int = 0
++
++
++@dataclass(frozen=True)
++class Control:
++    """A key a drawer offers, its label, what pressing it does, and whether it is one of the item's options, which
++    the drawer lists one to a line above its other keys."""
++
++    key: str
++    label: str
++    act: Callable[[], None]
++    option: bool = False
++
++
++@dataclass
++class Line:
++    """One line of the screen: its parts, each text with a style name, and whether the cursor's row is on it."""
++
++    parts: list[tuple[str, str]]
++    selected: bool = False
++
++    @property
++    def text(self) -> str:
++        return "".join(text for text, _ in self.parts)
++
++
++@dataclass
++class Work:
++    """What one refresh reads, decided under the lock and done outside it."""
++
++    inbox: bool
++    rows: bool
++    signatures: dict[str, Optional[tuple]]
++    pull: Optional[rows.Pull] = None
++    drawer: Optional[str] = None
++    conversation: Optional[tuple[str, conversation.Reader]] = None
++
++
++@dataclass
++class Found:
++    """What a refresh read."""
++
++    live: Optional[dict[str, tuple[str, str, str, str, tuple, Optional[list[dict]]]]] = None
++    rows: dict[str, list[rows.Row]] = field(default_factory=dict)
++    drawer: Optional[str] = None
++    threads: Optional[list[rows.Thread]] = None
++    # The session whose conversation was read, whether its transcript started over, what was said since, and
++    # whether a transcript was found.
++    said: Optional[tuple[str, bool, list[conversation.Said], bool]] = None
++
++
++# Reading the sessions
++
++def live_sessions(root: Path, now: float) -> dict[str, str]:
++    """Each session with an inbox or a watch folder whose deliverer is live, with how its events arrive."""
++    found = {}
++    for name in sorted(set(inbox.sessions()) | set(watch.session_names(root))):
++        delivery = watch.delivery(root, name, now)
++        if delivery != "none":
++            found[name] = delivery
++    return found
++
++
++def place_of(record: dict, folder: Path, checkouts: dict[str, str]) -> str:
++    """The repository and branch `agent.json` names, or those of the checkout `codex.json` runs in."""
++    place = " ".join(part for part in (record.get("repo"), record.get("branch")) if part)
++    cwd = codex_watch.registration(folder).get("cwd")
++    if place or not isinstance(cwd, str) or not cwd:
++        return place
++    if cwd not in checkouts:
++        try:
++            found = agents.checkout(Path(cwd))
++        except (ProjectorError, OSError):
++            found = {}
++        checkouts[cwd] = " ".join(part for part in (found.get("repo"), found.get("branch")) if part) or cwd
++    return checkouts[cwd]
++
++
++def describe(root: Path, name: str, delivery: str, checkouts: dict[str, str]) -> tuple[str, str, str, str]:
++    """The session's label, host, place, and summary, as `project agent list` shows them."""
++    record = agents.record(root, name) or {}
++    host = HOSTS.get(delivery) or record.get("host") or "other"
++    place = place_of(record, watch.session_folder(root, name), checkouts)
++    return agents.label(record, name), host, place, record.get("summary") or ""
++
++
++def signature(folder: Path) -> tuple:
++    """The names, sizes, and modification times of the files in a session's inbox directory."""
++    try:
++        entries = list(os.scandir(folder))
++    except OSError:
++        return ()
++    found = []
++    for entry in entries:
++        try:
++            stat = entry.stat()
++        except OSError:
++            continue
++        found.append((entry.name, stat.st_size, stat.st_mtime_ns))
++    return tuple(sorted(found))
++
++
++# What an item shows
++
++def is_snoozed(item: dict, now_ms: int) -> bool:
++    until = item.get("snoozedUntil")
++    return isinstance(until, int) and now_ms < until
++
++
++def is_awake(item: dict, now_ms: int) -> bool:
++    return not item.get("answer") and not is_snoozed(item, now_ms)
++
++
++def is_shown(item: dict, now_ms: int) -> bool:
++    """The panel's `isShownAt`: not withdrawn, not snoozed or snoozed in the last 30 seconds, and not delivered
++    or delivered in the last 30 seconds."""
++    if (item.get("answer") or {}).get("withdrawn"):
++        return False
++    snoozed_at = item.get("snoozedAt")
++    if is_snoozed(item, now_ms) and not (isinstance(snoozed_at, int) and now_ms - snoozed_at < RESOLVED_MS):
++        return False
++    delivered = item.get("deliveredAt")
++    return delivered is None or now_ms - delivered < RESOLVED_MS
++
++
++def stage_of(item: dict) -> Optional[str]:
++    """An open request's start: `starting` until its agent reports, then `ready` or `blocked`."""
++    if item["kind"] != "request" or item.get("answer"):
++        return None
++    return (item.get("progress") or {}).get("state") or ("starting" if item.get("started") else None)
++
++
++def start_of(item: dict) -> Optional[str]:
++    """What an open request's first control presses: Start, until it is pressed, or Retry once it is blocked."""
++    if item["kind"] != "request" or item.get("answer") or item.get("start") is None:
++        return None
++    stage = stage_of(item)
++    return "Start" if stage is None else "Retry" if stage == "blocked" else None
++
++
++def marks_of(item: dict) -> list[tuple[str, str]]:
++    """The words after an item's subject, as the panel shows them."""
++    is_open = not item.get("answer")
++    owes = inbox.owed_message(item) is not None
++    marks = []
++    if (not is_open and not item.get("deliveredAt")) or owes:
++        marks.append(("sending", "subtle"))
++    if is_open and item.get("unclear"):
++        marks.append(("unclear", "warning"))
++    stage = stage_of(item)
++    if stage is not None:
++        marks.append((stage, {"starting": "subtle", "ready": "success", "blocked": "warning"}[stage]))
++    if item.get("pr"):
++        marks.append((item["pr"], "subtle"))
++    return marks
++
++
++def age(milliseconds: float) -> str:
++    seconds = max(0, int(milliseconds // 1000))
++    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
++        if seconds >= size:
++            return f"{seconds // size}{unit}"
++    return f"{seconds}s"
++
++
++def counted(count: int, noun: str) -> Optional[str]:
++    return None if count == 0 else f"{count} {noun}{'' if count == 1 else 's'}"
++
++
++# A session's entries and its place on the home list
++
++def shown_items(session: Session, now_ms: int) -> list[dict]:
++    """The items the session's panel lists, newest first."""
++    return sorted((item for item in session.items if is_shown(item, now_ms)),
++                  key=lambda item: item.get("postedAt", 0), reverse=True)
++
++
++def counts_of(session: Session, now_ms: int) -> list[str]:
++    """The panel header's counts: pull requests, review requests, then each kind's open, awake items."""
++    awake = [item for item in session.items if is_shown(item, now_ms) and is_awake(item, now_ms)]
++    parts = [counted(sum(1 for row in session.rows if row.section == section), NOUNS[section])
++             for section in rows.SECTIONS]
++    parts += [counted(sum(1 for item in awake if item["kind"] == kind), NOUNS[kind]) for kind in KINDS]
++    return [part for part in parts if part is not None]
++
++
++def needs(session: Session, now_ms: int) -> tuple:
++    """The home list's order: the most open questions and requests first, then the newest item, then the
++    label."""
++    shown = shown_items(session, now_ms)
++    asking = sum(1 for item in shown if is_awake(item, now_ms) and item["kind"] in ASKING_KINDS)
++    newest = max((item.get("postedAt", 0) for item in shown), default=0)
++    return (-asking, -newest, session.label, session.name)
++
++
++def headline(session: Session, now_ms: int) -> Optional[dict]:
++    """The item a home entry names: the newest open one."""
++    return next((item for item in shown_items(session, now_ms) if is_awake(item, now_ms)), None)
++
++
++def pull_key(pull: rows.Pull) -> str:
++    return f"pr:{pull.repo}#{pull.number}"
++
++
++def item_key(item: dict) -> str:
++    return f"item:{item['ref']}"
++
++
++class Console:
++    """What the console shows, and what each key does to it."""
++
++    def __init__(self, root: Path, *, clock: Callable[[], float] = time.time,
++                 gh: Callable[[list[str]], watch.GhResult] = watch.run_gh,
++                 open_url: Callable[[str], Any] = webbrowser.open,
++                 wake: Callable[[str, dict], None] = lambda session, item: None) -> None:
++        self.root = root
++        self.clock = clock
++        self.gh = gh
++        self.open_url = open_url
++        self.wake = wake
++        self.lock = threading.RLock()
++        self.refresh_now = threading.Event()
++        self.sessions: dict[str, Session] = {}
++        self.checkouts: dict[str, str] = {}
++        self.view = "home"
++        self.session: Optional[str] = None
++        self.selected: Optional[str] = None
++        self.drawer: Optional[str] = None
++        self.asking: Optional[str] = None
++        self.field: Optional[Field] = None
++        self.threads: Optional[list[rows.Thread]] = None
++        self.offset = 0
++        self.room = 1
++        # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
++        # each one's transcript was found.
++        self.expanded: set[str] = set()
++        self.readers: dict[str, conversation.Reader] = {}
++        self.said: dict[str, list[conversation.Said]] = {}
++        self.transcripts: dict[str, bool] = {}
++        # Whether the screen keeps the conversation's newest line in view.
++        self.follow = True
++        self.status = ""
++        self.quit = False
++        self.next_inbox = self.next_rows = self.next_threads = self.next_conversation = float("-inf")
++
++    # Refreshing
++
++    def tick(self) -> None:
++        """One refresh: decide under the lock what is due, read it without the lock, then show it."""
++        with self.lock:
++            work = self.due(self.clock())
++        if work is not None:
++            found = self.load(work)
++            with self.lock:
++                self.apply(found)
++
++    def due(self, now: float) -> Optional[Work]:
++        work = Work(inbox=now >= self.next_inbox, rows=now >= self.next_rows,
++                    signatures={name: session.signature for name, session in self.sessions.items()})
++        if work.inbox:
++            self.next_inbox = now + INBOX_EVERY
++        if work.rows:
++            self.next_rows = now + ROWS_EVERY
++        row = self.row(self.drawer)
++        if row is not None and now >= self.next_threads:
++            self.next_threads = now + THREADS_EVERY
++            work.pull, work.drawer = row.pull, self.drawer
++        session = self.viewed()
++        if (self.view == "panel" and session is not None and session.name in self.expanded
++                and now >= self.next_conversation):
++            self.next_conversation = now + CONVERSATION_EVERY
++            reader = self.readers.get(session.name)
++            if reader is None:
++                reader = self.readers[session.name] = conversation.reader_for(self.root, session.name, session.host)
++            work.conversation = (session.name, reader)
++        return work if work.inbox or work.rows or work.pull or work.conversation else None
++
++    def load(self, work: Work) -> Found:
++        found = Found(drawer=work.drawer)
++        names = list(work.signatures)
++        if work.inbox:
++            found.live = {}
++            now = self.clock()
++            for name, delivery in live_sessions(self.root, now).items():
++                folder = inbox.store_root() / name
++                seen = signature(folder)
++                items = None if name in work.signatures and seen == work.signatures[name] else inbox.load_items(folder)
++                found.live[name] = (*describe(self.root, name, delivery, self.checkouts), seen, items)
++            names = list(found.live)
++        for name in names:
++            if work.rows or name not in work.signatures:
++                found.rows[name] = rows.rows_for(self.root, name)
++        if work.pull is not None:
++            found.threads = rows.fetch_threads(work.pull, self.gh)
++        if work.conversation is not None:
++            name, reader = work.conversation
++            restarted, said = reader.read()
++            found.said = (name, restarted, said, reader.path is not None)
++        return found
++
++    def apply(self, found: Found) -> None:
++        if found.live is not None:
++            for name in set(self.sessions) - set(found.live):
++                del self.sessions[name]
++            for name, (label, host, place, summary, seen, items) in found.live.items():
++                session = self.sessions.setdefault(name, Session(name, host, label, place, summary))
++                session.host, session.label, session.place, session.summary = host, label, place, summary
++                session.signature = seen
++                if items is not None:
++                    session.items = items
++        for name, found_rows in found.rows.items():
++            if name in self.sessions:
++                self.sessions[name].rows = found_rows
++        if found.drawer is not None and found.drawer == self.drawer:
++            self.threads = found.threads
++        if found.said is not None:
++            name, restarted, said, transcript = found.said
++            kept = self.said.setdefault(name, [])
++            if restarted:
++                kept.clear()
++            kept += said
++            del kept[:-conversation.KEEP]
++            self.transcripts[name] = transcript
++        self.settle_view()
++
++    def reload(self) -> None:
++        """Read the viewed session's items and rows again, after a key changed them."""
++        session = self.sessions.get(self.session or "")
++        if session is not None:
++            folder = inbox.store_root() / session.name
++            session.signature, session.items = signature(folder), inbox.load_items(folder)
++            session.rows = rows.rows_for(self.root, session.name)
++        self.settle_view()
++
++    def settle_view(self) -> None:
++        """Leave a panel whose session is gone, and close a drawer whose row is gone."""
++        if self.view == "panel" and self.session not in self.sessions:
++            self.status = f"{self.session} is no longer live"
++            self.go_home()
++            return
++        if self.view != "panel":
++            return
++        keys = [key for key, _ in self.entries()]
++        if self.drawer is not None and self.drawer not in keys:
++            self.close_drawer()
++
++    # What is on screen
++
++    def now_ms(self) -> int:
++        return int(self.clock() * 1000)
++
++    def home(self) -> list[Session]:
++        now = self.now_ms()
++        return sorted(self.sessions.values(), key=lambda session: needs(session, now))
++
++    def viewed(self) -> Optional[Session]:
++        return self.sessions.get(self.session or "")
++
++    def entries(self) -> list[tuple[str, object]]:
++        """The viewed panel's rows: its pull requests, then its items, each under its key."""
++        session = self.viewed()
++        if session is None:
++            return []
++        return ([(pull_key(row.pull), row) for row in session.rows]
++                + [(item_key(item), item) for item in shown_items(session, self.now_ms())])
++
++    def keys(self) -> list[str]:
++        if self.view == "home":
++            return [session.name for session in self.home()]
++        return [key for key, _ in self.entries()] + ([CONVERSATION] if self.viewed() is not None else [])
++
++    def row(self, key: Optional[str]) -> Optional[rows.Row]:
++        found = dict(self.entries()).get(key) if key and key.startswith("pr:") else None
++        return found if isinstance(found, rows.Row) else None
++
++    def item(self, key: Optional[str]) -> Optional[dict]:
++        found = dict(self.entries()).get(key) if key and key.startswith("item:") else None
++        return found if isinstance(found, dict) else None
++
++    # Keys
++
++    def key(self, name: str) -> None:
++        """Do what the key named `name` does: a character, or `up`, `down`, `left`, `right`, `enter`, `esc`,
++        `backspace`, `delete`, `home`, `end`, `pageup`, or `pagedown`."""
++        with self.lock:
++            self.status = ""
++            if self.field is not None:
++                self.field_key(name)
++            elif name == "q":
++                self.quit = True
++            elif name in ("up", "k", "down", "j"):
++                self.move(-1 if name in ("up", "k") else 1)
++            elif name in SCROLL_KEYS:
++                self.scroll(name)
++            elif self.view == "home":
++                if name == "enter" and self.selected_key() is not None:
++                    self.open_panel(self.selected_key())
++            else:
++                self.panel_key(name)
++
++    def scroll(self, name: str) -> None:
++        """Move the viewport a page, or to an end. `viewport` keeps it on the cursor's row and its drawer, so these
++        keys move it only through a drawer taller than the screen."""
++        page = max(1, self.room - 1)
++        # `viewport` follows the conversation's newest line again once the offset reaches it.
++        self.follow = False
++        if name in ("pagedown", " "):
++            self.offset += page
++        elif name in ("pageup", "b"):
++            self.offset -= page
++        elif name in ("end", "G"):
++            self.offset = sys.maxsize
++        else:
++            self.offset = 0
++
++    def selected_key(self) -> Optional[str]:
++        keys = self.keys()
++        return self.selected if self.selected in keys else (keys[0] if keys else None)
++
++    def move(self, step: int) -> None:
++        keys = self.keys()
++        if not keys:
++            return
++        at = keys.index(self.selected) if self.selected in keys else 0
++        self.selected = keys[max(0, min(len(keys) - 1, at + step))]
++        if self.view == "panel":
++            self.close_drawer()
++            self.follow = True
++
++    def open_panel(self, name: str) -> None:
++        self.view, self.session, self.selected = "panel", name, None
++        self.close_drawer()
++
++    def go_home(self) -> None:
++        self.close_drawer()
++        self.field = None
++        self.view, self.selected, self.session = "home", self.session, None
++
++    def close_drawer(self) -> None:
++        self.drawer = self.asking = None
++        self.threads = None
++
++    def panel_key(self, name: str) -> None:
++        if name == "left" or (name in ("esc", "0") and self.drawer is None):
++            self.go_home()
++        elif name in ("esc", "0"):
++            self.close_drawer()
++        elif name == "enter" and self.selected_key() == CONVERSATION:
++            self.toggle_conversation()
++        elif name == "enter":
++            self.toggle_drawer()
++        elif name == "v":
++            self.toggle_conversation()
++        elif self.drawer is not None:
++            control = next((one for one in self.controls() if one.key == name), None)
++            if control is not None:
++                control.act()
++        elif name == "7":
++            self.open_field("session", None, "Message this session: ")
++
++    def toggle_conversation(self) -> None:
++        """Show or hide the viewed session's conversation, which the console remembers for each session while it
++        runs. Showing it moves the cursor there, so the page keys scroll it, and starts at its newest line."""
++        name = self.session or ""
++        if name in self.expanded:
++            self.expanded.discard(name)
++            return
++        self.expanded.add(name)
++        self.close_drawer()
++        self.selected, self.follow = CONVERSATION, True
++        self.next_conversation = float("-inf")
++        self.refresh_now.set()
++
++    def toggle_drawer(self) -> None:
++        key = self.selected_key()
++        if key is None or key == self.drawer:
++            self.close_drawer()
++            return
++        self.close_drawer()
++        self.drawer = self.selected = key
++        if key.startswith("pr:"):
++            self.next_threads = float("-inf")
++            self.refresh_now.set()
++        self.settle_view()
++
++    def controls(self) -> list[Control]:
++        row, item = self.row(self.drawer), self.item(self.drawer)
++        if row is not None:
++            return self.pull_controls(row)
++        return self.item_controls(item) if item is not None else []
++
++    def pull_controls(self, row: rows.Row) -> list[Control]:
++        pull = row.pull
++        if self.asking == "dismiss":
++            return [Control("8", "Yes, dismiss it", lambda: self.dismiss_pull(row)),
++                    Control("9", "No, keep it", self.stop_asking)]
++        reference = f"{pull.repo}#{pull.number}"
++        controls = [Control("7", "Discuss", lambda: self.open_field("pr", reference, f"Discuss {reference}: ")),
++                    Control("8", "Dismiss", lambda: self.ask("dismiss")),
++                    Control("o", "Open in GitHub", lambda: self.open_url(pull.url))]
++        if pull.summary_url is not None:
++            controls.append(Control("p", "Open in Projector", lambda: self.open_url(pull.summary_url)))
++        return controls
++
++    def item_controls(self, item: dict) -> list[Control]:
++        ref, now = item["ref"], self.now_ms()
++        answered = item.get("answer")
++        if answered:
++            if answered.get("dismissed") and not answered.get("withdrawn"):
++                return [Control("8", "Restore", lambda: self.record(inbox.restore, ref))]
++            return []
++        if self.asking == "snooze" and not is_snoozed(item, now):
++            return [*(Control(str(index), label, lambda minutes=minutes: self.record(inbox.snooze, ref, minutes), True)
++                      for index, (label, minutes) in enumerate(SNOOZES, 1)),
++                    Control("9", "Cancel", self.stop_asking)]
++        controls = []
++        if item["kind"] == "question":
++            controls += [Control(str(index), f"{choice}{' (recommended)' if index == 1 else ''}",
++                                 lambda letter=chr(ord("a") + index - 1): self.record(inbox.answer, ref, letter), True)
++                         for index, choice in enumerate(item["choices"], 1)]
++            controls.append(Control("t", "type an answer", lambda: self.open_field("typed", ref, f"Answer {ref}: "),
++                                    True))
++        elif item["kind"] == "request":
++            start = start_of(item)
++            if start is not None:
++                controls.append(Control("1", start, lambda: self.record(inbox.start, ref, item["start"]), True))
++            given = item.get("choices")
++            controls += [Control(str(index), choice,
++                                 lambda choice=choice: self.record(inbox.done, ref, choice if given else None), True)
++                         for index, choice in enumerate(given or ["Done"], 1 if start is None else 2)]
++        if not item.get("unclear") and item["kind"] != "message":
++            controls.append(Control("6", "I don't understand",
++                                    lambda: self.record(inbox.unclear, ref, item["subject"], item.get("detail", ""))))
++        controls += [Control("7", "Discuss", lambda: self.open_field("discuss", ref, f"Discuss {ref}: ")),
++                     Control("8", "Dismiss", lambda: self.record(inbox.dismiss, ref)),
++                     Control("9", "Unsnooze", lambda: self.record(inbox.restore, ref)) if is_snoozed(item, now)
++                     else Control("9", "Snooze", lambda: self.ask("snooze"))]
++        return controls
++
++    def ask(self, what: str) -> None:
++        self.asking = what
++
++    def stop_asking(self) -> None:
++        self.asking = None
++
++    # Recording
++
++    def record(self, change: Callable[..., dict], *args) -> Optional[dict]:
++        """Record a choice with an inbox function for the viewed session, then show it. For a Codex session,
++        wake the daemon, which delivers its lines."""
++        session = self.viewed()
++        if session is None:
++            return None
++        try:
++            item = change(session.name, *args)
++        except ProjectorError as error:
++            self.status = str(error)
++            return None
++        self.asking = None
++        if session.host == "codex":
++            try:
++                self.wake(session.name, item)
++            except (ProjectorError, OSError) as error:
++                self.status = f"recorded, but the watch daemon did not start: {error}"
++        self.reload()
++        return item
++
++    def dismiss_pull(self, row: rows.Row) -> None:
++        """Keep the pull request out of each role the viewed session holds on it, as `project watch drop` does."""
++        session = self.viewed()
++        if session is None:
++            return
++        self.asking = None
++        try:
++            for role in row.roles:
++                watch.drop(self.root, session.name, row.pull.repo, row.pull.number, SUBSCRIPTION_ROLE[role])
++        except ProjectorError as error:
++            self.status = str(error)
++        self.reload()
++
++    # The text field
++
++    def open_field(self, purpose: str, target: Optional[str], prompt: str) -> None:
++        self.field = Field(purpose, target, prompt)
++
++    def field_key(self, name: str) -> None:
++        typing = self.field
++        assert typing is not None
++        if name == "esc":
++            self.field = None
++        elif name == "enter":
++            self.send(typing)
++        elif name == "left":
++            typing.cursor = max(0, typing.cursor - 1)
++        elif name == "right":
++            typing.cursor = min(len(typing.text), typing.cursor + 1)
++        elif name == "home":
++            typing.cursor = 0
++        elif name == "end":
++            typing.cursor = len(typing.text)
++        elif name == "backspace" and typing.cursor > 0:
++            typing.text = typing.text[:typing.cursor - 1] + typing.text[typing.cursor:]
++            typing.cursor -= 1
++        elif name == "delete":
++            typing.text = typing.text[:typing.cursor] + typing.text[typing.cursor + 1:]
++        elif len(name) == 1 and name.isprintable():
++            typing.text = typing.text[:typing.cursor] + name + typing.text[typing.cursor:]
++            typing.cursor += 1
++
++    def send(self, typing: Field) -> None:
++        """Record what the field holds. A refusal keeps the field, so the person can fix what they typed."""
++        said, target = typing.text, typing.target
++        if typing.purpose == "discuss":
++            item = self.record(inbox.discuss, target, said)
++        elif typing.purpose == "typed":
++            question = self.item(f"item:{target}")
++            letter = inbox.typed_letter(question) if question is not None else None
++            item = self.record(inbox.answer, target, letter, said)
++        else:
++            item = self.record(lambda name: inbox.send(name, said, pr=target))
++        if item is None:
++            return
++        self.field = None
++        if typing.purpose in ("pr", "session"):
++            # The message is an item of its own, which reads `sending` until it is delivered and then leaves.
++            self.close_drawer()
++            self.selected = item_key(item)
++
++    # Laying out the screen
++
++    def lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
++        """The screen's body, and the first and last of its lines that show the cursor's row and its drawer."""
++        with self.lock:
++            return self.home_lines() if self.view == "home" else self.panel_lines(width)
++
++    def viewport(self, width: int, room: int) -> list[Line]:
++        """The body's lines that fit in `room` rows. The offset survives each redraw and moves only as far as it
++        must to show the cursor's row and its drawer. A drawer taller than the room shows a room's worth of itself,
++        starting at its row, and the scroll keys move the offset through the rest. The conversation starts at its
++        newest line instead, and keeps it in view as lines arrive until a scroll key moves away from it."""
++        with self.lock:
++            body, (first, last) = self.lines(width)
++            self.room = room
++
++            def clamped(offset: int) -> int:
++                if last - first + 1 > room:
++                    offset = min(max(offset, first), last - room + 1)
++                else:
++                    offset = min(max(offset, last - room + 1), first)
++                return max(0, min(offset, len(body) - room))
++
++            following = self.view == "panel" and self.selected_key() == CONVERSATION
++            if following and self.follow:
++                self.offset = sys.maxsize
++            self.offset = clamped(self.offset)
++            if following:
++                self.follow = self.offset == clamped(sys.maxsize)
++            return body[self.offset:self.offset + room]
++
++    def footer(self) -> list[Line]:
++        """The lines under the body: what the keys do, and the last refusal or note."""
++        with self.lock:
++            lines = [Line([(self.status, "error")])] if self.status else []
++            if self.field is not None:
++                return [*lines, Line([("Enter sends · Esc cancels", "subtle")])]
++            if self.view == "home":
++                hint = "↑↓ move · Enter open · q quit"
++            elif self.selected_key() == CONVERSATION and self.session in self.expanded:
++                hint = "v hide · PgUp PgDn scroll · 7 message this session · ← or Esc back · q quit"
++            elif self.drawer is None:
++                hint = "↑↓ move · Enter open · 7 message this session · v conversation · ← or Esc back · q quit"
++            else:
++                hint = "Enter or Esc close · PgUp PgDn scroll · ← back · q quit"
++            return [*lines, Line([(hint, "subtle")])]
++
++    def home_lines(self) -> tuple[list[Line], tuple[int, int]]:
++        now = self.now_ms()
++        listed = self.home()
++        lines = [Line([("Projector console", "bold"),
++                       (f"  {counted(len(listed), 'live session') or 'no live sessions'}", "subtle")]), Line([])]
++        if not listed:
++            lines.append(Line([("No session is live. A session shows here while Claude Code's panel or the watch "
++                                "daemon's Codex adapter delivers to it.", "subtle")]))
++        chosen = self.selected_key()
++        focus = (0, 0)
++        for session in listed:
++            start = len(lines)
++            lines.append(Line([(session.label, "bold"), (f"  {session.host}", "subtle"),
++                               *([(f"  {session.place}", "accent")] if session.place else []),
++                               *([(f"  {' · '.join(counts_of(session, now))}", "")] if counts_of(session, now) else [])],
++                              selected=session.name == chosen))
++            if session.summary:
++                lines.append(Line([(f"  {session.summary}", "subtle")]))
++            named = headline(session, now)
++            if named is not None:
++                lines.append(Line([(f"  ‣ {named['subject']}", "")]))
++            if session.name == chosen:
++                focus = (start, len(lines) - 1)
++        return lines, focus
++
++    def conversation_lines(self, name: str, width: int, selected: bool) -> list[Line]:
++        """The conversation's heading, and, when it is shown, what the person and the agent said, newest last."""
++        shown = name in self.expanded
++        lines = [Line([(f"{'▾' if shown else '▸'} Conversation", "bold"),
++                       (f"  v {'hides' if shown else 'shows'} what you and the agent said", "subtle")], selected)]
++        if not shown:
++            return lines
++        indent = " " * DRAWER_INDENT
++        said = self.said.get(name) or []
++        if not said:
++            found = self.transcripts.get(name)
++            note = ("reading…" if found is None else "Nothing said yet." if found
++                    else "No transcript found for this session.")
++            return [*lines, Line([(indent + note, "subtle")])]
++        for one in said:
++            who = "you: " if one.who == "you" else "agent: "
++            wrap = max(1, width - DRAWER_INDENT - len(who))
++            parts = [part for paragraph in one.text.splitlines() for part in textwrap.wrap(paragraph, wrap) or [""]]
++            lines.append(Line([(indent + who, "subtle"), (parts[0], "accent" if one.who == "you" else "")]))
++            lines += [Line([(indent + " " * len(who) + part, "accent" if one.who == "you" else "")])
++                      for part in parts[1:]]
++        return lines
++
++    def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
++        session = self.viewed()
++        if session is None:
++            return [], (0, 0)
++        now = self.now_ms()
++        counts = counts_of(session, now)
++        lines = [Line([(session.label, "bold"), (f"  {session.host}", "subtle"),
++                       *([(f"  {session.place}", "accent")] if session.place else []),
++                       *([(f"  {' · '.join(counts)}", "subtle")] if counts else [])])]
++        if session.summary:
++            lines.append(Line([(session.summary, "subtle")]))
++        lines.append(Line([]))
++        entries = self.entries()
++        if not entries:
++            lines.append(Line([("No pull requests or items. Press 7 to send this session a message.", "subtle")]))
++        chosen = self.selected_key()
++        focus = (0, 0)
++        label_width = max((len(row.label) for row in session.rows), default=0)
++        author_width = max((len(row.pull.author or "") for row in session.rows if row.section == "review"), default=0)
++        previous = None
++        for key, entry in entries:
++            group = entry.section if isinstance(entry, rows.Row) else "items"
++            if previous is not None and group != previous:
++                lines.append(Line([]))
++            previous = group
++            start = len(lines)
++            if isinstance(entry, rows.Row):
++                lines.append(self.pull_line(entry, label_width, author_width, key == chosen))
++                if key == self.drawer:
++                    lines += self.pull_drawer(entry)
++            else:
++                lines.append(self.item_line(entry, now, key == chosen))
++                if key == self.drawer:
++                    lines += self.item_drawer(entry, width)
++            if key == chosen:
++                focus = (start, len(lines) - 1)
++        lines.append(Line([]))
++        start = len(lines)
++        lines += self.conversation_lines(session.name, width, chosen == CONVERSATION)
++        if chosen == CONVERSATION:
++            focus = (start, len(lines) - 1)
++        return lines, focus
++
++    def pull_line(self, row: rows.Row, label_width: int, author_width: int, selected: bool) -> Line:
++        pull = row.pull
++        parts = [(row.label.ljust(label_width), "")]
++        if pull.is_loading:
++            parts.append(("  loading…", "subtle"))
++            return Line(parts, selected)
++        parts.append((f"  {row.state}", {"conflict": "error", "failing": "error", "changes": "warning",
++                                         "findings": "warning", "clean": "success"}.get(row.state, "accent")))
++        if row.section == "review":
++            parts.append((f"  {(pull.author or '').ljust(author_width)}", "subtle"))
++        parts.append((f"  {pull.title}", ""))
++        if row.notes:
++            parts.append((f"  {' · '.join(row.notes)}", "subtle"))
++        return Line(parts, selected)
++
++    def pull_drawer(self, row: rows.Row) -> list[Line]:
++        pull, indent = row.pull, " " * DRAWER_INDENT
++        facts = [" and ".join(row.roles)] if row.roles else []
++        facts += [pull.branch] if pull.branch else []
++        if not pull.is_loading:
++            files = int(pull.changed_files)
++            facts.append(f"+{int(pull.additions)} −{int(pull.deletions)} in {files} file{'' if files == 1 else 's'}")
++        facts += [f"checks {pull.checks}"] if pull.checks else []
++        facts += pull.labels
++        lines = [Line([(indent + " · ".join(facts), "subtle")]), self.controls_line(self.controls())]
++        if pull.open_threads and self.threads is None:
++            lines.append(Line([(f"{indent}loading threads…", "subtle")]))
++        for path, threads in rows.threads_by_file(self.threads or []):
++            lines.append(Line([(f"{indent}{path} ", ""),
++                               (f"{len(threads)} finding{'' if len(threads) == 1 else 's'}", "warning")]))
++            for thread in threads:
++                where = f"{thread.line}: " if thread.line is not None else ""
++                said = f"{where}{thread.author or 'someone'}: {thread.excerpt}"
++                lines.append(Line([(f"{indent}  {said}", "subtle" if thread.is_outdated else "")]))
++        return lines
++
++    def item_line(self, item: dict, now: int, selected: bool) -> Line:
++        is_open = not item.get("answer")
++        style = "subtle" if not is_open or is_snoozed(item, now) else {
++            "question": "accent", "request": "warning", "notice": "", "message": ""}[item["kind"]]
++        parts = [(f"- {item['subject']}", style)]
++        parts += [(f"  {word}", mark) for word, mark in marks_of(item)]
++        parts.append((f"  {age(now - item.get('postedAt', now))}", "subtle"))
++        return Line(parts, selected)
++
++    def item_drawer(self, item: dict, width: int) -> list[Line]:
++        indent = " " * DRAWER_INDENT
++        wrap = max(10, width - DRAWER_INDENT)
++        lines: list[Line] = []
++        if item.get("detail"):
++            lines.append(Line([]))
++            for paragraph in item["detail"].splitlines():
++                lines += [Line([(indent + part, "")]) for part in textwrap.wrap(paragraph, wrap) or [""]]
++        if item.get("messages"):
++            # The messages the person sent about the item, oldest first. The agent answers them in its
++            # conversation.
++            lines.append(Line([]))
++            for said in item["messages"]:
++                first, *rest = textwrap.wrap(said.get("text", ""), max(1, wrap - len("you: "))) or [""]
++                lines.append(Line([(indent + "you: ", "subtle"), (first, "")]))
++                lines += [Line([(indent + " " * len("you: ") + part, "")]) for part in rest]
++        lines += self.answer_lines(item, indent)
++        stage = stage_of(item)
++        if item.get("start") and not item.get("answer"):
++            reason = (item.get("progress") or {}).get("reason")
++            said = f"Blocked: {reason}" if stage == "blocked" else f"{(stage or 'start').capitalize()}: {item['start']}"
++            lines += [Line([]), Line([(indent + said, "warning" if stage == "blocked" else "")])]
++        controls = self.controls()
++        options = [one for one in controls if one.option]
++        if options:
++            lines.append(Line([]))
++            lines += [Line([(f"{indent}{one.key}: {one.label}", "accent")]) for one in options]
++        rest = [one for one in controls if not one.option]
++        if rest:
++            lines += [Line([]), self.controls_line(rest)]
++        return lines
++
++    def answer_lines(self, item: dict, indent: str) -> list[Line]:
++        """What a resolved item's drawer says became of it."""
++        answered = item.get("answer")
++        if not answered:
++            return []
++        if answered.get("delivered"):
++            said = "Delivered"
++        elif answered.get("withdrawn"):
++            said = "Withdrawn by its agent"
++        elif answered.get("declined"):
++            said = "Declined"
++        elif answered.get("dismissed"):
++            said = "Dismissed"
++        elif answered.get("done"):
++            said = "Done"
++        else:
++            said = f"Answered: {answered.get('text', '')}"
++        if answered.get("text") and (answered.get("done") or answered.get("declined")):
++            said += f": {answered['text']}"
++        return [Line([]), Line([(f"{indent}{said} ✓", "success")])]
++
++    def controls_line(self, controls: list[Control]) -> Line:
++        return Line([(" " * DRAWER_INDENT + "   ".join(f"{one.key}: {one.label}" for one in controls), "accent")])
++
++
++# The terminal
++
++CURSES_KEYS = {"KEY_UP": "up", "KEY_DOWN": "down", "KEY_LEFT": "left", "KEY_RIGHT": "right", "KEY_ENTER": "enter",
++               "KEY_BACKSPACE": "backspace", "KEY_DC": "delete", "KEY_HOME": "home", "KEY_END": "end",
++               "KEY_PPAGE": "pageup", "KEY_NPAGE": "pagedown"}
++CHARACTER_KEYS = {"\n": "enter", "\r": "enter", "\x1b": "esc", "\x7f": "backspace", "\b": "backspace",
++                  "\x01": "home", "\x05": "end"}
++STYLE_COLORS = {"accent": "COLOR_CYAN", "success": "COLOR_GREEN", "warning": "COLOR_YELLOW", "error": "COLOR_RED"}
++
++
++def key_name(pressed: object, curses: Any) -> Optional[str]:
++    """The name `Console.key` takes for what `get_wch` returned."""
++    if isinstance(pressed, str):
++        return CHARACTER_KEYS.get(pressed, pressed)
++    return next((name for constant, name in CURSES_KEYS.items() if pressed == getattr(curses, constant, None)), None)
++
++
++def styles(curses: Any) -> dict[str, int]:
++    """Each style's attributes: the terminal's own colors on its own background, or none under `NO_COLOR`."""
++    found = {"": 0, "subtle": curses.A_DIM, "bold": curses.A_BOLD}
++    colored = not os.environ.get("NO_COLOR") and curses.has_colors()
++    if colored:
++        curses.start_color()
++        curses.use_default_colors()
++    for index, (style, color) in enumerate(STYLE_COLORS.items(), 1):
++        if colored:
++            curses.init_pair(index, getattr(curses, color), -1)
++            found[style] = curses.color_pair(index)
++        else:
++            found[style] = curses.A_BOLD if style == "error" else 0
++    return found
++
++
++def printable(text: str) -> str:
++    """Text as it can be drawn: an agent's subject or its conversation could hold a control character, which would
++    move the terminal's cursor."""
++    return "".join(character if character.isprintable() else " " for character in text)
++
++
++class Screen:
++    """Draws a `Console` with curses and feeds it keys."""
++
++    def __init__(self, window: Any, console: Console, curses: Any) -> None:
++        self.window, self.console, self.curses = window, console, curses
++        self.styles = styles(curses)
++
++    def put(self, y: int, line: Line, width: int) -> None:
++        x = 0
++        for text, style in line.parts:
++            if x >= width:
++                break
++            attributes = self.styles.get(style, 0) | (self.curses.A_REVERSE if line.selected else 0)
++            shown = printable(text)[:width - x]
++            try:
++                self.window.addstr(y, x, shown, attributes)
++            except self.curses.error:
++                pass
++            x += len(shown)
++
++    def draw(self) -> None:
++        height, width = self.window.getmaxyx()
++        footer = self.console.footer()
++        typing = self.console.field
++        room = max(1, height - len(footer) - (1 if typing else 0))
++        shown = self.console.viewport(width, room)
++        self.window.erase()
++        for y, line in enumerate(shown):
++            self.put(y, line, width)
++        for y, line in enumerate(footer, room):
++            self.put(y, line, width)
++        if typing is not None:
++            space = max(1, width - len(typing.prompt) - 1)
++            start = max(0, typing.cursor - space)
++            self.put(height - 1, Line([(typing.prompt, "bold"), (typing.text[start:start + space], "")]), width)
++            self.window.move(height - 1, min(width - 1, len(typing.prompt) + typing.cursor - start))
++        try:
++            self.curses.curs_set(0 if typing is None else 1)
++        except self.curses.error:
++            pass
++        self.window.refresh()
++
++    def run(self) -> int:
++        self.window.keypad(True)
++        self.window.timeout(250)
++        stop = threading.Event()
++
++        def refresh() -> None:
++            while not stop.is_set():
++                try:
++                    self.console.tick()
++                except Exception as error:  # a failed refresh must not stop the ones after it
++                    self.console.status = f"refresh failed: {error}"
++                self.console.refresh_now.wait(0.25)
++                self.console.refresh_now.clear()
++
++        worker = threading.Thread(target=refresh, daemon=True)
++        worker.start()
++        try:
++            while not self.console.quit:
++                self.draw()
++                try:
++                    pressed = self.window.get_wch()
++                except self.curses.error:
++                    continue
++                name = key_name(pressed, self.curses)
++                if name is not None:
++                    self.console.key(name)
++        finally:
++            stop.set()
++            self.console.refresh_now.set()
++        return 0
++
++
++def main(wake: Callable[[str, dict], None]) -> int:
++    """Run the console in this terminal until `q`."""
++    import curses
++
++    os.environ.setdefault("ESCDELAY", "25")
++    console = Console(watch.state_root(), wake=wake)
++    try:
++        return curses.wrapper(lambda window: Screen(window, console, curses).run())
++    except KeyboardInterrupt:
++        return 0
+diff --git a/src/projector/conversation.py b/src/projector/conversation.py
+new file mode 100644
+index 00000000..de553e3a
+--- /dev/null
++++ b/src/projector/conversation.py
+@@ -0,0 +1,204 @@
++"""A session's conversation as its own chat shows it: the person's messages and the agent's text replies.
++
++Claude Code and Codex each write a session's conversation to a JSON Lines transcript. `Reader` follows one,
++reading only the bytes added since its last read, and turns each entry into what was said: the person's typed
++prompts, the inbox lines Projector delivered on their behalf, and the agent's text. Tool calls, tool results,
++thinking, reasoning, hook context, and instructions are left out, and so is an entry of a kind the reader does not
++know, so a host that adds one breaks nothing.
++
++The transcript holds whatever the conversation held, including any secret an agent quoted there, so the console
++shows only what the session's own chat already shows, to the person who can already read that chat.
++"""
++
++from __future__ import annotations
++
++import json
++import os
++import re
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Callable, Optional
++
++from . import codex_watch, watch
++
++# How much of a transcript the first read takes from its end, so a long session opens at once.
++TAIL_BYTES = 2 * 1024 * 1024
++# How many things said a reader keeps, the newest.
++KEEP = 400
++# The lines Projector's deliverers send a session on the person's behalf, as `inbox.message` writes them.
++INBOX_LINE = re.compile(r"^(ANSWER|DISCUSS|STARTED|UNCLEAR|RESTORED|DONE|DECLINED|DISMISSED) \d+\S* ")
++COMMAND = re.compile(r"<command-name>(.*?)</command-name>(?:.*?<command-args>(.*?)</command-args>)?", re.S)
++
++
++@dataclass(frozen=True)
++class Said:
++    """One thing said in the conversation: by `you`, the person, or by the `agent`."""
++
++    who: str
++    text: str
++
++
++def inbox_lines(text: object) -> list[Said]:
++    """The person's inbox lines in a prompt Projector delivered, leaving out its pull request events."""
++    if not isinstance(text, str):
++        return []
++    return [Said("you", line) for line in text.splitlines() if INBOX_LINE.match(line)]
++
++
++# Claude Code
++
++def claude_typed(text: str) -> Optional[str]:
++    """What the person typed, from a prompt's text: a slash command as `/name args`, and nothing for the output a
++    command or a shell escape left in the conversation."""
++    said = text.strip()
++    if said.startswith("<command-"):
++        found = COMMAND.search(said)
++        return " ".join(part.strip() for part in found.groups() if part and part.strip()) if found else None
++    if not said or said.startswith("<") or said.startswith("[Request interrupted"):
++        return None
++    return said
++
++
++def claude_said(entry: dict) -> list[Said]:
++    """What a Claude Code transcript entry said: an assistant entry's text blocks, the person's typed prompt, or
++    the inbox lines in a prompt Projector's panel submitted. A subagent's, a meta, or a compaction summary's entry
++    says nothing in the session's chat."""
++    if entry.get("isSidechain") or entry.get("isMeta") or entry.get("isCompactSummary"):
++        return []
++    message = entry.get("message")
++    if not isinstance(message, dict):
++        return []
++    content = message.get("content")
++    blocks = [block for block in content if isinstance(block, dict)] if isinstance(content, list) else []
++    if entry.get("type") == "assistant":
++        return [Said("agent", block["text"].strip()) for block in blocks
++                if block.get("type") == "text" and isinstance(block.get("text"), str) and block["text"].strip()]
++    if entry.get("type") != "user" or entry.get("toolUseResult") is not None:
++        return []
++    origin = entry.get("origin") if isinstance(entry.get("origin"), dict) else {}
++    if origin.get("kind") == "plugin":
++        prompt = entry.get("pluginPrompt") if isinstance(entry.get("pluginPrompt"), dict) else {}
++        return inbox_lines(prompt.get("text")) if origin.get("name") == "projector" else []
++    # An older Claude Code writes no origin, so a prompt without one is taken as typed.
++    if origin.get("kind") not in (None, "human"):
++        return []
++    # A tool's result sits in a `tool_result` block, whose text this never reads.
++    text = content if isinstance(content, str) else "\n".join(
++        block["text"] for block in blocks if block.get("type") == "text" and isinstance(block.get("text"), str))
++    typed = claude_typed(text)
++    return [Said("you", typed)] if typed else []
++
++
++def claude_transcript(session: str, environ: Optional[dict] = None) -> Optional[Path]:
++    """The transcript Claude Code writes for `session`, `projects/<project>/<session>.jsonl` under its
++    configuration directory, the newest when several projects hold one."""
++    environ = os.environ if environ is None else environ
++    if not watch.SESSION.fullmatch(session):
++        return None
++    roots = [Path(environ["CLAUDE_CONFIG_DIR"]) / "projects"] if environ.get("CLAUDE_CONFIG_DIR") else []
++    roots.append(Path(environ.get("HOME") or Path.home()) / ".claude" / "projects")
++    found = []
++    for root in roots:
++        try:
++            found += [path for path in root.glob(f"*/{session}.jsonl") if path.is_file()]
++        except OSError:
++            continue
++    return max(found, key=lambda path: path.stat().st_mtime_ns, default=None)
++
++
++# Codex
++
++def codex_said(entry: dict) -> list[Said]:
++    """What a Codex rollout entry said: an assistant message's text, or a user message's text that the person
++    gave. Each content block of a user message carries its kind in `content_item_kinds`, where `user.text` is the
++    person's and the rest are instructions and context Codex adds. A rollout that records no kinds is older, and
++    there a block that opens with a tag is that context. A batch Projector's Codex adapter queued keeps only its
++    inbox lines."""
++    if entry.get("type") != "response_item":
++        return []
++    payload = entry.get("payload")
++    if not isinstance(payload, dict) or payload.get("type") != "message":
++        return []
++    blocks = payload.get("content") if isinstance(payload.get("content"), list) else []
++    texts = [(index, block.get("text")) for index, block in enumerate(blocks)
++             if isinstance(block, dict) and isinstance(block.get("text"), str) and block["text"].strip()]
++    if payload.get("role") == "assistant":
++        return [Said("agent", text.strip()) for _, text in texts]
++    if payload.get("role") != "user":
++        return []
++    passthrough = payload.get("internal_chat_message_metadata_passthrough")
++    kinds = passthrough.get("content_item_kinds") if isinstance(passthrough, dict) else None
++    said = []
++    for index, text in texts:
++        if isinstance(kinds, list):
++            if index >= len(kinds) or kinds[index] != "user.text":
++                continue
++        elif text.lstrip().startswith("<"):
++            continue
++        if codex_watch.MARKER.match(text):
++            said += inbox_lines(text)
++        else:
++            said.append(Said("you", text.strip()))
++    return said
++
++
++def codex_transcript(root: Path, session: str) -> Optional[Path]:
++    """The rollout `codex.json` names for the session's own thread."""
++    path = codex_watch.registration(watch.session_folder(root, session)).get("transcript_path")
++    return Path(path) if isinstance(path, str) and path and Path(path).is_absolute() else None
++
++
++# Following a transcript
++
++class Reader:
++    """Follows one session's transcript. `read` returns what was said since the last read, and only this reader's
++    one caller may call it, since it keeps the offset."""
++
++    def __init__(self, locate: Callable[[], Optional[Path]], parse: Callable[[dict], list[Said]]) -> None:
++        self.locate, self.parse = locate, parse
++        self.path: Optional[Path] = None
++        self.identity: Optional[tuple[int, int]] = None
++        self.offset = 0
++        self.partial = b""
++
++    def read(self) -> tuple[bool, list[Said]]:
++        """Whether the transcript started over, as when it was found, replaced, or cut short, so what was said
++        before no longer stands, and what was said since. The first read of a transcript takes only its last
++        `TAIL_BYTES`, from the first whole line in them."""
++        path = self.path if self.path is not None and self.path.exists() else self.locate()
++        if path is None:
++            restarted = self.path is not None
++            self.path, self.identity = None, None
++            return restarted, []
++        try:
++            stat = path.stat()
++            restarted = path != self.path or (stat.st_dev, stat.st_ino) != self.identity or stat.st_size < self.offset
++            if restarted:
++                self.path, self.identity, self.partial = path, (stat.st_dev, stat.st_ino), b""
++                # A line the tail starts inside is the end of a JSON object, which is never JSON itself, so it
++                # is skipped below with any other line that does not parse.
++                self.offset = max(0, stat.st_size - TAIL_BYTES)
++            with path.open("rb") as handle:
++                handle.seek(self.offset)
++                added = handle.read()
++        except OSError:
++            return False, []
++        self.offset += len(added)
++        *lines, self.partial = (self.partial + added).split(b"\n")
++        said = []
++        for line in lines:
++            try:
++                entry = json.loads(line)
++            except ValueError:
++                continue
++            if isinstance(entry, dict):
++                said += self.parse(entry)
++        return restarted, said
++
++
++def reader_for(root: Path, session: str, host: str) -> Reader:
++    """A reader of the session's conversation: Codex's rollout for a Codex session, and otherwise Claude Code's
++    transcript."""
++    if host == "codex":
++        return Reader(lambda: codex_transcript(root, session), codex_said)
++    return Reader(lambda: claude_transcript(session), claude_said)
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 867aa1be..27bb9176 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -34,7 +34,9 @@
+ action, or mark its own item unclear. `project inbox discuss` records the
+ person's message to the agent, which reaches it with the person's authority,
+ so it asks too: an agent running it could put words in the person's mouth.
+-Projector's panel runs those commands
++`project console` records all of these from a terminal, so it asks too: it
++refuses to start without a terminal, which Claude Code gives no command today,
++and the rule covers a mode that gives one. Projector's panel runs those commands
+ itself, not through an agent's shell, so the person answering from the panel is
+ never asked. `project inbox restore` needs no ask rule: it reopens an item the
+ person dismissed or snoozed, which takes no choice from them, and an agent
+@@ -85,7 +87,7 @@
+ `review gate`, `site build` and `serve`, and `ios build` and `logs`, which run
+ the repository's build scripts or `sudo`. They leave out `inbox answer`,
+ `dismiss`, `snooze`, `done`, `decline`, `start`, `unclear`, and `discuss`
+-too. A new
++too, and `console`, whose terminal an agent could type answers into. A new
+ command reaches Codex once it is added here and `init` rewrites the file.
+ 
+ Both hosts check each command of a chain such as `a && b` on its own and
+@@ -117,7 +119,8 @@
+        "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
+        "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
+        "Bash(project inbox decline *)", "Bash(project inbox start *)",
+-       "Bash(project inbox unclear *)", "Bash(project inbox discuss *)", "Bash(project ios *allow-untrusted*)")
++       "Bash(project inbox unclear *)", "Bash(project inbox discuss *)", "Bash(project console)",
++       "Bash(project console *)", "Bash(project ios *allow-untrusted*)")
+ # The narrower rules Projector wrote before `Bash(project *)` covered them,
+ # which `init` removes from `permissions.allow`.
+ SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
+@@ -128,7 +131,7 @@
+ 
+ ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
+          "`--prepare` or `--allow-prepare`, `project ios build --allow-untrusted`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
+-         "`decline`, `start`, `unclear`, and `discuss`")
++         "`decline`, `start`, `unclear`, and `discuss`, and `project console`")
+ COMMANDS = "every `project` command but the few that reach outside Projector's own state"
+ 
+ # Each pattern Codex may run without asking, and outside its sandbox, with the
+@@ -185,8 +188,8 @@
+     "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
+     "# the command line names, `project ios build` and `logs`, which run the repository's build scripts or\n"
+     "# `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
+-    "# `unclear`, and `discuss`, which record the person's choice or words, and a command line that\n"
+-    "# starts with an option.\n"
++    "# `unclear`, and `discuss`, which record the person's choice or words, `project console`, which\n"
++    "# records them from a terminal, and a command line that starts with an option.\n"
+     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
+               f'    justification = "{justification}",\n)\n'
+               for pattern, justification in CODEX_ALLOW)
+diff --git a/tests/fixtures/conversation/claude.jsonl b/tests/fixtures/conversation/claude.jsonl
+new file mode 100644
+index 00000000..1ce5d44b
+--- /dev/null
++++ b/tests/fixtures/conversation/claude.jsonl
+@@ -0,0 +1,19 @@
++{"type":"permission-mode","permissionMode":"auto","sessionId":"11111111-2222-4333-8444-555555555555"}
++{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"Rename the greeting to hello."},"uuid":"u1","timestamp":"2026-01-02T03:04:05.000Z","origin":{"kind":"human"},"promptSource":"typed","sessionId":"11111111-2222-4333-8444-555555555555"}
++{"parentUuid":"u1","isSidechain":false,"type":"attachment","attachment":{"type":"environment"},"uuid":"a1"}
++{"parentUuid":"u1","isSidechain":false,"type":"user","message":{"role":"user","content":"<system-reminder>Made-up reminder.</system-reminder>"},"isMeta":true,"uuid":"m1"}
++{"parentUuid":"u1","isSidechain":false,"message":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"Made-up thinking.","signature":"sig"}]},"type":"assistant","uuid":"t1"}
++{"parentUuid":"t1","isSidechain":false,"message":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"I'll rename it in greet.py."}]},"type":"assistant","uuid":"t2"}
++{"parentUuid":"t2","isSidechain":false,"message":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"sed -n 1p greet.py"}}]},"type":"assistant","uuid":"t3"}
++{"parentUuid":"t3","isSidechain":false,"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"def greet(): made-up tool output","is_error":false}]},"toolUseResult":{"stdout":"def greet(): made-up tool output"},"uuid":"r1"}
++{"parentUuid":"r1","isSidechain":false,"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_2","type":"tool_result","content":[{"type":"text","text":"Made-up tool output with no toolUseResult."}]}]},"uuid":"r2"}
++{"parentUuid":"r2","isSidechain":false,"type":"user","message":{"role":"user","content":"Made-up tool output recorded as text."},"toolUseResult":{"stdout":"Made-up tool output recorded as text."},"uuid":"r3"}
++{"parentUuid":"r1","isSidechain":true,"message":{"id":"msg_s","type":"message","role":"assistant","content":[{"type":"text","text":"A subagent's made-up text."}]},"type":"assistant","uuid":"s1"}
++{"parentUuid":"r1","isSidechain":false,"type":"user","message":{"role":"user","content":"The projector plugin sent a message:\nDISCUSS 5 About this session → please keep the old name as an alias\n\nThis is how Claude Code surfaces a prompt a plugin submits between turns."},"uuid":"p1","origin":{"kind":"plugin","name":"projector"},"promptSource":"system","pluginPrompt":{"name":"projector","text":"DISCUSS 5 About this session → please keep the old name as an alias"}}
++{"parentUuid":"p1","isSidechain":false,"type":"user","message":{"role":"user","content":"The projector plugin sent a message:\nFINDING acme/app#12 made-up finding — run fix-pr\n"},"uuid":"p2","origin":{"kind":"plugin","name":"projector"},"promptSource":"system","pluginPrompt":{"name":"projector","text":"FINDING acme/app#12 made-up finding — run fix-pr on acme/app#12"}}
++{"parentUuid":"p2","isSidechain":false,"type":"user","message":{"role":"user","content":"Another session sent a made-up peer message."},"uuid":"q1","isMeta":true,"origin":{"kind":"peer"}}
++{"parentUuid":"q1","isSidechain":false,"type":"user","message":{"role":"user","content":"<command-message>fix-pr</command-message>\n<command-name>/projector:fix-pr</command-name>\n<command-args>acme/app#12</command-args>"},"uuid":"c1","origin":{"kind":"human"}}
++{"parentUuid":"c1","isSidechain":false,"type":"user","message":{"role":"user","content":"<local-command-stdout>Made-up command output</local-command-stdout>"},"uuid":"c2"}
++{"type":"a-kind-this-reader-does-not-know","made":"up"}
++not json at all
++{"parentUuid":"c2","isSidechain":false,"message":{"id":"msg_2","type":"message","role":"assistant","content":[{"type":"text","text":"Done: greet.py says hello, and greet stays as an alias."}]},"type":"assistant","uuid":"t4"}
+diff --git a/tests/fixtures/conversation/codex.jsonl b/tests/fixtures/conversation/codex.jsonl
+new file mode 100644
+index 00000000..27cc296b
+--- /dev/null
++++ b/tests/fixtures/conversation/codex.jsonl
+@@ -0,0 +1,15 @@
++{"timestamp":"2026-01-02T03:04:05.000Z","ordinal":1,"type":"session_meta","payload":{"id":"01a1e773-0000-7000-8000-00000000c0de","cwd":"/tmp/made-up","source":"cli"}}
++{"timestamp":"2026-01-02T03:04:05.100Z","ordinal":2,"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"Made-up developer instructions."}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["model.base_instructions"]}}}
++{"timestamp":"2026-01-02T03:04:05.200Z","ordinal":3,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# Made-up AGENTS.md"},{"type":"input_text","text":"<environment_context>made-up</environment_context>"}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["agents_md.instructions","environments.environment_context"]}}}
++{"timestamp":"2026-01-02T03:04:06.000Z","ordinal":4,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Add a farewell function."}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"],"content_item_metadata":[{"provenance":{"type":"user"}}]}}}
++{"timestamp":"2026-01-02T03:04:06.100Z","ordinal":5,"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
++{"timestamp":"2026-01-02T03:04:06.200Z","ordinal":6,"type":"response_item","payload":{"type":"reasoning","summary":[],"content":null,"encrypted_content":"made-up"}}
++{"timestamp":"2026-01-02T03:04:06.300Z","ordinal":7,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I'll add it beside greet.","annotations":[]}],"phase":"commentary"}}
++{"timestamp":"2026-01-02T03:04:06.400Z","ordinal":8,"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat greet.py\"}","call_id":"call_1"}}
++{"timestamp":"2026-01-02T03:04:06.500Z","ordinal":9,"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"made-up tool output"}}
++{"timestamp":"2026-01-02T03:04:06.600Z","ordinal":10,"type":"response_item","payload":{"type":"agent_message","author":"/root/helper","recipient":"/root","content":[{"type":"input_text","text":"A subagent's made-up report."}]}}
++{"timestamp":"2026-01-02T03:04:06.700Z","ordinal":11,"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"Made-up hook context."}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["hooks.additional_context"]}}}
++{"timestamp":"2026-01-02T03:04:07.000Z","ordinal":12,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"PROJECTOR WATCH 0f0e0d0c-0b0a-4908-8706-050403020100\nsession=01a1e773-0000-7000-8000-00000000c0de\nRecheck current subscriptions, pull request state, and inbox items before acting.\nFINDING acme/app#12 made-up finding — run fix-pr on acme/app#12\nANSWER 3.a Add the farewell to the README too? → Yes, in the usage section"}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}}}
++{"type":"a-kind-this-reader-does-not-know","payload":{"made":"up"}}
++{"timestamp":"2026-01-02T03:04:08.000Z","ordinal":13,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Added farewell, and the README's usage section shows it.","annotations":[]}],"phase":"final_answer"}}
++{"timestamp":"2026-01-02T03:04:09.000Z","ordinal":14,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>made-up legacy context</user_instructions>"},{"type":"input_text","text":"A message from an older Codex that records no kinds."}]}}
+diff --git a/tests/test_console.py b/tests/test_console.py
+new file mode 100644
+index 00000000..97f8c4ec
+--- /dev/null
++++ b/tests/test_console.py
+@@ -0,0 +1,571 @@
++"""`project console`'s model, driven without a terminal against a temporary state directory.
++
++Each test points `XDG_STATE_HOME` at its own directory, writes the files a live session leaves there, and drives
++`console.Console` with key names and an injected clock, `gh`, browser, and Codex wake.
++"""
++
++from __future__ import annotations
++
++import io
++import json
++import os
++import shutil
++import subprocess
++import sys
++import tempfile
++import time
++import unittest
++from contextlib import redirect_stderr
++from pathlib import Path
++from unittest import mock
++
++from projector import cli, console, inbox, watch
++from projector.inbox import write_json
++
++SOURCE = Path(cli.__file__).resolve().parents[1]
++
++
++class Clock:
++    def __init__(self) -> None:
++        self.now = time.time()
++
++    def __call__(self) -> float:
++        return self.now
++
++
++def pull_node(number: int, *, author: str = "operator", threads: int = 0) -> dict:
++    return {"repository": {"pullRequest": {
++        "title": f"Pull request {number}", "state": "OPEN", "author": {"login": author}, "headRefName": "feature",
++        "reviewThreads": {"nodes": [{"isResolved": False} for _ in range(threads)]}}}}
++
++
++class ConsoleCase(unittest.TestCase):
++    def setUp(self) -> None:
++        scratch = tempfile.TemporaryDirectory()
++        self.addCleanup(scratch.cleanup)
++        self.scratch = Path(scratch.name)
++        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state")})
++        environ.start()
++        self.addCleanup(environ.stop)
++        self.root = watch.state_root()
++        self.clock = Clock()
++        self.queries: list[list[str]] = []
++        self.opened: list[str] = []
++        self.woken: list[tuple[str, str]] = []
++        self.console = self.new_console()
++
++    def new_console(self) -> console.Console:
++        return console.Console(self.root, clock=self.clock, gh=self.gh, open_url=self.opened.append,
++                               wake=lambda session, item: self.woken.append((session, item["ref"])))
++
++    def gh(self, args: list[str]) -> watch.GhResult:
++        self.queries.append(args)
++        return watch.GhResult(0, json.dumps({"data": {"r0": {}}}))
++
++    def folder(self, session: str) -> Path:
++        folder = watch.session_folder(self.root, session)
++        folder.mkdir(parents=True, exist_ok=True)
++        return folder
++
++    def claude(self, session: str, renewed_ago: float = 0) -> None:
++        write_json(self.folder(session) / "session.json",
++                   {"deliverer": "mod", "renewed_at": watch.stamp(self.clock.now - renewed_ago)})
++
++    def codex(self, session: str, **fields) -> None:
++        write_json(self.folder(session) / "codex.json",
++                   {"schema_version": 1, "enabled": True, "expires_at": self.clock.now + 86400, **fields})
++
++    def subscribe(self, session: str, *lines: str) -> None:
++        (self.folder(session) / "subscriptions").write_text("".join(f"{line}\n" for line in lines))
++
++    def cache(self, repo: str, number: int, **fields) -> None:
++        path = watch.pull_cache(self.root, repo, number)
++        path.parent.mkdir(parents=True, exist_ok=True)
++        write_json(path, pull_node(number, **fields))
++
++    def ask(self, session: str, question: str = "Decline the finding?") -> dict:
++        return inbox.ask(session, question, "Decline it", ["Fix it"])
++
++    def press(self, *keys: str) -> None:
++        for key in keys:
++            self.console.key(key)
++
++    def type(self, text: str) -> None:
++        self.press(*text)
++
++    def home_names(self) -> list[str]:
++        return [session.name for session in self.console.home()]
++
++    def screen(self) -> str:
++        return "\n".join(line.text for line in self.console.lines(100)[0])
++
++    def open_entry(self, session: str, key: str) -> None:
++        """Open the session's panel and the drawer of the row under `key`."""
++        self.console.tick()
++        self.console.open_panel(session)
++        self.console.selected = key
++        self.press("enter")
++        self.assertEqual(key, self.console.drawer)
++
++
++class SessionSet(ConsoleCase):
++    def test_the_home_list_holds_live_claude_and_codex_sessions_and_leaves_out_a_lapsed_one(self) -> None:
++        self.claude("claude-session")
++        write_json(self.folder("claude-session") / "agent.json",
++                   {"schema_version": 1, "name": "fixer", "repo": "acme/app", "branch": "main"})
++        checkout = self.scratch / "checkout"
++        checkout.mkdir()
++        subprocess.run(["git", "init", "-q", "-b", "codex-branch"], cwd=checkout, check=True)
++        subprocess.run(["git", "remote", "add", "origin", "https://github.com/acme/web.git"], cwd=checkout, check=True)
++        self.codex("019a2b3c-0000-7000-8000-00000000c0de", cwd=str(checkout))
++        self.claude("lapsed-session", renewed_ago=600)
++        self.ask("lapsed-session")
++
++        self.console.tick()
++
++        self.assertEqual([("00000000c0de", "codex", "acme/web codex-branch"), ("fixer", "claude", "acme/app main")],
++                         sorted((one.label, one.host, one.place) for one in self.console.home()))
++
++
++class HomeOrder(ConsoleCase):
++    def test_a_session_with_more_open_questions_lists_first(self) -> None:
++        for session in ("one", "two"):
++            self.claude(session)
++        self.ask("one", "Retry the mirrors?")
++        self.ask("two")
++        self.ask("two", "Merge it now?")
++
++        self.console.tick()
++
++        self.assertEqual(["two", "one"], self.home_names())
++
++    def test_an_items_drawer_lists_the_messages_you_sent_about_it(self) -> None:
++        self.claude("s1")
++        item = self.ask("s1")
++        inbox.discuss("s1", item["ref"], "Which mirrors?")
++
++        self.open_entry("s1", "item:1")
++
++        self.assertIn("you: Which mirrors?", self.screen())
++
++
++class Recording(ConsoleCase):
++    def test_an_option_answers_the_item_of_the_viewed_session_when_another_session_has_the_same_number(self) -> None:
++        for session in ("first", "second"):
++            self.claude(session)
++            for question in ("One?", "Two?", "Three?"):
++                self.ask(session, question)
++
++        self.open_entry("second", "item:3")
++        self.press("1")
++
++        answers = [inbox.read_item(inbox.session_dir(name), "3").get("answer") for name in ("first", "second")]
++        self.assertEqual([None, "a"], [answer and answer["letter"] for answer in answers])
++
++    def test_an_answer_or_a_message_from_the_console_is_recorded_and_left_to_the_sessions_deliverer(self) -> None:
++        self.claude("s1")
++        self.ask("s1")
++        self.ask("s1", "Merge it now?")
++
++        self.open_entry("s1", "item:1")
++        self.press("1")
++        self.console.selected = "item:2"
++        self.press("enter", "7")
++        self.type("Why now?")
++        self.press("enter")
++
++        answered, discussed = (inbox.read_item(inbox.session_dir("s1"), ref) for ref in ("1", "2"))
++        self.assertEqual((None, None, None, None, "Why now?"),
++                         (answered.get("claim"), answered.get("deliveredAt"), discussed.get("claim"),
++                          discussed["messages"][0].get("deliveredAt"), discussed["messages"][0]["text"]))
++
++    def test_a_codex_sessions_answer_wakes_its_delivery_and_a_claude_sessions_does_not(self) -> None:
++        self.codex("codex-session")
++        self.claude("claude-session")
++        for session in ("codex-session", "claude-session"):
++            self.ask(session)
++        for session in ("codex-session", "claude-session"):
++            self.open_entry(session, "item:1")
++            self.press("1")
++
++        self.assertEqual([("codex-session", "1")], self.woken)
++
++
++class Messages(ConsoleCase):
++    def test_seven_with_no_drawer_open_sends_a_message_about_an_empty_session(self) -> None:
++        self.claude("idle")
++        self.console.tick()
++        self.console.open_panel("idle")
++
++        self.press("7")
++        self.type("hello")
++        self.press("enter")
++
++        item = inbox.read_item(inbox.session_dir("idle"), "1")
++        self.assertEqual(("message", None, "DISCUSS 1 About this session → hello"),
++                         (item["kind"], item["pr"], inbox.message(item)))
++
++    def test_a_message_reads_sending_like_a_notice_offers_no_unclear_and_leaves_once_delivered(self) -> None:
++        self.claude("s1")
++        self.console.tick()
++        self.console.open_panel("s1")
++        self.press("7")
++        self.type("hello")
++        self.press("enter")
++        sending = self.screen()
++        self.press("enter")
++        drawer = self.screen()
++        token = inbox.claim("s1", "1")["claim"]["token"]
++        inbox.settle("s1", "1", token, True)
++        self.console.reload()
++        delivered = self.screen()
++        self.clock.now += 31
++        self.console.reload()
++
++        self.assertEqual((True, True, False, True, False),
++                         ("- About this session  sending" in sending, "7: Discuss" in drawer,
++                          "6: I don't understand" in drawer, "Delivered ✓" in delivered,
++                          "About this session" in self.screen()))
++
++    def test_discussing_a_pull_request_two_sessions_hold_sends_the_message_to_the_viewed_session(self) -> None:
++        self.claude("first")
++        self.claude("second")
++        self.subscribe("first", "acme/app#12 fix")
++        self.subscribe("second", "acme/app#12 review claude-opus-5-5 operator")
++        self.cache("acme/app", 12)
++
++        self.open_entry("second", "pr:acme/app#12")
++        self.press("7")
++        self.type("Why the second retry loop?")
++        self.press("enter")
++
++        self.assertEqual(([], [("acme/app#12", "Why the second retry loop?")]),
++                         tuple([(item["pr"], item["messages"][0]["text"])
++                                for item in inbox.load_items(inbox.store_root() / name)]
++                               for name in ("first", "second")))
++
++
++class PullRequests(ConsoleCase):
++    def test_dismissing_a_pull_request_drops_only_the_viewed_sessions_roles_after_confirmation(self) -> None:
++        self.claude("first")
++        self.claude("second")
++        self.subscribe("first", "acme/app#12 fix")
++        self.subscribe("second", "acme/app#12 fix", "acme/app#12 review claude-opus-5-5 operator")
++        self.cache("acme/app", 12)
++        self.open_entry("second", "pr:acme/app#12")
++
++        self.press("8")
++        unconfirmed = watch.read_lines(self.folder("second"))
++        self.press("8")
++
++        self.assertEqual(
++            (["acme/app#12 fix", "acme/app#12 review claude-opus-5-5 operator"],
++             ["acme/app#12 fix", "acme/app#12 review claude-opus-5-5 operator", "!acme/app#12 fix",
++              "!acme/app#12 review claude-opus-5-5 operator"],
++             ["acme/app#12 fix"]),
++            (unconfirmed, watch.read_lines(self.folder("second")), watch.read_lines(self.folder("first"))))
++
++    def test_an_open_drawer_asks_for_threads_every_30_seconds_and_never_without_an_unresolved_thread(self) -> None:
++        for number, threads, expected in ((12, 2, 3), (13, 0, 0)):
++            with self.subTest(threads=threads):
++                self.queries.clear()
++                self.console = self.new_console()
++                self.claude(f"s{number}")
++                self.subscribe(f"s{number}", f"acme/app#{number} fix")
++                self.cache("acme/app", number, threads=threads)
++                self.open_entry(f"s{number}", f"pr:acme/app#{number}")
++                start = self.clock.now
++                for second in range(66):
++                    self.clock.now = start + second
++                    self.console.tick()
++                self.assertEqual(expected, len(self.queries))
++
++    def test_o_opens_the_pull_request_in_a_browser(self) -> None:
++        self.claude("s1")
++        self.subscribe("s1", "acme/app#12 fix")
++        self.cache("acme/app", 12)
++        self.open_entry("s1", "pr:acme/app#12")
++
++        self.press("o")
++
++        self.assertEqual(["https://github.com/acme/app/pull/12"], self.opened)
++
++
++class Keys(ConsoleCase):
++    def test_left_returns_home_closing_the_drawer_but_moves_the_cursor_in_a_text_field(self) -> None:
++        self.claude("s1")
++        self.ask("s1")
++        self.open_entry("s1", "item:1")
++
++        self.press("7")
++        self.type("ac")
++        self.press("left")
++        self.type("b")
++        self.press("enter")
++        in_field = (self.console.view, self.console.drawer)
++        self.press("left")
++
++        self.assertEqual((("panel", "item:1"), ("home", None), "abc"),
++                         (in_field, (self.console.view, self.console.drawer),
++                          inbox.read_item(inbox.session_dir("s1"), "1")["messages"][0]["text"]))
++
++
++class FakeCurses:
++    """The parts of `curses` that `console.Screen` draws with, for a terminal with no colors."""
++
++    A_DIM, A_BOLD, A_REVERSE = 1, 2, 4
++    KEY_NPAGE, KEY_PPAGE, KEY_HOME, KEY_END = 338, 339, 262, 360
++
++    class error(Exception):
++        pass
++
++    @staticmethod
++    def has_colors() -> bool:
++        return False
++
++    @staticmethod
++    def curs_set(visibility: int) -> None:
++        pass
++
++
++class FakeWindow:
++    """A terminal `height` rows tall that keeps the text each row was last drawn with."""
++
++    def __init__(self, height: int, width: int = 80) -> None:
++        self.height, self.width = height, width
++        self.rows: dict[int, str] = {}
++
++    def getmaxyx(self) -> tuple[int, int]:
++        return self.height, self.width
++
++    def erase(self) -> None:
++        self.rows = {}
++
++    def addstr(self, y: int, x: int, text: str, attributes: int) -> None:
++        self.rows[y] = self.rows.get(y, "").ljust(x) + text
++
++    def move(self, y: int, x: int) -> None:
++        pass
++
++    def refresh(self) -> None:
++        pass
++
++    def text(self) -> str:
++        return "\n".join(self.rows.get(y, "") for y in range(self.height))
++
++
++class TerminalCase(ConsoleCase):
++    """Draws the console with the real `Screen` into a 12-row fake window. It holds no tests of its own, so each
++    class built on it runs only the tests it defines."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.window = FakeWindow(12)
++        self.terminal = console.Screen(self.window, self.console, FakeCurses)
++
++    def draw(self) -> str:
++        self.terminal.draw()
++        return self.window.text()
++
++    def press_terminal(self, *pressed: object) -> None:
++        """Press keys as `get_wch` returns them, so the curses key names are tested too."""
++        for one in pressed:
++            name = console.key_name(one, FakeCurses)
++            if name is not None:
++                self.console.key(name)
++            self.terminal.draw()
++
++
++class Scrolling(TerminalCase):
++    def tall_question(self) -> None:
++        self.claude("s1")
++        item = inbox.ask("s1", "Decline the finding?", "Decline it", ["Fix it"],
++                         detail="\n".join(f"Detail line {number}." for number in range(1, 41)))
++        inbox.discuss("s1", item["ref"], "The newest message.")
++        self.open_entry("s1", f"item:{item['ref']}")
++
++    def test_page_down_reaches_the_last_message_and_controls_of_a_drawer_taller_than_the_screen(self) -> None:
++        self.tall_question()
++        opened = self.draw()
++        self.press_terminal(FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE,
++                            FakeCurses.KEY_NPAGE)
++        scrolled = self.draw()
++        self.console.tick()
++
++        self.assertEqual((True, False, False, True, True, True),
++                         ("- Decline the finding?" in opened, "you: The newest message." in opened,
++                          "8: Dismiss" in opened, "you: The newest message." in scrolled,
++                          "1: Decline it (recommended)" in scrolled, "8: Dismiss" in self.draw()))
++
++    def test_end_and_home_jump_to_a_tall_drawers_controls_and_back_to_its_row(self) -> None:
++        self.tall_question()
++        self.draw()
++
++        self.press_terminal(FakeCurses.KEY_END)
++        at_end = self.draw()
++        self.press("g")
++        self.terminal.draw()
++        self.press(" ", "b")
++        at_top = self.draw()
++
++        self.assertEqual((True, False, True, False),
++                         ("8: Dismiss" in at_end, "- Decline the finding?" in at_end,
++                          "- Decline the finding?" in at_top, "8: Dismiss" in at_top))
++
++    def test_the_cursor_still_closes_a_tall_drawer_and_moves_to_the_next_row(self) -> None:
++        self.claude("s1")
++        self.ask("s1", "Merge it now?")
++        self.tall_question()
++        self.draw()
++        self.press_terminal(FakeCurses.KEY_NPAGE)
++        # Both items can share a millisecond, so either may list first.
++        step = "down" if self.console.keys()[0] == "item:2" else "up"
++
++        self.press(step)
++
++        self.assertEqual((None, "item:1"), (self.console.drawer, self.console.selected_key()))
++        self.assertIn("- Merge it now?", self.draw())
++
++
++def claude_entry(who: str, text: str) -> str:
++    if who == "you":
++        return json.dumps({"type": "user", "origin": {"kind": "human"},
++                           "message": {"role": "user", "content": text}}) + "\n"
++    return json.dumps({"type": "assistant",
++                       "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}) + "\n"
++
++
++class Conversation(TerminalCase):
++    """The panel's conversation section, read from a Claude Code transcript under a temporary `CLAUDE_CONFIG_DIR`
++    and from a Codex rollout that `codex.json` names."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        environ = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.scratch / "claude"),
++                                               "HOME": str(self.scratch / "home")})
++        environ.start()
++        self.addCleanup(environ.stop)
++
++    def transcript(self, session: str) -> Path:
++        path = self.scratch / "claude" / "projects" / "-tmp-made-up" / f"{session}.jsonl"
++        path.parent.mkdir(parents=True, exist_ok=True)
++        return path
++
++    def say(self, path: Path, *said: tuple[str, str]) -> None:
++        with path.open("a", encoding="utf-8") as handle:
++            handle.write("".join(claude_entry(who, text) for who, text in said))
++
++    def test_the_conversation_is_collapsed_by_default_and_v_shows_it_for_that_session_only(self) -> None:
++        for session in ("s1", "s2"):
++            self.claude(session)
++            self.say(self.transcript(session), ("you", f"Hello from {session}."), ("agent", f"Hi, {session}."))
++        self.console.tick()
++        self.console.open_panel("s1")
++        self.console.tick()
++        collapsed = self.screen()
++
++        self.press("v")
++        self.console.tick()
++        shown = self.screen()
++        self.press("left")
++        self.console.open_panel("s2")
++        self.console.tick()
++        other = self.screen()
++        self.press("left")
++        self.console.open_panel("s1")
++        self.console.tick()
++
++        self.assertEqual(("▸ Conversation", False, "▾ Conversation", True, True, "▸ Conversation", False, True),
++                         (collapsed.splitlines()[-1][:14], "agent: Hi, s1." in collapsed,
++                          shown.splitlines()[-3][:14], "you: Hello from s1." in shown, "agent: Hi, s1." in shown,
++                          other.splitlines()[-1][:14], "Hi, s2." in other, "agent: Hi, s1." in self.screen()))
++
++    def test_a_collapsed_conversation_is_never_read(self) -> None:
++        self.claude("s1")
++        self.say(self.transcript("s1"), ("you", "Hello."))
++        self.console.tick()
++        self.console.open_panel("s1")
++        for _ in range(3):
++            self.clock.now += 1
++            self.console.tick()
++
++        self.assertEqual(({}, {}), (self.console.readers, self.console.said))
++
++    def test_an_open_conversation_starts_at_its_newest_line_and_follows_it_until_you_scroll_back(self) -> None:
++        self.claude("s1")
++        self.ask("s1")
++        path = self.transcript("s1")
++        self.say(path, *(("agent", f"Old line {number}.") for number in range(1, 31)))
++        self.console.tick()
++        self.console.open_panel("s1")
++        self.press("v")
++        self.console.tick()
++        opened = self.draw()
++        self.say(path, ("you", "A newer question."), ("agent", "A newer answer."))
++        self.clock.now += 1
++        self.console.tick()
++        followed = self.draw()
++        self.press_terminal(FakeCurses.KEY_PPAGE)
++        back = self.draw()
++        self.say(path, ("agent", "The newest answer."))
++        self.clock.now += 1
++        self.console.tick()
++        stayed = self.draw()
++        self.press_terminal("G")
++        self.say(path, ("agent", "One more answer."))
++        self.clock.now += 1
++        self.console.tick()
++
++        self.assertEqual((True, False, True, True, False, False, True, True),
++                         ("agent: Old line 30." in opened, "Old line 1." in opened,
++                          "agent: A newer answer." in followed, "Old line 20." in back,
++                          "agent: A newer answer." in back, "The newest answer." in stayed, stayed == back,
++                          "agent: One more answer." in self.draw()))
++
++    def test_a_codex_sessions_conversation_comes_from_the_rollout_codex_json_names(self) -> None:
++        rollout = self.scratch / "rollout.jsonl"
++        shutil.copy(Path(__file__).resolve().parent / "fixtures" / "conversation" / "codex.jsonl", rollout)
++        self.codex("019a2b3c-0000-7000-8000-00000000c0de", transcript_path=str(rollout))
++        self.console.tick()
++        self.console.open_panel("019a2b3c-0000-7000-8000-00000000c0de")
++        self.press("v")
++        self.console.tick()
++
++        self.assertIn("agent: Added farewell, and the README's usage section shows it.", self.screen())
++
++    def test_a_session_with_no_transcript_says_so(self) -> None:
++        self.claude("s1")
++        self.console.tick()
++        self.console.open_panel("s1")
++        self.press("v")
++        self.console.tick()
++
++        self.assertIn("No transcript found for this session.", self.screen())
++
++
++class Command(unittest.TestCase):
++    @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
++    def test_project_console_without_a_terminal_on_standard_input_exits_69(self) -> None:
++        # Standard output is a terminal, as when a person types `project console </dev/null` at a shell.
++        primary, secondary = os.openpty()
++        self.addCleanup(os.close, primary)
++        with os.fdopen(secondary, "wb") as terminal:
++            done = subprocess.run([sys.executable, "-m", "projector", "console"], stdin=subprocess.DEVNULL,
++                                  stdout=terminal, stderr=subprocess.PIPE, text=True, timeout=60,
++                                  env={**os.environ, "PYTHONPATH": str(SOURCE)})
++
++        self.assertEqual((69, "project: project console needs a terminal; run it in its own window or split\n"),
++                         (done.returncode, done.stderr))
++
++    def test_project_console_without_curses_exits_69_and_points_to_the_list_commands(self) -> None:
++        stderr = io.StringIO()
++        with mock.patch.dict(sys.modules, {"curses": None}), mock.patch.object(sys.stdin, "isatty", return_value=True), \
++                mock.patch.object(sys.stdout, "isatty", return_value=True), redirect_stderr(stderr):
++            code = cli.main(["console"])
++
++        self.assertEqual(69, code)
++        self.assertIn("`project inbox list` and `project watch list`", stderr.getvalue())
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_conversation.py b/tests/test_conversation.py
+new file mode 100644
+index 00000000..ff46aa29
+--- /dev/null
++++ b/tests/test_conversation.py
+@@ -0,0 +1,158 @@
++"""`conversation.py`: reading a session's conversation from Claude Code's and Codex's transcripts.
++
++The fixtures in `tests/fixtures/conversation/` hold made-up entries in each host's transcript format: what the
++person typed, what the agent said, and the tool calls, results, thinking, and context the console leaves out.
++"""
++
++from __future__ import annotations
++
++import os
++import shutil
++import tempfile
++import unittest
++from pathlib import Path
++from unittest import mock
++
++from projector import conversation, watch
++from projector.conversation import Said
++from projector.inbox import write_json
++
++FIXTURES = Path(__file__).resolve().parent / "fixtures" / "conversation"
++SESSION = "11111111-2222-4333-8444-555555555555"
++
++
++class Case(unittest.TestCase):
++    def setUp(self) -> None:
++        scratch = tempfile.TemporaryDirectory()
++        self.addCleanup(scratch.cleanup)
++        self.scratch = Path(scratch.name)
++
++    def follow(self, fixture: str, parse) -> tuple[Path, conversation.Reader]:
++        path = self.scratch / fixture
++        return path, conversation.Reader(lambda: path if path.exists() else None, parse)
++
++
++class Hosts(Case):
++    def test_a_claude_transcript_gives_the_persons_prompts_and_inbox_lines_and_the_agents_text_only(self) -> None:
++        _, reader = self.follow("claude.jsonl", conversation.claude_said)
++        shutil.copy(FIXTURES / "claude.jsonl", self.scratch / "claude.jsonl")
++
++        self.assertEqual((True, [
++            Said("you", "Rename the greeting to hello."),
++            Said("agent", "I'll rename it in greet.py."),
++            Said("you", "DISCUSS 5 About this session → please keep the old name as an alias"),
++            Said("you", "/projector:fix-pr acme/app#12"),
++            Said("agent", "Done: greet.py says hello, and greet stays as an alias."),
++        ]), reader.read())
++
++    def test_a_codex_rollout_gives_the_persons_text_and_inbox_lines_and_the_agents_text_only(self) -> None:
++        _, reader = self.follow("codex.jsonl", conversation.codex_said)
++        shutil.copy(FIXTURES / "codex.jsonl", self.scratch / "codex.jsonl")
++
++        self.assertEqual((True, [
++            Said("you", "Add a farewell function."),
++            Said("agent", "I'll add it beside greet."),
++            Said("you", "ANSWER 3.a Add the farewell to the README too? → Yes, in the usage section"),
++            Said("agent", "Added farewell, and the README's usage section shows it."),
++            Said("you", "A message from an older Codex that records no kinds."),
++        ]), reader.read())
++
++
++class Following(Case):
++    def test_a_later_read_returns_only_what_was_added_and_waits_for_a_line_to_end(self) -> None:
++        path, reader = self.follow("claude.jsonl", conversation.claude_said)
++        lines = (FIXTURES / "claude.jsonl").read_bytes().splitlines(keepends=True)
++        path.write_bytes(b"".join(lines[:6]))
++        first = reader.read()
++        last = lines[-1]
++        with path.open("ab") as handle:
++            handle.write(b"".join(lines[6:-1]) + last[:20])
++        middle = reader.read()
++        with path.open("ab") as handle:
++            handle.write(last[20:])
++
++        self.assertEqual([
++            (True, [Said("you", "Rename the greeting to hello."), Said("agent", "I'll rename it in greet.py.")]),
++            (False, [Said("you", "DISCUSS 5 About this session → please keep the old name as an alias"),
++                     Said("you", "/projector:fix-pr acme/app#12")]),
++            (False, [Said("agent", "Done: greet.py says hello, and greet stays as an alias.")]),
++            (False, []),
++        ], [first, middle, reader.read(), reader.read()])
++
++    def test_a_replaced_or_shortened_transcript_is_read_again_from_its_start(self) -> None:
++        path, reader = self.follow("claude.jsonl", conversation.claude_said)
++        shutil.copy(FIXTURES / "claude.jsonl", path)
++        reader.read()
++        lines = (FIXTURES / "claude.jsonl").read_bytes().splitlines(keepends=True)
++        path.write_bytes(b"".join(lines[:2]))
++
++        self.assertEqual((True, [Said("you", "Rename the greeting to hello.")]), reader.read())
++
++    def test_the_first_read_of_a_long_transcript_starts_at_a_whole_line_near_its_end(self) -> None:
++        path, reader = self.follow("claude.jsonl", conversation.claude_said)
++        filler = b'{"type":"user","message":{"role":"user","content":"An old made-up prompt."}}\n' * 50
++        shutil.copy(FIXTURES / "claude.jsonl", self.scratch / "tail.jsonl")
++        path.write_bytes(filler + (self.scratch / "tail.jsonl").read_bytes())
++
++        tail = len((self.scratch / "tail.jsonl").read_bytes())
++        found = []
++        # A tail that starts inside the last filler line, and one that starts exactly where the fixture does.
++        for size in (tail + 10, tail):
++            with mock.patch.object(conversation, "TAIL_BYTES", size):
++                restarted, said = conversation.Reader(lambda: path, conversation.claude_said).read()
++            found.append((restarted, said[0]))
++
++        self.assertEqual([(True, Said("you", "Rename the greeting to hello."))] * 2, found)
++
++    def test_the_first_read_keeps_a_line_that_starts_exactly_where_the_tail_does(self) -> None:
++        path, _ = self.follow("claude.jsonl", conversation.claude_said)
++        first = b'{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"Old."}}\n'
++        second = b'{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"New."}}\n'
++        path.write_bytes(first + second)
++
++        with mock.patch.object(conversation, "TAIL_BYTES", len(second)):
++            said = conversation.Reader(lambda: path, conversation.claude_said).read()[1]
++
++        self.assertEqual([Said("you", "New.")], said)
++
++    def test_a_transcript_that_disappears_starts_over_and_one_never_found_reads_nothing(self) -> None:
++        path, reader = self.follow("claude.jsonl", conversation.claude_said)
++        missing = reader.read()
++        shutil.copy(FIXTURES / "claude.jsonl", path)
++        reader.read()
++        path.unlink()
++
++        self.assertEqual([(False, []), (True, [])], [missing, reader.read()])
++
++
++class Finding(Case):
++    def test_a_claude_transcript_is_found_under_claude_config_dir_or_home_and_the_newest_wins(self) -> None:
++        config, home = self.scratch / "config", self.scratch / "home"
++        for root, project in ((config, "a"), (home / ".claude", "b"), (home / ".claude", "c")):
++            (root / "projects" / project).mkdir(parents=True)
++            (root / "projects" / project / f"{SESSION}.jsonl").write_text("")
++        os.utime(home / ".claude" / "projects" / "b" / f"{SESSION}.jsonl", (1, 1))
++        os.utime(config / "projects" / "a" / f"{SESSION}.jsonl", (2, 2))
++
++        self.assertEqual(
++            (home / ".claude" / "projects" / "c" / f"{SESSION}.jsonl",
++             home / ".claude" / "projects" / "c" / f"{SESSION}.jsonl", None),
++            (conversation.claude_transcript(SESSION, {"CLAUDE_CONFIG_DIR": str(config), "HOME": str(home)}),
++             conversation.claude_transcript(SESSION, {"HOME": str(home)}),
++             conversation.claude_transcript("*", {"HOME": str(home)})))
++
++    def test_a_codex_rollout_is_the_one_codex_json_names(self) -> None:
++        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state")}):
++            root = watch.state_root()
++            folder = watch.session_folder(root, SESSION)
++            folder.mkdir(parents=True)
++            rollout = self.scratch / "rollout.jsonl"
++            write_json(folder / "codex.json", {"schema_version": 1, "transcript_path": str(rollout)})
++
++            self.assertEqual((rollout, None),
++                             (conversation.codex_transcript(root, SESSION),
++                              conversation.codex_transcript(root, "another-session")))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index c7251a2e..287119db 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -56,6 +56,7 @@
+     ("project inbox block 3 --reason 'Unlock the phone' --session s1", "allow", "allow"),
+     ("project inbox discuss 3 --text 'Why decline it?' --session s1", "ask", "none"),
+     ("project inbox discuss --pr acme/app#12 --text hello --session s1", "ask", "none"),
++    ("project console", "ask", "none"),
+     ("project list --json", "allow", "allow"),
+     ("project config get review.username", "allow", "allow"),
+     ("project config list", "allow", "allow"),
+@@ -118,7 +119,7 @@
+ 
+ # What the Codex rules leave to Codex's usual approval: each command with the
+ # subcommands left out, or None where the whole command is.
+-CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "agent": {"key"},
++CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None, "agent": {"key"},
+                   "config": {"set", "unset"},
+                   "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},
+                   "review": {"gate"},
+diff --git a/web/components/sections/panel.tsx b/web/components/sections/panel.tsx
+index 20f21dcf..aed8b34a 100644
+--- a/web/components/sections/panel.tsx
++++ b/web/components/sections/panel.tsx
+@@ -183,13 +183,15 @@ export function Panel() {
+           </p>
+           <p>
+             The panel is part of the Claude Code plugin. In Codex or a terminal,{" "}
+-            <Code>project inbox</Code> reaches the same inbox, and Codex gets
+-            the same pull request events as prompts.
++            <Code>project console</Code> shows every live session&apos;s pull
++            requests and items, and answers and messages reach each session
++            as a new turn, as they do from the panel.
+           </p>
+           <div className="flex flex-wrap gap-x-6 gap-y-2 pt-1">
+             <DocLink href={DOCS.panel}>The panel</DocLink>
+             <DocLink href={DOCS.inboxPanel}>The inbox</DocLink>
+             <DocLink href={DOCS.inbox}>project inbox</DocLink>
++            <DocLink href={DOCS.console}>project console</DocLink>
+           </div>
+         </div>
+       </div>
+diff --git a/web/lib/links.ts b/web/lib/links.ts
+index 1f11a085..7497d852 100644
+--- a/web/lib/links.ts
++++ b/web/lib/links.ts
+@@ -9,6 +9,7 @@ export const DOCS = {
+   site: `${GITHUB}/blob/main/docs/site.md`,
+   panel: `${GITHUB}/blob/main/docs/plugins.md#see-your-sessions-pull-requests-in-projectors-panel`,
+   inbox: `${GITHUB}/blob/main/docs/cli.md#use-the-inbox`,
++  console: `${GITHUB}/blob/main/docs/cli.md#use-the-console`,
+   inboxPanel: `${GITHUB}/blob/main/docs/plugins.md#read-your-inbox-in-projectors-panel`,
+   watch: `${GITHUB}/blob/main/docs/cli.md#watch-pull-requests`,
+   worktree: `${GITHUB}/blob/main/docs/cli.md#find-a-branchs-worktree`,
