@@ -607,7 +607,10 @@ answer's place among a question's options and in the focus ring:
   while you typed, Enter records nothing: the field closes, the drawer
   shows the revised item, and the status line says
   `3 changed while you were choosing; read it and choose again`. Choosing
-  again on that item opens the field with the note you had typed. Without
+  again on that item opens the field with the note you had typed. The
+  console keeps the note under the session and the item, because item
+  numbers repeat across sessions, and drops it when you leave the session's
+  panel, so it never reaches another agent. Without
   this, the letter alone would record whatever option the revision put
   under it, even before the drawer showed the revision.
 

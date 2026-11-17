@@ -547,6 +547,29 @@ class Options(ConsoleCase):
                 self.assertEqual(("Deploy production" if kind == "question" else "Deployed production",
                                   "keep the cap"), (answered["text"], answered["note"]))
 
+    def test_a_kept_note_comes_back_only_on_its_own_sessions_item_and_not_after_leaving_the_panel(self) -> None:
+        # Catches a kept note matched by item number alone, which repeats across sessions, so it fills another
+        # session's field with words meant for a different agent.
+        for session in ("first", "second"):
+            self.claude(session)
+            inbox.ask(session, "Build it?", "Build locally", ["Wait"])
+        self.open_entry("first", "item:1")
+        self.press("1")
+        self.type("for the first agent")
+        inbox.revise("first", "1", recommend="Deploy production")
+        self.press("enter")
+        kept = self.console.kept_note
+        self.press("left", "left")
+        self.open_entry("second", "item:1")
+        self.press("1")
+        other = self.console.field.text if self.console.field else None
+        self.press("esc", "left", "left")
+        self.open_entry("first", "item:1")
+        self.press("1")
+
+        self.assertEqual((("first", "1", "for the first agent"), "", ""),
+                         (kept, other, self.console.field.text if self.console.field else None))
+
     def test_a_question_offers_no_typed_answer_and_t_records_nothing(self) -> None:
         # Catches `type an answer` left among a question's options or in the focus ring, or `t` still opening the
         # typed answer's field, when Discuss is how the person writes their own words.

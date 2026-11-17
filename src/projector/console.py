@@ -372,10 +372,11 @@ class Console:
         # and whether it was sent to the clipboard; and the text `Screen` still has to send there.
         self.link: Optional[tuple[str, str, str, bool]] = None
         self.clipboard: Optional[str] = None
-        # The last refusal `record` showed, and the item and note of a note field a revision closed, which choosing
-        # again on that item brings back.
+        # The last refusal `record` showed, and the session, item, and note of a note field a revision closed, which
+        # choosing again on that item of that session brings back until the person leaves its panel. Item numbers
+        # repeat across sessions, so the session is part of the key.
         self.refusal: Optional[ProjectorError] = None
-        self.kept_note: Optional[tuple[str, str]] = None
+        self.kept_note: Optional[tuple[str, str, str]] = None
         self.offset = 0
         self.room = 1
         # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
@@ -632,7 +633,7 @@ class Console:
 
     def go_home(self) -> None:
         self.close_drawer()
-        self.field = None
+        self.field = self.kept_note = None
         self.view, self.selected, self.session = "home", self.session, None
 
     def close_drawer(self) -> None:
@@ -794,7 +795,7 @@ class Console:
         """Pick the focused choice: open the note field under it, whose Enter records it, holding the note a
         revision of the item made the person leave."""
         self.reveal = True
-        kept = self.kept_note[1] if self.kept_note is not None and self.kept_note[0] == ref else ""
+        kept = self.kept_note[2] if self.kept_note is not None and self.kept_note[:2] == (self.session, ref) else ""
         self.kept_note = None
         self.field = Field("note", ref, "Note (optional): ", text=kept, cursor=len(kept), then=then)
 
@@ -878,10 +879,11 @@ class Console:
         said, target = typing.text, typing.target
         if typing.purpose == "note" and typing.then is not None:
             item = typing.then(said.strip() or None)
-            if item is None and isinstance(self.refusal, inbox.ChangedError) and target is not None:
+            if (item is None and isinstance(self.refusal, inbox.ChangedError) and target is not None
+                    and self.session is not None):
                 # The choice may no longer name what the person read, so the field closes on the revised item,
                 # keeping their note for the choice they make next.
-                self.field, self.kept_note = None, (target, said)
+                self.field, self.kept_note = None, (self.session, target, said)
                 self.reload()
                 return
         elif typing.purpose == "discuss":

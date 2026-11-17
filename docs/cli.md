@@ -2999,7 +2999,8 @@ panel, where an option with more words after it is a reply that leaves the
 question open, because the console has no prompt to carry your words. If the
 agent revises the item while the note field is open, Enter records nothing
 and says the item changed. The drawer then shows the revised item, and the
-field brings your note back when you choose again.
+field brings your note back when you choose again on that item, until you
+leave the session's panel.
 
 | Key | Effect |
 | --- | --- |
