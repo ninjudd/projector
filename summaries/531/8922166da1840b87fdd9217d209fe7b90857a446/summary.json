@@ -1,0 +1,124 @@
+{
+ "version": 1,
+ "name": "Console interaction feedback",
+ "project": "console",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 531,
+  "title": "Move the console's focus through every row and control, add notes to choices, and quit with Ctrl-C",
+  "head": "8922166da1840b87fdd9217d209fe7b90857a446",
+  "headRef": "console/feedback",
+  "base": "53496478ed379df9fd2d3d375c09e7f6337a0e67",
+  "baseRef": "console/tui",
+  "basePr": 530
+ },
+ "overview": {
+  "summary": [
+   "The terminal console lets you answer the questions and requests from several agent sessions. This layer makes the arrows move one focus through rows and drawer controls, adds an optional note to a choice, and makes Ctrl-C the exit key.",
+   "The console also accepts both terminal cursor-key encodings, matches the panel’s colors, and shows or copies a pull request URL when a browser cannot open where you sit. Each answer and message still goes through the viewed session’s inbox and its existing deliverer.",
+   "The earlier stale-choice finding is fixed: the inbox compares the selected question and options under its lock before recording. One new finding remains: the recovery buffer can preload a note from another session when both sessions have the same item number."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation and remaining issue",
+    "html": "<ul class=\"tight\"><li><b>Validation:</b> The gate, exact-head CI, 263 hook tests, and 245 focused console, inbox, delivery, and permission tests pass.</li><li><b>Original finding fixed:</b> A revised choice is refused before any answer is stored, and the note can be recovered when choosing again.</li><li><b>Remaining issue:</b> After session A’s item 1 refuses a stale note, choosing session B’s item 1 preloads that note and can send it to B.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "notes",
+   "title": "Carry a note with an answer",
+   "kicker": "Store and deliver context beside the choice you picked",
+   "intro": [
+    "A choice can need context without becoming a new discussion. The inbox, the on-disk store for each session’s questions and requests, now accepts one paragraph of optional note text alongside an answer or request outcome.",
+    "The CLI exposes that text as <code>--note</code>. Validation caps it at 4 KiB of UTF-8 and refuses embedded line breaks; the same note reaches the agent at the end of the existing answer line. The hook-facing types admit the optional field, while older records without it retain their meaning.",
+    "Answers and completed requests can also carry the subject and options the person read. The inbox compares this snapshot under the same lock that records the answer, so an agent revision cannot silently change the selected choice."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Validate, store, and append optional notes to answer and outcome lines.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused inbox tests pass: notes survive storage and delivery, UTF-8 byte limits apply, and invalid notes leave items unanswered."
+      },
+      {
+       "kind": "verify",
+       "text": "The prior stale-choice reproduction now records no answer after revision. The focused tests also verify the snapshot guard for both answers and completed requests."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Accept --note on answer, done, and decline, and display it with a resolved item."
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Allow notes on stored answers and request outcomes without requiring them on old items."
+    },
+    {
+     "path": "tests/test_inbox.py",
+     "collapsed": true,
+     "note": "Exercise note delivery and refusal at the CLI boundary."
+    }
+   ]
+  },
+  {
+   "id": "console",
+   "title": "Navigate and act from one focus",
+   "kicker": "Keep rows, controls, fields, and terminal keys connected",
+   "intro": [
+    "A drawer is the detail and action list opened under a row. The console keeps that drawer open while the arrows move focus through rows, its choices and actions, and the conversation heading. Choosing an answer opens an optional-note field underneath it. If the agent revises the item, submission is refused and the note is retained for a new choice.",
+    "Left closes a drawer before returning home. Ctrl-C cancels a field, exits home immediately, or asks for a second press in a panel. Terminal escape sequences are decoded when curses does not recognize their encoding, and the terminal renderer maps panel colors onto the available palette.",
+    "On a remote terminal, opening a pull request shows its URL and sends an OSC 52 clipboard request, which asks the local terminal to copy text. A configured <code>BROWSER</code> helper can open it instead. The terminal capture accidentally committed on the first reviewed head is absent from this head."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Implement focus navigation, optional-note fields, terminal key decoding, colors, and remote URL handling.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 797,
+       "text": "The retained note is matched only by the item number, although numbers are per session. A stale note from session A’s item 1 is preloaded into session B’s item 1 and sent to B on Enter. Bind recovery to the session as well as the reference, or clear it when changing sessions."
+      },
+      {
+       "kind": "verify",
+       "text": "The original stale-choice scenario is refused before storage on this head. The 245 focused tests pass; a separate two-session reproduction confirms that recovery can copy the note to the wrong session."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "collapsed": true,
+     "note": "Drive navigation and notes against temporary inbox state and exercise actual terminal byte sequences."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Explain the terminal workflow",
+   "kicker": "Document the controls, notes, and remote-browser choices",
+   "intro": [
+    "The command reference describes picking an option, adding context, navigating the focus ring, quitting, and following a URL from a remote console. It now also explains refusal after item revision and recovery of the typed note when choosing again.",
+    "The completed console plan records the decisions from successive hand-testing rounds and updates its outcome. The living command reference states the current behavior; the plan retains the reasons those interaction decisions changed."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describe the current CLI note format and terminal navigation, exit, and URL behavior."
+    },
+    {
+     "path": "docs/projects/console/readme.md",
+     "note": "Record the interaction decisions and completed console outcome."
+    }
+   ]
+  }
+ ]
+}
