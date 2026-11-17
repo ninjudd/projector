@@ -745,7 +745,7 @@ export function InboxDemo() {
           {"   "}
           <Seg tone="accent">0</Seg>
           <Seg tone={itemTone(item)}>: {item.subject}</Seg>
-          {spaces(WIDTH - 5 - item.subject.length - tailLength(item))}
+          {spaces(WIDTH - 6 - item.subject.length - tailLength(item))}
           {tail(item)}
         </button>
         <span className="block"> </span>
@@ -835,7 +835,7 @@ export function InboxDemo() {
               <>
                 <span className="block">
                   <Seg tone="subtle">{"  /projector"}</Seg>
-                  {spaces(WIDTH - 12 - header.length - 5)}
+                  {spaces(WIDTH - 12 - header.length - 4)}
                   <Seg tone="subtle">{header} 12s</Seg>
                 </span>
                 {yours.map(prRow)}
