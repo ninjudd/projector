@@ -1,0 +1,65 @@
+{
+ "version": 1,
+ "name": "Stable Git test fixtures",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 537,
+  "title": "Stop Git's background maintenance from racing the test fixtures' copies",
+  "head": "a35a582cbe6beb2949b34a6fbcd4fa40dae5cd0d",
+  "headRef": "fixture-maintenance",
+  "base": "c77f2daf3d97327243aaee2182c6da5f57c228ec",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The test suite builds temporary Git repositories once and copies them for individual tests. A detached Git maintenance process can outlive the build and remove a lock file while a copy is in progress, causing an unrelated test to fail during setup.",
+   "This change disables automatic maintenance and garbage collection through Git command-scope environment configuration before the suite starts its workers. The settings follow child processes and take precedence over repository configuration. Production behavior is unchanged."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation",
+    "html": "<ul class=\"tight\"><li>The configured gate and exact-head CI passed, including 263 hook tests.</li><li>All 25 focused fixture and summary-publication tests passed.</li><li>Both new regressions reject the base configuration in a disposable copy.</li><li>The timing-dependent race itself was not forced; the tests verify the effective Git settings that prevent background maintenance.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "fixtures",
+   "title": "Keep copied fixtures stable",
+   "kicker": "Disable background mutation before any worker builds a Git fixture",
+   "intro": [
+    "A fixture is a prepared directory that several tests copy instead of rebuilding. The suite now supplies <code>maintenance.auto=false</code> and <code>gc.auto=0</code> using <code>GIT_CONFIG_COUNT</code> and its key/value pairs. These settings are read by real Git subprocesses, including those with a separate repository configuration.",
+    "The two regressions check the external Git boundary: a copied fixture sees both disabled settings, and a repository that enables maintenance still sees the command-scope override. They fail against the base suite initialization, so they catch losing the override or moving it to a weaker configuration scope."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/__init__.py",
+     "collapsed": false,
+     "note": "Set inherited Git configuration before discovery and test workers can create fixtures.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 26,
+       "text": "Traced worker launch and explicit subprocess environments: they retain os.environ, so both command-scope settings reach Git. No caller resets GIT_CONFIG_COUNT."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_scratch.py",
+     "collapsed": true,
+     "note": "Exercise effective Git configuration and repository-override resistance through a real copied fixture.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 18,
+       "text": "The head passes both tests. With the base tests/__init__.py in a disposable copy, the default-setting test errors and the repository-precedence test fails."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
