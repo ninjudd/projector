@@ -27,6 +27,8 @@ Refs in the repository, each a parentless commit whose tree holds one `sealed.js
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -70,8 +72,14 @@ NO_KEY = "no agent.key is set; run `project agent key init` to make one"
 NO_ORIGIN = "this checkout has no GitHub origin to relay through"
 NO_CHECKOUT = "no recorded checkout of the repository remains"
 PUBLIC_REMINDER = "public repository: name no private repository and describe none of its internals"
-COPY = ("To copy the key to another machine, run `project agent key export` here in a terminal, then run "
-        "`project agent key import` there in a terminal and paste the line it printed.")
+COPY = "To give another machine this key, run `project agent key join` there in a terminal."
+REQUEST_PREFIX = "pj1-"
+LINE_PREFIX = "pk1-"
+REQUEST = re.compile(r"pj1-([a-z0-9-]{0,20})-([A-Za-z0-9_-]{43})")
+# `pk1-` and the unpadded base64url of a sealed record of a 32-byte plaintext, whose JSON is 235 bytes.
+LINE_LENGTH = 318
+LABEL_LENGTH = 20
+CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
 class RelayError(ProjectorError):
@@ -127,19 +135,24 @@ def command_key(environ: Optional[dict] = None) -> tuple[Optional[Key], str]:
         return None, str(error)
 
 
+def no_keychain(reason: str) -> RelayError:
+    return RelayError(f"{reason}, so no keychain can hold the key and nothing was stored; pass --inline to store "
+                      "it in ~/.projector.toml instead, where every process running as you can read it")
+
+
 def save_key(root: Path, private: bytes, *, inline: bool, environ: Optional[dict] = None) -> tuple[str, str, str]:
-    """Store the private key in the keychain when one is usable, and inline otherwise or with `inline`; write
-    `agent.key` to `~/.projector.toml` with mode 0600. Answers the key ID, where the key is stored, and why when
-    that is inline."""
+    """Store the private key in the keychain, or inline with `inline`, and write `agent.key` to
+    `~/.projector.toml` with mode 0600. Answers the key ID, where the key is stored, and why when that is inline.
+    Without `inline`, a keychain that cannot store the key stores nothing."""
     key_id = crypto.key_id(crypto.public_key(private))
     secret = crypto.encode(private)
     value, store, reason = INLINE_KEY + secret, "inline", "you passed --inline"
     if not inline:
         try:
             store = keychain.store(key_id, secret)
-            value, reason = KEYCHAIN + key_id, ""
         except KeychainError as error:
-            reason = str(error)
+            raise no_keychain(str(error)) from None
+        value, reason = KEYCHAIN + key_id, ""
     path = user_config_path(environ)
     if not path.exists():
         os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
@@ -159,35 +172,125 @@ def init_key(root: Path, *, inline: bool, environ: Optional[dict] = None) -> tup
     return save_key(root, crypto.new_private_key(), inline=inline, environ=environ)
 
 
-def parse_line(line: str) -> bytes:
-    found = re.fullmatch(r'\s*(?:agent\.key\s*=\s*)?"?(x25519:[A-Za-z0-9+/=]+)"?\s*', line)
+def unpadded(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def from_unpadded(text: str) -> bytes:
+    """The bytes of unpadded base64url `text`, which must be the one encoding of them."""
+    try:
+        data = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+    except (binascii.Error, ValueError):
+        raise RelayError("it is not base64url") from None
+    if unpadded(data) != text:
+        raise RelayError("it is not base64url")
+    return data
+
+
+def machine_label(hostname: str) -> str:
+    """The short host name, as lowercase letters, digits, and hyphens, cut to 20 characters."""
+    short = re.sub(r"[^a-z0-9-]", "", hostname.split(".")[0].lower())[:LABEL_LENGTH]
+    return short or "machine"
+
+
+def fingerprint(public: bytes) -> str:
+    """Three groups of three Crockford base32 characters: the first 45 bits of the SHA-256 of `public`."""
+    bits = int.from_bytes(hashlib.sha256(public).digest()[:6], "big") >> 3
+    text = "".join(CROCKFORD[(bits >> shift) & 31] for shift in range(40, -1, -5))
+    return f"{text[:3]}-{text[3:6]}-{text[6:]}"
+
+
+def check_prefix(text: str, prefix: str, kind: str, maker: str) -> None:
+    if text.startswith(prefix):
+        return
+    stem = prefix[:2]
+    version = re.match(re.escape(stem) + r"([0-9]+)-", text)
+    if version:
+        raise RelayError(f"the {kind} is version {version.group(1)}, and this Projector reads only version 1, "
+                         f"which starts with {prefix}")
+    raise RelayError(f"that is not a {kind} that {maker} prints; it starts with {prefix}")
+
+
+def make_request(private: bytes, hostname: str) -> str:
+    """The request `project agent key join` prints: pj1-, the machine label, and the temporary public key."""
+    return f"{REQUEST_PREFIX}{machine_label(hostname)}-{unpadded(crypto.public_key(private))}"
+
+
+def parse_request(request: str) -> tuple[str, bytes]:
+    """A request's machine label and the temporary public key it carries."""
+    text = request.strip()
+    check_prefix(text, REQUEST_PREFIX, "request", "`project agent key join`")
+    found = REQUEST.fullmatch(text)
     if found is None:
-        raise RelayError("the line is not the agent.key line `project agent key export` prints")
-    return inline_key(found.group(1))
+        raise RelayError(f"the request is {len(text)} characters; a request is pj1-, a machine label of up to "
+                         f"{LABEL_LENGTH} lowercase letters, digits, and hyphens, a hyphen, and the 43 characters of "
+                         "a public key")
+    try:
+        public = from_unpadded(found.group(2))
+    except RelayError as error:
+        raise RelayError(f"the request's public key is not usable: {error}") from None
+    return found.group(1), public
 
 
-def import_key(root: Path, line: str, *, inline: bool, replace: bool,
-               environ: Optional[dict] = None) -> tuple[str, str, str]:
-    private = parse_line(line)
+def grant_line(key: Key, recipient: bytes) -> str:
+    """`key`'s private bytes sealed by `key` to the public key `recipient`, as the line
+    `project agent key join` reads."""
+    sealed = crypto.seal(key.private, recipient, key.private)
+    return LINE_PREFIX + unpadded(json.dumps(sealed, separators=(",", ":")).encode())
+
+
+def accept_line(private: bytes, line: str) -> bytes:
+    """The relay key a line from `project agent key grant` carries, opened with the temporary `private` key.
+    The line must have been sealed by the key it carries."""
+    text = line.strip()
+    check_prefix(text, LINE_PREFIX, "line", "`project agent key grant`")
+    if len(text) != LINE_LENGTH:
+        raise RelayError(f"the line is {len(text)} characters, and a line `project agent key grant` prints is "
+                         f"{LINE_LENGTH}")
+    try:
+        sealed = json.loads(from_unpadded(text[len(LINE_PREFIX):]))
+    except (RelayError, ValueError):
+        raise RelayError("the line is not an encrypted key; copy it again from `project agent key grant`") from None
+    try:
+        sender, carried = crypto.unseal(private, sealed)
+    except crypto.CryptoError as error:
+        raise RelayError(f"the line does not open with this request's key: {error}; it was encrypted to another "
+                         "request, or it changed on the way") from None
+    if len(carried) != 32 or crypto.public_key(carried) != sender:
+        raise RelayError("the line carries a key other than the key that encrypted it, so it is not one "
+                         "`project agent key grant` printed")
+    return carried
+
+
+def replaceable(replace: bool, environ: Optional[dict] = None) -> Optional[str]:
+    """The `agent.key` that `join` replaces, refused without `replace`."""
     existing = configured(environ)
-    wanted = crypto.key_id(crypto.public_key(private))
-    if existing and value_id(existing) != wanted:
-        if not replace:
-            raise RelayError(f"agent.key already holds a different key, {value_id(existing)}; pass --replace to "
-                             "replace it, after which no message sealed to it can be opened")
-        if existing.startswith(KEYCHAIN):
-            try:
-                keychain.delete(value_id(existing))
-            except KeychainError:
-                pass
-    return save_key(root, private, inline=inline, environ=environ)
+    if existing and not replace:
+        raise RelayError(f"agent.key already holds key {value_id(existing)}; pass --replace to replace it with the "
+                         "key you join, after which no message sealed to it can be opened")
+    return existing
 
 
-def export_line(environ: Optional[dict] = None) -> str:
-    value = configured(environ)
-    if not value:
-        raise RelayError(NO_KEY)
-    return f'agent.key = "{INLINE_KEY}{crypto.encode(read_key(value).private)}"'
+def check_join(*, inline: bool, replace: bool, environ: Optional[dict] = None) -> None:
+    """Refuse `project agent key join` before it makes a request when it could not store the key."""
+    replaceable(replace, environ)
+    if not inline:
+        missing = keychain.usable()
+        if missing:
+            raise no_keychain(missing)
+
+
+def join_key(root: Path, private: bytes, *, inline: bool, replace: bool,
+             environ: Optional[dict] = None) -> tuple[str, str, str]:
+    """Store the key `join` accepted, and then delete the keychain item of a different key it replaced."""
+    existing = replaceable(replace, environ)
+    saved = save_key(root, private, inline=inline, environ=environ)
+    if existing and existing.startswith(KEYCHAIN) and value_id(existing) != saved[0]:
+        try:
+            keychain.delete(value_id(existing))
+        except KeychainError:
+            pass
+    return saved
 
 
 def show_key(environ: Optional[dict] = None) -> dict:

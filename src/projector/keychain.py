@@ -214,6 +214,11 @@ def store(key_id: str, secret: str, timeout: Optional[float] = None) -> str:
     return chosen.name
 
 
+def usable() -> str:
+    """Why this system's keychain cannot be used, or "" when its tool or library is there."""
+    return backend().usable()
+
+
 def read(key_id: str, timeout: Optional[float] = None) -> str:
     chosen = backend()
     missing = chosen.usable()

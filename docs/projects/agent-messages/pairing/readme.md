@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -75,7 +75,7 @@ back to an inline key unless you pass `--inline`.
    ```console
    $ project agent key grant pj1-laptop-Zx8k2Q...Qm9w
    Request from laptop, fingerprint K7Q-4MD-9XP.
-   Seal key 3f2a9c1d7e4b6a05 to it? [y/N] y
+   Encrypt key 3f2a9c1d7e4b6a05 to it? [y/N] y
    Paste this line into the waiting `project agent key join`:
 
      pk1-eyJ2IjoxLCJzZW5kZXIiOi...
@@ -212,3 +212,40 @@ It touches no daemon path and no relay pass.
   the sender's public key with the plaintext after checking the tag. A
   record sealed by the relay key to the temporary public key therefore
   proves to `join` that its sealer held the key it carries.
+
+## 7. Implementation notes
+
+Building the commands settled these details, which § 2 left open or which
+changed in the building:
+
+- **Words a person reads say "encrypt".** `grant` asks `Encrypt key <id>
+  to it? [y/N]` rather than "Seal", and its errors, `join`'s errors, the
+  `message` skill, and the README say "encrypted". Code identifiers, the
+  record format, and the relay section of `docs/cli.md` keep "sealed",
+  which that section defines.
+- **One reader serves every answer.** `join` and `grant` read each line
+  from standard input's file descriptor, a byte at a time, on a daemon
+  thread, while the command waits on it with a deadline. Nothing after the
+  line is consumed, a read that never returns cannot keep the process
+  alive, and reading stops and refuses a line once it passes 4,096 bytes.
+  `grant`'s question has the same 30-minute limit as `join`'s wait.
+- **Exit codes.** A refusal exits 65, as other relay errors do. Ctrl-C in
+  `join` prints `stopped, so nothing was stored` and exits 130. Running
+  either command without a terminal exits 69, and `key export` or
+  `key import` exits 2, the usage-error status, with a message that names
+  `key join`. Both old names stay as hidden subcommands so the message can
+  name the replacement whatever arguments follow them.
+- **`join` checks the keychain twice.** Before it prints a request, it asks
+  `keychain.usable()`, a new function in `src/projector/keychain.py`, whether
+  the keychain's tool or library is there. A keychain that is present but
+  refuses the store, such as a locked Secret Service, is found only when
+  `join` stores the key, and then `join` stores nothing and names
+  `--inline`, as `init` does.
+- **`--replace` stores before it deletes.** `join --replace` stores the new
+  key first and only then deletes the old key's keychain item, so a store
+  that fails leaves the old key in place. `join` refuses any `agent.key`
+  without `--replace`, even one holding the same key.
+- **The machine label falls back to `machine`** when the host name has no
+  letter, digit, or hyphen left after it is reduced.
+- **`join` takes no `--json`.** It is interactive, and the old `import`'s
+  JSON output has no caller.

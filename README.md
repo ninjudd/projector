@@ -94,10 +94,11 @@ Your agent sessions can also find and message each other, in Claude Code
 and Codex alike, on one machine or across your machines. A session that
 subscribes to a pull request registers itself, and any other session
 registers when you ask it to. To reach your other machines, make a key once
-with `project agent key init`, then copy it to each machine in a terminal
-with `project agent key export` and `project agent key import`. Messages
-then travel sealed through hidden refs of a repository both machines work
-in. A message from another agent carries none of your authority. See
+with `project agent key init`, then run `project agent key join` in a
+terminal on each other machine and paste the `project agent key grant`
+command it prints into a machine that has the key. Messages then travel
+encrypted, so only your machines can read or write them, through hidden
+refs of a repository both machines work in. A message from another agent carries none of your authority. See
 [Message other agents](docs/cli.md#message-other-agents).
 
 ## Publish a site

@@ -14,7 +14,10 @@ import io
 import json
 import os
 import pty
+import re
+import select
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -178,12 +181,15 @@ class Machine:
             yield
 
     def project(self, *args: str, claude: str = "", stdin: str = "", cwd: Optional[Path] = None,
-                terminal: bool = False) -> tuple[int, str, str]:
-        out, err = Terminal() if terminal else io.StringIO(), io.StringIO()
-        given = Terminal(stdin) if terminal else io.StringIO(stdin)
+                terminal: bool | str = False) -> tuple[int, str, str]:
+        """Run `project` here. `terminal` puts a terminal on standard input and output, or on only "stdin" or
+        "stdout"; a terminal's input is `stdin` already typed, through a pipe."""
+        out, err = Terminal() if terminal in (True, "stdout") else io.StringIO(), io.StringIO()
+        given = Typed(stdin) if terminal in (True, "stdin") else io.StringIO(stdin)
         with self.acting(cwd, claude), redirect_stdout(out), redirect_stderr(err), \
                 mock.patch.object(sys, "stdin", given):
             code = cli.main(list(args))
+        given.close()
         return code, out.getvalue(), err.getvalue()
 
     def claude(self, session: str) -> None:
@@ -248,6 +254,20 @@ class Machine:
 
 
 class Terminal(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+class Typed(io.FileIO):
+    """A terminal's standard input that `text` was typed into: a pipe that ends after it, read by file
+    descriptor as `project agent key join` reads it."""
+
+    def __init__(self, text: str) -> None:
+        read, write = os.pipe()
+        os.write(write, text.encode())
+        os.close(write)
+        super().__init__(read, "r")
+
     def isatty(self) -> bool:
         return True
 
@@ -639,24 +659,59 @@ class FakeAdvapi32:
         return 1 if self.items.pop((target, kind), None) is not None else 0
 
 
-def pty_import(environment: dict, line: str) -> tuple[int, str]:
-    """Run `project agent key import --inline` with a pseudo-terminal on its standard input and output."""
-    leader, follower = pty.openpty()
-    process = subprocess.Popen([sys.executable, "-m", "projector", "agent", "key", "import", "--inline"],
-                               stdin=follower, stdout=follower, stderr=follower, env=environment)
-    os.close(follower)
-    os.write(leader, (line + "\n").encode())
-    output = b""
-    while True:
+# `project` with the fake `secret-tool` as its keychain, and `key join`'s wait cut to the seconds given.
+LAUNCH = ("import sys; from projector import cli, keychain; keychain.SYSTEM = 'linux'; "
+          "keychain.SECRET_TOOL = sys.argv[1]; cli.JOIN_TIMEOUT = float(sys.argv[2]); "
+          "raise SystemExit(cli.main(sys.argv[3:]))")
+
+
+class Pty:
+    """A `project` process with a pseudo-terminal on its standard input and output."""
+
+    def __init__(self, case: "RelayCase", machine: Machine, *args: str, timeout: float = 120.0) -> None:
+        environment = {**os.environ, **machine.env, "PYTHONPATH": str(Path(cli.__file__).parents[1])}
+        self.leader, follower = pty.openpty()
+        self.process = subprocess.Popen([sys.executable, "-c", LAUNCH, str(case.bin / "secret-tool"), str(timeout),
+                                         *args], stdin=follower, stdout=follower, stderr=follower, env=environment)
+        os.close(follower)
+        self.output = b""
+        case.addCleanup(self.close)
+
+    def read(self, seconds: float) -> bool:
+        if not select.select([self.leader], [], [], seconds)[0]:
+            return False
         try:
-            chunk = os.read(leader, 4096)
+            chunk = os.read(self.leader, 4096)
         except OSError:
-            break
-        if not chunk:
-            break
-        output += chunk
-    os.close(leader)
-    return process.wait(30), output.decode(errors="replace")
+            chunk = b""
+        self.output += chunk
+        return bool(chunk)
+
+    def until(self, text: str, seconds: float = 30.0) -> str:
+        deadline = time.monotonic() + seconds
+        while text.encode() not in self.output:
+            if not self.read(max(0.0, deadline - time.monotonic())):
+                raise AssertionError(f"waited for {text!r}, and the process printed {self.output!r}")
+        return self.output.decode(errors="replace")
+
+    def type(self, line: str) -> None:
+        os.write(self.leader, (line + "\n").encode())
+
+    def finish(self, seconds: float = 30.0) -> tuple[int, str]:
+        deadline = time.monotonic() + seconds
+        while self.read(max(0.0, deadline - time.monotonic())):
+            pass
+        return self.process.wait(max(0.1, deadline - time.monotonic())), self.output.decode(errors="replace")
+
+    def close(self) -> None:
+        if self.process.poll() is None:
+            self.process.kill()
+            self.process.wait()
+        os.close(self.leader)
+
+
+def files_under(*folders: Path) -> set[Path]:
+    return {path for folder in folders if folder.exists() for path in folder.rglob("*")}
 
 
 class KeyTests(RelayCase):
@@ -668,19 +723,16 @@ class KeyTests(RelayCase):
         private = config.inline_key(tomllib.loads(self.config())["agent"]["key"])
         secret = crypto.encode(private)
         key_id = crypto.key_id(crypto.public_key(private))
-        line = relay.export_line(self.one.env)
         outputs = [init]
         for args in (["list"], ["list", "--json"], ["get", "agent.key"], ["get", "agent.key", "--json"],
                      ["get", "agent"], ["get", "agent", "--json"], ["unset", "agent.key", "--user", "--json"]):
             outputs.append("".join(self.one.project("config", *args)[1:]))
-        imported = self.one.project("agent", "key", "import", "--inline", stdin=line + "\n", terminal=True)
-        outputs.append("".join(imported[1:]))
+        self.one.inline_key(private)
         outputs.append("".join(self.one.project("config", "unset", "agent", "--user", "--json")[1:]))
 
         self.assertEqual(0, code, err)
         self.assertIn(f"key {key_id} stored inline", init)
-        self.assertIn("project agent key export", init)
-        self.assertEqual(0, imported[0], imported[2])
+        self.assertIn("run `project agent key join` there", init)
         for output in outputs:
             self.assertNotIn(secret.rstrip("="), output)
         for output in outputs[1:8]:
@@ -693,18 +745,15 @@ class KeyTests(RelayCase):
         key_id = name.split("/")[1]
         shown = self.one.project("config", "get", "agent")[1]
         shown_json = json.loads(self.one.project("config", "get", "agent", "--json")[1])
-        imported = self.one.project("agent", "key", "import", stdin=f'agent.key = "x25519:{secret}"\n',
-                                    terminal=True)
 
         self.assertEqual(0, code, err)
-        self.assertEqual(0, imported[0], imported[2])
         self.assertEqual(f"projector-agent/{key_id}", name)
         self.assertIn(f'key = "keychain:{key_id}"', self.config())
         self.assertEqual(f'{{"key": "keychain:{key_id}"}}\n', shown)
         self.assertEqual({"key": f"keychain:{key_id}"}, shown_json["value"])
         calls = self.keychain_calls()
         self.assertEqual([], [call for call in calls if secret in " ".join(call["argv"])])
-        self.assertEqual([["-i"], ["-i"]], [call["argv"] for call in calls if secret in call["stdin"]])
+        self.assertEqual([["-i"]], [call["argv"] for call in calls if secret in call["stdin"]])
 
     def test_the_daemon_reads_the_keychain_once_and_again_only_when_agent_key_changes(self) -> None:
         self.keychain_key(self.one)
@@ -730,7 +779,7 @@ class KeyTests(RelayCase):
         self.assertEqual((1, 1, 2), (steady, commented, reads() - before))
         self.assertEqual(other.id, self.one.status()["key"]["id"])
 
-    def test_the_linux_backend_stores_through_standard_input_and_falls_back_when_it_cannot(self) -> None:
+    def test_the_linux_backend_stores_through_standard_input_and_init_stores_nothing_when_it_cannot(self) -> None:
         tool = mock.patch.object(keychain, "SECRET_TOOL", str(self.bin / "secret-tool"))
         tool.start()
         code, out, err = self.one.project("agent", "key", "init")
@@ -740,7 +789,7 @@ class KeyTests(RelayCase):
         outcomes = {}
         for mode, reason in (("missing", "secret-tool: not installed"), ("fail", "no secret service"),
                              ("hang", "secret-tool: keychain locked or not answering")):
-            (self.one.home / ".projector.toml").unlink()
+            (self.one.home / ".projector.toml").unlink(missing_ok=True)
             if mode == "missing":
                 tool.stop()
             else:
@@ -749,9 +798,8 @@ class KeyTests(RelayCase):
             started = time.monotonic()
             with mock.patch.object(keychain, "TIMEOUT", 0.2):
                 result = self.one.project("agent", "key", "init")
-            listed = self.one.project("agent", "list")
-            outcomes[mode] = (result[0], reason in result[1], "stored inline" in listed[1].splitlines()[0],
-                              time.monotonic() - started < 10)
+            outcomes[mode] = (result[0], reason in result[2], "pass --inline" in result[2],
+                              (self.one.home / ".projector.toml").exists(), time.monotonic() - started < 10)
         tool.stop()
 
         self.assertEqual(0, code, err)
@@ -760,7 +808,7 @@ class KeyTests(RelayCase):
         self.assertEqual(["store", "lookup"], [call["argv"][0] for call in calls])
         self.assertEqual(secret, calls[0]["stdin"])
         self.assertEqual([], [call for call in calls if secret in " ".join(call["argv"])])
-        self.assertEqual({mode: (0, True, True, True) for mode in ("missing", "fail", "hang")}, outcomes)
+        self.assertEqual({mode: (65, True, True, False, True) for mode in ("missing", "fail", "hang")}, outcomes)
 
     def test_the_windows_backend_keeps_a_generic_credential_named_for_the_key(self) -> None:
         fake = FakeAdvapi32()
@@ -799,30 +847,6 @@ class KeyTests(RelayCase):
         self.assertEqual({}, self.keychain_items())
         self.assertEqual((None, relay.NO_KEY), relay.command_key(self.one.env))
 
-    def test_the_commands_that_handle_the_key_refuse_without_a_terminal_and_import_copies_it(self) -> None:
-        self.one.inline_key(self.private)
-        before = self.config()
-        line = f'agent.key = "x25519:{crypto.encode(self.private)}"'
-        refused = [self.one.project("agent", "key", "export"),
-                   self.one.project("agent", "key", "import", stdin=line),
-                   self.one.project("config", "set", "agent.key", "x25519:" + crypto.encode(bytes(32)), "--user")]
-        exported = self.one.project("agent", "key", "export", terminal=True)[1].strip()
-        environment = {**os.environ, **self.two.env, "PYTHONPATH": str(Path(cli.__file__).parents[1])}
-        first = pty_import(environment, exported)
-        second = pty_import(environment, f'agent.key = "x25519:{crypto.encode(bytes(range(2, 34)))}"')
-
-        for code, out, err in refused:
-            self.assertNotEqual(0, code)
-            self.assertIn("in a terminal", err)
-        self.assertEqual(before, self.config())
-        self.assertEqual(line, exported)
-        self.assertEqual(0, first[0], first[1])
-        self.assertIn(f"key {self.key.id} stored inline", first[1])
-        self.assertEqual(0o600, (self.two.home / ".projector.toml").stat().st_mode & 0o777)
-        self.assertEqual(self.key.id, relay.command_key(self.two.env)[0].id)
-        self.assertNotEqual(0, second[0])
-        self.assertIn("pass --replace", second[1])
-
     def test_a_key_planted_in_a_checkout_is_ignored_and_a_readable_inline_key_is_refused(self) -> None:
         (self.one.work / ".projector.toml").write_text(f'[agent]\nkey = "x25519:{crypto.encode(self.private)}"\n')
         self.one.claude(A)
@@ -840,6 +864,217 @@ class KeyTests(RelayCase):
         self.assertEqual({}, self.refs())
         self.assertIsNone(readable[0])
         self.assertIn(f"run `chmod 600 {self.one.home / '.projector.toml'}`", readable[1])
+
+
+class PairingTests(RelayCase):
+    """`key join` on machine one, which has no key and the fake `secret-tool` as its keychain, and `key grant` on
+    machine two, which holds the key inline. In-process, `join` makes the temporary key `TEMPORARY`, so a test can
+    encrypt a line to its request first."""
+
+    TEMPORARY = bytes(range(3, 35))
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.secret_tool = mock.patch.object(keychain, "SECRET_TOOL", str(self.bin / "secret-tool"))
+        self.secret_tool.start()
+        self.addCleanup(self.secret_tool.stop)
+        self.two.inline_key(self.private)
+        self.request = relay.make_request(self.TEMPORARY, "one.local")
+
+    def config_text(self) -> str:
+        return (self.one.home / ".projector.toml").read_text()
+
+    def join(self, *flags: str, typed: str = "") -> tuple[int, str, str]:
+        with mock.patch.object(crypto, "new_private_key", return_value=self.TEMPORARY):
+            return self.one.project("agent", "key", "join", *flags, stdin=typed, terminal=True)
+
+    def grant(self, request: str, answer: str = "y") -> tuple[int, str, str]:
+        return self.two.project("agent", "key", "grant", request, stdin=answer + "\n", terminal=True)
+
+    def line(self) -> str:
+        code, out, err = self.grant(self.request)
+        self.assertEqual(0, code, err)
+        return re.search(r"^  (pk1-\S+)$", out, re.MULTILINE).group(1)
+
+    def stored_nothing(self) -> None:
+        self.assertEqual((False, {}), ((self.one.home / ".projector.toml").exists(), self.keychain_items()))
+
+    def test_join_and_grant_copy_the_key_through_two_terminals_into_the_new_machines_keychain(self) -> None:
+        join = Pty(self, self.one, "agent", "key", "join")
+        shown = join.until("Paste the line it prints here: ")
+        request = re.search(r"project agent key grant (pj1-\S+)", shown).group(1)
+        granted = self.grant(request)
+        join.type(re.search(r"^  (pk1-\S+)$", granted[1], re.MULTILINE).group(1))
+        join.until("Does the other machine show the same key? [y/N] ")
+        join.type("y")
+        code, output = join.finish()
+        shown_key = json.loads(self.one.project("agent", "key", "show", "--json")[1])
+
+        self.assertEqual(0, granted[0], granted[2])
+        self.assertEqual(0, code, output)
+        self.assertEqual(re.search(r"Request fingerprint: (\S+)", shown).group(1),
+                         re.search(r"fingerprint (\S+)\.", granted[1]).group(1))
+        self.assertEqual((self.key.id, "keychain"), (shown_key["key_id"], shown_key["store"]))
+        self.assertEqual({f"projector-agent/{self.key.id}": crypto.encode(self.private)}, self.keychain_items())
+
+    def test_no_byte_join_or_grant_writes_and_no_argument_of_a_process_they_start_holds_the_key(self) -> None:
+        self.on_macos()
+        started: list[list[str]] = []
+        real = subprocess.Popen
+
+        def recording(args, *rest, **options):
+            started.append([str(arg) for arg in args])
+            return real(args, *rest, **options)
+
+        with mock.patch.object(subprocess, "Popen", side_effect=recording):
+            granted = self.grant(self.request)
+            line = re.search(r"^  (pk1-\S+)$", granted[1], re.MULTILINE).group(1)
+            joined = self.join(typed=line + "\ny\n")
+
+        self.assertEqual((0, 0), (granted[0], joined[0]), granted[2] + joined[2])
+        self.assertIn(f"key {self.key.id} stored in the macOS Keychain", joined[1])
+        self.assertIn([str(self.bin / "security"), "-i"], started)
+        self.assertEqual([["-i"]], [call["argv"] for call in self.keychain_calls()
+                                    if crypto.encode(self.private) in call["stdin"]])
+        written = [*granted[1:], *joined[1:], *(" ".join(args) for args in started),
+                   *(" ".join(call["argv"]) for call in self.keychain_calls())]
+        for form in (crypto.encode(self.private).rstrip("="), relay.unpadded(self.private), self.private.hex(),
+                     self.private.hex().upper(), self.private.decode("latin-1")):
+            self.assertEqual([], [text for text in written if form in text])
+
+    def test_a_line_for_another_request_altered_or_of_another_kind_is_refused_and_stores_nothing(self) -> None:
+        line = self.line()
+        position = len(line) // 2
+        altered = line[:position] + ("A" if line[position] != "A" else "B") + line[position + 1:]
+        for name, pasted, reason in (
+                ("for another request", relay.grant_line(self.key, crypto.public_key(bytes(range(7, 39)))),
+                 "does not open with this request's key"),
+                ("altered", altered, "does not open with this request's key|is not an encrypted key"),
+                ("shortened", line[:-1], "is 317 characters, and a line `project agent key grant` prints is 318"),
+                ("a request", self.request, "not a line that `project agent key grant` prints; it starts with pk1-"),
+                ("another version", "pk2-" + line[4:], "version 2, and this Projector reads only version 1")):
+            with self.subTest(name):
+                code, out, err = self.join(typed=pasted + "\ny\n")
+                self.assertEqual(65, code, out)
+                self.assertRegex(err, reason)
+                self.assertNotIn("Does the other machine show", out)
+                self.stored_nothing()
+
+    def test_a_line_another_key_encrypted_to_the_request_is_not_stored_when_its_key_id_is_denied(self) -> None:
+        other = relay.Key(bytes(range(9, 41)), "inline")
+
+        code, out, err = self.join(typed=relay.grant_line(other, crypto.public_key(self.TEMPORARY)) + "\nn\n")
+
+        self.assertEqual(65, code, out)
+        self.assertIn(f"Key {other.id}. Does the other machine show the same key? [y/N] ", out)
+        self.assertIn(f"key {other.id} was not confirmed, so nothing was stored", err)
+        self.stored_nothing()
+
+    def test_a_line_whose_key_did_not_encrypt_it_is_refused_before_the_question(self) -> None:
+        sealed = crypto.seal(self.private, crypto.public_key(self.TEMPORARY), bytes(range(9, 41)))
+        line = relay.LINE_PREFIX + relay.unpadded(json.dumps(sealed, separators=(",", ":")).encode())
+
+        code, out, err = self.join(typed=line + "\ny\n")
+
+        self.assertEqual(65, code, out)
+        self.assertIn("carries a key other than the key that encrypted it", err)
+        self.assertNotIn("Does the other machine show", out)
+        self.stored_nothing()
+
+    def test_grant_prints_no_line_unless_the_answer_is_yes(self) -> None:
+        for answer in ("", "n", "no", "yep", "y n"):
+            with self.subTest(answer):
+                code, out, err = self.grant(self.request, answer)
+                self.assertEqual(65, code, err)
+                self.assertIn("Request from one, fingerprint ", out)
+                self.assertNotIn("pk1-", out + err)
+        self.assertEqual(0, self.grant(self.request, " YES ")[0])
+
+    def test_grant_refuses_a_request_of_another_kind_version_or_length(self) -> None:
+        for request, reason in ((self.request.replace("pj1-", "pj2-", 1), "version 2"),
+                                (self.line(), "not a request that `project agent key join` prints"),
+                                (self.request[:-1], f"is {len(self.request) - 1} characters"),
+                                ("pj1-" + "a" * 21 + self.request[-44:], "up to 20 lowercase letters")):
+            with self.subTest(request[:8]):
+                code, out, err = self.grant(request)
+                self.assertEqual(65, code, err)
+                self.assertIn(reason, err)
+                self.assertNotIn("pk1-", out)
+
+    def test_join_and_grant_refuse_without_a_terminal_on_standard_input_and_output(self) -> None:
+        for terminal in (False, "stdin", "stdout"):
+            for command in (["join"], ["grant", self.request]):
+                with self.subTest(command=command[0], terminal=terminal):
+                    code, out, err = self.one.project("agent", "key", *command, stdin="y\n", terminal=terminal)
+                    self.assertEqual(69, code, err)
+                    self.assertIn(f"run `project agent key {command[0]}` yourself in a terminal", err)
+                    self.assertEqual("", out)
+        self.stored_nothing()
+
+    def test_join_stores_nothing_and_writes_no_file_when_interrupted_or_out_of_time(self) -> None:
+        before = files_under(self.one.home, self.one.state)
+        interrupted = Pty(self, self.one, "agent", "key", "join")
+        interrupted.until("Paste the line it prints here: ")
+        interrupted.process.send_signal(signal.SIGINT)
+        stopped = interrupted.finish()
+        waited = Pty(self, self.one, "agent", "key", "join", timeout=0.5).finish()
+
+        self.assertEqual(130, stopped[0], stopped[1])
+        self.assertIn("stopped, so nothing was stored", stopped[1])
+        self.assertEqual(65, waited[0], waited[1])
+        self.assertIn("nothing was entered within", waited[1])
+        self.assertEqual(before, files_under(self.one.home, self.one.state))
+        self.assertEqual({}, self.keychain_items())
+
+    def test_join_replaces_a_key_this_machine_holds_only_with_replace(self) -> None:
+        self.on_macos()
+        old = relay.Key(bytes(range(5, 37)), "keychain")
+        (self.bin / "keychain.json").write_text(json.dumps({f"projector-agent/{old.id}": crypto.encode(old.private)}))
+        (self.one.home / ".projector.toml").write_text(f'[agent]\nkey = "keychain:{old.id}"\n')
+
+        refused = self.join(typed=self.line() + "\ny\n")
+        kept = (self.keychain_items(), self.config_text())
+        replaced = self.join("--replace", typed=self.line() + "\ny\n")
+
+        self.assertEqual(65, refused[0], refused[1])
+        self.assertIn(f"agent.key already holds key {old.id}; pass --replace", refused[2])
+        self.assertNotIn("grant", refused[1])
+        self.assertEqual(({f"projector-agent/{old.id}": crypto.encode(old.private)},
+                          f'[agent]\nkey = "keychain:{old.id}"\n'), kept)
+        self.assertEqual(0, replaced[0], replaced[2])
+        self.assertEqual({f"projector-agent/{self.key.id}": crypto.encode(self.private)}, self.keychain_items())
+        self.assertIn(f'key = "keychain:{self.key.id}"', self.config_text())
+
+    def test_init_and_join_store_the_key_inline_only_with_inline_when_no_keychain_answers(self) -> None:
+        self.secret_tool.stop()
+        path = self.one.home / ".projector.toml"
+        refused = [self.one.project("agent", "key", "init"), self.join(typed=self.line() + "\ny\n")]
+        files = files_under(self.one.home, self.one.state)
+        made = self.one.project("agent", "key", "init", "--inline")
+        made_mode = path.stat().st_mode & 0o777
+        path.unlink()
+        joined = self.join("--inline", typed=self.line() + "\ny\n")
+
+        for code, out, err in refused:
+            self.assertEqual(65, code, out)
+            self.assertIn("secret-tool: not installed, so no keychain can hold the key and nothing was stored; "
+                          "pass --inline", err)
+            self.assertNotIn("grant", out)
+        self.assertEqual(set(), files)
+        self.assertEqual((0, 0), (made[0], joined[0]), made[2] + joined[2])
+        self.assertEqual((0o600, 0o600), (made_mode, path.stat().st_mode & 0o777))
+        self.assertIn(f"key {self.key.id} stored inline", joined[1])
+        self.assertEqual((self.key.id, "inline"), (relay.command_key(self.one.env)[0].id,
+                                                   relay.command_key(self.one.env)[0].store))
+
+    def test_the_old_ways_to_copy_or_set_the_key_are_refused_and_name_key_join(self) -> None:
+        for args in (["agent", "key", "export"], ["agent", "key", "import", "--inline"],
+                     ["config", "set", "agent.key", "x", "--user"]):
+            with self.subTest(args[2]):
+                code, out, err = self.one.project(*args, terminal=True)
+                self.assertEqual(2, code, err)
+                self.assertIn("run `project agent key join` in a terminal", err)
+        self.stored_nothing()
 
 
 def wait_for(condition, seconds: float = 10.0) -> bool:

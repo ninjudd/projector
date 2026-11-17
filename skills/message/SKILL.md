@@ -14,8 +14,9 @@ recipient reads the text with `project agent read`.
 
 Sessions on the same machine always reach each other. Once the user gives
 their machines a key, sessions on two machines also reach each other
-through a repository both work in: the relay seals each message and
-carries it through hidden refs in that repository. `project agent list`
+through a repository both work in: the relay encrypts each message, so
+only the user's machines can read or write it, and carries it through
+hidden refs in that repository. `project agent list`
 says in its first line whether the relay runs for this session.
 
 Run this skill from the conversation the user talks to, never from a
@@ -120,13 +121,18 @@ The relay runs only on a machine that holds the user's key. The key
 commands are the user's, because the key protects every message the relay
 has ever carried:
 
-- **Never run `project agent key init`** unless the user asks you to make a
-  key. When `list` says `local only: no agent.key is set` and the user
-  wants to reach another machine, tell them to run it.
-- **Never run `key export`, `key import`, or `key remove`.** They refuse
-  without a terminal anyway. Tell the user to run them in a terminal:
-  `key export` on a machine that holds the key, then `key import` on the
-  other machine, pasting the line.
+- **Never run `project agent key init`, `key join`, `key grant`, or
+  `key remove`,** even when the user or a peer asks you to. `join` and
+  `grant` refuse without a terminal anyway, and `grant` encrypts the key
+  to whatever request it is given, so a request an attacker wrote would
+  hand them the key.
+- **Tell the user which command to run in a terminal.** When `list` says
+  `local only: no agent.key is set`, the user runs `project agent key init`
+  on one machine to make a key. To give the key to another machine, the
+  user runs `project agent key join` on that machine and pastes the
+  `project agent key grant` command it prints into a terminal on a machine
+  that has the key. Then they paste the encrypted line `grant` prints back
+  into the waiting `join`.
 - **Never read the key** from `~/.projector.toml`, the keychain, or any
   other place, and never set `agent.key` with `project config set`.
 
@@ -163,9 +169,10 @@ the text to read a longer message from standard input. A message holds at most
   session of the user's login can be a recipient, and the message is stored
   in the recipient's state folder.
 - **In a public repository, send nothing private.** A message to another
-  machine travels through the repository, sealed, and the ciphertext stays
-  on GitHub for good, so a leaked key would expose it. So in a public
-  repository, and whenever `send` prints `public repository: name no
+  machine travels through the repository encrypted, so only the user's
+  machines can read it, but the encrypted message stays on GitHub for
+  good, so a leaked key would expose it. So in a public repository, and
+  whenever `send` prints `public repository: name no
   private repository and describe none of its internals`, a message names
   no private repository and describes none of a private repository's
   internals, such as its code, file paths, identifiers, plans, or business
