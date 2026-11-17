@@ -1,7 +1,7 @@
 import type { AgentInfo, ConfigRow, FsEntry, On, PromptEditInput, PromptEditResult } from 'claude-code'
 import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testing'
 
-import type { Notice, Question, Request } from './types'
+import type { Message, MessageItem, Notice, Question, Request } from './types'
 
 const HOME = '/home/ada'
 const REVIEW = `${HOME}/loops/review/tracked`
@@ -1857,7 +1857,8 @@ const TICK = 5_000
 type HeldQuestion = Omit<Question, 'session'>
 type HeldNotice = Omit<Notice, 'session'>
 type HeldRequest = Omit<Request, 'session'>
-type Held = HeldQuestion | HeldNotice | HeldRequest
+type HeldMessage = Omit<MessageItem, 'session'>
+type Held = HeldQuestion | HeldNotice | HeldRequest | HeldMessage
 type Clock = ReturnType<typeof mock.clock>
 
 const HOUR = 3_600_000
@@ -1896,6 +1897,22 @@ const requested = (fields: Partial<HeldRequest> = {}): HeldRequest => ({
   choices: ['Looks good', 'Some feedback'],
   ...fields,
 })
+
+/** A message you sent about a pull request or the session, as `project inbox discuss` without a number posts it. */
+const messageItem = (fields: Partial<HeldMessage> = {}): HeldMessage => ({
+  ref: '4',
+  kind: 'message',
+  number: 4,
+  pr: null,
+  postedAt: NOW - 10_000,
+  subject: 'About this session',
+  detail: '',
+  messages: [{ text: 'Why the retry?', at: NOW - 10_000 }],
+  ...fields,
+})
+
+/** A message you sent about an item, not yet delivered. */
+const yours = (text: string, at = NOW - 1_000): Message => ({ text, at })
 
 /** A held item when it is a request, so a test reads a request's own fields. */
 const heldRequest = (item: Held | undefined): HeldRequest | undefined => (item?.kind === 'request' ? item : undefined)
@@ -1948,14 +1965,18 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
   /** An item without `unclear` and without a claim on its `UNCLEAR` line, as a revision leaves it. */
   const unmarked = <T extends Held>(item: T): T =>
     without(item, 'unclear', ...(item.claim?.line === 'unclear' ? ['claim'] : []))
+  /** The index of the oldest message you sent not yet delivered, as the CLI owes it; -1 for none. */
+  const owedMessage = (item: Held) => item.messages?.findIndex(said => said.deliveredAt === undefined) ?? -1
   const textOf = (item: Held) => {
     const { answer, ref, subject } = item
-    // A notice owes no line but `UNCLEAR`.
+    if (item.claim?.line === 'discuss') return `DISCUSS ${ref} ${subject} → ${item.messages?.[item.claim.entry ?? 0]?.text ?? ''}`
+    // A notice owes no other line but `UNCLEAR`.
     if (item.claim?.line === 'unclear' || item.kind === 'notice') return `UNCLEAR ${ref} ${subject}`
     if (item.kind === 'request' && item.claim?.line === 'started') {
       return `STARTED ${ref} ${subject} → ${item.started?.action ?? ''}`
     }
-    if (item.restoredAt !== undefined) return `RESTORED ${ref} ${subject}`
+    // A message item owes nothing but `DISCUSS`.
+    if (item.kind !== 'message' && item.restoredAt !== undefined) return `RESTORED ${ref} ${subject}`
     if (answer !== undefined && 'letter' in answer) return `ANSWER ${ref}.${answer.letter} ${subject} → ${answer.text}`
     if (answer !== undefined && ('done' in answer || 'declined' in answer)) {
       const said = answer.text === undefined ? '' : ` → ${answer.text}`
@@ -2047,19 +2068,28 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       }
       if (!('dismissed' in item.answer)) return failed(65, `${ref} is already answered`)
       const restored = without(item, 'answer', 'deliveredAt', 'claim')
-      if (restored.kind !== 'notice' && (item.deliveredAt !== undefined || 'claim' in item)) {
+      const isAnswerable = restored.kind === 'question' || restored.kind === 'request'
+      if (isAnswerable && (item.deliveredAt !== undefined || 'claim' in item)) {
         return printed(put({ ...restored, restoredAt: time }))
       }
       return printed(put(restored))
     }
     // Dismissing or answering an item drops word of a restore not yet claimed, as the CLI does, and word that you
-    // don't understand it unless a deliverer holds that word.
+    // don't understand it unless a deliverer holds that word. A claimed message of yours keeps its claim too.
     const isUnclearClaimed = item.claim?.line === 'unclear'
-    const awake = without(item, 'snoozedUntil', 'snoozedAt', 'restoredAt', ...(isUnclearClaimed ? [] : ['claim', 'unclear']))
+    const isHeld = isUnclearClaimed || item.claim?.line === 'discuss'
+    const awake = without(
+      item,
+      'snoozedUntil',
+      'snoozedAt',
+      'restoredAt',
+      ...(isHeld ? [] : ['claim']),
+      ...(isUnclearClaimed ? [] : ['unclear']),
+    )
     const isUnsaid = 'restoredAt' in item && !('claim' in item)
     if (command === 'dismiss') {
       const answer = { dismissed: true as const, answeredAt: time }
-      const isDelivered = awake.kind === 'notice' || isUnsaid
+      const isDelivered = awake.kind === 'notice' || awake.kind === 'message' || isUnsaid
       const declined = awake.kind === 'request' ? { declined: true as const } : {}
       const recorded = { ...awake, answer: { ...answer, ...declined } } as Held
       return printed(put(isDelivered ? { ...recorded, deliveredAt: time } : recorded))
@@ -2110,28 +2140,48 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       }
       return printed(put({ ...item, unclear: { at: time } }))
     }
-    // An item owes its answer, outcome, `RESTORED`, or `STARTED` before its `UNCLEAR`, and a notice owes only `UNCLEAR`.
+    // An item owes its answer, outcome, `RESTORED`, or `STARTED` before its `UNCLEAR`, and that before a message of
+    // yours, `DISCUSS`. A notice owes only `UNCLEAR` and `DISCUSS`, and a message item only `DISCUSS`.
     if (command === 'claim') {
       const isOwed =
-        item.kind !== 'notice' && (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined))
+        (item.kind === 'question' || item.kind === 'request') &&
+        (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined))
       const renew = flag(args, 'renew')
-      if (!isOwed && !owesStart(item) && !owesUnclear(item) && renew === undefined) return failed(65, 'nothing to deliver')
+      const isNothing = !isOwed && !owesStart(item) && !owesUnclear(item) && owedMessage(item) === -1
+      if (isNothing && renew === undefined) return failed(65, 'nothing to deliver')
       if (renew !== undefined) {
         if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
         put({ ...item, claim: { ...item.claim, renewedAt: time } })
         return ran('')
       }
       if (item.claim !== undefined && time - item.claim.renewedAt < 60_000) return failed(65, 'already claimed')
-      const line =
-        item.kind === 'notice' || !isOwed
-          ? owesStart(item)
-            ? 'started'
-            : 'unclear'
-          : item.restoredAt !== undefined && item.answer === undefined
-            ? 'restored'
-            : 'answer'
-      const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line } } as Held
+      const line = isOwed
+        ? item.restoredAt !== undefined && item.answer === undefined
+          ? 'restored'
+          : 'answer'
+        : owesStart(item)
+          ? 'started'
+          : owesUnclear(item)
+            ? 'unclear'
+            : 'discuss'
+      const entry = line === 'discuss' ? { entry: owedMessage(item) } : {}
+      const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line, ...entry } } as Held
       return printed(put(claimed), { token: claimed.claim?.token, text: textOf(claimed) })
+    }
+    // A message of yours is marked delivered, or taken back when it failed. A message item with none left to
+    // send is resolved, as delivered when one of its messages was.
+    if ((command === 'delivered' || command === 'reopen') && item.claim?.line === 'discuss') {
+      if (item.claim.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
+      const at = item.claim.entry ?? 0
+      const messages = (item.messages ?? []).flatMap((said, index) =>
+        index !== at ? [said] : command === 'delivered' ? [{ ...said, deliveredAt: time }] : [],
+      )
+      const settled = messages.length === 0 ? without(item, 'claim', 'messages') : { ...without(item, 'claim'), messages }
+      if (settled.kind !== 'message' || settled.answer !== undefined || owedMessage(settled) !== -1) {
+        return printed(put(settled))
+      }
+      const answer = messages.length === 0 ? { dismissed: true as const, answeredAt: time } : { delivered: true as const, answeredAt: time }
+      return printed(put({ ...settled, answer, deliveredAt: time }))
     }
     // Word that you don't understand an item is marked delivered, or taken back when it failed.
     if ((command === 'delivered' || command === 'reopen') && item.claim?.line === 'unclear') {
@@ -2150,7 +2200,9 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         put({ ...unmarked(item), subject: flag(args, 'notice') ?? item.subject, detail: flag(args, 'detail') ?? item.detail }),
       )
     }
-    if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
+    if (item.kind === 'notice' || item.kind === 'message') {
+      return failed(65, `${ref} is a ${item.kind}; dismiss it with \`project inbox dismiss\``)
+    }
     if (command === 'revise' && item.kind === 'request') {
       // A revised request returns to open, as the CLI resets it.
       const start = flag(args, 'start') ?? item.start
@@ -5351,6 +5403,113 @@ test('an open item’s line draws its title with no rule after it', async ($, on
   await desktop.press({ key: 'item:1' })
   expect(await desktop.find({ type: 'Text', text: /─/ })).toBeUndefined()
   await desktop.unmount()
+})
+
+/** The messages you sent that an open drawer shows, in order. */
+async function messagesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+  return (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(text => /^(you|agent): \S/.test(text))
+}
+
+test('messages discussed from a terminal reach the agent as DISCUSS, each once and in order, and the item stays open', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const messages = [yours('Why decline?', NOW - 2_000), yours('What does the budget cost?')]
+  const session = questionWorld(on, clock, [held({ messages })])
+  await startSession($, clock, false)
+  for (let tick = 0; tick < 3; tick += 1) {
+    await clock.advance(TICK)
+    await clock.settle()
+  }
+
+  expect(session.submitted.map(one => one.text)).toEqual([
+    'DISCUSS 1 Decline the finding? → Why decline?',
+    'DISCUSS 1 Decline the finding? → What does the budget cost?',
+  ])
+  const item = session.store.store.get('1')
+  expect([item?.answer, item?.messages?.map(said => said.deliveredAt !== undefined)]).toEqual([undefined, [true, true]])
+})
+
+test('a message that cannot be delivered is taken back, and the panel says to send it again', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held({ messages: [yours('Why decline?')] })], { drop: 'a hook refused it' })
+  await startSession($, clock)
+  await clock.advance(TICK)
+  await clock.settle()
+
+  expect(session.toasts).toEqual([
+    'projector: your message about "Decline the finding?" did not reach its agent (a hook refused it); send it again',
+  ])
+  expect(session.store.store.get('1')?.messages).toBeUndefined()
+})
+
+/** A claim another deliverer holds on an item's `DISCUSS` line, which lapses a minute after `NOW`. */
+const elsewhere = (entry: number) => ({ token: 'elsewhere', renewedAt: NOW, line: 'discuss' as const, entry })
+
+/** Moves the clock past the claim `elsewhere` holds, and through the tick that claims the line itself. */
+async function outlast(clock: Clock): Promise<void> {
+  await clock.advance(60_000 + TICK)
+  await clock.settle()
+}
+
+test('an item’s line reads `sending` until your message is delivered, and its drawer shows what you sent', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const messages = [{ ...yours('Why decline?', NOW - 3_000), deliveredAt: NOW - 2_000 }, yours('Which hosts?')]
+  const session = questionWorld(on, clock, [held({ messages, claim: elsewhere(1) })])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: 'sending' })).toBeDefined()
+  expect(await messagesOf(ui)).toEqual([])
+
+  await ui.press({ key: 'item:1' })
+  expect(await messagesOf(ui)).toEqual(['you: Why decline?', 'you: Which hosts?'])
+  await outlast(clock)
+  expect(session.submitted.map(one => one.text)).toEqual(['DISCUSS 1 Decline the finding? → Which hosts?'])
+  expect(await ui.find({ type: 'Text', text: 'sending' })).toBeUndefined()
+  expect(await messagesOf(ui)).toEqual(['you: Why decline?', 'you: Which hosts?'])
+  // Nothing comes back to the item: the agent answers in its conversation.
+  expect(session.project().filter(command => /^inbox (read|reply)/.test(command))).toEqual([])
+  await ui.unmount()
+})
+
+test('a message about the session is counted and drawn like a notice, takes no I don’t understand, and leaves once delivered', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held(), messageItem({ claim: elsewhere(0) })])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question · 1 message  \d+s$/)
+  expect((await ui.find({ type: 'Text', text: 'About this session' }))?.props.color).toBe('inactive')
+
+  await ui.press({ key: 'item:4' })
+  expect(await messagesOf(ui)).toEqual(['you: Why the retry?'])
+  expect((await ui.findAll({ type: 'Button' })).filter(button => /^(answer|outcome|start):4/.test(button.key ?? ''))).toEqual([])
+  expect(await actionLinesOf(ui)).toEqual(['discuss:4 7 Discuss', 'dismiss:4 8 Dismiss', 'snooze:4 9 Snooze'])
+  await outlast(clock)
+  expect(session.submitted.map(one => one.text)).toEqual(['DISCUSS 4 About this session → Why the retry?'])
+  expect(session.store.store.get('4')?.answer).toEqual({ delivered: true, answeredAt: expect.any(Number) })
+
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: 'About this session' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('dismissing a message about the session sends the agent nothing but the message itself', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [messageItem({ claim: elsewhere(0) })])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:4' })
+  await ui.press({ key: 'dismiss:4' })
+  await outlast(clock)
+  await outlast(clock)
+  expect(session.project().filter(command => /^inbox dismiss/.test(command))).toEqual(['inbox dismiss 4 --session s1 --json'])
+  expect(session.submitted.map(one => one.text)).toEqual(['DISCUSS 4 About this session → Why the retry?'])
+  expect(session.store.store.get('4')?.answer).toEqual({ dismissed: true, answeredAt: expect.any(Number) })
+  await ui.unmount()
 })
 
 // The daemon's files: the session's subscriptions, each pull request's cached

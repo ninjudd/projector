@@ -54,6 +54,8 @@ DECISIONS = (
     ("project inbox unclear 3 --subject 'Pushed the fix' --detail '' --session s1", "ask", "none"),
     ("project inbox ready 3 --session s1", "allow", "allow"),
     ("project inbox block 3 --reason 'Unlock the phone' --session s1", "allow", "allow"),
+    ("project inbox discuss 3 --text 'Why decline it?' --session s1", "ask", "none"),
+    ("project inbox discuss --pr acme/app#12 --text hello --session s1", "ask", "none"),
     ("project list --json", "allow", "allow"),
     ("project config get review.username", "allow", "allow"),
     ("project config list", "allow", "allow"),
@@ -117,7 +119,8 @@ DECISIONS = (
 # What the Codex rules leave to Codex's usual approval: each command with the
 # subcommands left out, or None where the whole command is.
 CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "agent": {"key"},
-                  "config": {"set", "unset"}, "inbox": {"answer", "decline", "dismiss", "done", "snooze", "start", "unclear"},
+                  "config": {"set", "unset"},
+                  "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},
                   "review": {"gate"},
                   "site": {"build", "serve"}, "ios": {"build", "logs"}}
 

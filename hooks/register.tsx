@@ -5,6 +5,7 @@ import type {
   Checks,
   Item,
   LoopKind,
+  MessageItem,
   Notice,
   PullRequest,
   Question,
@@ -42,12 +43,14 @@ import {
   BLOCK_SCHEMA,
   choicesOf,
   forMainLoop,
+  isAnswerable,
   isShownAt,
   isSnoozedAt,
   letterAt,
   liveAgent,
   mayBeUnclear,
   needsDelivery,
+  owesMessage,
   proposalOf,
   quoteOf,
   READY_DESCRIPTION,
@@ -207,7 +210,7 @@ const REQUEST_COLORS: Record<string, string> = {
 const OTHER_REQUEST_COLOR = 'rgb(255,190,140)'
 
 /** The kinds of item, in the order the header counts them. */
-const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice']
+const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice', 'message']
 
 /** The sections of pull requests, in their order: your own, then the review requests. */
 const PR_SECTIONS = ['pr', 'review'] as const satisfies readonly Section[]
@@ -233,6 +236,7 @@ const kindColors = (requestColor: string): Record<Item['kind'], string> => ({
   question: QUESTION_COLOR,
   notice: NOTICE_COLOR,
   request: requestColor,
+  message: NOTICE_COLOR,
 })
 
 /**
@@ -801,7 +805,11 @@ async function closeLeftDrawer($: Engine, time: number): Promise<void> {
  * An item as the CLI prints it, without the session the panel adds. Each kind
  * is its own `Omit`, because one over the union would merge their `kind`s.
  */
-type Printed = Omit<Question, 'session'> | Omit<Notice, 'session'> | Omit<Request, 'session'>
+type Printed =
+  | Omit<Question, 'session'>
+  | Omit<Notice, 'session'>
+  | Omit<Request, 'session'>
+  | Omit<MessageItem, 'session'>
 
 /** The item a CLI command printed with `--json`, in the session it belongs to. */
 const itemOf = (stdout: string, session: string): Item => ({
@@ -876,7 +884,7 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
     // subject. A restore's line is not sent again, and its item stays open. A
     // start that did not reach its agent is taken back, so start returns, and
     // so is word that you don't understand an item, so I don't understand
-    // returns.
+    // returns, and a message you sent about it, so you send it again.
     const item = (await read($, items)).find(one => one.ref === ref && one.session === session)
     const quoted = item === undefined ? undefined : quoteOf(item)
     const why = reason ? ` (${reason})` : ''
@@ -887,6 +895,8 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
           ? `projector: the start of ${quoted ?? 'a request'} did not reach its agent${why}; press start again`
           : text.startsWith('UNCLEAR ')
           ? `projector: word that you don't understand ${quoted ?? 'an item'} did not reach its agent${why}; press I don't understand again`
+          : text.startsWith('DISCUSS ')
+          ? `projector: your message about ${quoted ?? 'an item'} did not reach its agent${why}; send it again`
           : item?.kind === 'request'
           ? `projector: the outcome of ${quoted ?? 'a request'} did not reach its agent${why}; mark it done or declined again`
           : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
@@ -1622,8 +1632,8 @@ export const register: Register = on => {
     const { ref } = item
     return {
       result:
-        item.kind === 'notice'
-          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it.${whenUnclear('notice', ref)} Nothing else comes back to you.`
+        !isAnswerable(item)
+          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it.${item.kind === 'notice' ? whenUnclear('notice', ref) : ''} Nothing else comes back to you.`
           : item.kind === 'request'
             ? `Restored ${ref}. It is open in Projector’s panel again. An agent that already heard DECLINED ${ref} hears RESTORED ${ref} first.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
             : `Restored ${ref}. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
@@ -1697,7 +1707,7 @@ export const register: Register = on => {
     const { answers, outcomes, replies, unclears } = readPrompt(e.text, mine, isYours ? proposed : [])
     // An open question or request is done only when the prompt resolves or
     // replies to it, so a quote two of them share closes one drawer, not both.
-    const isOpenAnswerable = (item: Item) => item.kind !== 'notice' && item.answer === undefined
+    const isOpenAnswerable = (item: Item) => isAnswerable(item) && item.answer === undefined
     const done = new Set([
       ...mine.filter(item => !isOpenAnswerable(item) && e.text.includes(quoteOf(item))).map(item => item.ref),
       ...answers.map(one => one.question.ref),
@@ -2225,7 +2235,7 @@ export const register: Register = on => {
       // say what you don't follow before you send it. A question's choices
       // and a request's, after any Start or Retry, end at `5`, leaving it `6`.
       // An item stored before that cap can hold a choice on `6`, so there it
-      // takes no digit.
+      // takes no digit. A message is your own words, so it offers none.
       const choiceDigits =
         item.kind === 'question'
           ? item.choices.length
@@ -2233,7 +2243,7 @@ export const register: Register = on => {
             ? (startOf(item) === undefined ? 0 : 1) + choicesOf(item).length
             : 0
       const unclear: Line[] =
-        isOpen && item.unclear === undefined
+        isOpen && item.unclear === undefined && item.kind !== 'message'
           ? [
               {
                 name: 'unclear',
@@ -2252,7 +2262,7 @@ export const register: Register = on => {
           label: 'Discuss',
           hotkey: '7',
           onPress: () => {
-            if (item.kind !== 'notice') propose(item, '')
+            if (isAnswerable(item)) propose(item, '')
             fill(`${quoteOf(item)}\n\n`)
           },
         },
@@ -2322,7 +2332,8 @@ export const register: Register = on => {
               ? `outcome:${ref}.${letterAt(0)}`
               : `start:${ref}`
             : `discuss:${ref}`
-      const isSending = !isOpen && item.deliveredAt === undefined
+      const messages = item.messages ?? []
+      const isSending = (!isOpen && item.deliveredAt === undefined) || owesMessage(item)
       const isUnclear = isOpen && item.unclear !== undefined
       const stage = item.kind === 'request' && isOpen ? stageOf(item) : undefined
 
@@ -2386,6 +2397,15 @@ export const register: Register = on => {
                   above. */}
               {item.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
+              {/* The messages you sent about the item follow, oldest first.
+                  The agent answers them in its conversation. */}
+              {messages.length > 0 && <Text key={`before-messages:${ref}`}> </Text>}
+              {messages.map((said, at) => (
+                <Text key={`said:${ref}.${at}`}>
+                  <Text color="subtle">you: </Text>
+                  {said.text}
+                </Text>
+              ))}
               {item.kind === 'question' && !isChoosingLength && drawAnswers(item)}
               {item.kind === 'request' && !isChoosingLength && drawOutcomes(item)}
               <Text key={`before-buttons:${ref}`}> </Text>

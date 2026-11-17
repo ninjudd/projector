@@ -46,11 +46,12 @@ Three changes, built together. First, the watch daemon's Codex adapter
 becomes the deliverer of inbox lines for Codex sessions. It claims each
 line a Codex session is owed and sends it in the same `codex queue` batch
 as that session's watch events. It marks the line delivered when Codex
-acknowledges the batch. Second, each inbox item gets a thread, so you can
-discuss it without the session's chat: your messages reach the agent as
-`DISCUSS` lines, and the agent answers into the thread with
-`project inbox reply`. Discussing a pull request starts a new item of kind
-`discussion` with the same thread. Third, `project console` is a curses
+acknowledges the batch. Second, you can send the agent a message about an
+item, a pull request, or the session without typing into the session's
+chat: `project inbox discuss` records it, it reaches the agent as a
+`DISCUSS` line, and the agent answers in its own conversation. A message
+about a pull request or the session is an item of a new kind, `message`.
+Third, `project console` is a curses
 TUI that you run in a split or a second window. It opens on a list of every
 live session, sorted by what needs you. Enter opens that session's panel,
 where you answer, discuss, and dismiss for that one session. The console
@@ -76,8 +77,8 @@ for both hosts and never sends anything to a session itself.
    and the console shows that session's panel: its pull requests (§ 2.4)
    and its inbox items (§ 2.5).
 4. You open an item's drawer and press an option, or type a message with
-   Discuss. Or, with no drawer open, you press `7` and type a message to
-   start a discussion about the session itself (§ 2.6). The console records
+   Discuss. Or, with no drawer open, you press `7` and type a message
+   about the session itself (§ 2.6). The console records
    it with the functions in
    `src/projector/inbox.py`, passing the session you are viewing: `answer`,
    `done`, `decline`, `unclear`, `start`, `dismiss`, `snooze`, `restore`,
@@ -98,7 +99,10 @@ for both hosts and never sends anything to a session itself.
      sends it, as § 2.2 describes.
 7. The item shows `sending` until its line is delivered. An answered item
    leaves the list 30 seconds later, as it does in the panel. A discussed
-   item stays open, and the agent's reply appears in its thread.
+   item stays open, and a `message` item leaves the list 30 seconds after
+   its message is delivered. The agent answers in its own conversation,
+   which you read in the session's own window, such as the split below the
+   console, or in the console's view of that conversation.
 
 ### 2.2 Delivering inbox lines to Codex
 
@@ -155,17 +159,13 @@ and its summary from `agent.json`, then the counts the panel's header
 shows (pull requests, review requests, questions, requests, and notices),
 then the subject of its newest open item. A session with no open item and
 no pull request still gets a row, so you can open its panel and press `7`
-to start a discussion about the session (§ 2.5).
+to send a message about the session (§ 2.5).
 
 Sessions are sorted by what needs you:
 
-1. Sessions with an agent reply you have not read.
-2. Then sessions with an open question or request, most of them first.
-3. Then sessions with only notices or pull requests.
-4. Ties go to the session whose newest item is newest, then to the label.
-
-The row of a session with an unread reply shows `replied` beside the
-subject of the item that carries it.
+1. Sessions with an open question or request, most of them first.
+2. Then sessions with only notices or pull requests.
+3. Ties go to the session whose newest item is newest, then to the label.
 
 ### 2.4 A session's panel: pull requests
 
@@ -194,7 +194,7 @@ thread. The drawer's actions are these:
 
 | Key | Action |
 | --- | --- |
-| `7` | Discuss: opens a text field, and starts a `discussion` item about this pull request in this session (§ 2.6) |
+| `7` | Discuss: opens a text field, and sends your message about this pull request to this session as a `message` item (§ 2.6) |
 | `8` | Dismiss, after a confirmation. The console runs `project watch drop <owner>/<repo>#<n> --role <role> --session <s>` for each role this session holds |
 | `o` | Opens the pull request in a browser with `webbrowser.open` |
 | `p` | Opens its projector.bot summary, when the description carries one |
@@ -202,75 +202,115 @@ thread. The drawer's actions are these:
 ### 2.5 A session's panel: inbox items
 
 Each item line shows the subject, the state words the panel shows
-(`sending`, `unclear`, `starting`, `ready`, `blocked`, and the new
-`replied`), the pull request, and the age. The item drawer shows the detail
-as wrapped text, then the item's thread, then the panel's controls:
+(`sending`, `unclear`, `starting`, `ready`, and `blocked`), the pull
+request, and the age. The item drawer shows the detail as wrapped text, then
+each message you sent about the item after `you:`, then the panel's
+controls:
 
 | Kind | Controls |
 | --- | --- |
 | Question | `1`… for the options, the first marked `(recommended)`. The last option, `type an answer`, opens a one-line text field |
 | Request | `1: Start` or `Retry` when the item has a start action, then the choices, or `Done` |
-| Discussion | No options. It stays open until you dismiss it or the agent withdraws it |
+| Message | No options and no `I don't understand`. It leaves the list 30 seconds after its message is delivered |
 | Any open item | `6: I don't understand`, `7: Discuss`, `8: Dismiss` or `Restore`, and `9: Snooze`, whose options are 15 minutes, 1 hour, 4 hours, and 1 day |
 
-Opening a drawer marks the agent's replies in its thread read.
+With no drawer open, `7` opens a text field and sends a message about the
+session itself (§ 2.6), whichever row the cursor is on. It works in a panel
+with no rows, such as an idle session's or a new one's. To write about a
+particular item or pull request, open its drawer and press `7` there.
 
-With no drawer open, `7` opens a text field and starts a `discussion` item
-about the session itself (§ 2.6), whichever row the cursor is on. It works
-in a panel with no rows, such as an idle session's or a new one's. To
-discuss a particular item or pull request, open its drawer and press `7`
-there.
+### 2.6 Discussing an item, a pull request, or the session
 
-### 2.6 Threads
-
-An item's thread holds the messages you and the agent exchange about it.
-Each entry is one paragraph of up to 4 KiB, which keeps a `DISCUSS` line
-well inside the adapter's batch limit.
+A message is one way: it carries your words to the agent, and the agent
+answers in its own conversation, never into the inbox. An item keeps the
+messages you sent about it in `messages`:
 
 | Item field | Value |
 | --- | --- |
-| `thread` | A list of entries, oldest first. Absent until the first message |
-| `thread[].from` | `person` or `agent` |
-| `thread[].text` | The message |
-| `thread[].at` | When it was recorded, in milliseconds |
-| `thread[].deliveredAt` | Set on a `person` entry when its line is delivered |
-| `thread[].readAt` | Set on an `agent` entry when you open the item's drawer, in the console or in the panel |
+| `messages` | A list of your messages, oldest first. Absent until the first |
+| `messages[].text` | The message, one paragraph of at most 4 KiB in UTF-8 |
+| `messages[].at` | When it was recorded, in milliseconds |
+| `messages[].deliveredAt` | Set when its `DISCUSS` line is delivered |
 
-A `discussion` item is an item of a new kind that you start, about a pull
-request or about the session itself. It has a thread whose first entry is
-your message, and it takes the next number in the session's count, like any
-other item. Its subject says what it is about:
+A `message` item is an item of a new kind that holds one message of yours
+about a pull request or about the session itself. It asks nothing of you,
+and it takes the next number in the session's count, like any other item.
+Its subject says what it is about:
 
 | About | `pr` | `subject` |
 | --- | --- | --- |
 | A pull request | `<owner>/<repo>#<n>` | `About <owner>/<repo>#<n>` |
 | The session | Absent | `About this session` |
 
-The commands:
+The commands, which you run through the console or a terminal:
 
-| Command | Who runs it | What it does |
-| --- | --- | --- |
-| `project inbox discuss <number> --text <words> --session <s>` | You, through the console or a terminal | Adds a `person` entry to an open item's thread |
-| `project inbox discuss --pr <owner>/<repo>#<n> --text <words> --session <s>` | You | Starts a `discussion` item about that pull request, and prints its number |
-| `project inbox discuss --text <words> --session <s>` | You | Starts a `discussion` item about the session itself, and prints its number |
-| `project inbox reply <number> --text <words> --session <s>` | The agent | Adds an `agent` entry to the thread. It needs no delivery, because you read it in the console or the panel |
+| Command | What it does |
+| --- | --- |
+| `project inbox discuss <number> --text <words> --session <s>` | Adds your message to an open item's `messages` |
+| `project inbox discuss --pr <owner>/<repo>#<n> --text <words> --session <s>` | Posts a `message` item about that pull request, and prints its number |
+| `project inbox discuss --text <words> --session <s>` | Posts a `message` item about the session itself, and prints its number |
 
-Each undelivered `person` entry owes a line, after the lines the item
-already owes in this order: `answer`, `restored`, `started`, and `unclear`.
-An item has one claim at a time, so its entries are delivered one at a
-time, oldest first. The line is
+Each undelivered message owes a line, after the lines the item already owes
+in this order: `answer`, `restored`, `started`, and `unclear`. An item has
+one claim at a time, so its messages are delivered one at a time, oldest
+first. The line is
 `DISCUSS 3 Decline the finding about the retry budget? → <words>`, or
-`DISCUSS 5 About this session → <words>` for a discussion about the
-session. `discuss` refuses a number together with `--pr`.
+`DISCUSS 5 About this session → <words>` for a message about the session.
+`discuss` refuses a number together with `--pr`.
 
-The agent treats a `DISCUSS` line as a reply to the item. It answers with
-`project inbox reply`, or with the panel's new `reply` tool in Claude Code.
-Then it withdraws the item if the discussion settles it, revises it if the
-discussion changed the choice, or leaves it open. It answers in its chat as
-well, because you may be reading either one. `src/projector/templates/agents-block.md`
-and `skills/work/SKILL.md` say so beside their instructions for `ANSWER`
-lines. In the panel, `7: Discuss` still fills Claude Code's prompt, and
-the drawer shows the item's thread.
+The agent treats a `DISCUSS` line about an item as a reply to it. It
+answers in its conversation, then withdraws the item if the message settles
+it, revises it if the message changed the choice, or leaves it open. A
+`DISCUSS` line about a pull request or the session needs no inbox action.
+`src/projector/templates/agents-block.md` and `skills/work/SKILL.md` say so
+beside their instructions for `ANSWER` lines. In the panel, `7: Discuss`
+still fills Claude Code's prompt.
+
+Building the messages settled these details:
+
+- **The claim names its message.** A `DISCUSS` claim records
+  `line: discuss` and the index of the message it carries in `entry`, so
+  `message` and `settle` act on that message even when another arrives
+  meanwhile. `settle(delivered=True)` sets the message's `deliveredAt`.
+  `settle(delivered=False)` removes the message, as a failed `UNCLEAR` is
+  taken back, and drops `messages` once it is empty, so you say it again.
+  The panel's toast for it reads "your message about … did not reach its
+  agent; send it again".
+- **Your words are owed whatever becomes of the item.** A message stays
+  owed after you answer, dismiss, or withdraw the item, so a message sent
+  just before a dismissal still arrives. Its claim survives an answer, an
+  outcome, a dismissal, and a restore, as a claimed `STARTED` or `UNCLEAR`
+  does, and the answer's line follows once it settles. Pruning keeps a
+  delivered item that still owes a line.
+- **A `message` item resolves itself.** Once it has no message left to
+  send, `settle` resolves it: as `{"delivered": true}` when one of its
+  messages was delivered, or as dismissed when the last was taken back, so
+  no open item is left with nothing to send. Either way it gets
+  `deliveredAt`, so it leaves `list` and, 30 seconds later, the panel, as a
+  delivered answer does. `list` shows it as `delivered <n>`.
+- **A `message` item takes nothing from you.** `answer` refuses it as a
+  kind that takes no answer, `revise` refuses it because its subject names
+  what it is about, `unclear` refuses it because the words are your own,
+  and `done`, `decline`, and `start` refuse it as they refuse any kind but a
+  request. Its dismissal is delivered at once and sends nothing, and a
+  restore sends no `RESTORED`. `restore` refuses one with no message left
+  to send. `snooze` and `withdraw` work on it.
+- **A message is one line.** "One paragraph" means no line break, so a
+  `DISCUSS` line stays one line for `watch`, and the 4 KiB limit counts
+  UTF-8 bytes. `check_message` enforces it, for reuse by other text you
+  send.
+- **What shows it.** `show` prints each message as a `you:` line. The
+  panel draws a `message` item in the notice's `inactive` color, counts it
+  in the header as `message`, and reads `sending` on a line while it owes a
+  message. `discuss` records your words, so it joins `ASK` and `ASKED` and
+  stays out of `CODEX_ALLOW`. The template in `agents-block.md` moves to
+  version 31.
+- **Threads were built and dropped.** A first version gave each item a
+  thread the agent answered into with `project inbox reply` or a `reply`
+  tool, read with `project inbox read`, and marked `replied` until you
+  opened the drawer. You chose the one-way message instead, as § 3
+  explains, so `reply`, `read`, `readAt`, `replied`, and the `discussion`
+  kind were removed before the layer merged.
 
 ### 2.7 Running the console
 
@@ -284,7 +324,7 @@ $ project console
 | Up and down, or `k` and `j` | Move between rows |
 | Enter | On the home list, opens the session's panel. In a panel, opens or closes the drawer of the row under the cursor |
 | Esc or `0` | Closes the drawer, or, with no drawer open, returns to the home list |
-| `7` in a panel with no drawer open | Starts a discussion about the session (§ 2.5) |
+| `7` in a panel with no drawer open | Sends a message about the session (§ 2.5) |
 | Left | Returns to the home list from a session's panel, closing any open drawer. In a text field, it moves the cursor instead |
 | Enter in a text field | Sends the message. Esc cancels it |
 | `q` | Quits |
@@ -306,19 +346,19 @@ Without `curses`, it also exits with code 69 and points you to
 | File | Change |
 | --- | --- |
 | `src/projector/codex_watch.py` | Claims, renews, batches, and settles inbox lines (§ 2.2). Adds the inbox key to `eligible`, sends an oversized event alone, counts owed lines in `has_work`, keeps inbox events out of `drain`, and rewords `message` and the hook context |
-| `src/projector/inbox.py` | Adds `thread`, the `discussion` kind, `discuss`, `reply`, and marking replies read. `owed_line`, `message`, and `settle` handle `DISCUSS` lines |
+| `src/projector/inbox.py` | Adds `messages`, the `message` kind, `discuss`, and `send`. `owed_line`, `message`, and `settle` handle `DISCUSS` lines, and `settle` resolves a `message` item with nothing left to send |
 | `src/projector/rows.py` | New. Turns subscriptions and the cache into rows, and queries and parses threads |
 | `src/projector/console.py` | New. Holds the session set, the model of what is on screen, key handling, and the curses drawing, kept separate so tests drive the model without a terminal |
-| `src/projector/cli.py` | Adds `project console`, `project inbox discuss`, and `project inbox reply`. The inbox recording subcommands run `ensure_daemon` for a Codex session |
-| `src/projector/permissions.py` | Adds `Bash(project console)`, `Bash(project console *)`, and `Bash(project inbox discuss *)` to `ASK` and `ASKED`. Adds `reply` to the inbox subcommands in `CODEX_ALLOW`. Leaves `console` and `discuss` to Codex's approval, and updates the docstring and the `CODEX_RULES` header |
-| `hooks/inbox.ts`, `hooks/register.tsx` | `needsDelivery` counts undelivered `person` entries. The drawer shows the thread and marks replies read. The item list draws `discussion` items and `replied`. Registers the `reply` tool |
-| `src/projector/templates/agents-block.md`, `skills/work/SKILL.md` | Describe `DISCUSS` lines and `reply`. `skills/work/SKILL.md` also tells a session not to run `project inbox watch` when its session-start context says Projector delivers its events |
+| `src/projector/cli.py` | Adds `project console` and `project inbox discuss`. `show` prints your messages. The inbox recording subcommands run `ensure_daemon` for a Codex session |
+| `src/projector/permissions.py` | Adds `Bash(project console)`, `Bash(project console *)`, and `Bash(project inbox discuss *)` to `ASK` and `ASKED`. Leaves `console` and `discuss` to Codex's approval, and updates the docstring and the `CODEX_RULES` header |
+| `hooks/inbox.ts`, `hooks/register.tsx` | `needsDelivery` counts undelivered messages. The drawer shows your messages, and the item list draws `message` items like notices, without `I don't understand` |
+| `src/projector/templates/agents-block.md`, `skills/work/SKILL.md` | Describe `DISCUSS` lines. `skills/work/SKILL.md` also tells a session not to run `project inbox watch` when its session-start context says Projector delivers its events |
 | `tests/fixtures/rows/` | New. Each case is a set of input files plus the rows they must produce |
 | `hooks/rows.test.ts` | New. Runs the panel's row model over `tests/fixtures/rows/` |
 | `tests/test_console.py`, `tests/test_rows.py` | New |
 | `tests/test_codex_watch.py`, `tests/test_inbox.py`, `tests/test_permissions.py`, `hooks/inbox.test.ts`, `hooks/panel.test.tsx` | New cases (§ 4) |
-| `docs/cli.md` | A new "Use the console" section. "Use the inbox" describes threads, `discuss`, `reply`, the Codex adapter's delivery, and the permission rules |
-| `docs/plugins.md` | Describes the thread in the drawer and the `reply` tool, and says that `project console` covers Codex and terminals, where it said Codex has no equivalent |
+| `docs/cli.md` | A new "Use the console" section. "Use the inbox" describes `discuss`, the `message` kind, the Codex adapter's delivery, and the permission rules |
+| `docs/plugins.md` | Describes your messages in the drawer and the `message` kind, and says that `project console` covers Codex and terminals, where it said Codex has no equivalent |
 | `web/components/sections/panel.tsx` | Names `project console` for Codex and terminals |
 
 ## 3. Why this design
@@ -338,16 +378,22 @@ Without `curses`, it also exits with code 69 and points you to
   question, which is right when a person must answer again. A queue
   failure is the adapter's problem, not the person's, so the adapter keeps
   the claim and retries.
-- **The thread lives on the item.** In Claude Code, Discuss works because
-  your words and the agent's reply both happen in the chat. In the console,
-  the agent's reply would land in a chat you are not reading. So the agent
-  answers into the item, where you are looking. Agent messages to the
-  session, through `project agent send`, were rejected: they carry none of
-  the person's authority, and your words must.
-- **`discuss` is a recording command, and `reply` is not.** `discuss`
-  speaks for you, so it gets the permission rules `answer` has, and an
-  agent cannot put words in your mouth. `reply` speaks for the agent, so
-  agents run it freely.
+- **The agent answers in its own chat, and the inbox stays a list of
+  decisions.** In Claude Code, Discuss works because your words and the
+  agent's reply both happen in the chat. From the console, your message
+  reaches that same chat as a `DISCUSS` turn, and the agent answers there.
+  You read the answer in the session's own window, such as the split below
+  the console, or in the console's collapsible view of the session's
+  conversation. A thread on each item, which the agent answered into with
+  `project inbox reply`, was built first and dropped once the console could
+  show each session's conversation: it put a second copy of that
+  conversation in the inbox, which stays a list of what needs you. Agent
+  messages to
+  the session, through `project agent send`, were rejected too: they carry
+  none of the person's authority, and your words must.
+- **`discuss` is a recording command.** It speaks for you, so it gets the
+  permission rules `answer` has, and an agent cannot put words in your
+  mouth.
 - **The home list is per session.** You chose a list of sessions over one
   combined view. Each session's panel then scopes every action to that
   session: Dismiss drops a pull request only from the session you are
@@ -391,13 +437,14 @@ Without `curses`, it also exits with code 69 and points you to
 | Disconnect the session with an inbox event queued | `events` holds no inbox line, and `inbox.undelivered` returns the item after 60 seconds | Inbox lines drained into a file whose reader never settles them |
 | Record an answer whose text is 9 KiB | It goes out alone, and the watch event queued behind it goes out in the next batch | An oversized line that wedges the queue |
 | Record an answer for a Codex session while the daemon is stopped | The daemon is running when the command exits | An answer that waits for the session's next hook |
-| Discuss item 3 twice, then let the Codex adapter and, separately, the panel deliver | Two `DISCUSS 3` lines, in the order you sent them, each delivered once, and item 3 still open | Entries delivered out of order or twice, or a discussion that closes the item |
-| Have the agent run `project inbox reply 3 --text …` | The home list sorts that session first and shows `replied`. Opening the drawer shows the reply and clears `replied` | A reply nobody sees, or one that stays unread after you read it |
-| Open the panel of a session with no item and no pull request, press `7`, and send `hello` | A `discussion` item with no `pr` and the subject `About this session`, and the session's deliverer sends `DISCUSS <n> About this session → hello` | An empty session that you can open but cannot talk to |
-| Run `project inbox discuss --text hello --session <s>`, then the same with `3 --pr acme/app#12` | The first prints the new item's number. The second exits with an error and records nothing | A session discussion missing from the CLI, or an ambiguous call that picks one target |
-| Discuss a pull request that two sessions hold, from the second session's panel | A `discussion` item about it in the second session only, with your words as the first entry | A discussion started in the wrong session |
+| Discuss item 3 twice, then let the Codex adapter and, separately, the panel deliver | Two `DISCUSS 3` lines, in the order you sent them, each delivered once, and item 3 still open | Messages delivered out of order or twice, or a message that closes the item |
+| Open the panel of a session with no item and no pull request, press `7`, and send `hello` | A `message` item with no `pr` and the subject `About this session`, and the session's deliverer sends `DISCUSS <n> About this session → hello` | An empty session that you can open but cannot talk to |
+| Let the deliverer send that `DISCUSS` line | The item is resolved as delivered and leaves `project inbox list` and, 30 seconds later, the panel | A `message` item that stays open after the agent heard it |
+| Run `answer`, `revise`, `done`, `decline`, `start`, and `unclear` on a `message` item | Each exits 65 and records nothing | A message handled as a question, which would take an answer or owe the agent a line |
+| Run `project inbox discuss --text hello --session <s>`, then the same with `3 --pr acme/app#12` | The first prints the new item's number. The second exits with an error and records nothing | A message about the session missing from the CLI, or an ambiguous call that picks one target |
+| Discuss a pull request that two sessions hold, from the second session's panel | A `message` item about it in the second session only, holding your words | A message sent to the wrong session |
 | Start the console with one Claude Code session renewed by `mod`, one Codex session, and one session whose `session.json` is 10 minutes old | Home rows for the first two, each labelled with its host. None for the third | A session set that includes dead sessions, or one that misses a host |
-| On the home list, give one session an unread reply and another two open questions | The session with the reply comes first | A sort that ignores replies |
+| On the home list, give one session one open question and another two | The session with two comes first | A sort that ignores what needs you |
 | Two sessions each own an item 3. In the second session's panel, press option `a` | Only that session's item 3 is answered | A recording call made with the wrong session |
 | Answer from the console for a Claude Code session | The panel delivers it. `hooks/panel.test.tsx` already covers an answer recorded outside the panel | Covered by the existing test |
 | Answer or discuss from the console | The item has no `claim` and no `deliveredAt` | A console that delivers, racing the session's deliverer |
@@ -405,7 +452,7 @@ Without `curses`, it also exits with code 69 and points you to
 | Open a drawer for a pull request with two unresolved threads, and wait 65 seconds | Three thread queries. With no unresolved thread, none | A thread query on every tick, or a drawer that never refreshes |
 | Dismiss a pull request in one session's panel when another session also holds it | `watch drop` runs for the viewed session's roles only, and the other session keeps it | A dismiss that reaches beyond the viewed session |
 | Run `project console </dev/null` | Exit 69 with the terminal message | A console that starts without a terminal |
-| Decide `project console`, `project inbox discuss`, and `project inbox reply` in each host | `console` and `discuss` ask in Claude Code and are left to Codex's approval. `reply` runs freely in both | An agent allowed to drive the console or speak for you, or one blocked from replying |
+| Decide `project console` and `project inbox discuss` in each host | Both ask in Claude Code and are left to Codex's approval | An agent allowed to drive the console or speak for you |
 
 ## 5. Cost
 
@@ -431,9 +478,9 @@ The four pull requests merge in this order. Each one works on its own.
 1. Codex delivery (§ 2.2), with the `ensure_daemon` call, the
    `skills/work` change, and its tests. After it merges,
    `project inbox answer` in a terminal reaches a Codex session.
-2. Threads (§ 2.6): `discuss`, `reply`, the `discussion` kind, the
-   panel's thread and `reply` tool, and the agent instructions. After it
-   merges, `project inbox discuss` in a terminal works with both hosts.
+2. Messages (§ 2.6): `discuss`, the `message` kind, the panel's drawer
+   lines, and the agent instructions. After it merges,
+   `project inbox discuss` in a terminal works with both hosts.
 3. `rows.py`, the shared fixtures, and `hooks/rows.test.ts`.
 4. `project console`, its permission rules, and the documentation.
 

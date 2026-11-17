@@ -2530,13 +2530,13 @@ your prompt. The agent then withdraws the question if the reply settles it,
 revises it if the reply shows it was unclear, or leaves it open while it still
 needs you.
 
-`answer`, `dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear`
-record your choice, so the permission rules `project init` adds ask you
-before an agent runs one, in Claude Code, and leave them to Codex's usual
-approval. Otherwise an agent could answer its own question, mark its own
-request done, press start for you, or say for you that you don't
-understand its item. Projector's
-panel runs them itself, so answering there never asks. `restore` takes no
+`answer`, `dismiss`, `snooze`, `done`, `decline`, `start`, `unclear`, and
+`discuss` record your choice or your words, so the permission rules
+`project init` adds ask you before an agent runs one, in Claude Code, and
+leave them to Codex's usual approval. Otherwise an agent could answer its
+own question, mark its own request done, press start for you, say for you
+that you don't understand its item, or send itself a message as you.
+Projector's panel runs them itself, so answering there never asks. `restore` takes no
 choice from you, so an agent runs it without asking, in either host, when
 you say a dismissal was a mistake.
 
@@ -2561,17 +2561,18 @@ RESTORED 2 Run project init to add the publish rule?
 `watch --once` makes one pass and exits. A Codex session needs no watcher:
 the watch daemon claims each line its inbox owes and sends it with the
 session's pull request events, as [Codex delivery](#deliver-events-to-codex)
-describes. Recording an answer, outcome, dismissal, start, restore, or
-`unclear` for a Codex session starts the daemon when it is not running. A
+describes. Recording an answer, outcome, dismissal, start, restore,
+`unclear`, or `discuss` for a Codex session starts the daemon when it is not
+running. A
 view that delivers answers itself, such as Projector's panel in Claude Code,
 uses the steps `watch` takes:
 
 | Command | What it does |
 | --- | --- |
-| `claim <number>` | Claims an answer, word of a restore, or an `UNCLEAR` line for delivery and prints a token and the text to send; exits 65 when it is already claimed or delivered |
+| `claim <number>` | Claims an answer, word of a restore, or an `UNCLEAR` or `DISCUSS` line for delivery and prints a token and the text to send; exits 65 when it is already claimed or delivered |
 | `claim <number> --renew <token>` | Keeps that claim live while its delivery is pending |
-| `delivered <number> --claim <token>` | Marks the claimed answer or `UNCLEAR` line delivered |
-| `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again, or, for an `UNCLEAR` line, takes back the item's `unclear` mark, so you say it again |
+| `delivered <number> --claim <token>` | Marks the claimed answer, `UNCLEAR` line, or `DISCUSS` line delivered |
+| `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again, or, for an `UNCLEAR` line, takes back the item's `unclear` mark, so you say it again, or, for a `DISCUSS` line, takes back your message, so you send it again |
 
 A claimed `RESTORED` line is done after either `delivered` or `reopen`: no
 deliverer sends it again, and the question stays open. A restore, or an
@@ -2810,6 +2811,61 @@ and an item already answered, dismissed, or withdrawn, and it changes
 nothing when it refuses. A number no session holds exits 66. In Claude
 Code, the agent revises an item with Projector's `revise` tool, and the
 panel redraws it at once.
+
+### Send the agent a message
+
+To talk an item over outside the session's conversation, such as from a
+terminal, send the agent a message about it with `discuss`:
+
+```console
+$ project inbox discuss 3 --text "Which hosts does the reviewer mean?" --session "$SESSION"
+discussed 3
+$ project inbox watch --once --session "$SESSION"
+DISCUSS 3 Decline the finding about the retry budget? → Which hosts does the reviewer mean?
+```
+
+The item's deliverer sends the agent a line that starts `DISCUSS 3` with
+the item's line, an arrow, and your message. The agent answers in its own
+conversation, and nothing comes back to the item, which stays open. Each
+message waits behind any line the item already owes, its answer or outcome,
+`RESTORED`, `STARTED`, or `UNCLEAR`, and an item's messages go out one at a
+time, oldest first. A message reaches the agent even when you dismiss the
+item before it goes out. When the line cannot be delivered, the message is
+taken back, so you send it again. `show` prints each message you sent after
+`you:`.
+
+To write about something that has no item, leave out the number. `discuss`
+then posts an item of kind `message` that holds your message, and prints its
+number. With `--pr`, the message is about that pull request, and its line is
+`About owner/repo#number`. Without `--pr`, it is about the session itself,
+and its line is `About this session`:
+
+```console
+$ project inbox discuss --pr acme/app#337 --text "Why the second retry loop?" --session "$SESSION"
+7
+$ project inbox discuss --text "Pause after this pull request." --session "$SESSION"
+8
+$ project inbox watch --once --session "$SESSION"
+DISCUSS 7 About acme/app#337 → Why the second retry loop?
+DISCUSS 8 About this session → Pause after this pull request.
+$ project inbox list --all --session "$SESSION"
+7	message	delivered 7	About acme/app#337
+8	message	delivered 8	About this session
+```
+
+A `message` item asks nothing of you. It shows `open` until its message is
+delivered, and then it is resolved and leaves `list`, as a delivered answer
+does. `answer`, `done`, `decline`, `start`, `revise`, and `unclear` refuse
+one with exit code 65. Dismissing one sends the agent nothing, as
+dismissing a notice does, and its message still goes out. `restore` refuses
+one that has no message left to send.
+
+Each message is one paragraph of at most 4 KiB in UTF-8, with no line
+breaks. `discuss` refuses, with exit code 65, an empty message, a longer
+one, and one with a line break. It refuses an item already answered,
+dismissed, withdrawn, or delivered too. `discuss` refuses a number together
+with `--pr` and records nothing, and it needs `--session` to write about a
+pull request or the session.
 
 ## Watch pull requests
 

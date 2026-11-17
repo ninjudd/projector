@@ -40,7 +40,7 @@ import {
   wokeBetween,
   type Proposal,
 } from './inbox'
-import type { Item, Notice, Question, Request } from './types'
+import type { Item, MessageItem, Notice, Question, Request } from './types'
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
 
@@ -978,4 +978,27 @@ test('the main loop is told which subagent posted an item it receives UNCLEAR fo
     `UNCLEAR 3 Test the gutters${note('agent-1')}`,
   )
   expect(forMainLoop('UNCLEAR 2 Force-pushed #7', notice(), [])).toBe('UNCLEAR 2 Force-pushed #7')
+  // A message of yours is a message, not the answer the subagent asked for.
+  expect(forMainLoop('DISCUSS 1 Decline the finding? → Why?', question({ agentId: 'gone' }), [])).toBe(
+    `DISCUSS 1 Decline the finding? → Why?${note('gone')}`,
+  )
+})
+
+test('a message you sent waits for a deliverer until DISCUSS is delivered, whatever became of its item', () => {
+  const said = { text: 'Why decline?', at: NOW - 1_000 }
+  const dismissed = { dismissed: true as const, answeredAt: NOW }
+  const about: MessageItem = { ...notice(), kind: 'message', subject: 'About this session', pr: null }
+  for (const item of [
+    question({ messages: [said] }),
+    notice({ messages: [said], answer: dismissed, deliveredAt: NOW }),
+    { ...about, messages: [said] },
+  ]) {
+    expect(needsDelivery(item, NOW)).toBe(true)
+    const claim = { token: 't', renewedAt: NOW - 5_000, line: 'discuss' as const, entry: 0 }
+    expect(needsDelivery({ ...item, claim }, NOW)).toBe(false)
+    expect(needsDelivery({ ...item, messages: [{ ...said, deliveredAt: NOW }] }, NOW)).toBe(false)
+  }
+  // A message item owes nothing but its messages: it has no answer to send.
+  const delivered = { delivered: true as const, answeredAt: NOW }
+  expect(needsDelivery({ ...about, answer: delivered, messages: [{ ...said, deliveredAt: NOW }] }, NOW)).toBe(false)
 })

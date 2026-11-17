@@ -989,7 +989,7 @@ def seconds(text: str) -> float:
 
 def add_inbox_parser(subcommands) -> None:
     parser = subcommands.add_parser("inbox", help="put a question, a notice, or a request in the person's inbox, "
-                                                   "and answer, dismiss, snooze, restore, and deliver it")
+                                                   "and answer, discuss, dismiss, snooze, restore, and deliver it")
     commands = parser.add_subparsers(dest="inbox_command", required=True)
 
     def command(name: str, help_text: str) -> argparse.ArgumentParser:
@@ -1067,6 +1067,13 @@ def add_inbox_parser(subcommands) -> None:
     unclear.add_argument("reference", help="the item's number, such as 3")
     unclear.add_argument("--subject", help="the item's line as you read it, which must match the item's")
     unclear.add_argument("--detail", help="the item's detail as you read it, which must match the item's")
+
+    discuss = command("discuss", "send the agent your message about an open item, or about a pull request or the "
+                                 "session as a message item, whose number it prints")
+    discuss.add_argument("reference", nargs="?",
+                         help="the item's number, such as 3; leave it out to write about a pull request or the session")
+    discuss.add_argument("--text", required=True, help="your message, one paragraph of at most 4 KiB")
+    discuss.add_argument("--pr", help="write about this pull request, as owner/repo#number")
 
     withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
     withdraw.add_argument("reference")
@@ -2346,6 +2353,8 @@ def print_item(item: dict) -> None:
         print(f"start: {item['start']}")
     if (item.get("progress") or {}).get("reason"):
         print(f"blocked: {item['progress']['reason']}")
+    for said in item.get("messages") or []:
+        print(f"you: {said['text']}")
     print(item_state(item))
 
 
@@ -2428,6 +2437,15 @@ def run_inbox(arguments: argparse.Namespace) -> int:
             item = inbox.block(session, ref, arguments.reason)
         wake_codex_delivery(session, item)
         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
+    elif command == "discuss":
+        if ref is not None and arguments.pr is not None:
+            raise inbox.InboxError("`discuss` takes an item's number, to write about that item, or --pr, to write "
+                                   "about a pull request, not both")
+        session = inbox_session(arguments, ref is None)
+        item = (inbox.discuss(session, ref, arguments.text) if ref is not None
+                else inbox.send(session, arguments.text, pr=arguments.pr))
+        wake_codex_delivery(session, item)
+        print(json_text({"item": item}) if json_output else f"discussed {ref}" if ref is not None else item["ref"])
     elif command == "revise":
         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
         options = [] if arguments.no_options else arguments.option
