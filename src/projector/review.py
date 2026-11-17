@@ -927,8 +927,13 @@ def draft_lines(result: dict) -> list[str]:
 # docs/projects/review-on-ready/readme.md § 2.3 describes them.
 CLEAN_LABEL = "clean"
 REVIEWING_LABEL = "reviewing"
-LABELS = {CLEAN_LABEL: ("0e8a16", "Projector's newest review of the current head is clean"),
-          REVIEWING_LABEL: ("fbca04", "A Projector review of this pull request is in progress")}
+# Each label takes the color the panel draws its state in on Claude Code's dark themes: `success`'s green for
+# `clean`, and Claude's orange for `reviewing`, which the light themes share.
+LABELS = {CLEAN_LABEL: ("4eba65", "Projector's newest review of the current head is clean"),
+          REVIEWING_LABEL: ("d77757", "A Projector review of this pull request is in progress")}
+# The colors an earlier release created each label with. `sync_labels` moves a label that still has one, and
+# Projector's description, to the current color, since nobody chose it; any other label is the repository's own.
+FORMER_LABEL_COLORS = {CLEAN_LABEL: ("0e8a16",), REVIEWING_LABEL: ("fbca04",)}
 REVIEW_CONTEXT = "projector/review"
 
 
@@ -945,6 +950,30 @@ def sign_off(head: str, reviews: list[dict], open_threads: int) -> dict:
 def label_names(pr: dict) -> set[str]:
     """The labels on `pr`, a pull request as GitHub's REST API gives it, lowercased, as GitHub matches them."""
     return {(label.get("name") or "").lower() for label in pr.get("labels") or []}
+
+
+def sync_labels(repo: str) -> list[str]:
+    """Create each of Projector's labels that `repo` lacks, and give each that still has a color an earlier
+    release created it with, and Projector's description, the current color. A label with any other color or
+    description is the repository's own and stays as it is. Gives a line for each change."""
+    found = {}
+    for line in run_gh(["api", "--paginate", f"repos/{repo}/labels?per_page=100", "--jq",
+                        ".[] | {name, color, description}"]).splitlines():
+        if line.strip():
+            label = json.loads(line)
+            found[(label.get("name") or "").lower()] = label
+    changes = []
+    for name, (color, description) in LABELS.items():
+        label = found.get(name)
+        if label is None:
+            run_gh(["api", "-X", "POST", f"repos/{repo}/labels", "-f", f"name={name}", "-f", f"color={color}",
+                    "-f", f"description={description}"])
+            changes.append(f"created the {name} label")
+        elif (label.get("color") or "").lower() in FORMER_LABEL_COLORS.get(name, ()) \
+                and label.get("description") == description:
+            run_gh(["api", "-X", "PATCH", f"repos/{repo}/labels/{quote(label['name'])}", "-f", f"color={color}"])
+            changes.append(f"recolored the {name} label from {label['color'].lower()} to {color}")
+    return changes
 
 
 def change_labels(repo: str, number: int, present: set[str], add: set[str], remove: set[str],

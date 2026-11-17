@@ -2891,6 +2891,25 @@ def init_required_check(arguments: argparse.Namespace, root: Path, files: list[F
         record_required_check(root, True)
 
 
+def init_labels(root: Path) -> None:
+    """`init`'s update of the review labels on a repository whose origin is on GitHub, as `review.sync_labels`
+    makes it, so a repository gets a label color a later release chose. Unless `review.labels` is `false`. The
+    labels only show a review, so GitHub refusing them is a warning."""
+    if load_config(root).get("review.labels") is False:
+        return
+    try:
+        repo = review.origin_repo(root)
+    except review.ReviewError:
+        return
+    try:
+        changes = review.sync_labels(repo)
+    except review.ReviewError as error:
+        print(f"project: left {repo}'s review labels as they were: {error}", file=sys.stderr)
+        return
+    for change in changes:
+        print(f"project: {change} on {repo}", file=sys.stderr)
+
+
 def record_required_check(root: Path, value: bool) -> None:
     change = write_value(root / CONFIG_NAME, "review.require_check", value)
     print(f"project: {change.action} review.require_check = {format_value(value)} in {change.path}", file=sys.stderr)
@@ -3063,6 +3082,7 @@ def run(arguments: argparse.Namespace) -> int:
                     if needs_admin:
                         print(f"project: to finish setting it up, {error.steps()}", file=sys.stderr)
             init_required_check(arguments, root, files)
+            init_labels(root)
         except InitError as error:
             # Say what was written before saying what could not be.
             if not arguments.json_output:

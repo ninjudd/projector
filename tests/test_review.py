@@ -376,7 +376,7 @@ class SetupTests(ReviewCase):
             self.assertEqual("token-operator" if writes else None, token,
                              f"only a write carries the reviewer's token: {args}")
         self.assertEqual(["reviewing"], self.github.labels())
-        self.assertEqual([{"name": "reviewing", "color": "fbca04",
+        self.assertEqual([{"name": "reviewing", "color": "d77757",
                            "description": "A Projector review of this pull request is in progress"}],
                          self.github.created_labels, "the first review in a repository creates the label")
 

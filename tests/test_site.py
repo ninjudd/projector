@@ -19,7 +19,7 @@ from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from projector import cli, summary
+from projector import cli, review, summary
 from projector import site as site_build
 from projector.site import serve
 
@@ -52,6 +52,15 @@ class SiteRepoCase(unittest.TestCase):
             offline = mock.patch.object(summary, name, side_effect=summary.SummaryError("gh api failed: offline"))
             offline.start()
             self.addCleanup(offline.stop)
+        # Any other gh call fails the test, rather than reaching GitHub with the signed-in account's token.
+        for module, name in ((summary, "gh"), (summary, "gh_lookup"), (review, "run_gh")):
+            guard = mock.patch.object(module, name, side_effect=unexpected_gh)
+            guard.start()
+            self.addCleanup(guard.stop)
+
+
+def unexpected_gh(*args: object, **_: object) -> str:
+    raise AssertionError(f"a site test ran gh without a fake for it: {args}")
 
 
 class SiteBuildTests(SiteRepoCase):
@@ -2939,7 +2948,9 @@ class FileHeaderTests(SiteRepoCase):
         status = mock.patch.object(summary, "pr_status", return_value=reported) \
             if state is not None else nullcontext()
         out = Path(tempfile.mkdtemp()) / "site"
+        # No open pull request has the summary's base branch as its head, so the summary is stacked on none.
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), status, \
+             mock.patch.object(summary, "base_pr", return_value=None), \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             code = cli.main(["site", "build", "--out", str(out), "--repo-root", str(self.repo),
                              "--summaries", str(summaries)])
@@ -3900,6 +3911,7 @@ class FakeGitHub:
         self.private, self.pages, self.private_pages = private, pages, private_pages
         self.admin, self.homepage = admin, homepage
         self.calls: list[tuple[str, ...]] = []
+        self.label_calls: list[tuple[str, ...]] = []
 
     def lookup(self, *args: str) -> str | None:
         self.calls.append(args)
@@ -3909,6 +3921,15 @@ class FakeGitHub:
         if endpoint == "repos/owner/example":
             return "true\n" if self.private else "false\n"
         raise summary.SummaryError(f"unexpected lookup {args}")
+
+    def run_gh(self, args: list[str], token: str | None = None) -> str:
+        """`review.run_gh` for `init`'s label update, on a repository that already has Projector's labels. It
+        records its calls apart from the site's, in `label_calls`."""
+        self.label_calls.append(tuple(args))
+        if args[:3] == ["api", "--paginate", "repos/owner/example/labels?per_page=100"]:
+            return "".join(json.dumps({"name": name, "color": color, "description": description}) + "\n"
+                           for name, (color, description) in review.LABELS.items())
+        raise AssertionError(f"unexpected gh call {args}")
 
     def gh(self, *args: str) -> str:
         self.calls.append(args)
@@ -3966,6 +3987,7 @@ class InitSiteTests(SiteRepoCase):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(summary, "gh_lookup", side_effect=github.lookup), \
              mock.patch.object(summary, "gh", side_effect=github.gh), \
+             mock.patch.object(review, "run_gh", side_effect=github.run_gh), \
              mock.patch.object(cli.shutil, "which", return_value="/usr/bin/gh"), \
              mock.patch("sys.stdin.isatty", return_value=False), \
              redirect_stdout(out), redirect_stderr(err):

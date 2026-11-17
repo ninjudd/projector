@@ -497,7 +497,9 @@ Does this repository rely on Projector alone to sign off pull requests before me
 
 `--require-review` answers yes and `--no-require-review` answers no, without
 a prompt, and both are refused outside a Git repository. Without a terminal
-or a flag, `init` asks nothing and changes nothing. When `gh` cannot read the
+or a flag, `init` asks nothing and changes nothing but the review labels, as
+[Keep the review labels current](#keep-the-review-labels-current) describes.
+When `gh` cannot read the
 default branch's rules, because it is missing, signed out, or offline,
 `init` skips the question with a note and changes nothing, unless a flag or a
 recorded `true` asked for the check, which then fails `init`. A yes does four
@@ -548,6 +550,27 @@ the workflow, and run:
 ```sh
 project config set review.require_check false
 ```
+
+### Keep the review labels current
+
+In a GitHub repository, `init` also brings the `reviewing` and `clean`
+labels up to date, whatever you answer about the check:
+
+- It creates each label the repository lacks, with the color and
+  description that
+  [Review a pull request](#review-a-pull-request) lists.
+- It gives a label the current color when the label still has a color an
+  earlier release created it with and Projector's description, such as the
+  yellow `fbca04` and the green `0e8a16` that `reviewing` and `clean` had
+  before they took the panel's colors. Nobody chose those colors, so `init`
+  moves them. A label with any other color or description is the
+  repository's own, and `init` leaves it as it is.
+
+`init` prints a line for each change, such as
+`project: recolored the reviewing label from fbca04 to d77757 on acme/app`.
+When GitHub refuses, `init` says so and goes on, because the labels only show
+a review. With `review.labels` set to `false`, `init` leaves the labels
+alone.
 
 ## Browse projects
 
@@ -1982,13 +2005,20 @@ they add it:
 
 | Label | Color | Description |
 | --- | --- | --- |
-| `clean` | `0e8a16` | Projector's newest review of the current head is clean |
-| `reviewing` | `fbca04` | A Projector review of this pull request is in progress |
+| `clean` | `4eba65` | Projector's newest review of the current head is clean |
+| `reviewing` | `d77757` | A Projector review of this pull request is in progress |
 
-A label that already exists is used as it is, and Projector never changes
-its color or description. `clean` says that Projector's newest review of the
-current head is clean, not that the pull request may merge, because a
-repository can still require people's approval. A label stays on the pull
+The colors are the ones the panel draws the two states in on Claude Code's
+dark themes: `reviewing` in Claude's orange, which the light themes share,
+since yellow marks a review's findings, and `clean` in the `success` green.
+A light theme draws `clean` in a darker green. The review commands use a
+label that already exists as it is, and never change its color or
+description. `project init` gives a label the current color only while it
+still has an earlier release's color and Projector's description, as
+[Keep the review labels current](#keep-the-review-labels-current) describes.
+`clean` says that Projector's newest review of the current head is clean,
+not that the pull request may merge, because a repository can still require
+people's approval. A label stays on the pull
 request through a push, so `setup` removes a stale `clean` when the next
 review starts. `publish` reads the head again after it adds `clean`, and
 takes the label back off when a push moved the head during the edit. Set

@@ -15,6 +15,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from urllib.parse import unquote
 from unittest import mock
 
 import importlib.metadata as metadata
@@ -1615,6 +1616,8 @@ class RulesetGitHub:
         self.pulls: dict[int, tuple[str, list[str]]] = {}
         self.open_findings: set[int] = set()
         self.statuses: list[dict] = []
+        # The repository's labels, as GitHub lists them.
+        self.labels: list[dict] = []
         self.calls: list[list[str]] = []
         # A part of a call's arguments that makes it fail, as gh does offline or signed out.
         self.fail: str | None = None
@@ -1658,6 +1661,17 @@ class RulesetGitHub:
             return "{}"
         if args == ["api", "user", "--jq", ".login"]:
             return "operator\n"
+        if args == ["api", "--paginate", "repos/acme/app/labels?per_page=100", "--jq",
+                    ".[] | {name, color, description}"]:
+            return "".join(json.dumps(label) + "\n" for label in self.labels)
+        if args[:4] == ["api", "-X", "POST", "repos/acme/app/labels"]:
+            self.labels.append(dict(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "-f"))
+            return "{}"
+        if args[:3] == ["api", "-X", "PATCH"] and args[3].startswith("repos/acme/app/labels/"):
+            name = unquote(args[3].rsplit("/", 1)[1])
+            label = next(label for label in self.labels if label["name"] == name)
+            label.update(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "-f")
+            return "{}"
         raise AssertionError(f"unexpected gh call: {args}")
 
 
@@ -1687,6 +1701,10 @@ class RequiredCheckTests(RepositoryTestCase):
 
     def workflow(self) -> Path:
         return self.root / review.CLEAN_WORKFLOW_PATH
+
+    def ruleset_calls(self) -> list[list[str]]:
+        """The calls GitHub saw for the required check, leaving out the update of the labels that follows it."""
+        return [call for call in self.github.calls if not any("/labels" in arg for arg in call)]
 
     def recorded(self) -> object:
         path = self.root / ".projector.toml"
@@ -1761,14 +1779,14 @@ class RequiredCheckTests(RepositoryTestCase):
 
         self.assertEqual(0, code, err)
         self.assertNotIn(cli.REQUIRE_QUESTION, err)
-        self.assertEqual([], self.github.calls, "a recorded no asks GitHub nothing")
+        self.assertEqual([], self.ruleset_calls(), "a recorded no asks GitHub nothing about the ruleset")
 
     def test_without_a_terminal_or_a_flag_it_asks_and_changes_nothing(self) -> None:
         code, _, err = self.init()
 
         self.assertEqual(0, code, err)
         self.assertNotIn(cli.REQUIRE_QUESTION, err)
-        self.assertEqual([], self.github.calls)
+        self.assertEqual([], self.ruleset_calls())
         self.assertIsNone(self.recorded())
         self.assertFalse(self.workflow().exists())
 
@@ -1852,6 +1870,71 @@ class RequiredCheckTests(RepositoryTestCase):
 
                 self.assertNotEqual(0, code)
                 self.assertIn(f"{flag} answers for a repository", err)
+
+
+class LabelSyncTests(RepositoryTestCase):
+    """`project init`'s update of Projector's review labels in a repository whose origin is acme/app on GitHub."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        subprocess.run(["git", "-C", str(self.root), "remote", "add", "origin", "https://github.com/acme/app.git"],
+                       check=True)
+        self.github = RulesetGitHub()
+        self.enterContext(mock.patch.object(review, "run_gh", self.github))
+
+    def init(self) -> tuple[int, str, str]:
+        return self.invoke("init", "--no-site", "--no-publish-rule", "--no-require-review")
+
+    def colors(self) -> dict[str, str]:
+        return {label["name"]: label["color"] for label in self.github.labels}
+
+    def test_init_recolors_a_label_an_earlier_release_made_and_leaves_one_the_repository_chose(self) -> None:
+        reviewing = review.LABELS[review.REVIEWING_LABEL][1]
+        cases = {
+            "untouched": ({"name": "reviewing", "color": "FBCA04", "description": reviewing}, "d77757"),
+            "recolored by hand": ({"name": "reviewing", "color": "5319e7", "description": reviewing}, "5319e7"),
+            "described by hand": ({"name": "Reviewing", "color": "fbca04", "description": "Under review"}, "fbca04"),
+        }
+        for case, (label, color) in cases.items():
+            with self.subTest(case=case):
+                # The clean label an earlier release made, in its green. No case edits it by hand, so `init`
+                # recolors it in every case.
+                self.github.labels = [dict(label), {"name": "clean", "color": "0e8a16",
+                                                    "description": review.LABELS[review.CLEAN_LABEL][1]}]
+
+                code, _, err = self.init()
+
+                self.assertEqual(0, code, err)
+                self.assertEqual({label["name"]: color, "clean": "4eba65"}, self.colors())
+                self.assertIn("project: recolored the clean label from 0e8a16 to 4eba65 on acme/app", err)
+                said = "project: recolored the reviewing label from fbca04 to d77757 on acme/app"
+                self.assertEqual(case == "untouched", said in err, err)
+
+    def test_init_creates_the_labels_the_repository_lacks_once(self) -> None:
+        code, _, err = self.init()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({"clean": "4eba65", "reviewing": "d77757"}, self.colors())
+        self.assertIn("project: created the reviewing label on acme/app", err)
+
+        code, _, err = self.init()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(2, len(self.github.labels), "a rerun finds both labels and changes nothing")
+        self.assertNotIn("label on acme/app", err)
+
+    def test_init_leaves_the_labels_alone_when_review_labels_is_off_and_warns_when_github_refuses(self) -> None:
+        (self.root / ".projector.toml").write_text("[review]\nlabels = false\n", encoding="utf-8")
+        self.assertEqual(0, self.init()[0])
+        self.assertEqual([], [call for call in self.github.calls if any("labels" in arg for arg in call)])
+
+        (self.root / ".projector.toml").unlink()
+        self.github.fail = "repos/acme/app/labels"
+        code, _, err = self.init()
+
+        self.assertEqual(0, code, err)
+        self.assertIn("project: left acme/app's review labels as they were:", err)
+        self.assertEqual([], self.github.labels)
 
 
 # The clean workflow 0.8.14 wrote, which removed the label without reading the pull request.
