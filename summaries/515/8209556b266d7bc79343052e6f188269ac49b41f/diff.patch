@@ -1,0 +1,23 @@
+diff --git a/docs/projects/agent-messages/pairing/readme.md b/docs/projects/agent-messages/pairing/readme.md
+index 378bb308..ea1844ca 100644
+--- a/docs/projects/agent-messages/pairing/readme.md
++++ b/docs/projects/agent-messages/pairing/readme.md
+@@ -277,3 +277,18 @@ and each was seen to fail with the fault it names introduced:
+ Pairing a second machine by hand and confirming that messages flow is a
+ check only the user can run after the merge, on two of their own machines.
+ Record its result here once it runs.
++
++The check by hand ran on 2026-11-17, on two machines running release 0.9.7,
++and passed:
++
++- **`key init`.** On the first machine, `key init` stored a new key in the
++  keychain and printed no key.
++- **`key join`.** On the second machine, `key join` printed the full
++  `key grant pj1-…` command and a fingerprint, then waited.
++- **`key grant`.** Pasted into the first machine, `key grant` showed the
++  same fingerprint, asked for confirmation, and printed one `pk1-…` line and
++  the key ID.
++- **The line.** Pasted into the waiting `join`, the line brought a question
++  to confirm the key ID, and `join` then stored the key in the keychain.
++- **Both machines.** `key show` reported the same key ID on both machines,
++  and the relay came back on with nothing queued or rejected.

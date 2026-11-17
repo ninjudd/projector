@@ -1,0 +1,56 @@
+{
+ "version": 1,
+ "name": "Pairing check result",
+ "project": "agent-messages/pairing",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 515,
+  "title": "Record the pairing check run after merge",
+  "head": "8209556b266d7bc79343052e6f188269ac49b41f",
+  "headRef": "pairing-check-result",
+  "base": "74e8e5ea011e6ef4dda9a5d597c2534c1fe33672",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Agent pairing copies the relay key between machines through encrypted text and terminal confirmation. The completed project deferred a real two-machine check until after merge; this change records that check as passed on release 0.9.7.",
+   "The added outcome reports matching request fingerprints and key IDs, keychain storage, and the relay returning with no queued or rejected work. It changes no commands, code, or project status."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "result",
+   "title": "Record the two-machine pairing result",
+   "kicker": "Close the deferred check in the completed plan",
+   "intro": [
+    "The pairing project leaves its manual validation result in its outcome so a reader can see what was exercised after shipping. Section 8 now records the dated terminal sequence for creating, granting, and accepting the key on two machines."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/pairing/readme.md",
+     "collapsed": false,
+     "note": "Append the successful manual pairing result to section 8 without changing the completed project’s metadata or numbered sections.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 281,
+       "text": "Project checks pass, and project show reports agent-messages/pairing as completed."
+      },
+      {
+       "kind": "context",
+       "line": 281,
+       "text": "The two-machine run is reported evidence from the outcome; this review did not repeat it or read a real relay key."
+      },
+      {
+       "kind": "verify",
+       "line": 287,
+       "text": "The recorded fingerprints, confirmation prompts, encrypted response prefix, and key ID outputs match the current join/grant/show implementations and CLI reference."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
