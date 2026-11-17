@@ -718,6 +718,22 @@ class UnregisterTests(AgentCase):
         self.assertEqual(65, replied)
         self.assertIn("this session is not registered", refused)
 
+    def test_a_send_whose_recipient_unregisters_after_it_is_chosen_stores_and_counts_nothing(self) -> None:
+        recent = agents.recent
+
+        def unregistering(folder: Path, now: float) -> list[dict]:
+            """The sender's recent sends, read once the recipient is chosen, as the recipient unregisters."""
+            agents.unregister(self.root, B, self.now)
+            return recent(folder, now)
+
+        with mock.patch.object(agents, "recent", side_effect=unregistering):
+            code, _, err = self.send(A, "test-writer", "Which error type should the parser raise?")
+
+        self.assertEqual(65, code)
+        self.assertIn("no registered session is named test-writer", err)
+        self.assertEqual(([], []), (self.message_ids(B), self.events(B)))
+        self.assertFalse((self.folder(A) / "sent.json").exists())
+
 
 class DaemonTests(AgentCase):
     def test_an_idle_registered_codex_session_keeps_the_daemon_running_past_its_idle_stop(self) -> None:
