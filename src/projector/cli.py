@@ -870,6 +870,8 @@ def parser() -> argparse.ArgumentParser:
                                      "full review, when `project review interdiff` allows one")
 
     add_inbox_parser(subcommands)
+    subcommands.add_parser("console", help="list every live session in a terminal, and answer or discuss each one's "
+                                           "inbox items and pull requests")
     add_ios_parser(subcommands)
     add_loop_parser(subcommands)
     add_watch_parser(subcommands)
@@ -2376,6 +2378,18 @@ def wake_codex_delivery(session: Optional[str], item: dict) -> None:
         watch.ensure_daemon(root, distribution_version(), newer_release)
 
 
+def run_console() -> int:
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise EnvironmentError("project console needs a terminal; run it in its own window or split")
+    try:
+        import curses  # noqa: F401
+    except ImportError as error:
+        raise EnvironmentError("project console needs Python's curses module, which this Python lacks; run "
+                               "`project inbox list` and `project watch list` instead") from error
+    from . import console
+    return console.main(wake=wake_codex_delivery)
+
+
 def run_inbox(arguments: argparse.Namespace) -> int:
     command = arguments.inbox_command
     json_output = arguments.json_output
@@ -3166,6 +3180,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_review(arguments)
     if arguments.command == "inbox":
         return run_inbox(arguments)
+    if arguments.command == "console":
+        return run_console()
     if arguments.command == "loop":
         return run_loop(arguments)
     if arguments.command == "ios":

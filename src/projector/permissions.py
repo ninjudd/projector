@@ -34,7 +34,9 @@ answer its own question, mark its own request done, consent to its own start
 action, or mark its own item unclear. `project inbox discuss` records the
 person's message to the agent, which reaches it with the person's authority,
 so it asks too: an agent running it could put words in the person's mouth.
-Projector's panel runs those commands
+`project console` records all of these from a terminal, so it asks too: it
+refuses to start without a terminal, which Claude Code gives no command today,
+and the rule covers a mode that gives one. Projector's panel runs those commands
 itself, not through an agent's shell, so the person answering from the panel is
 never asked. `project inbox restore` needs no ask rule: it reopens an item the
 person dismissed or snoozed, which takes no choice from them, and an agent
@@ -85,7 +87,7 @@ program: `create` and `edit`, whose editor an agent could drive,
 `review gate`, `site build` and `serve`, and `ios build` and `logs`, which run
 the repository's build scripts or `sudo`. They leave out `inbox answer`,
 `dismiss`, `snooze`, `done`, `decline`, `start`, `unclear`, and `discuss`
-too. A new
+too, and `console`, whose terminal an agent could type answers into. A new
 command reaches Codex once it is added here and `init` rewrites the file.
 
 Both hosts check each command of a chain such as `a && b` on its own and
@@ -117,7 +119,8 @@ ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config s
        "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
        "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
        "Bash(project inbox decline *)", "Bash(project inbox start *)",
-       "Bash(project inbox unclear *)", "Bash(project inbox discuss *)", "Bash(project ios *allow-untrusted*)")
+       "Bash(project inbox unclear *)", "Bash(project inbox discuss *)", "Bash(project console)",
+       "Bash(project console *)", "Bash(project ios *allow-untrusted*)")
 # The narrower rules Projector wrote before `Bash(project *)` covered them,
 # which `init` removes from `permissions.allow`.
 SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
@@ -128,7 +131,7 @@ RETIRED_ASK = ("Bash(project -*)",)
 
 ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
          "`--prepare` or `--allow-prepare`, `project ios build --allow-untrusted`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
-         "`decline`, `start`, `unclear`, and `discuss`")
+         "`decline`, `start`, `unclear`, and `discuss`, and `project console`")
 COMMANDS = "every `project` command but the few that reach outside Projector's own state"
 
 # Each pattern Codex may run without asking, and outside its sandbox, with the
@@ -185,8 +188,8 @@ CODEX_RULES = (
     "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
     "# the command line names, `project ios build` and `logs`, which run the repository's build scripts or\n"
     "# `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
-    "# `unclear`, and `discuss`, which record the person's choice or words, and a command line that\n"
-    "# starts with an option.\n"
+    "# `unclear`, and `discuss`, which record the person's choice or words, `project console`, which\n"
+    "# records them from a terminal, and a command line that starts with an option.\n"
     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
               f'    justification = "{justification}",\n)\n'
               for pattern, justification in CODEX_ALLOW)
