@@ -1,0 +1,111 @@
+{
+ "version": 1,
+ "name": "Console inbox delivery",
+ "project": "console",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 524,
+  "title": "Deliver inbox answers to Codex sessions through the watch daemon",
+  "head": "24312f718cbd4ffc283aebc9e949c3829c5e7c9e",
+  "headRef": "console/codex-delivery",
+  "base": "926af14923a672f25781d88171b8a2fd35951f47",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector keeps questions and requests in a per-session inbox. This layer lets an idle Codex session receive answers through the existing watch daemon, rather than requiring the agent to poll or run a separate inbox watcher.",
+   "The adapter claims an owed line, queues it alongside pull request events, renews its claim while it waits, and settles it after Codex acknowledges the batch. Recording a response starts the daemon when necessary. The terminal console and discussion threads remain later layers."
+  ],
+  "cards": [
+   {
+    "id": "delivery",
+    "title": "Delivery terms",
+    "html": "<ul class=\"tight\"><li><b>Claim:</b> a token that reserves one inbox line for a deliverer.</li><li><b>Batch:</b> one prompt submitted to Codex, which can contain inbox and pull request events.</li><li><b>Receipt:</b> the persistent record that a batch was consumed.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Review result",
+    "html": "<p>Gate and exact-head CI passed, as did 322 focused tests. The earlier settlement-recovery finding is fixed: restart settles the persisted inbox keys without submitting the received answer again.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "delivery",
+   "title": "Claim and deliver inbox lines",
+   "kicker": "The Codex adapter becomes the inbox deliverer",
+   "intro": [
+    "The adapter reserves each line with the inbox claim API and places its token in the queued event key. Renewal protects waiting lines from another deliverer; current-token checks discard lines replaced by a restore or revision.",
+    "When Codex acknowledges a batch, the adapter persists its inbox keys in the durable settlement file before writing the receipt or removing the batch. Busy inbox locks or an interrupted process leave those keys for the next tick to renew and settle."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/codex_watch.py",
+     "note": "Adds claim discovery, renewal, eligibility, acknowledgment settlement, and disconnect behavior.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 326,
+       "text": "The original transcript-backed interruption reproduction now leaves one submission, marks the answer delivered after restart, and empties the durable settlement list. The regression also fails against the previous consume implementation."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_codex_watch.py",
+     "note": "Exercises delivery, waiting claims, replacement, retry, disconnect, oversized lines, daemon startup, and restart after interrupted settlement.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All 322 focused Codex delivery, inbox, watch, instruction, and packaging tests passed. The new interruption regression fails against the previous implementation with a duplicate submission."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "wake",
+   "title": "Wake delivery when a response is recorded",
+   "kicker": "The CLI starts the daemon for Codex-owned inbox lines",
+   "intro": [
+    "A response recorded in another terminal must wake an idle session even when the daemon has stopped. The CLI checks whether the changed item owes a line and whether its destination uses Codex delivery before ensuring the daemon is running."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Starts Codex delivery after answers, outcomes, dismissals, starts, unclear reports, and restores.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused daemon-start regression passed; the response remains recorded before the wake call."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "workflow",
+   "title": "Describe automatic inbox delivery",
+   "kicker": "Session instructions and documentation use the daemon path",
+   "intro": [
+    "The CLI guide explains automatic delivery and claim lifetime, while the work skill tells Codex agents not to start a second inbox watcher. The console plan moves to in-progress and records renewal and deferred-settlement details for this first layer."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents inbox delivery alongside the existing Codex watch batches."
+    },
+    {
+     "path": "skills/work/SKILL.md",
+     "note": "Uses the trusted session context to select automatic Codex delivery."
+    },
+    {
+     "path": "docs/projects/console/readme.md",
+     "note": "Records this layer’s claim renewal and busy-settlement behavior."
+    }
+   ]
+  }
+ ]
+}

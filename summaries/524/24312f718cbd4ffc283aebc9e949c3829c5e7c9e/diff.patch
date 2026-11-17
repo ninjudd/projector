@@ -1,0 +1,567 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 17e65ab6..dea3023b 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2558,8 +2558,13 @@ RESTORED 2 Run project init to add the publish rule?
+ 
+ `RESTORED` tells the agent that you brought back a question it already heard
+ `DISMISSED` for, so the question is open again, as `restore` below describes.
+-`watch --once` makes one pass and exits. A view that delivers answers itself,
+-such as Projector's panel in Claude Code, uses the steps `watch` takes:
++`watch --once` makes one pass and exits. A Codex session needs no watcher:
++the watch daemon claims each line its inbox owes and sends it with the
++session's pull request events, as [Codex delivery](#deliver-events-to-codex)
++describes. Recording an answer, outcome, dismissal, start, restore, or
++`unclear` for a Codex session starts the daemon when it is not running. A
++view that delivers answers itself, such as Projector's panel in Claude Code,
++uses the steps `watch` takes:
+ 
+ | Command | What it does |
+ | --- | --- |
+@@ -2904,6 +2909,17 @@ reminders even when their text differs. An acknowledgment marks a batch
+ consumed. An idle session starts no model turn until an event arrives.
+ The registration expires after 24 hours without host activity.
+ 
++The same batches carry the session's inbox lines, such as `ANSWER 3.a …`.
++The daemon claims each line before it queues it and renews the claim until
++Codex takes the batch, so no other deliverer sends the line too, and it
++marks the line delivered when the batch is consumed. A line whose item
++changed first, through a restore, another answer, or a revision, leaves
++the queue, and the line the item owes now goes out instead. A failed send
++keeps the claim and retries, so your answer stays recorded. A typed answer
++longer than a batch goes out in a batch of its own. When delivery
++disconnects, the daemon stops renewing those claims, and the session's
++next deliverer sends the lines once the claims lapse a minute later.
++
+ Codex unloads a conversation that sits idle and unopened for 30 minutes,
+ and sends `SessionEnd` when it does. Projector keeps delivery enabled
+ through that unload: the daemon goes on watching the session's pull
+diff --git a/docs/projects/console/readme.md b/docs/projects/console/readme.md
+index 48cb5bd0..e25e2f07 100644
+--- a/docs/projects/console/readme.md
++++ b/docs/projects/console/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: in-progress
+ priority: now
+ ---
+ 
+@@ -112,7 +112,9 @@ following for each active Codex session before it calls `prepare`:
+    deliverer from sending the same line.
+ 2. It renews the claim of every inbox event that is still queued or in a
+    pending batch, so a batch can wait in Codex's queue longer than the
+-   claim's one-minute lapse.
++   claim's one-minute lapse. A claim is renewed once it is 20 seconds old,
++   in every active session, including one whose batch is being sent, so a
++   send that runs to its 60-second timeout cannot outlast the claim.
+ 3. `prepare` builds the batch as it does today. Inbox events and watch
+    events share the one outstanding batch per session, the 8 KiB limit, and
+    the `PROJECTOR WATCH <uuid>` marker. An inbox event larger than the limit
+@@ -123,7 +125,10 @@ following for each active Codex session before it calls `prepare`:
+    the next tick claims the line the item now owes.
+ 5. When Codex acknowledges the batch, through the `UserPromptSubmit` hook
+    or the transcript scan in `confirm`, `consume` settles each inbox event
+-   with `inbox.settle(session, ref, token, delivered=True)`.
++   with `inbox.settle(session, ref, token, delivered=True)`. When the inbox
++   stays locked through the settle's 5-second wait, the event waits in
++   `codex-unsettled.json`, keeps its claim renewed, and settles on a later
++   tick.
+ 6. A failed `codex queue` call keeps the claims and retries with the
+    adapter's existing backoff. It never settles with `delivered=False`,
+    because that deletes the person's answer.
+diff --git a/skills/work/SKILL.md b/skills/work/SKILL.md
+index fbe6dd28..3db6a32f 100644
+--- a/skills/work/SKILL.md
++++ b/skills/work/SKILL.md
+@@ -59,8 +59,11 @@ with `--session`, as `../cleanup/SKILL.md` describes under "Find the
+ session's id".
+ 
+ Where the host has the tools, Projector's panel delivers the user's answers
+-to the session. Where it has none, nothing does until you start their
+-deliverer, because `project watch stream` prints only pull request events.
++to the session. In Codex, when the session-start context says that Codex
++watch delivery handles the session, the watch daemon delivers them as new
++turns, so start no deliverer. Otherwise nothing delivers them until you
++start their deliverer, because `project watch stream` prints only pull
++request events.
+ Start `project inbox watch --session <id>` once, under the host's
+ persistent process or monitor facility, where it runs until stopped and
+ prints each answer as one of the lines below. Where the host has no such
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 75b5ad09..bf98f0f1 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -2355,6 +2355,18 @@ def print_choices(question: dict) -> None:
+     print(f"{inbox.typed_letter(question)}. type an answer with --text")
+ 
+ 
++def wake_codex_delivery(session: Optional[str], item: dict) -> None:
++    """Start the watch daemon when the line the item now owes goes to a Codex session, whose delivery stops
++    with the daemon while the session sits idle."""
++    if not inbox.owes_a_line(item):
++        return
++    root, now = watch.state_root(), time.time()
++    names = [session] if session else [name for name in inbox.sessions()
++                                       if inbox.item_file(inbox.store_root() / name, item["ref"]).is_file()]
++    if any(watch.delivery(root, name, now) == "codex" for name in names):
++        watch.ensure_daemon(root, distribution_version(), newer_release)
++
++
+ def run_inbox(arguments: argparse.Namespace) -> int:
+     command = arguments.inbox_command
+     json_output = arguments.json_output
+@@ -2395,11 +2407,14 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+         session = inbox_session(arguments, False)
+         item = (inbox.answer(session, ref, letter, arguments.text) if command == "answer"
+                 else inbox.dismiss(session, ref, withdrawn=command == "withdraw"))
++        wake_codex_delivery(session, item)
+         done = {"answer": "answered", "dismiss": "dismissed", "withdraw": "withdrew"}[command]
+         print(json_text({"item": item}) if json_output else f"{done} {inbox.answer_ref(item)}")
+     elif command in ("done", "decline"):
+         record = inbox.done if command == "done" else inbox.decline
+-        item = record(inbox_session(arguments, False), ref, arguments.text)
++        session = inbox_session(arguments, False)
++        item = record(session, ref, arguments.text)
++        wake_codex_delivery(session, item)
+         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
+     elif command in ("start", "ready", "block", "unclear"):
+         session = inbox_session(arguments, False)
+@@ -2411,6 +2426,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+             item = inbox.ready(session, ref)
+         else:
+             item = inbox.block(session, ref, arguments.reason)
++        wake_codex_delivery(session, item)
+         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
+     elif command == "revise":
+         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+@@ -2423,7 +2439,9 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
+         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
+     elif command == "restore":
+-        item = inbox.restore(inbox_session(arguments, False), ref)
++        session = inbox_session(arguments, False)
++        item = inbox.restore(session, ref)
++        wake_codex_delivery(session, item)
+         print(json_text({"item": item}) if json_output else f"restored {item['ref']}")
+     elif command == "claim":
+         item = inbox.claim(inbox_session(arguments, False), ref, arguments.renew)
+diff --git a/src/projector/codex_watch.py b/src/projector/codex_watch.py
+index 92db9b61..074a6b51 100644
+--- a/src/projector/codex_watch.py
++++ b/src/projector/codex_watch.py
+@@ -18,7 +18,8 @@
+ from pathlib import Path
+ from typing import Callable, Optional
+ 
+-from .core import UsageError
++from . import inbox
++from .core import ProjectorError, UsageError
+ from .inbox import locked, read_json, try_lock, unlock, write_json
+ 
+ LEASE = 24 * 3600
+@@ -32,6 +33,9 @@
+ CONFIRM_EVERY = 30
+ MARKER = re.compile(r"^PROJECTOR WATCH ([0-9a-f-]{36})\n")
+ TERMINAL = {"MERGED", "CLOSED", "MISSING", "MOVED"}
++# A claim lapses a minute after its last renewal, so renewing a third of the way through keeps a line that
++# waits in Codex's queue claimed through a send that runs to TIMEOUT.
++RENEW_AFTER_MS = 20_000
+ 
+ 
+ def digest(value: object) -> str:
+@@ -85,7 +89,88 @@ def save_queue(folder: Path, items: list[dict]) -> None:
+ 
+ def has_work(folder: Path) -> bool:
+     from .watch import subscriptions
+-    return any(not line.excluded for line in subscriptions(folder)) or bool(queued(folder) or pending(folder))
++    return (any(not line.excluded for line in subscriptions(folder)) or bool(queued(folder) or pending(folder))
++            or any(inbox.owes_a_line(item) for item in inbox_items(folder.name)))
++
++
++SCANNED: dict[str, tuple[int, list[dict]]] = {}
++
++
++def inbox_items(session: str) -> list[dict]:
++    """The session's inbox items, read again only when its folder changed. Every inbox write replaces a file,
++    which changes the folder's modification time, and the daemon asks once a second."""
++    try:
++        folder = inbox.session_dir(session)
++        stamp = folder.stat().st_mtime_ns
++    except (ProjectorError, OSError):
++        return []
++    seen = SCANNED.get(str(folder))
++    if seen is None or seen[0] != stamp:
++        seen = SCANNED[str(folder)] = (stamp, inbox.load_items(folder))
++    return seen[1]
++
++
++def inbox_key(item: dict) -> Optional[list]:
++    """An inbox event's key, `["inbox", ref, line, token]`, or None for any other event."""
++    key = json.loads(item["key"])
++    return key if key[:1] == ["inbox"] and len(key) == 4 else None
++
++
++def claim_of(session: str, ref: str) -> dict:
++    try:
++        return (read_json(inbox.item_file(inbox.session_dir(session), ref)) or {}).get("claim") or {}
++    except (ProjectorError, OSError, ValueError):
++        return {}
++
++
++def offer(folder: Path) -> None:
++    """Claim each line the session's inbox owes and queue it, so this adapter is its one deliverer."""
++    lines = []
++    for item in inbox_items(folder.name):
++        if not inbox.owes_a_line(item) or inbox.live_claim(item):
++            continue
++        try:
++            claimed = inbox.claim(folder.name, item["ref"])
++        except inbox.InboxBusy:
++            break
++        except ProjectorError:
++            continue
++        held = claimed["claim"]
++        lines.append(Event(inbox.message(claimed), ["inbox", claimed["ref"], held["line"], held["token"]]))
++    if lines:
++        append(folder, lines)
++
++
++def unsettled(folder: Path) -> list[list]:
++    return (read_json(folder / "codex-unsettled.json") or {}).get("keys") or []
++
++
++def renew(folder: Path) -> None:
++    """Renew the claim of every inbox line that waits in the queue, in a batch, or for its settle, so no other
++    deliverer claims it while Codex has yet to take it."""
++    lines = queued(folder) + [item for _, batch in pending(folder) for item in batch["items"]]
++    for _, ref, _, token in [key for item in lines if (key := inbox_key(item))] + unsettled(folder):
++        claim = claim_of(folder.name, ref)
++        if claim.get("token") == token and inbox.now_ms() - int(claim.get("renewedAt", 0)) >= RENEW_AFTER_MS:
++            with contextlib.suppress(ProjectorError):
++                inbox.claim(folder.name, ref, renew=token)
++
++
++def settle(folder: Path, keys: list[list]) -> None:
++    """Mark each inbox line delivered. A claim that a restore, an answer, or a revision replaced settles
++    nothing, and the line the item owes now goes out next. A line a busy inbox kept from settling waits for
++    the next tick."""
++    left = []
++    for key in keys:
++        try:
++            inbox.settle(folder.name, key[1], key[3], delivered=True)
++        except inbox.InboxBusy:
++            left.append(key)
++        except ProjectorError:
++            pass
++    waiting = [key for key in unsettled(folder) if key not in keys] + left
++    if waiting or (folder / "codex-unsettled.json").exists():
++        write_json(folder / "codex-unsettled.json", {"schema_version": 1, "keys": waiting})
+ 
+ 
+ @contextlib.contextmanager
+@@ -151,6 +236,8 @@ def eligible(folder: Path, item: dict) -> bool:
+     if item["line"].split(" ", 1)[0] in TERMINAL:
+         return True
+     key = json.loads(item["key"])
++    if key[:1] == ["inbox"]:
++        return len(key) == 4 and claim_of(folder.name, key[1]).get("token") == key[3]
+     if key[:1] == ["message"]:
+         from .agents import message_file
+         path = message_file(folder, key[1]) if len(key) == 2 and isinstance(key[1], str) else None
+@@ -181,6 +268,9 @@ def prepare(folder: Path, now: float) -> Optional[dict]:
+             break
+         chosen.append(item)
+         size += length
++    if not chosen and items and inbox_key(items[0]):
++        # A typed answer can be longer than a batch. Alone in a batch of its own, it cannot hold back the queue.
++        chosen = items[:1]
+     if not chosen:
+         if items != queued(folder):
+             save_queue(folder, items)
+@@ -199,7 +289,7 @@ def prepare(folder: Path, now: float) -> Optional[dict]:
+ 
+ def message(session: str, batch: dict) -> str:
+     return (f"PROJECTOR WATCH {batch['batch_id']}\nsession={session}\n"
+-            "Recheck current subscriptions and PR state before acting.\n"
++            "Recheck current subscriptions, pull request state, and inbox items before acting.\n"
+             + "\n".join(item["line"].replace("\0", "\\0") for item in batch["items"]))
+ 
+ 
+@@ -230,12 +320,21 @@ def acknowledge(folder: Path, session: str, prompt: str, now: float) -> tuple[bo
+ 
+ 
+ def consume(folder: Path, batch_id: str, now: float) -> None:
++    path = folder / "codex-pending" / f"{batch_id}.json"
++    keys = [key for item in (read_json(path) or {}).get("items") or [] if (key := inbox_key(item))]
++    # Record the keys as waiting to settle before the receipt and the unlink, so a stop anywhere after this
++    # leaves them where the next tick renews their claims and settles them, rather than nowhere.
++    waiting = unsettled(folder)
++    if any(key not in waiting for key in keys):
++        write_json(folder / "codex-unsettled.json",
++                   {"schema_version": 1, "keys": waiting + [key for key in keys if key not in waiting]})
+     receipt = folder / "codex-receipts" / f"{batch_id}.json"
+     receipt.parent.mkdir(exist_ok=True)
+     write_json(receipt, {"batch_id": batch_id, "consumed_at": now})
+     # A command result can race this. The receipt wins over that result.
+-    (folder / "codex-pending" / f"{batch_id}.json").unlink(missing_ok=True)
++    path.unlink(missing_ok=True)
+     write_json(folder / "codex-last.json", {"batch_id": batch_id, "state": "consumed", "last_error": ""})
++    settle(folder, keys)
+ 
+ 
+ def delivered(folder: Path, path: Path, batch: dict) -> bool:
+@@ -290,11 +389,13 @@ def drain(folder: Path) -> None:
+     from .watch import write_text
+     recover(folder)
+     items = queued(folder)
+-    lines = [item["line"] for item in items if eligible(folder, item)]
++    # The plain events file has no reader that settles an inbox claim, so an inbox line stays out of it. Its
++    # claim lapses once nothing renews it, and the session's next deliverer sends the line.
++    lines = [item["line"] for item in items if not inbox_key(item) and eligible(folder, item)]
+     removable = []
+     for path, batch in pending(folder):
+         if batch["state"] in ("prepared", "failed"):
+-            lines.extend(item["line"] for item in batch["items"] if eligible(folder, item))
++            lines.extend(item["line"] for item in batch["items"] if not inbox_key(item) and eligible(folder, item))
+             removable.append(path)
+     if lines:
+         events = folder / "events"
+@@ -517,12 +618,14 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
+         return {"decision": "block", "reason": "This watch batch is already consumed or its work was removed."}
+     if name != "SessionStart" and not consumed:
+         return {}
+-    context = (f"Use --session {session} for project watch commands and pass this parent ID to workers. "
+-               + ("Codex watch delivery handles this session; do not start a stream. " if record.get("enabled") else
++    context = (f"Use --session {session} for project watch and project inbox commands and pass this parent ID "
++               "to workers. "
++               + ("Codex watch delivery handles this session, its inbox answers included; do not start a stream "
++                  "or project inbox watch. " if record.get("enabled") else
+                   "Automatic Codex delivery is disconnected; inspect watch status before starting a stream. ") +
+-               "Recheck subscriptions and current PR state before acting on events.")
++               "Recheck subscriptions, current pull request state, and inbox items before acting on events.")
+     if consumed:
+-        context += " Process only these still-subscribed events:\n" + "\n".join(lines)
++        context += " Process only these still-current events:\n" + "\n".join(lines)
+     return {"hookSpecificOutput": {"hookEventName": name, "additionalContext": context}}
+ 
+ 
+@@ -555,15 +658,22 @@ def __init__(self, *, run: Callable = subprocess.run, wall: Callable[[], float]
+ 
+     def tick(self, folders: list[Path]) -> None:
+         self.jobs = {folder: job for folder, job in self.jobs.items() if not job.done()}
++        folders = [folder for folder in folders if active(folder, self.wall())]
++        # Renewal skips no folder, not even one whose batch is being sent, so a claim outlives the send.
++        for folder in folders:
++            renew(folder)
+         for folder in folders:
+             if len(self.jobs) >= 4:
+                 break
+-            if folder in self.jobs or not active(folder, self.wall()):
++            if folder in self.jobs:
+                 continue
+             with locked(folder):
+                 if self.wall() - self.cleaned.get(folder, float("-inf")) >= 3600:
+                     prune_receipts(folder, self.wall())
+                     self.cleaned[folder] = self.wall()
++                if unsettled(folder):
++                    settle(folder, unsettled(folder))
++                offer(folder)
+                 batches = pending(folder)
+                 waiting = batches[0][1] if batches else {}
+                 if (waiting.get("state") in ("queued", "uncertain") and not self.confirm(folder, *batches[0])
+diff --git a/tests/test_codex_watch.py b/tests/test_codex_watch.py
+index f795afb9..2b1bf416 100644
+--- a/tests/test_codex_watch.py
++++ b/tests/test_codex_watch.py
+@@ -7,12 +7,13 @@
+ import sys
+ import tempfile
+ import threading
++import time
+ import unittest
+ from concurrent import futures
+ from pathlib import Path
+ from unittest import mock
+ 
+-from projector import cli, codex_watch as codex, watch
++from projector import cli, codex_watch as codex, inbox, watch
+ from projector.core import UsageError
+ from projector.inbox import locked, read_json, write_json
+ 
+@@ -500,6 +501,175 @@ def test_bounded_batches_keep_later_complete_lines_without_losing_them(self):
+ from tests.test_watch import WatchCase, SHA_A, SHA_B, MODEL, thread
+ 
+ 
++class InboxDeliveryTests(unittest.TestCase):
++    """The adapter delivers a Codex session's inbox lines, the way the panel delivers a Claude Code session's."""
++
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory(prefix="codex inbox ")
++        self.addCleanup(self.temp.cleanup)
++        state = Path(self.temp.name).resolve()
++        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(state)})
++        environ.start()
++        self.addCleanup(environ.stop)
++        self.root = watch.state_root()
++        self.folder = watch.session_folder(self.root, "session-A")
++        self.folder.mkdir(parents=True)
++        # `delivery()` reads the wall clock, so the registration has to be live by it.
++        self.now = time.time()
++        self.ms = int(self.now * 1000)
++        clock = mock.patch.object(inbox, "now_ms", side_effect=lambda: self.ms)
++        clock.start()
++        self.addCleanup(clock.stop)
++        self.executable = state / "codex"
++        self.executable.write_text(f"#!{sys.executable}\n" + '''import json, pathlib, sys
++root = pathlib.Path(__file__).parent
++if sys.argv[1:] == ["queue", "--help"]:
++    print("--thread --message --resume")
++else:
++    with (root / "calls.jsonl").open("a") as stream:
++        stream.write(json.dumps({"args": sys.argv[1:]}) + "\\n")
++    if (root / "fail").exists():
++        sys.exit(1)
++''')
++        self.executable.chmod(0o755)
++        which = mock.patch("shutil.which", return_value=str(self.executable))
++        which.start()
++        self.addCleanup(which.stop)
++        codex.register(self.folder, "session-A", str(state), self.now)
++        self.dispatcher = codex.Dispatcher(wall=lambda: self.now)
++        self.addCleanup(self.dispatcher.close)
++        self.question = inbox.ask("session-A", "Decline the finding?", "Decline it", ["Fix it"])
++
++    def tick(self):
++        self.dispatcher.tick([self.folder])
++        for job in list(self.dispatcher.jobs.values()):
++            job.result()
++
++    def sent(self):
++        path = self.executable.parent / "calls.jsonl"
++        return [json.loads(line)["args"][4] for line in path.read_text().splitlines()] if path.exists() else []
++
++    def acknowledge(self):
++        batch = codex.pending(self.folder)[0][1]
++        consumed, _ = codex.acknowledge(self.folder, "session-A", codex.message("session-A", batch), self.now)
++        self.assertTrue(consumed)
++
++    def item(self):
++        return inbox.read_item(inbox.session_dir("session-A"), self.question["ref"])
++
++    def hold_the_queue(self):
++        """Send a watch event and leave its batch unacknowledged, so the lines queued next wait behind it."""
++        watch.append_events(self.folder, [codex.Event("MERGED Acme/App#14", ["acme/app", 14, "fix", "merged"])])
++        self.tick()
++
++    def test_an_answer_wakes_the_session_and_is_delivered_once_codex_takes_it(self):
++        # Catches an adapter that never claims inbox lines, or one that marks them delivered before Codex has them.
++        inbox.answer("session-A", "1", "a")
++        self.assertTrue(codex.has_work(self.folder))
++        self.tick()
++        self.assertEqual(1, len(self.sent()))
++        self.assertIn("ANSWER 1.a Decline the finding? → Decline it", self.sent()[0])
++        self.assertIsNone(self.item().get("deliveredAt"))
++        self.acknowledge()
++        self.assertIsNotNone(self.item().get("deliveredAt"))
++        self.tick()
++        self.assertEqual(1, len(self.sent()))
++
++    def test_a_line_waiting_in_codex_keeps_its_claim_from_another_deliverer(self):
++        # Catches a claim that lapses while its batch waits, so another deliverer, or this one, sends it again.
++        inbox.answer("session-A", "1", "a")
++        self.tick()
++        for _ in range(9):
++            self.ms += 20_000
++            self.tick()
++        printed = []
++        inbox.deliver_pass("session-A", printed.append)
++        self.assertEqual([], printed)
++        self.acknowledge()
++        self.tick()
++        self.assertEqual(1, len(self.sent()))
++        self.assertIsNotNone(self.item().get("deliveredAt"))
++
++    def test_an_answer_codex_took_is_not_sent_again_after_an_interrupted_settle(self):
++        # Catches a consumed batch whose inbox keys live only in memory, so a stop before they settle lets the
++        # claim lapse and the next daemon claims and sends the same answer again.
++        inbox.answer("session-A", "1", "a")
++        self.tick()
++        with mock.patch.object(codex, "settle", side_effect=RuntimeError("stopped")):
++            with self.assertRaises(RuntimeError):
++                self.acknowledge()
++        self.assertEqual([], codex.pending(self.folder))
++        self.dispatcher = codex.Dispatcher(wall=lambda: self.now)
++        self.addCleanup(self.dispatcher.close)
++        self.now += 61
++        self.ms += 61_000
++        self.tick()
++        self.tick()
++        self.assertEqual(1, len(self.sent()))
++        self.assertIsNotNone(self.item().get("deliveredAt"))
++        self.assertEqual([], codex.unsettled(self.folder))
++
++    def test_a_restore_replaces_a_dismissal_that_has_not_gone_out(self):
++        # Catches a stale DISMISSED sent after the restore that dropped its claim.
++        self.hold_the_queue()
++        inbox.dismiss("session-A", "1")
++        self.tick()
++        inbox.restore("session-A", "1")
++        self.acknowledge()
++        self.tick()
++        self.assertEqual(2, len(self.sent()))
++        self.assertIn("RESTORED 1 Decline the finding?", self.sent()[1])
++        self.assertNotIn("DISMISSED", self.sent()[1])
++
++    def test_a_failed_send_keeps_the_answer_and_retries(self):
++        # Catches a failure settled as undelivered, which deletes the person's answer.
++        (self.executable.parent / "fail").touch()
++        inbox.answer("session-A", "1", "a")
++        self.tick()
++        self.assertEqual("failed", codex.pending(self.folder)[0][1]["state"])
++        self.assertEqual("a", self.item()["answer"]["letter"])
++        (self.executable.parent / "fail").unlink()
++        self.now += 31
++        self.ms += 31_000
++        self.tick()
++        self.assertEqual(2, len(self.sent()))
++        self.assertIn("ANSWER 1.a", self.sent()[1])
++
++    def test_a_disconnected_session_leaves_its_line_to_the_next_deliverer(self):
++        # Catches an inbox line drained into the events file, whose reader never settles its claim.
++        self.hold_the_queue()
++        inbox.answer("session-A", "1", "a")
++        self.tick()
++        codex.disconnect(self.folder)
++        with locked(self.folder):
++            codex.drain(self.folder)
++        events = self.folder / "events"
++        self.assertNotIn("ANSWER", events.read_text() if events.exists() else "")
++        self.assertEqual([], inbox.undelivered("session-A"))
++        self.ms += 61_000
++        self.assertEqual(["1"], [item["ref"] for item in inbox.undelivered("session-A")])
++
++    def test_an_answer_longer_than_a_batch_goes_out_alone(self):
++        # Catches an oversized typed answer that wedges the queue for every event behind it.
++        self.hold_the_queue()
++        inbox.answer("session-A", "1", "c", "x" * (9 * 1024))
++        self.tick()
++        watch.append_events(self.folder, [codex.Event("CLOSED Acme/App#15", ["acme/app", 15, "fix", "closed"])])
++        self.acknowledge()
++        self.tick()
++        self.assertIn("ANSWER 1.c", self.sent()[1])
++        self.assertNotIn("CLOSED", self.sent()[1])
++        self.acknowledge()
++        self.tick()
++        self.assertIn("CLOSED Acme/App#15", self.sent()[2])
++
++    def test_recording_an_answer_starts_the_daemon_for_a_codex_session(self):
++        # Catches an answer that waits for the session's next hook while the daemon is down.
++        with mock.patch.object(watch, "ensure_daemon") as ensure, mock.patch("sys.stdout", io.StringIO()):
++            cli.main(["inbox", "answer", "1.a", "--session", "session-A"])
++        ensure.assert_called_once()
++
++
+ class RoutingTests(WatchCase):
+     def setUp(self):
+         super().setUp()
