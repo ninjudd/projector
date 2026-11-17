@@ -354,7 +354,10 @@ class FakeWindow:
         return "\n".join(self.rows.get(y, "") for y in range(self.height))
 
 
-class Scrolling(ConsoleCase):
+class TerminalCase(ConsoleCase):
+    """Draws the console with the real `Screen` into a 12-row fake window. It holds no tests of its own, so each
+    class built on it runs only the tests it defines."""
+
     def setUp(self) -> None:
         super().setUp()
         self.window = FakeWindow(12)
@@ -372,6 +375,8 @@ class Scrolling(ConsoleCase):
                 self.console.key(name)
             self.terminal.draw()
 
+
+class Scrolling(TerminalCase):
     def tall_question(self) -> None:
         self.claude("s1")
         item = inbox.ask("s1", "Decline the finding?", "Decline it", ["Fix it"],
@@ -430,7 +435,7 @@ def claude_entry(who: str, text: str) -> str:
                        "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}) + "\n"
 
 
-class Conversation(Scrolling):
+class Conversation(TerminalCase):
     """The panel's conversation section, read from a Claude Code transcript under a temporary `CLAUDE_CONFIG_DIR`
     and from a Codex rollout that `codex.json` names."""
 
