@@ -1,0 +1,64 @@
+{
+ "version": 1,
+ "name": "Console session launching",
+ "project": "console/launch",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 519,
+  "title": "Plan launching Claude Code and Codex sessions from the console",
+  "head": "831a27edae19c7b2b471730f8b22d682b7387065",
+  "headRef": "spec/console-launch",
+  "base": "926af14923a672f25781d88171b8a2fd35951f47",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s planned terminal console lets you answer and discuss work across live agent sessions. This draft extends it with a form that starts a Claude Code or Codex session in a chosen checkout, so each session does not need its own terminal window.",
+   "The console launches each host through its command-line interface, tracks startup in a local record, and opens a session’s chat on demand. This pull request adds only the plan; it implements no launcher.",
+   "The plan remains <code>draft</code> with priority <code>next</code>. Approval prompts, matching Claude Code background IDs, attaching Codex to a daemon-held thread, and prompts that match Claude Code subcommands remain explicit open questions. They do not assert implementation readiness."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review result",
+    "html": "The earlier prompt-option finding is fixed: both launch commands end options with <code>--</code> before the prompt, and acceptance cases cover a leading-hyphen prompt. Read-only parser checks, the required gate, exact-head CI, and project metadata checks pass."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "launch-design",
+   "title": "Start sessions and open their chats",
+   "kicker": "A draft design for launching from the console home list",
+   "intro": [
+    "The <b>New session</b> form selects a host and checkout, accepts a name and prompt, and starts the host without a shell. A launch record lets the console show <code>starting</code> or <code>failed</code> before the session joins the live list.",
+    "The <b>Chat</b> key attaches through <code>claude attach</code> or <code>codex resume</code>. Inside tmux it opens a pane; elsewhere it temporarily hands the console’s terminal to the host. Fake executable tests check arguments and startup behavior, while real host approval and attachment behavior stays unresolved."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/console/launch/readme.md",
+     "collapsed": false,
+     "note": "Adds the launch form, delimited command arguments, startup record, chat attachment, acceptance cases, and unresolved host questions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 55,
+       "text": "Section 2.1 now ends host options before the prompt. Safe CLI parser checks confirm that Codex treats <code>--help</code>, <code>-v hi</code>, and <code>help</code> as operands after <code>--</code>; Claude Code’s parser also accepts <code>--help</code> as an operand."
+      },
+      {
+       "kind": "context",
+       "line": 192,
+       "text": "Section 6 explicitly leaves Claude Code prompts that match a subcommand unresolved, alongside approval and attachment behavior. This is a <code>draft</code> plan, so these questions do not claim implementation readiness."
+      },
+      {
+       "kind": "context",
+       "line": 205,
+       "text": "Section 7 records a prior real Codex launch and wake test. This review checks the plan against the delivery adapter and uses read-only CLI parsing probes; it does not repeat the historical background-session test."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
