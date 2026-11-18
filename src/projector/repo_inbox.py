@@ -865,10 +865,13 @@ def describe(entry: dict) -> str:
         return f"{agent_of(entry, 'from')} {ASKS[entry['kind']]}: {entry['subject']}"
     if entry["role"] == "sent":
         return f"{SENT[entry['kind']].format(peer=peer_label(entry))}: {entry['subject']}"
-    did = DID[entry["outcome"]]
-    if entry["by"] == "agent" and entry["outcome"] != "reply":
-        did = f"{did} for {peer_label(entry)}"
-    return f"{who(entry)} {did}: {outcome_preview(entry)}"
+    return f"{who(entry)} {did_of(entry)}: {outcome_preview(entry)}"
+
+
+def did_of(reply: dict) -> str:
+    """What a reply did, with the peer an agent did it for when it answered or closed the item for them."""
+    did = DID[reply["outcome"]]
+    return f"{did} for {peer_label(reply)}" if reply["by"] == "agent" and reply["outcome"] != "reply" else did
 
 
 def state_of(entry: dict, session: Optional[str], at_ms: int) -> str:
@@ -942,26 +945,35 @@ def show_text(entry: dict, found: list[dict], reader: Optional[str] = None) -> s
     """What `project inbox show` prints for an entry to a session working in `reader`: who it is from, the
     repository it comes from when that is not the reader's, and the notice of a private source, and for anything a
     peer wrote, the notice that it carries none of your authority before the words they chose. A sent entry's
-    replies each carry their own source and notice."""
+    replies each carry their own source and notices, and its own notice of a private source follows its marks."""
     text = entry_text(entry, found, reader)
     marks = [*([f"from {agents.source_of(entry)}"] if agents.crosses(entry, reader) else []),
              *([f"for {entry['scope_repo']}"] if entry.get("scope_repo") else [])]
     notice = agents.private_notice(entry, reader)
     head, _, rest = text.partition("\n")
     lines = [head, *marks]
-    if notice:
+    if notice and entry["role"] == "sent":
+        lines.append(notice)
+    elif notice:
         before, found_notice, after = rest.partition(NOTICE)
-        rest = f"{before}{NOTICE}\n\n{notice}{after}" if found_notice else f"{rest}\n\n{notice}"
+        rest = f"{before}{notices(entry, reader)}{after}" if found_notice else f"{rest}\n\n{notice}"
     return "\n".join([*lines, rest]) if rest else "\n".join(lines)
 
 
-def reply_line(reply: dict, reader: Optional[str]) -> str:
-    """A reply's line under the entry it answers, with the repository it comes from when that is not the reader's,
-    and the notice of a private source, both before the words the peer chose."""
-    if not agents.crosses(reply, reader):
-        return f"{reply['ref']} {describe(reply)}"
-    notice = agents.private_notice(reply, reader)
-    return f"{reply['ref']} from {agents.source_of(reply)}. {notice + ' ' if notice else ''}{describe(reply)}"
+def notices(entry: dict, reader: Optional[str]) -> str:
+    """What comes before the words a peer chose, for a session working in `reader`: the notice that they carry
+    none of the user's authority, then the notice of a private source when the entry comes from one."""
+    private = agents.private_notice(entry, reader)
+    return f"{NOTICE}\n\n{private}" if private else NOTICE
+
+
+def reply_lines(reply: dict, reader: Optional[str]) -> list[str]:
+    """A reply under the sent entry it answers, in a `PEER REPLY` line's order: who sent it, the repository it
+    comes from when that is not the reader's, the notices a reply shown alone carries, and then the words the
+    peer chose."""
+    where = f" in {agents.source_of(reply)}" if agents.crosses(reply, reader) else ""
+    return ["", f"{reply['ref']} from {who(reply)}{where}", "", notices(reply, reader), "",
+            f"{did_of(reply)}: {outcome_preview(reply)}"]
 
 
 def entry_text(entry: dict, found: list[dict], reader: Optional[str]) -> str:
@@ -982,7 +994,7 @@ def entry_text(entry: dict, found: list[dict], reader: Optional[str]) -> str:
         return "\n".join([f"{entry['ref']} {describe(entry)}", *([f"about {entry['pr']}"] if entry.get("pr") else []),
                           *([f"\n{entry['detail']}\n"] if entry.get("detail") else []), *choice_lines(entry),
                           "closed" if is_closed(entry) else "open",
-                          *(reply_line(reply, reader) for reply in replies)])
+                          *(line for reply in replies for line in reply_lines(reply, reader))])
     how = agents.describe(entry["from_host"], entry.get("from_model")) + \
         (f" on {entry['branch']}" if entry.get("branch") else "")
     return "\n".join([f"{entry['ref']} from {agent_of(entry, 'from')} ({how})",

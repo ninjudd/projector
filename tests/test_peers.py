@@ -199,8 +199,8 @@ class SharedInboxTests(SharedRelayCase):
         notice = ("It comes from private repository acme/api: keep its private details out of anything you write in "
                   "acme/web, and describe them in general terms if you need to.")
         self.assertIn(notice, alone)
-        self.assertIn(f"\n{reply} from acme/api. {notice} justin's agent agent-a replied: Use the internal v3 endpoint",
-                      shown)
+        self.assertIn(f"\n{reply} from justin's agent agent-a in acme/api\n\n{repo_inbox.NOTICE}\n\n{notice}\n\n"
+                      "replied: Use the internal v3 endpoint", shown)
 
     def test_a_checkout_with_no_github_origin_posts_to_a_peer_and_is_named_as_one(self) -> None:
         loose = self.one.home / "acme" / "notes"
@@ -314,6 +314,21 @@ class ExchangeTests(PeersCase):
                          tuple(reply[field] for field in ("by", "by_name", "by_host", "by_model")))
         self.assertTrue(shown.startswith(f"{reply['ref']} from jason's agent agent-b (claude claude-opus-5-5"), shown)
         self.assertLess(shown.index(repo_inbox.NOTICE), shown.index("Neither; rewrite it"))
+
+    def test_a_reply_listed_under_its_sent_item_carries_the_authority_notice_before_its_words(self) -> None:
+        self.status_request()
+        self.everyone()
+        self.ok(self.two, B, "reply", "r1", "--text", "Half the parser is done", "--as", "agent")
+        self.everyone()
+        [sent] = self.by_role(self.one, A, "sent")
+        [reply] = sent["replies"]
+
+        shown = self.ok(self.one, A, "show", sent["ref"])
+
+        listed = shown[shown.index(f"\n{reply} "):]
+        self.assertIn(repo_inbox.NOTICE, listed, shown)
+        self.assertLess(listed.index("jason's agent agent-b"), listed.index(repo_inbox.NOTICE), shown)
+        self.assertLess(listed.index(repo_inbox.NOTICE), listed.index("Half the parser is done"), shown)
 
     def test_a_status_request_gathers_one_reply_from_each_agent_and_stays_open(self) -> None:
         self.status_request()

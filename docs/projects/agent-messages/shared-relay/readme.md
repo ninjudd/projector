@@ -404,7 +404,9 @@ repository, so a peers item never goes where no job polls for its replies.
 - **Replies carry their responder's repository too,** with its visibility,
   so a `PEER REPLY` line and `inbox show` name a reply's source and add the
   notice of a private one, as a message's do. `inbox show` on a sent item
-  puts each reply's source and notice before the reply's words on its line.
+  lists each reply in a `PEER REPLY` line's order: its sender, its source,
+  the notice of none of the user's authority, the notice of a private
+  source, and then the reply's words.
 - **`pr` names a pull request in the sender's work repository.** A record
   from before shared relays may name one in its location, and a record from
   a checkout with no GitHub `origin` names none.
@@ -428,7 +430,7 @@ failed with its fault introduced:
 | A committed location waits, a branch never chooses one, an untracked or user file needs no allowing | `SharedRelayTests.test_a_location_a_repository_commits_waits_until_you_allow_it_and_a_branch_never_chooses_one`, `test_a_location_an_untracked_parent_or_your_own_file_sets_needs_no_allowing` |
 | Public, internal, and read-only locations | `SharedRelayTests.test_a_relay_location_must_be_private_or_internal_and_writable` |
 | The bare clone, its hooks, credentials, and refspecs | `SharedRelayTests.test_a_pass_with_only_the_bare_clone_runs_global_hooks_and_gh_credentials_and_fetches_only_relay_refs` |
-| Crossing notices and the peers-only reminder | `CrossingTests.test_a_message_from_a_private_repository_names_it_and_guards_it_wherever_it_is_read`, `SharedInboxTests.test_the_inbox_is_the_locations_and_a_scoped_item_shows_only_in_its_repository`, `test_a_reply_shown_under_its_sent_item_names_its_private_source_before_its_words` |
+| Crossing notices and the peers-only reminder | `CrossingTests.test_a_message_from_a_private_repository_names_it_and_guards_it_wherever_it_is_read`, `SharedInboxTests.test_the_inbox_is_the_locations_and_a_scoped_item_shows_only_in_its_repository`, `test_a_reply_shown_under_its_sent_item_names_its_private_source_before_its_words`, `ExchangeTests.test_a_reply_listed_under_its_sent_item_carries_the_authority_notice_before_its_words` |
 | A checkout with no GitHub `origin` | `SharedRelayTests.test_a_checkout_with_no_github_origin_relays_through_a_location_and_its_messages_cross`, `test_two_checkouts_with_no_github_origin_are_not_one_repository`, `SharedInboxTests.test_a_checkout_with_no_github_origin_posts_to_a_peer_and_is_named_as_one` |
 | The record's visibility over a cache | `CrossingTests.test_a_reader_takes_the_records_visibility_over_any_cache` |
 | One job for a location and its own checkout | `SharedRelayTests.test_one_job_serves_a_location_for_its_own_checkout_and_the_sessions_that_name_it` |
