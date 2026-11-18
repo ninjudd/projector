@@ -1264,6 +1264,34 @@ class PeerCommandTests(RelayCase):
             self.assertIn("run `project agent peer add <name> <public-key>` in a terminal", err)
         self.assertNotIn("peers", self.config_text())
 
+    def test_a_peer_under_an_override_is_ignored_in_every_file_so_peer_remove_leaves_no_copy(self) -> None:
+        # `peer remove` edits only the ordinary `[agent.peers]`, so a peer honored under an override, in a
+        # checkout's file or your own, would reach your inbox past the user-only rule or outlive its removal.
+        mallory, alice = bytes(range(120, 152)), bytes(range(160, 192))
+        self.assertEqual(0, self.add("amy", public_of(self.AMY))[0])
+        checkout = self.one.work / ".projector.toml"
+        checkout.write_text(f'[override.1]\nagent.peers.mallory = "{public_of(mallory)}"\n'
+                            '[review]\ngate_checks = "check"\n')
+        with (self.one.home / ".projector.toml").open("a") as stream:
+            stream.write(f'\n[override.2]\nagent.peers.amy = "{public_of(self.AMY)}"\n'
+                         f'agent.peers."alice.work" = "{public_of(alice)}"\n')
+
+        got = self.one.project("config", "get", "review.gate_checks")
+        listed = self.one.project("agent", "peer", "list")
+        peers = config.peers(self.one.env)
+        removed = self.one.project("agent", "peer", "remove", "amy")
+
+        self.assertEqual((0, "check\n"), got[:2], got[2])
+        for source, key in (("(override 1)", "agent.peers.mallory"), ("(override 2)", "agent.peers.amy"),
+                            ("(override 2)", "agent.peers.alice.work")):
+            self.assertIn(f"{source} sets {key}, which Projector reads only outside an override in", got[2])
+        self.assertEqual({"amy": crypto.public_key(self.AMY)}, peers)
+        self.assertEqual(0, listed[0], listed[2])
+        self.assertEqual(["amy"], [line.split("\t")[0] for line in listed[1].splitlines()])
+        self.assertEqual(0, removed[0], removed[2])
+        self.assertEqual({}, config.peers(self.one.env))
+        self.assertIn("no peers", self.one.project("agent", "peer", "list")[1])
+
     def test_a_planted_peer_whose_quoted_name_holds_a_dot_is_ignored_without_breaking_other_settings(self) -> None:
         (self.one.work / ".projector.toml").write_text(
             f'[agent.peers]\n"alice.work" = "{public_of(self.JASON)}"\n[review]\ngate_checks = "check"\n')
@@ -1300,6 +1328,8 @@ class PeerCommandTests(RelayCase):
                  {"jason": jason}, True, None),
                 ("config set", lambda: cli.main(["config", "set", "--user", "watch.renotify", "600"]), both, True,
                  600),
+                ("config set --override", lambda: cli.main(["config", "set", "--user", "--override", "1",
+                                                            "watch.renotify", "600"]), both, True, 600),
                 ("key remove", lambda: relay.remove_key(self.one.root, environ=self.one.env), both, False, None)):
             with self.subTest(label):
                 self.one.inline_key(self.private)
@@ -1345,7 +1375,8 @@ class PeerCommandTests(RelayCase):
                 self.assertEqual(peers, config.peers(self.one.env))
                 written = tomllib.loads(path.read_text())
                 self.assertEqual(key, "key" in written["agent"])
-                self.assertEqual(renotify, written.get("watch", {}).get("renotify"))
+                table = written.get("override", {}).get("1", written)
+                self.assertEqual(renotify, table.get("watch", {}).get("renotify"))
 
     def test_a_table_that_repeats_a_key_or_holds_your_own_is_refused_when_read(self) -> None:
         for table, said in ((f'amy = "{public_of(self.AMY)}"\njason = "{public_of(self.AMY)}"\n', "hold one key"),

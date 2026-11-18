@@ -874,10 +874,11 @@ you can always choose a higher one.
 
 A key under `override` that is not a whole number from 1 to 99, such as
 `[override.0]` or `[override.x]`, makes every command that reads
-configuration exit 78 and name the file. `agent.key` under an override is
-ignored with a warning in every file, `~/.projector.toml` included, because
-Projector reads it only as an ordinary setting there, where
-`project agent key remove` and `key join --replace` change it.
+configuration exit 78 and name the file. `agent.key` and every
+`agent.peers` entry under an override are ignored with a warning in every
+file, `~/.projector.toml` included, because Projector reads them only as
+ordinary settings there, where `project agent key remove`,
+`key join --replace`, and `project agent peer remove` change them.
 `config list` and `config get --json` name an override's source with its
 priority:
 
@@ -4175,10 +4176,11 @@ you have checked the key ID with the other person.
 | `peer remove <name>` | Removes the peer from `~/.projector.toml` |
 | `peer list [--json]` | Prints each peer's name and key ID |
 
-Projector reads `agent.peers` only from `~/.projector.toml`. A checkout's
-`.projector.toml` that sets it is ignored with a warning, so a repository
-cannot plant a peer. `project config set agent.peers.<name>` refuses and
-names `peer add`.
+Projector reads `agent.peers` only from `~/.projector.toml`, and never from
+an `[override.<priority>]` table. A checkout's `.projector.toml` that sets
+it, or an override in any file, is ignored with a warning, so a repository
+cannot plant a peer and a removed peer stays removed.
+`project config set agent.peers.<name>` refuses and names `peer add`.
 
 ## Put an iOS app on a device
 
