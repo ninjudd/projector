@@ -820,6 +820,40 @@ def files_under(*folders: Path) -> set[Path]:
     return {path for folder in folders if folder.exists() for path in folder.rglob("*")}
 
 
+class TerminalLineTests(unittest.TestCase):
+    def test_a_prompt_ends_on_a_ctrl_c_that_its_wait_for_the_line_would_sleep_through(self) -> None:
+        # A SIGINT that another thread takes trips Python's signal flag without waking the main thread's wait, as
+        # one arriving just before the wait does; the striker sends it once the prompt waits for its line.
+        read, write = os.pipe()
+        typed = io.FileIO(read, "r")
+        self.addCleanup(typed.close)
+        self.addCleanup(os.close, write)
+        waiting = threading.Event()
+
+        class Watched(cli.queue.Queue):
+            def get(self, *args, **kwargs):
+                waiting.set()
+                return super().get(*args, **kwargs)
+
+        def strike() -> None:
+            waiting.wait()
+            signal.pthread_kill(threading.get_ident(), signal.SIGINT)
+
+        handler = signal.getsignal(signal.SIGINT)
+        striker = threading.Thread(target=strike)
+        deadline = time.monotonic() + 10
+        with (mock.patch.object(cli.queue, "Queue", Watched), mock.patch.object(sys, "stdin", typed),
+              redirect_stdout(io.StringIO())):
+            striker.start()
+            with self.assertRaises(KeyboardInterrupt):
+                cli.terminal_line("Paste the line it prints here: ", deadline, cli.STORED_NOTHING)
+        ended = time.monotonic()
+        striker.join()
+
+        self.assertLess(ended, deadline)
+        self.assertIs(handler, signal.getsignal(signal.SIGINT))
+
+
 class KeyTests(RelayCase):
     def config(self) -> str:
         return (self.one.home / ".projector.toml").read_text()
