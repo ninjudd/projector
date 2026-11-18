@@ -1034,6 +1034,7 @@ reads, which are these:
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `review.labels` | boolean | `true` | `project review setup`, `publish`, and `finish`, to add and remove the `reviewing` label, which shows a review in progress, and the `clean` label, which shows a signed-off head; `false` leaves both labels alone, as a repository whose own `clean` or `reviewing` label means something else needs |
 | `review.require_check` | boolean | none | `init`, as your answer to whether the repository relies on Projector alone to sign off pull requests: none asks at a terminal, `true` keeps the ruleset and the label workflow in place, and `false` asks no more; `init` writes it when you answer, as [Require a clean review before merge](#require-a-clean-review-before-merge) describes |
+| `review.reviewers` | string | none | `project review status`, `suggestions`, `setup`, and `publish`, and the watch daemon from the configuration of a checkout a live session works in, as the logins whose Projector verdicts count beside the reviewer's and those of the repository's owner, members, and collaborators, separated by commas, as `github-actions[bot]`. On a public repository a review from any other account does not count, so name an account here, such as the one a CI review posts as, only when you trust every review it posts |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
 | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
@@ -1598,8 +1599,9 @@ the head of the full review it builds on, by the same model, and links that
 review, while the row on Reviews shows **Clean** alone. Models are told apart
 by their model ID, lowercased and without a trailing bracketed variant such as
 `[1m]`. In a public repository a review counts only when its author owns the
-repository, belongs to its organization, or collaborates on it, because anyone
-can review a public repository's pull request. In a private or internal
+repository, belongs to its organization, or collaborates on it, or is a login
+that `review.reviewers` names, because anyone can review a public repository's
+pull request. In a private or internal
 repository every review counts, because only an account that can see the
 repository can review there. That keeps a verdict counting when its author
 keeps their organization membership private, which the token the deploy
@@ -2186,10 +2188,10 @@ and is another model's only when that model posted on the head in between.
 In the same step `publish` counts the open finding threads again, so a
 finding that another model posts after this review's census still keeps the
 head from being signed off. It counts the reviewer's verdicts, the one it
-just posted included, and those of the accounts the site's status counts:
-in a public repository, any account that owns the repository, belongs to its
-organization, or collaborates on it, and in a private or internal
-repository, every account. Draft state plays no part in the sign-off, and
+just posted included, those of each login `review.reviewers` names, and
+those of the accounts the site's status counts: in a public repository, any
+account that owns the repository, belongs to its organization, or
+collaborates on it, and in a private or internal repository, every account. Draft state plays no part in the sign-off, and
 `publish` never changes it, because a draft means that the pull request's
 author is still working on it. The author moves it with `hold` and `ready`.
 
@@ -2308,10 +2310,11 @@ A head with no Projector verdict is `unreviewed`. On an unlabeled draft that
 no review has signed off, the last line reads
 `not signed off, a draft; no Projector label`. `status` counts the
 verdicts `publish` counts: those of the reviewer, found as `setup` finds it,
-from `--reviewer`, then `review.username`, then the authenticated user, and
-in a public repository those of any account that owns the repository, belongs
-to its organization, or collaborates on it, or in a private or internal
-repository those of every account. It reads the pull request, its reviews,
+from `--reviewer`, then `review.username`, then the authenticated user,
+those of each login `review.reviewers` names, and in a public repository
+those of any account that owns the repository, belongs to its organization,
+or collaborates on it, or in a private or internal repository those of every
+account. It reads the pull request, its reviews,
 its threads, and its head's commit status, and runs from any directory. It
 exits 0 whatever the verdict, and 1 only when it cannot read the pull
 request. With `--json` it prints one object:

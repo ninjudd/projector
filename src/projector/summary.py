@@ -723,7 +723,7 @@ PR_STATUS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $endC
       isCrossRepository
       baseRef { name }
       reviews(first: 100, after: $endCursor) {
-        nodes { body url submittedAt authorAssociation }
+        nodes { body url submittedAt authorAssociation author { login } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -739,10 +739,10 @@ def pr_status(repo: str, number: int) -> dict:
     or None once that branch is deleted. `fork` is True when its head branch
     is in another repository, GitHub's `isCrossRepository`. `visibility` is
     `public`, `private`, or `internal`, or None when GitHub does not say. Each
-    review has its `body`, its page as `url`, its time as `at`, and its
-    author's relation to the repository as `association`, GitHub's
-    `authorAssociation`. One query answers them all, a page of reviews at a
-    time.
+    review has its `body`, its page as `url`, its time as `at`, its author's
+    `login`, and its author's relation to the repository as `association`,
+    GitHub's `authorAssociation`. One query answers them all, a page of
+    reviews at a time.
     """
     owner, name = repo.split("/", 1)
     pages = gh("api", "graphql", "--paginate", "-f", f"query={PR_STATUS_QUERY}", "-f", f"owner={owner}",
@@ -750,7 +750,8 @@ def pr_status(repo: str, number: int) -> dict:
                "--jq", ".data.repository | .visibility as $visibility | .pullRequest "
                        "| {state, base: .baseRef.name, fork: .isCrossRepository, visibility: $visibility, "
                        "reviews: [.reviews.nodes[] | select(.submittedAt != null) "
-                       "| {body, url, at: .submittedAt, association: .authorAssociation}]} | @json")
+                       "| {body, url, at: .submittedAt, association: .authorAssociation, login: .author.login}]} "
+                       "| @json")
     found = [json.loads(page) for page in pages.splitlines() if page.strip()]
     if not found or not found[0].get("state"):
         raise SummaryError(f"GitHub returned no state for {repo}#{number}")

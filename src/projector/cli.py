@@ -2384,7 +2384,7 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
     """`review status`: the newest Projector verdict on a pull request's head, whatever it is; exit 1 only
     when the pull request cannot be read."""
     repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
-    result = review.status(repo, arguments.pr, counted_reviewer(arguments))
+    result = review.status(repo, arguments.pr, counted_reviewer(arguments), counted_logins(Path.cwd()))
     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.status_lines(result)))
     return 0
 
@@ -2393,7 +2393,7 @@ def review_suggestions(root: Path, arguments: argparse.Namespace) -> int:
     """`review suggestions`: the suggestions fix-pr decides on a pull request's head, printing nothing when
     there are none; exit 1 only when the pull request cannot be read."""
     repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
-    items = review.suggestions(repo, arguments.pr, counted_reviewer(arguments))
+    items = review.suggestions(repo, arguments.pr, counted_reviewer(arguments), counted_logins(Path.cwd()))
     if arguments.json_output:
         print(json.dumps(items, indent=2))
     elif items:
@@ -2413,6 +2413,15 @@ def review_draft(arguments: argparse.Namespace) -> int:
         watch.request_refresh(root, [(repo, arguments.pr)])
     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.draft_lines(result)))
     return 0
+
+
+def counted_logins(checkout: Path) -> tuple[str, ...]:
+    """The logins `review.reviewers` names in the checkout's configuration, whose verdicts count beside the
+    reviewer's; none when there is no checkout to read it from."""
+    try:
+        return review.extra_reviewers(load_config(review.checkout_root(checkout)).get("review.reviewers"))
+    except ProjectorError:
+        return ()
 
 
 def labels_enabled(checkout: Path) -> bool:
@@ -2465,7 +2474,8 @@ def run_review(arguments: argparse.Namespace) -> int:
             configured = None
         state = review.setup(root, arguments.pr, checkout, arguments.repo, arguments.reviewer,
                              configured if isinstance(configured, str) else None,
-                             arguments.model, loop, arguments.rereview, arguments.replace, labels_enabled(checkout))
+                             arguments.model, loop, arguments.rereview, arguments.replace, labels_enabled(checkout),
+                             counted_logins(checkout))
     else:
         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
         if command == "census":
@@ -2512,7 +2522,8 @@ def run_review(arguments: argparse.Namespace) -> int:
             enabled = incremental_enabled(Path(state["checkout"])) if arguments.incremental else True
             result = review.publish(paths, loop, arguments.verdict, arguments.body,
                                     arguments.threads, arguments.covered, arguments.second_verdict, allow,
-                                    arguments.incremental, enabled, labels_enabled(Path(state["checkout"])))
+                                    arguments.incremental, enabled, labels_enabled(Path(state["checkout"])),
+                                    counted_logins(Path(state["checkout"])))
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
@@ -3104,6 +3115,7 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
         base=base,
         lookup=base_pr if repo else None,
         status_lookup=pr_status if repo else None,
+        counted=review.extra_reviewers(load_config(root).setting("review.reviewers")),
         stacks_lookup=repo_stacks if repo else None,
     )
     return (f"{len(projects)} projects, {len(proposed)} proposed project{'' if len(proposed) == 1 else 's'}, "
@@ -3459,7 +3471,8 @@ def init_required_check(arguments: argparse.Namespace, root: Path, files: list[F
         try:
             reviewer = review.reviewer_login(None, username if isinstance(username, str) else None,
                                              review.authenticated_login())
-            for posted in review.backfill_statuses(repo, reviewer):
+            also = review.extra_reviewers(config.get("review.reviewers"))
+            for posted in review.backfill_statuses(repo, reviewer, also):
                 print(f"project: posted {review.REVIEW_CONTEXT} success on #{posted['number']} at "
                       f"{posted['sha'][:7]}, which a review already signed off", file=sys.stderr)
         except review.ReviewError as error:

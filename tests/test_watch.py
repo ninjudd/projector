@@ -571,6 +571,28 @@ class FixRoleTests(WatchCase):
         self.assertEqual([unreviewed(3), f"FINDING acme/app#3 src/x.py:3 [bugbot]: A nil deref — {fix_action(3)}"],
                          events["fixer"], "an open finding keeps #3's clean verdict from signing it off")
 
+    def test_a_verdict_by_a_login_review_reviewers_names_signs_the_head_off(self) -> None:
+        home = self.scratch / "home"
+        checkout = home / "app"
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+        subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", "https://github.com/acme/app.git"],
+                       check=True)
+        (checkout / ".projector.toml").write_text('[review]\nreviewers = "github-actions[bot]"\n')
+        environment = mock.patch.dict(os.environ, {"HOME": str(home)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.github.pull_request(1, draft=False, verdicts=[
+            projector_verdict(SHA_A, "clean", who="github-actions[bot]", association="NONE")])
+        self.github.pull_request(2, draft=False, verdicts=[
+            projector_verdict(SHA_A, "clean", who="passerby", association="NONE")])
+        self.fixer("acme/app#1 fix", "acme/app#2 fix")
+        write_json(self.folder("fixer") / "agent.json", {"schema_version": 1, "cwd": str(checkout)})
+
+        events = self.cycle()
+
+        self.assertEqual([unreviewed(2)], events["fixer"],
+                         "the live checkout's review.reviewers counts the bot's verdict, and only the bot's")
+
     def test_a_ready_pull_request_another_session_reviews_asks_the_fixer_for_nothing(self) -> None:
         self.github.pull_request(1, draft=False)
         self.fixer("acme/app#1 fix")

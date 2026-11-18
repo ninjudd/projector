@@ -3394,6 +3394,19 @@ class StatusTests(LatestWinsCase):
                     self.assertEqual(("changes-requested", [newest, older]),
                                      (result["verdict"], [m["review"] for m in result["models"]]))
 
+    def test_a_login_review_reviewers_names_counts_on_a_public_repository(self) -> None:
+        self.github.pr["base"]["repo"]["visibility"] = "public"
+        bot = self.add_verdict("claude-opus-5-5", login="github-actions[bot]", association="NONE")
+        self.add_verdict("gpt-5.5", login="passer-by", association="NONE", verdict="changes-requested")
+
+        before = json.loads(self.status("--json")[1])
+        (self.checkout / ".projector.toml").write_text('[review]\nreviewers = "someone, github-actions[bot]"\n')
+        after = json.loads(self.status("--json")[1])
+
+        self.assertEqual("unreviewed", before["verdict"])
+        self.assertEqual(("clean", [bot]), (after["verdict"], [m["review"] for m in after["models"]]),
+                         "the listed bot counts, and an account the list does not name still does not")
+
     def test_a_pull_request_that_cannot_be_read_exits_one(self) -> None:
         self.github.missing = True
 
@@ -4308,6 +4321,64 @@ class IdentityTests(unittest.TestCase):
 
     def test_two_versions_of_one_model_are_two_reviewers(self) -> None:
         self.assertNotEqual(review.identity("claude-opus-5-5"), review.identity("claude-opus-5-6"))
+
+
+class RunnerTokenTests(unittest.TestCase):
+    """A CI runner's token belongs to no GitHub user, and gh stores no login for it."""
+
+    REFUSED = "gh api user --jq .login failed: Resource not accessible by integration (HTTP 403)"
+
+    @staticmethod
+    def gh(user: str | None = None, stored: tuple[str, ...] = ()):
+        """GitHub as a token sees it: one acting as `user`, or as no user when it is None, with gh holding a
+        stored login for each name in `stored`."""
+        def answer(args: list[str], token: str | None = None) -> str:
+            if args == ["api", "user", "--jq", ".login"]:
+                if user is None:
+                    raise ReviewError(RunnerTokenTests.REFUSED)
+                return f"{user}\n"
+            if args[:3] == ["auth", "token", "--user"]:
+                if args[3] not in stored:
+                    raise ReviewError(f"gh auth token --user {args[3]} failed: no oauth token found")
+                return f"stored-{args[3]}\n"
+            if args == ["auth", "token"]:
+                return "active\n"
+            raise AssertionError(f"unexpected gh call: {args}")
+        return mock.patch.object(review, "run_gh", answer)
+
+    def named(self, login: str | None):
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop(review.TOKEN_LOGIN, None)
+        if login is not None:
+            os.environ[review.TOKEN_LOGIN] = login
+
+    def test_a_token_of_no_user_is_the_login_the_variable_names(self) -> None:
+        self.named("github-actions[bot]")
+        with self.gh():
+            self.assertEqual("github-actions[bot]", review.authenticated_login())
+
+    def test_the_variable_never_renames_a_persons_token(self) -> None:
+        self.named("github-actions[bot]")
+        with self.gh(user="octocat"):
+            self.assertEqual("octocat", review.authenticated_login())
+
+    def test_a_token_of_no_user_without_the_variable_fails_naming_it(self) -> None:
+        self.named(None)
+        with self.gh(), self.assertRaisesRegex(ReviewError, review.TOKEN_LOGIN):
+            review.authenticated_login()
+
+    def test_the_active_token_posts_only_as_the_account_it_acts_as(self) -> None:
+        self.named("github-actions[bot]")
+        with self.gh():
+            self.assertEqual("active", review.reviewer_token("github-actions[bot]"))
+        with self.gh(user="octocat"):
+            self.assertEqual("active", review.reviewer_token("OctoCat"))
+            with self.assertRaisesRegex(ReviewError, "no gh login for the reviewer review-bot"):
+                review.reviewer_token("review-bot")
+        with self.gh(user="octocat", stored=("review-bot",)):
+            self.assertEqual("stored-review-bot", review.reviewer_token("review-bot"))
 
 
 class ReviewCountsTests(unittest.TestCase):

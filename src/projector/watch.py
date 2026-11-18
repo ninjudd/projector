@@ -673,7 +673,8 @@ def trim_review(found: dict) -> dict:
             "submitted_at": found.get("submitted_at"), "author_association": found.get("author_association")}
 
 
-def standing_suggestions(reviews: list[dict], head: str, operator: str, visibility: Optional[str]) -> dict:
+def standing_suggestions(reviews: list[dict], head: str, operator: str, visibility: Optional[str],
+                         also: tuple[str, ...] = ()) -> dict:
     """How many suggestions each review lists, for the reviews whose suggestions `project review suggestions`,
     run by the operator, lists on `head`: each account's newest Projector verdict on it by each model, and the
     full review an incremental one among them builds on, which can be of an earlier head. `reviews` are the
@@ -681,7 +682,7 @@ def standing_suggestions(reviews: list[dict], head: str, operator: str, visibili
     rows = [{"id": found.get("id"), "url": found.get("html_url"), "at": found.get("submitted_at"),
              "login": (found.get("user") or {}).get("login"), "association": found.get("author_association"),
              "body": found.get("body") or ""} for found in reviews if found.get("id") is not None]
-    chosen = review.suggesting_reviews(head, review.counted_reviews(rows, operator, visibility))
+    chosen = review.suggesting_reviews(head, review.counted_reviews(rows, operator, visibility, also))
     return {found["id"]: review.listed_suggestions(found) for found in chosen}
 
 
@@ -1324,6 +1325,8 @@ class Pass:
         # By repository, its open pull requests, and by pull request, the subagent that fixes it.
         self.listings: dict[str, object] = {}
         self.fixers: dict[tuple[str, int], str] = {}
+        # By repository, lowercased, the logins `review.reviewers` names in a live checkout of it.
+        self.logins: Optional[dict[str, tuple[str, ...]]] = None
 
     def tell(self, session: str, *lines: str) -> None:
         self.outbox.setdefault(session, []).extend(lines)
@@ -1699,6 +1702,20 @@ class Pass:
         else:
             state["review"].pop(role_label(pull, name), None)
 
+    def counted_logins(self, repo: str) -> tuple[str, ...]:
+        """The logins whose verdicts count on `repo` beside the operator's, as `project review status` counts
+        them there: those `review.reviewers` names in a checkout of it that a live session works in, read once
+        a pass. A repository no live session works in counts none."""
+        if self.logins is None:
+            self.logins = {}
+            for top in live_checkouts(self.root, self.daemon.live).values():
+                try:
+                    named = review.origin_repo(top).lower()
+                    self.logins[named] = review.extra_reviewers(load_config(top).setting("review.reviewers"))
+                except (ProjectorError, ConfigError) as error:
+                    self.daemon.log(f"could not read review.reviewers in {top}: {error}")
+        return self.logins.get(repo.lower(), ())
+
     def locks_for(self, repo: str, number: int) -> list:
         pull = (repo.lower(), number)
         if pull not in self.lock_lists:
@@ -1776,10 +1793,11 @@ class Pass:
         # announced only once. A draft waits on its author, not on a review.
         unreviewed = f"unreviewed:{number}:{head}"
         if not pr.get("isDraft") and not reviewers \
-                and not head_sign_off(pr, head, self.daemon.operator or "", visibility)["signed_off"]:
+                and not head_sign_off(pr, head, self.daemon.operator or "", visibility,
+                                      self.counted_logins(repo))["signed_off"]:
             starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
                       for comment, _ in self.live_starts(pr, head)]
-            if review.counted_reviews(starts, self.daemon.operator or "", visibility) \
+            if review.counted_reviews(starts, self.daemon.operator or "", visibility, self.counted_logins(repo)) \
                     or self.reviewed_remotely(repo, number):
                 if unreviewed in announced:
                     kept[unreviewed] = announced[unreviewed]
@@ -1825,7 +1843,8 @@ class Pass:
             standing(thread["id"], f"FINDING {ref} {place} [{who}]{said} — {action}",
                      f"FINDING {ref} (still open) {place} [{who}]{said} — {action}",
                      [head, last.get("databaseId"), codex_watch.digest(last.get("body") or "")])
-        suggesting = standing_suggestions(reviews, head, self.daemon.operator or "", visibility)
+        suggesting = standing_suggestions(reviews, head, self.daemon.operator or "", visibility,
+                                          self.counted_logins(repo))
         for found in reviews:
             if found.get("id") is None:
                 continue
@@ -1965,7 +1984,7 @@ class Pass:
         head = pr.get("headRefOid") or ""
         branch = pr.get("headRefName") or "?"
         action = f"run review-pr on {ref} in subagent review-{number} with --loop {session}"
-        signed = head_sign_off(pr, head, reviewer, repository.get("visibility"))
+        signed = head_sign_off(pr, head, reviewer, repository.get("visibility"), self.counted_logins(repo))
         reviewed = any(found["model"] == model and (found["login"] or "").lower() == reviewer
                        for found in signed["models"])
         newest = signed["newest"]["verdict"] if signed["newest"] else None
@@ -2083,12 +2102,15 @@ def verdict_rows(pr: dict) -> list[dict]:
             for node in nodes(pr, "reviews") if review.verdict_marker(node.get("body") or "")]
 
 
-def head_sign_off(pr: dict, head: str, reviewer: str, visibility: Optional[str]) -> dict:
-    """`review.sign_off` of the head from the reviewer's verdicts and those of every account `project review
-    status` counts, and the open Projector finding threads in the daemon's query."""
+def head_sign_off(pr: dict, head: str, reviewer: str, visibility: Optional[str],
+                  also: tuple[str, ...] = ()) -> dict:
+    """`review.sign_off` of the head from the reviewer's verdicts, those of each login in `also`, and those of
+    every account `project review status` counts, and the open Projector finding threads in the daemon's
+    query."""
     open_threads = sum(1 for thread in nodes(pr, "reviewThreads") if not thread.get("isResolved")
                        and review.FINDING_MARKER in ((nodes(thread, "first") or [{}])[0].get("body") or ""))
-    return review.sign_off(head, review.counted_reviews(verdict_rows(pr), reviewer, visibility), open_threads)
+    return review.sign_off(head, review.counted_reviews(verdict_rows(pr), reviewer, visibility, also),
+                           open_threads)
 
 
 def newest_answer(unresolved: list[dict]) -> Optional[int]:
