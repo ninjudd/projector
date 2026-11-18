@@ -66,9 +66,12 @@ author's sessions and the site, count that account's reviews.
 
 1. **The event.** A `pull_request` event (`opened`, `reopened`,
    `synchronize`, or `ready_for_review`) starts the workflow, or a person
-   starts it by hand with `workflow_dispatch` and a pull request number. The
-   job runs only when the pull request is not a draft and its head is in
-   the same repository. A fork's pull request is skipped (§ 7).
+   starts it by hand with `workflow_dispatch` and a pull request number.
+   Only a pull request that is not a draft and whose head is in the same
+   repository is reviewed. A fork's pull request is skipped (§ 7). For a
+   `pull_request` event, the job's `if` skips the rest before a runner
+   starts. A dispatch carries only a number, so `project review run`
+   enforces the same rule for either trigger (step 6).
 2. **One run per pull request and agent.** The job's concurrency group is
    `projector-review-<number>-<agent>` with `cancel-in-progress: true`, so a
    new push cancels the review of the head it replaces. The group stands in
@@ -86,7 +89,12 @@ author's sessions and the site, count that account's reviews.
    committed setting for CI, such as a `review.gate` that needs a local
    tool.
 6. **The run.** The action runs `project review run <number> --agent <agent>
-   --model <model>`, which does these steps:
+   --model <model>`. The command first reads the pull request from GitHub.
+   When its head is in another repository, or it is a draft, the command
+   prints why and exits 1 before it reads the diff, posts anything, or
+   starts an agent. This check, not the job's `if`, is the boundary that
+   keeps a fork's diff away from the model credential and the token. Then
+   the command does these steps:
    1. **Skip a reviewed head.** When the reviewer already has a verdict by
       this model on the head, the command prints that review's URL and exits
       0, unless `--rereview` is given. A re-run of a finished job therefore
@@ -619,7 +627,9 @@ file:
 - **Same-repository pull requests only.** A fork's `pull_request` run gets no
   secrets. `pull_request_target` would give it secrets, but the agent would
   then read an outsider's diff with a model key and a writing token in its
-  environment, where one successful prompt injection leaks both.
+  environment, where one successful prompt injection leaks both. A manual
+  dispatch names any pull request number, so `project review run` refuses a
+  fork's head itself rather than relying on the workflow's `if`.
 
 ## 4. Acceptance criteria
 
@@ -630,6 +640,7 @@ file:
 | Push twice within a minute | The first run is cancelled, and the second run gives the only verdict on the newest head, with no start comment left behind |
 | Re-run a finished job | The job prints the existing verdict's URL, exits 0, and posts nothing |
 | Open a pull request from a fork, and push to a draft | No review job runs |
+| Start the workflow by hand with a fork's pull request number, and with a draft's | The review job fails before the agent starts, its log says why, and nothing is posted on the pull request |
 | Make the agent exit without publishing, such as by giving it a model ID the CLI refuses | The job fails, the start comment and `reviewing` label are gone, and one comment names the head and the run |
 | Run `project review status` on the reviewed pull request from a session with `review.reviewers` set, and without it | The bot's verdict signs the head off with the setting, and is ignored without it |
 | List a private repository in `review.context_repos` of a public repository | The run warns and leaves it out, and the agent's working folders do not include it |
@@ -644,6 +655,11 @@ file:
 
 These tests fail before the change, and each catches the bug it names:
 
+- **`test_run_refuses_a_fork_or_a_draft`.** With a fake `gh`, a pull request
+  whose head is in another repository, and one that is a draft, each make
+  the command exit 1 without reading the diff, posting a comment, or
+  starting the agent. Catches a manual dispatch that sends a fork's diff to
+  an agent holding the model credential and the token.
 - **`test_run_skips_a_reviewed_head`.** Catches a re-run that posts a second
   verdict, or that fails on the collision check because the cache lost the
   record.
@@ -750,9 +766,10 @@ These tests fail before the change, and each catches the bug it names:
 
 - **Fork pull requests.** Decided: the workflow skips them, as § 2.1 step 1
   says. Review them only once the agent's shell can run without the model
-  credential and a writing token in its environment. Until then, the job's
-  `if` stays the boundary, and no change offers `pull_request_target` for
-  reviews.
+  credential and a writing token in its environment. Until then,
+  `project review run`'s check of the head's repository stays the boundary
+  for every trigger, the job's `if` only saves a runner, and no change
+  offers `pull_request_target` for reviews.
 - **The app model.** Decided: an app is optional. Reviews post as
   `github-actions[bot]` by default. An owner who wants a named reviewer, or
   reviews that read context repositories, creates their own app once and
