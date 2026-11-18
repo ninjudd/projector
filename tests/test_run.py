@@ -24,12 +24,17 @@ HEAD = "a" * 40
 MODEL = "claude-opus-5-5"
 SKILLS = Path(cli.__file__).resolve().parents[2] / "skills"
 
-# The agent `review.runner` names in these tests. It records the environment it saw, then does what the
-# `behavior` file in its folder says: publish a verdict, write a report and publish nothing, or outlast its time.
+# The agent `review.runner` names in these tests. It records the environment it saw, writes the files a `setup`
+# would when its folder has `setup.json`, then does what the `behavior` file says: publish a verdict, write a
+# report and publish nothing, or outlast its time.
 AGENT = '''
 import json, os, pathlib, sys, time
 here = pathlib.Path(sys.argv[1])
 (here / "seen.json").write_text(json.dumps({"env": dict(os.environ), "stdin": sys.stdin.read()}))
+if (here / "setup.json").exists():
+    for path, content in json.loads((here / "setup.json").read_text()).items():
+        pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+        pathlib.Path(path).write_text(json.dumps(content))
 behavior = (here / "behavior").read_text().strip()
 if behavior == "publish":
     (here / "published.json").write_text(json.dumps({"id": 950, "sha": os.environ["HEAD_SHA"]}))
@@ -56,6 +61,7 @@ class FakeGitHub:
         self.reviews: list[dict] = []
         self.starts: list[dict] = []
         self.posted: list[str] = []
+        self.deleted: list[str] = []
 
     def listed_reviews(self) -> list[dict]:
         published = self.agent_folder / "published.json"
@@ -80,6 +86,9 @@ class FakeGitHub:
         if args[:2] == ["api", f"repos/{REPO}/issues/1/comments"] and args[2] == "-f":
             self.posted.append(args[3].removeprefix("body="))
             return "{}"
+        if args[:3] == ["api", "-X", "DELETE"]:
+            self.deleted.append(args[3])
+            return ""
         raise AssertionError(f"unexpected gh call: {args}")
 
 
@@ -194,9 +203,8 @@ class RunTests(unittest.TestCase):
             with self.subTest(behavior=behavior):
                 self.setUp()
                 self.behave(behavior)
-                with mock.patch.object(review, "finish", wraps=review.finish) as finish, \
-                        mock.patch.dict(os.environ, {"GITHUB_SERVER_URL": "https://github.com",
-                                                     "GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "77"}):
+                with mock.patch.dict(os.environ, {"GITHUB_SERVER_URL": "https://github.com",
+                                                  "GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "77"}):
                     code = self.review_run()
 
                 self.assertEqual(1, code)
@@ -204,7 +212,45 @@ class RunTests(unittest.TestCase):
                 self.assertIn(reason, self.github.posted[0])
                 self.assertIn(f"https://github.com/{REPO}/actions/runs/77", self.github.posted[0])
                 self.assertIn(f"sha={HEAD}", self.github.posted[0])
-                self.assertTrue(finish.call_args.args[4], "the cleanup is forced, since nothing was published")
+
+    def review_files(self, loop: str, start_comment: int) -> dict[str, dict]:
+        """The state and lock a `setup` in `loop` writes for HEAD, by path."""
+        paths = review.Paths(self.tmp / "state" / "projector" / "reviews", REPO, 1, MODEL)
+        state = {"repo": REPO, "number": 1, "sha": HEAD, "checkout": str(self.checkout), "worktrees": [],
+                 "reviewer": "operator", "model": MODEL, "identity": review.identity(MODEL), "loop": loop,
+                 "start_comment": {"id": start_comment, "created_at": "2026-11-18T11:00:00Z"}}
+        lock = {"sha": HEAD, "host": "runner", "loop": loop, "pid": 1, "taken_at": review.now().isoformat()}
+        return {str(paths.state): state, str(paths.lock(HEAD)): lock}
+
+    def test_a_failed_run_cleans_up_the_review_its_agent_set_up(self) -> None:
+        # A setup killed between taking its lock and writing its state leaves only the lock, which the state
+        # cache would carry into the next run and refuse its setup for a day.
+        for kept, why in ((slice(None), "the unpublished review's state and lock are discarded"),
+                          (slice(1, None), "a lock with no state is discarded")):
+            with self.subTest(why=why):
+                self.setUp()
+                files = dict(list(self.review_files("run", 501).items())[kept])
+                (self.agent / "setup.json").write_text(json.dumps(files))
+                self.behave("nothing")
+
+                self.assertEqual(1, self.review_run())
+
+                self.assertEqual([], [path for path in files if Path(path).exists()], why)
+
+    def test_a_failed_run_leaves_another_loops_live_review_alone(self) -> None:
+        # Another loop holds this pull request and model's lock, so the agent's setup is refused and it publishes
+        # nothing; cleaning up regardless deleted that loop's state, lock, and worktrees from under it.
+        files = self.review_files("laptop", 400)
+        for path, content in files.items():
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text(json.dumps(content))
+        self.behave("nothing")
+
+        self.assertEqual(1, self.review_run())
+
+        self.assertEqual(list(files), [path for path in files if Path(path).exists()])
+        self.assertEqual([], self.github.deleted, "the other review's start comment stands")
+        self.assertEqual(1, len(self.github.posted), "the run still says on the pull request that it failed")
 
     def test_an_agent_out_of_time_is_stopped_and_the_run_fails(self) -> None:
         self.behave("sleep")

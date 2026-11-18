@@ -146,6 +146,24 @@ def verdicts_on(reviews: list[dict], head: Optional[str], model: str) -> list[di
     return sorted(found, key=lambda posted: posted.get("at") or "", reverse=True)
 
 
+def stored(paths: review.Paths) -> Optional[dict]:
+    """The model's review state for the pull request, or None when there is none or it cannot be read."""
+    try:
+        return review.stored_state(paths)
+    except (ReviewError, OSError, ValueError):
+        return None
+
+
+def set_up_here(before: Optional[dict], after: Optional[dict], loop: str) -> bool:
+    """Whether the review state `after` the agent ran is the one its `setup` wrote: it names the run's loop and
+    a start comment the state `before` the run did not. Otherwise the state, its lock, and its worktrees are
+    another review's, such as one another loop holds, whose lock refused the agent's `setup`."""
+    if after is None or after.get("loop") != loop:
+        return False
+    started = (after.get("start_comment") or {}).get("id")
+    return started is not None and started != ((before or {}).get("start_comment") or {}).get("id")
+
+
 def stale_start(starts: list[dict], reviews: list[dict], head: str, model: str) -> Optional[int]:
     """The newest live start comment of `model` on `head`. Only one run of a reviewer and an agent holds a pull
     request at a time, so such a comment comes from a run that was cancelled."""
@@ -244,6 +262,8 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
 
     print(f"reviewing {repo}#{number} at {head[:7]} as {reviewer} with {model} through {chosen}"
           + (f", in place of the cancelled run's start comment {replace}" if replace is not None else ""))
+    paths = review.Paths(root, repo, number, model)
+    before, held = stored(paths), set(paths.locks())
     try:
         code, timed_out = start(invocation, environment, checkout, timeout_minutes * 60)
     finally:
@@ -265,7 +285,17 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
     else:
         reason = report_text(report) or f"the agent exited {code} and published no verdict"
     try:
-        review.finish(root, number, repo, model, True, checkout, labels)
+        if set_up_here(before, stored(paths), loop):
+            review.finish(root, number, repo, model, True, checkout, labels)
+        else:
+            # A setup stopped between taking its lock and writing the state, as a timeout can stop it, leaves
+            # only the lock, which would refuse the next run's setup for a day.
+            for path in paths.locks():
+                if path not in held and (lock := review.read_lock(path)) is not None and lock.loop == loop:
+                    path.unlink(missing_ok=True)
+            if before is not None:
+                print(f"project: left the review state of {repo}#{number} by {model} alone, because the agent did "
+                      "not set it up", file=sys.stderr)
     except ReviewError as error:
         print(f"project: could not clean the review up: {error}", file=sys.stderr)
     review.run_gh(["api", f"repos/{repo}/issues/{number}/comments",

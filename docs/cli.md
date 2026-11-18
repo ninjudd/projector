@@ -2754,8 +2754,11 @@ or on a newer one: when a push lands while the agent reviews, the skill
 moves the review to the new head and publishes there. When the agent exits
 with no new verdict, or runs out of its `--timeout` minutes, 45 by default,
 the command runs
-`project review finish --force`, which deletes the start comment and takes
-`reviewing` off. It then posts one comment on the pull request that names
+`project review finish --force` for the review the agent set up, which
+deletes the start comment and takes `reviewing` off. A review another loop
+holds, which refused the agent's `setup`, keeps its state, lock, and
+worktrees, and a lock the agent's `setup` took and left with no state is
+removed. The command then posts one comment on the pull request that names
 the head, the report file's text or why there is none, and the Actions run
 when there is one, and exits 1.
 

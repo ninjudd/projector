@@ -109,8 +109,9 @@ author's sessions and the site, count that account's reviews.
       reviewer's reviews. It succeeds when a Projector verdict by this model
       was submitted after the run started, on the head or on one pushed
       while the agent ran (§ 9). Otherwise it
-      runs `project review finish --force` for the pull request, which
-      deletes the start comment and takes `reviewing` off. It then posts one
+      runs `project review finish --force` for the review the agent set up
+      (§ 9), which deletes the start comment and takes `reviewing` off. It
+      then posts one
       comment that names the head, the reason the agent gave in its report
       file or "the agent published no verdict", and the run's URL, and it
       exits 1.
@@ -865,6 +866,15 @@ These tests fail before the change, and each catches the bug it names:
   head makes an earlier verdict look like this run's. The verdict may name
   a newer head than the one the run started on, because the skill moves an
   unpublished review to a head pushed while it runs.
+- **A failed run cleans up only its own review.** The run reads the
+  model's review state before the agent starts. Afterwards it runs
+  `project review finish --force` only when the state names the run's loop
+  and a start comment the earlier state did not, which only the agent's
+  `setup` writes. When another loop holds the lock, `setup` is refused, and
+  that loop's state, lock, and worktrees stay as they are. A lock that
+  names the run's loop and appeared during the run, when the agent wrote
+  no state, is a `setup` stopped partway, and the run removes it so the
+  cached state does not refuse the next run.
 - **Asking before a run.** `project review run` starts another agent with
   its own credential, or the command `review.runner` names. Claude Code
   asks before it through `Bash(project review run *)`, and Codex's rules
