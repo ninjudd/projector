@@ -71,8 +71,53 @@ export const needsDelivery = (item: Item, time: number): boolean =>
         (item.kind === 'request' && isStarting(item))))) &&
   (item.claim === undefined || time - item.claim.renewedAt >= CLAIM_MS)
 
-/** What the panel puts in the prompt to discuss an item: its subject, in quotes. */
-export const quoteOf = (item: Item) => `"${item.subject}"`
+/** An item's subject in quotes, which a prompt quotes the item by, with or without its reference before it. */
+export const subjectQuoteOf = (item: Item) => `"${item.subject}"`
+
+/** What the panel puts in the prompt to discuss an item: its reference in brackets, then its subject in quotes. */
+export const quoteOf = (item: Item) => `[${item.ref}] ${subjectQuoteOf(item)}`
+
+/** The pattern of an item's reference as `project inbox` numbers items. */
+const REF = '[1-9][0-9]*'
+
+/** A reference in brackets that ends the text before a quoted subject, as `quoteOf` writes it. */
+const REF_BEFORE = new RegExp(`\\[(${REF})\\][ \\t]*$`)
+
+/**
+ * One quote a prompt holds: where it starts, at its reference when one is
+ * written before it, where its subject ends, the quoted subject, and the
+ * reference when it names an item that has that subject or that a drawer put
+ * in the prompt under it. A reference that names neither, or none, leaves
+ * the quote to speak by its subject alone.
+ */
+export type Quoted = { at: number; end: number; quote: string; ref: string | undefined }
+
+/** Every quote of an item's subject, or of a subject a drawer put in the prompt, that a prompt holds, in order. */
+export function quotesIn(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Quoted[] {
+  const names = (ref: string, quote: string) =>
+    items.some(item => item.ref === ref && subjectQuoteOf(item) === quote) ||
+    proposed.some(one => one.ref === ref && one.quote === quote)
+  return [...new Set([...items.map(subjectQuoteOf), ...proposed.map(one => one.quote)])]
+    .flatMap(quote => {
+      const found: Quoted[] = []
+      for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at + 1)) {
+        const written = REF_BEFORE.exec(text.slice(0, at))
+        const ref = written?.[1]
+        found.push({
+          at: at - (written?.[0].length ?? 0),
+          end: at + quote.length,
+          quote,
+          ref: ref !== undefined && names(ref, quote) ? ref : undefined,
+        })
+      }
+      return found
+    })
+    .sort((one, other) => one.at - other.at)
+}
+
+/** Whether a prompt's quotes hold `quote` under the reference `ref`, or under none that names another item. */
+export const holdsQuote = (quoted: readonly Quoted[], ref: string, quote: string) =>
+  quoted.some(one => one.quote === quote && (one.ref ?? ref) === ref)
 
 /** What the panel puts in the prompt for an answer or an outcome: the quoted item, a blank line, and the answer's text. */
 export const proposalOf = (item: Answerable, answer: string) => `${quoteOf(item)}\n\n${answer}`
@@ -118,10 +163,11 @@ function outcomeIn(request: Request, said: string | undefined): Omit<Finished, '
 }
 
 /**
- * What an item's drawer put in the prompt: the item's quote as it read then,
- * and the option or outcome chosen, an empty answer for discuss, or
- * `UNCLEAR_WORDS` for I don't understand, which also keeps the detail you
- * read. `isStale` marks one put there before the item was revised.
+ * What an item's drawer put in the prompt: the item's quoted subject as it
+ * read then, without the reference before it, and the option or outcome
+ * chosen, an empty answer for discuss, or `UNCLEAR_WORDS` for I don't
+ * understand, which also keeps the detail you read. `isStale` marks one put
+ * there before the item was revised.
  */
 export type Proposal = { ref: string; quote: string; answer: string; detail?: string; isStale?: boolean }
 
@@ -153,6 +199,12 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
  * put that quote in the prompt, or else to the oldest with that text. Only
  * questions and requests take answers and replies, snoozed ones included.
  *
+ * A quote is the reference in brackets and the quoted subject that `quoteOf`
+ * writes. Its reference, when it names an item with that subject or one
+ * whose drawer put the subject there, limits every rule here to that item,
+ * so two items that share a subject are told apart. A quote whose reference
+ * was edited out, or names no such item, follows the rules by its subject.
+ *
  * A quote whose text below starts with `I don't understand` says you don't
  * understand an open item of any kind not already marked unclear: the item
  * whose drawer last put those words under that quote or, when the prompt
@@ -169,15 +221,7 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
     .filter((item): item is Answerable => isAnswerable(item) && item.answer === undefined)
     .sort(byAge)
   const markable = items.filter(item => item.answer === undefined && item.unclear === undefined).sort(byAge)
-  const quotes = [...new Set([...items.map(quoteOf), ...proposed.map(one => one.quote)])]
-    .flatMap(quote => {
-      const found: { at: number; end: number; quote: string }[] = []
-      for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at + 1)) {
-        found.push({ at, end: at + quote.length, quote })
-      }
-      return found
-    })
-    .sort((one, other) => one.at - other.at)
+  const quotes = quotesIn(text, items, proposed)
   const answers: Given[] = []
   const outcomes: Finished[] = []
   const answered = new Set<string>()
@@ -189,16 +233,24 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
   // a subject. A prompt that holds the quote once holds one drawer's fill, so
   // a press you cleared gives way to a later discuss. One that holds it twice
   // can hold both fills, and the words are the press's.
-  const unclearAt = (quote: string) => {
-    const drawn = proposed.filter(one => one.quote === quote && !isSettled(one.ref))
-    const isQuotedOnce = quotes.filter(one => one.quote === quote).length === 1
+  // A quote whose reference names an item speaks to that item alone.
+  const aimingAt =
+    (ref: string | undefined) =>
+    (one: { ref: string }) =>
+      ref === undefined || one.ref === ref
+  const unclearAt = ({ quote, ref }: Quoted) => {
+    const aims = aimingAt(ref)
+    const drawn = proposed.filter(one => one.quote === quote && aims(one) && !isSettled(one.ref))
+    const isQuotedOnce = quotes.filter(one => one.quote === quote && one.ref === ref).length === 1
     const source = drawn.findLast(one => one.answer === UNCLEAR_WORDS || (isQuotedOnce && one.answer === '')) ?? drawn.at(-1)
-    if (source === undefined) return markable.find(item => quoteOf(item) === quote && !isSettled(item.ref))?.ref
+    if (source === undefined) {
+      return markable.find(item => subjectQuoteOf(item) === quote && aims(item) && !isSettled(item.ref))?.ref
+    }
     const item = markable.find(one => one.ref === source.ref)
     const isAsRead =
       item !== undefined &&
       source.isStale !== true &&
-      quoteOf(item) === source.quote &&
+      subjectQuoteOf(item) === source.quote &&
       (source.detail === undefined || source.detail === item.detail)
     return isAsRead ? source.ref : undefined
   }
@@ -218,11 +270,13 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
     const outcome = outcomeIn(item, said)
     if (outcome !== undefined) outcomes.push({ request: item, ...outcome })
   }
-  for (const { end, quote } of quotes) {
+  for (const quoted of quotes) {
+    const { end, quote, ref } = quoted
+    const aims = aimingAt(ref)
     const after = text.slice(end, quotes.find(next => next.at >= end)?.at)
     const said = /^[ \t]*\n/.test(after) ? after.trim() : undefined
-    const isAnswer = open.some(item => quoteOf(item) === quote && isOpen(item.ref) && takes(item, said))
-    const unclearRef = saysUnclear(said) && !isAnswer ? unclearAt(quote) : undefined
+    const isAnswer = open.some(item => subjectQuoteOf(item) === quote && aims(item) && isOpen(item.ref) && takes(item, said))
+    const unclearRef = saysUnclear(said) && !isAnswer ? unclearAt(quoted) : undefined
     if (unclearRef !== undefined) {
       unclear.add(unclearRef)
       continue
@@ -234,6 +288,7 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
     const source = proposed.findLast(
       one =>
         one.quote === quote &&
+        aims(one) &&
         (isRequest(one.ref) || one.answer === said || one.answer === '') &&
         !answered.has(one.ref),
     )
@@ -249,13 +304,13 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
       }
       continue
     }
-    const offering = open.find(item => quoteOf(item) === quote && isOpen(item.ref) && takes(item, said))
+    const offering = open.find(item => subjectQuoteOf(item) === quote && aims(item) && isOpen(item.ref) && takes(item, said))
     if (offering !== undefined && said !== undefined) {
       resolve(offering, said)
       continue
     }
-    const intended = proposed.findLast(one => one.quote === quote && isFree(one.ref))
-    const replying = intended?.ref ?? open.find(one => quoteOf(one) === quote && isFree(one.ref))?.ref
+    const intended = proposed.findLast(one => one.quote === quote && aims(one) && isFree(one.ref))
+    const replying = intended?.ref ?? open.find(one => subjectQuoteOf(one) === quote && aims(one) && isFree(one.ref))?.ref
     if (replying !== undefined) replied.add(replying)
   }
   return {
@@ -372,7 +427,7 @@ export const ASK_DESCRIPTION = described([
   'When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
   'When they restore a question after you heard `DISMISSED 3`, `RESTORED 3` arrives, and the question is open again.',
   unclearArrives('question'),
-  'When they reply in their own words instead, the reply arrives as their prompt, quoting the question, and the question stays open:',
+  'When they reply in their own words instead, the reply arrives as their prompt, quoting the question after its number in brackets, such as `[3] "…"`, and the question stays open:',
   'answer what they asked, then withdraw the question if the reply settles it, revise it if it was unclear or the choice has changed,',
   'or leave it open while it still needs them.',
   'When the person needs to do something only they can do, use `request` instead.',
@@ -482,10 +537,10 @@ export const REQUEST_DESCRIPTION = described([
   'the start action. Do the start action only after it arrives, and do exactly what it quotes and nothing more.',
   'Then mark the request ready with `ready`, or, when you cannot finish, `block` it with what they should do first.',
   'Keep working on anything the result does not block. The call returns the request’s number, such as 3.',
-  'When they finish, their outcome arrives later as their prompt, quoting the request with the option they chose and',
+  'When they finish, their outcome arrives later as their prompt, quoting the request after its number in brackets, such as `[3] "…"`, with the option they chose and',
   'any notes under it, or as a message that starts `DONE 3` and names the option. When they decline it, a message that starts `DECLINED 3` arrives. When they restore a request after you heard',
   '`DECLINED 3`, `RESTORED 3` arrives, and the request is open again. When they reply in their own words instead, the',
-  'reply arrives as their prompt, quoting the request, and the request stays open.',
+  'reply arrives as their prompt, quoting the request after its number, and the request stays open.',
   unclearArrives('request'),
   'When you need the person to decide something rather than do it, use `ask` instead.',
 ])

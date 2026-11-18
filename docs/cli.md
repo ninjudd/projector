@@ -2542,9 +2542,9 @@ the note under the item's state. The note is how
 [the console](#use-the-console) carries what you type under an option.
 
 In Projector's panel, only an option answers a question. The panel records an
-answer when a prompt you send quotes the question and follows the quote with
-one of its options' text and nothing else, as pressing the option in its
-drawer fills it in. Anything else you send under a quoted question, such as your own
+answer when a prompt you send quotes the question, its number in brackets
+before its text, and follows the quote with one of its options' text and
+nothing else, as pressing the option in its drawer fills it in. Anything else you send under a quoted question, such as your own
 words, an option with more after it, or a question back, is a reply. The panel
 records nothing, the question stays open, and the reply reaches the agent as
 your prompt. The agent then withdraws the question if the reply settles it,
