@@ -486,10 +486,13 @@ class StateTests(PeersCase):
         self.incoming()
 
         outcomes, sent = self.race("done", "user", (None, None))
+        refused = [str(found) for found in outcomes if isinstance(found, Exception)]
 
         self.assertEqual(1, sum(isinstance(found, dict) for found in outcomes), outcomes)
-        self.assertEqual(["r1 is no longer in the repository inbox; another command responded to it and closed it"],
-                         [str(found) for found in outcomes if isinstance(found, Exception)])
+        # Which refusal the second command gets depends on whether it claims while the first is still queuing.
+        self.assertIn(refused, (["r1 is no longer in the repository inbox; another command responded to it and "
+                                 "closed it"],
+                                ["another command is responding to r1 and closing it; respond again if it fails"]))
         self.assertEqual(1, sent)
         self.assertEqual([], self.entries(self.one, A))
 
@@ -549,6 +552,73 @@ class StateTests(PeersCase):
         self.assertEqual(0, again[0], again[2])
         self.assertEqual(1, len(self.sent_to_jason()))
         self.assertEqual([], self.entries(self.one, A))
+
+    def test_a_reply_refused_while_another_session_changes_state_reaches_no_machine(self) -> None:
+        # Catches a claim kept in `replied`, where another session's state change on the same machine seals it into
+        # the record that syncs: the release takes it out of one mirror only, the other machine keeps it, and its
+        # next change brings it back, so the session can never reply though its reply was never queued.
+        self.incoming()
+        on_three = self.entries(self.three, C)[0]["ref"]
+        key, peers = relay.Key(self.private, "inline"), {"jason": crypto.public_key(JASON)}
+        claimed, refuse = threading.Event(), threading.Event()
+        queue = relay.queue
+
+        def paused(root, repo, cwd, changes, now, remote=None):
+            if any(ref.startswith(f"{relay.USER}{self.jason.id}/") for ref, _, _ in changes):
+                claimed.set()
+                refuse.wait(10)
+                raise relay.RelayError("the outbox could not be written")
+            return queue(root, repo, cwd, changes, now, remote)
+
+        refused: list[Exception] = []
+
+        def respond() -> None:
+            try:
+                repo_inbox.respond(self.one.root, REPO, self.one.work, key, peers, "r1", "reply", by="agent",
+                                   text="Parser half done", session=A, registration=agents.record(self.one.root, A),
+                                   now=self.now)
+            except relay.RelayError as error:
+                refused.append(error)
+
+        with mock.patch.object(relay, "queue", paused):
+            thread = threading.Thread(target=respond)
+            thread.start()
+            self.assertTrue(claimed.wait(10))
+            repo_inbox.snooze(self.one.root, REPO, self.one.work, key, "r1", 60, self.now)
+            entry_id = self.entries(self.one, A)[0]["id"]
+            queued = next(item for item in self.one.outbox() if item["ref"] == relay.state_ref(self.key.id, entry_id))
+            marks = json.loads(crypto.unseal(self.private, queued["sealed"])[1])["replied"]
+            refuse.set()
+            thread.join()
+        self.one.run_pass()
+        self.three.run_pass()
+        self.ok(self.three, C, "snooze", on_three, "--for", "30")
+        self.three.run_pass()
+        self.one.run_pass()
+        held = [self.entries(machine, session)[0]["replied"] for machine, session in ((self.one, A), (self.three, C))]
+        again = self.inbox(self.one, A, "reply", "r1", "--text", "Parser half done", "--as", "agent")
+
+        self.assertEqual(1, len(refused))
+        self.assertEqual([], marks)
+        self.assertEqual([[], []], held)
+        self.assertEqual(0, again[0], again[2])
+        self.assertEqual([A], [mark["session"] for mark in self.entries(self.one, A)[0]["replied"]])
+
+    def test_a_reply_a_stopped_command_reserved_holds_for_five_minutes_only(self) -> None:
+        # Catches a reservation that never lapses: a command that stops between reserving a reply and queuing it,
+        # as a crash would, could otherwise keep its session from ever replying.
+        self.incoming()
+        with mock.patch.object(repo_inbox, "release"):
+            self.refused_queue("reply", "agent", "Parser half done")
+        self.advance(299)
+        held = self.inbox(self.one, A, "reply", "r1", "--text", "Parser half done", "--as", "agent")
+        self.advance(2)
+        lapsed = self.inbox(self.one, A, "reply", "r1", "--text", "Parser half done", "--as", "agent")
+
+        self.assertEqual((65, "project: this session already replied to r1; a session replies to an item once"),
+                         (held[0], held[2].strip()))
+        self.assertEqual(0, lapsed[0], lapsed[2])
+        self.assertEqual(1, len(self.sent_to_jason()))
 
     def test_state_changed_on_two_machines_before_either_pushes_is_merged_rather_than_lost(self) -> None:
         self.incoming()

@@ -568,15 +568,28 @@ building:
   command that timed out or a held lock, still ends the job, since it is not
   the record's doing.
 - **A response claims its entry under the mirror's lock.** `respond`
-  rereads the entry and its state under the lock the state record takes,
-  refuses a reply from a session already in `replied` or an entry another
-  command closed meanwhile, and records the session or removes the entry
-  before it queues anything. So two commands that respond at once send one
-  response between them, where checking an earlier read let both send.
+  rereads the entry, its state, and the responses this machine is queuing
+  under the lock the state record takes, refuses a reply from a session
+  already in `replied` or already replying, and an entry another command
+  closed or is closing, and reserves the response before it queues
+  anything. So two commands that respond at once send one response between
+  them, where checking an earlier read let both send.
 - **A refused response leaves its entry as it was.** `respond` seals the
   response, the step that refuses one too large for the relay, before it
-  claims the entry, and releases the claim under the same lock when
-  queuing fails after it: it takes the session's mark out of `replied`, or
-  puts back the entry and state a closing response removed. A claim kept
-  for a response never sent would stop that session from ever replying, or
-  drop an entry the peer was never told was closed.
+  claims the entry, and drops its reservation under the same lock when
+  queuing fails after it. A claim kept for a response never sent would stop
+  that session from ever replying, or drop an entry the peer was never told
+  was closed.
+- **A claim is a local reservation that no state record carries.** The
+  reservation lives in the mirror's `claims.json`, apart from the state
+  records in `states.json` that every state change seals and queues. Only
+  once the response is queued does the entry change: a reply's state
+  record, queued with the reply, records the session in `replied`, and a
+  closing response removes the entry and its state. Recording the session
+  in `replied` while the reply was still queuing let another session's
+  state change, such as a snooze, seal it into a record that reached your
+  other machines, so a reply that failed to queue still counted as sent
+  there and came back on the next merge. A reservation older than five
+  minutes, which a command that stopped before queuing left behind, no
+  longer refuses the response. The lock is never held across the queue,
+  because the relay's rebase takes the outbox's lock and then the mirror's.

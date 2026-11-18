@@ -17,6 +17,8 @@ Files under the state root, beside the watch state root:
     repo-inbox/<owner>/<repo>/r<number>.json    an opened entry with its role, its peer, and when it opened
     repo-inbox/<owner>/<repo>/count.json         the last number given
     repo-inbox/<owner>/<repo>/states.json        each entry's state record, by the entry's ID
+    repo-inbox/<owner>/<repo>/claims.json        the responses this machine is queuing, by the entry's ID,
+                                                 which no state record carries
     watch/peers.json                             the entries opened from each peer in the past hour, and the
                                                  replies opened to each item you sent
 """
@@ -40,6 +42,9 @@ OUTCOMES = ("answer", "done", "declined", "dismissed", "reply")
 ROLES = ("incoming", "sent", "reply")
 MAX_DETAIL = 16 * 1024
 MAX_REPLIED = 256
+# How long a response's reservation holds at most, so one that a command left behind when it stopped between
+# reserving and queuing, as a crash would, no longer refuses the response after this.
+CLAIM_MS = 5 * 60 * 1000
 # The last millisecond of the year 9999, the latest time a record may carry, so every time converts to a date and
 # divides to seconds as a float.
 MAX_STAMP = 253_402_300_799_999
@@ -524,9 +529,10 @@ def respond(root: Path, repo: str, cwd: Path, key: relay.Key, peers: dict[str, b
     changes = []
     if sends:
         changes.append(change_of(key, relay.user_ref(entry["key_id"], record["id"]), public, record, "reply", now))
-    # Claimed before anything is queued, so of two commands that respond at once, only one sends. A command
-    # that fails after its claim releases it, so a response never queued leaves the entry as it was.
-    state, undo = claim(root, repo, entry, now, closes=closes, mark=mark)
+    # Reserved before anything is queued, so of two commands that respond at once, only one sends. The
+    # reservation is this machine's alone and no state record carries it, so a response that fails to queue
+    # drops it and leaves nothing that another command's state change could publish.
+    token, state = claim(root, repo, entry, now, closes=closes, mark=mark)
     try:
         if closes:
             changes += [deletion(relay.user_ref(key.id, entry["id"])),
@@ -535,83 +541,113 @@ def respond(root: Path, repo: str, cwd: Path, key: relay.Key, peers: dict[str, b
             changes.append(state_change(key, state, now))
         relay.queue(root, repo, str(cwd), changes, now)
     except BaseException:
-        release(root, repo, entry, undo)
+        release(root, repo, entry, token, now)
         raise
+    settle(root, repo, entry, token, now, closes=closes, state=state)
     return {**entry, "reply": record if sends else None, "closes": closes, "peer": name}
 
 
+def read_claims(store: Path, at_ms: int) -> dict[str, list[dict]]:
+    """The responses this machine is queuing, by entry ID, leaving out any older than `CLAIM_MS`, which a command
+    that stopped before it settled or released its reservation left behind."""
+    found = (read_json(store / "claims.json") or {}).get("claims") or {}
+    live: dict[str, list[dict]] = {}
+    for entry_id, held in found.items():
+        kept = [claimed for claimed in held if isinstance(claimed, dict) and isinstance(claimed.get("at"), int)
+                and at_ms - CLAIM_MS < claimed["at"] <= at_ms + CLAIM_MS] if isinstance(held, list) else []
+        if kept:
+            live[entry_id] = kept
+    return live
+
+
+def drop_claim(store: Path, entry_id: str, token: str, at_ms: int) -> None:
+    """Drop one reservation from `claims.json`, under the store's lock, which the caller holds."""
+    claims = read_claims(store, at_ms)
+    kept = [claimed for claimed in claims.pop(entry_id, []) if claimed.get("token") != token]
+    if kept:
+        claims[entry_id] = kept
+    write_json(store / "claims.json", {"schema_version": 1, "claims": claims})
+
+
 def claim(root: Path, repo: str, entry: dict, now: float, *, closes: bool,
-          mark: Optional[dict]) -> tuple[Optional[dict], dict]:
-    """Claim the response to an incoming entry under the mirror's lock, which every change to the entry and its
+          mark: Optional[dict]) -> tuple[str, Optional[dict]]:
+    """Reserve the response to an incoming entry under the mirror's lock, which every change to the entry and its
     state takes, so of two commands that respond to it at once only one sends. Refuses an entry that another
-    command closed since `entry` was read, and, with `mark`, a reply from a session that already replied. A
-    closing response removes the entry and its state; a reply that keeps it open records `mark` in its state.
-    Answers that state to queue, or None when the state did not change, and what `release` needs to undo the
-    claim."""
+    command closed or is closing, and, with `mark`, a reply from a session that replied or is replying.
+
+    The reservation goes in `claims.json`, which no state record is built from, so a state change another
+    command queues meanwhile cannot carry a response that is never queued to your other machines. Answers the
+    reservation's token and, for a reply with `mark`, the state record to queue with it: the mirror's with
+    `mark` added, which the mirror takes only once the queue succeeds."""
     store = folder(root, repo)
+    at = now_ms(now)
     with locked(store):
         found = entry_in(entry_file(store, entry["ref"]))
         if found is None or found["id"] != entry["id"]:
             raise RepoInboxError(f"{entry['ref']} is no longer in the repository inbox; another command responded "
                                  "to it and closed it")
-        states = read_states(store)
-        if mark is not None and any(replied["session"] == mark["session"]
-                                    for replied in (states.get(entry["id"]) or {}).get("replied") or []):
+        claims = read_claims(store, at)
+        held = claims.get(entry["id"], [])
+        if any(claimed.get("closes") for claimed in held):
+            raise RepoInboxError(f"another command is responding to {entry['ref']} and closing it; respond again "
+                                 "if it fails")
+        state = read_states(store).get(entry["id"]) or fresh_state(entry["id"], repo)
+        if mark is not None and any(replier.get("session") == mark["session"]
+                                    for replier in [*(state.get("replied") or []), *held]):
             raise RepoInboxError(f"this session already replied to {entry['ref']}; a session replies to an item "
                                  "once")
-        if closes:
-            entry_file(store, entry["ref"]).unlink(missing_ok=True)
-            removed = states.pop(entry["id"], None)
-            if removed is not None:
-                write_states(store, states)
-            return None, {"entry": found, "state": removed}
-        if mark is None:
-            return None, {}
-        return changed_state(store, states, entry, repo, now, add_replied=mark), {"mark": mark}
+        token = uuid.uuid4().hex
+        claims[entry["id"]] = [*held, {"token": token, "closes": closes, "at": at,
+                                       **({"session": mark["session"]} if mark is not None else {})}]
+        write_json(store / "claims.json", {"schema_version": 1, "claims": claims})
+    if closes or mark is None:
+        return token, None
+    marked = {**state, "replied": [*(state.get("replied") or []), mark],
+              "updated_at": max(at, (state.get("updated_at") or 0) + 1)}
+    return token, merge(marked, marked)
 
 
-def release(root: Path, repo: str, entry: dict, undo: dict) -> None:
-    """Undo a claim whose response was never queued, under the mirror's lock: put back the entry and state a
-    closing response removed, or take the session's mark out of `replied`, so the response can be given again.
-    Leaves what another command changed since the claim."""
+def settle(root: Path, repo: str, entry: dict, token: str, now: float, *, closes: bool,
+           state: Optional[dict]) -> None:
+    """Make a queued response part of the mirror and drop its reservation, under the mirror's lock: a closing
+    response removes the entry and its state, and a reply merges in the state record queued with it, which
+    records the session in `replied`. A reply to an entry another command closed meanwhile changes nothing."""
     store = folder(root, repo)
     with locked(store):
+        drop_claim(store, entry["id"], token, now_ms(now))
+        found = entry_in(entry_file(store, entry["ref"]))
+        present = found is not None and found["id"] == entry["id"]
         states = read_states(store)
-        if "entry" in undo:
-            path = entry_file(store, undo["entry"]["ref"])
-            if entry_in(path) is None:
-                write_json(path, undo["entry"])
-            if undo["state"] is not None and entry["id"] not in states:
-                states[entry["id"]] = undo["state"]
+        if closes:
+            if present:
+                entry_file(store, entry["ref"]).unlink(missing_ok=True)
+            if states.pop(entry["id"], None) is not None:
                 write_states(store, states)
-        elif "mark" in undo:
-            state = states.get(entry["id"])
-            if state is not None and undo["mark"] in (state.get("replied") or []):
-                states[entry["id"]] = {**state, "replied": [found for found in state["replied"]
-                                                            if found != undo["mark"]]}
-                write_states(store, states)
+        elif state is not None and present:
+            states[entry["id"]] = merge(states.get(entry["id"]) or state, state)
+            write_states(store, states)
 
 
-def changed_state(store: Path, states: dict[str, dict], entry: dict, repo: str, now: float, *,
-                  add_replied: Optional[dict] = None, **fields: Optional[int]) -> dict:
-    """Change an entry's state in `states`, read under the store's lock, and write them all. Answers the whole
-    record to queue."""
-    state = dict(states.get(entry["id"]) or fresh_state(entry["id"], repo))
-    if add_replied is not None:
-        state["replied"] = [*state.get("replied", []), add_replied]
-    state.update({key: value for key, value in fields.items() if value is not None})
-    state["updated_at"] = max(now_ms(now), (state.get("updated_at") or 0) + 1)
-    state = merge(state, state)
-    states[entry["id"]] = state
-    write_states(store, states)
-    return state
+def release(root: Path, repo: str, entry: dict, token: str, now: float) -> None:
+    """Drop the reservation of a response that was never queued, under the mirror's lock, so it can be given
+    again. Neither the mirror nor any state record held the reservation, so nothing else needs undoing."""
+    store = folder(root, repo)
+    with locked(store):
+        drop_claim(store, entry["id"], token, now_ms(now))
 
 
 def update_state(root: Path, repo: str, entry: dict, now: float, **fields: Optional[int]) -> dict:
     """Change an entry's state in the mirror, and answer the whole record to queue."""
     store = folder(root, repo)
     with locked(store):
-        return changed_state(store, read_states(store), entry, repo, now, **fields)
+        states = read_states(store)
+        state = dict(states.get(entry["id"]) or fresh_state(entry["id"], repo))
+        state.update({key: value for key, value in fields.items() if value is not None})
+        state["updated_at"] = max(now_ms(now), (state.get("updated_at") or 0) + 1)
+        state = merge(state, state)
+        states[entry["id"]] = state
+        write_states(store, states)
+        return state
 
 
 def snooze(root: Path, repo: str, cwd: Path, key: relay.Key, ref: str, minutes: int, now: float) -> dict:

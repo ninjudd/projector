@@ -4251,12 +4251,16 @@ the responder's machines at their next poll, whether or not the asker is
 online. `reply` takes `-` for standard input, refuses an entry that is not
 incoming, and refuses a second reply from a session that already replied,
 on any of your machines, so a request such as "what is your progress?"
-gathers one reply from each agent. Each response claims the entry under the
-repository inbox's lock before it queues anything, so of two commands that
-respond at once on one machine, only one sends: the other is refused,
-because the session already replied or the first response closed the item.
-A response refused for any reason, such as a reply too large for the relay
-once encrypted, leaves the entry as it was, so you can give it again.
+gathers one reply from each agent. Each response reserves the entry under
+the repository inbox's lock before it queues anything, so of two commands
+that respond at once on one machine, only one sends: the other is refused,
+because the session already replied or is replying, or the first response
+closed the item or is closing it. The reservation stays on that machine,
+and the entry records the reply or closes only once the response is queued,
+so a response refused for any reason, such as a reply too large for the
+relay once encrypted, leaves the entry as it was on every machine, and you
+can give it again. A reservation that a command left behind when it
+stopped before queuing lapses after five minutes.
 
 ### Follow up on an item you sent
 
