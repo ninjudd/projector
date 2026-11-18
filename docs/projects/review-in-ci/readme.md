@@ -880,9 +880,11 @@ These tests fail before the change, and each catches the bug it names:
   rewrites the state, so the state alone cannot show who owns the review.
   The run's `finish` passes its loop as `holder`. Under `review_mutex`,
   the mutex the daemon clears a lock under, `finish` checks that the head's
-  lock names that loop, as `publish` and `move` do. It takes the state and
-  that loop's locks off disk before it changes anything on GitHub, and it
-  refuses once ownership has moved.
+  lock names that loop, as `publish` and `move` do. It removes the
+  worktrees while that lock still keeps every `setup` off the head, then
+  takes that loop's locks and the state off disk, all before it changes
+  anything on GitHub. It refuses once ownership has moved, and it keeps a
+  worktree whose head another loop's lock holds.
 - **Asking before a run.** `project review run` starts another agent with
   its own credential, or the command `review.runner` names. Claude Code
   asks before it through `Bash(project review run *)`, and Codex's rules

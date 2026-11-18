@@ -1423,10 +1423,11 @@ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], f
     Refuses while the review is unpublished unless `force`, and succeeds when there is nothing to clean, so
     a second run changes nothing.
 
-    With `holder`, finish ends the review only while the lock on its head names that loop. It checks the
-    lock and takes the state and that loop's locks off disk together, under the `review_mutex` the watch
-    daemon clears a lock under, before it changes anything on GitHub. A review handed over to another loop
-    keeps its state, lock, worktrees, and start comment, and finish refuses.
+    With `holder`, finish ends the review only while the lock on its head names that loop. Under the
+    `review_mutex` the watch daemon clears a lock under, it checks the lock, removes the worktrees while the
+    lock still keeps every setup off the head, and only then takes that loop's locks and the state off disk,
+    all before it changes anything on GitHub. A worktree whose head another loop's lock holds stays. A review
+    handed over to another loop keeps its state, lock, worktrees, and start comment, and finish refuses.
 
     The repository is `repo`, else the origin of the checkout `cwd` is in, never one taken from review state,
     so a run in one repository cannot end another's review of a pull request with the same number. Every
@@ -1457,8 +1458,16 @@ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], f
                     raise ReviewError(f"the review state of {repo}#{number} by model {model} changed while finish "
                                       "read it, so finish leaves it to the review that wrote it")
                 check_lock(paths, state["sha"], holder)
-                held = [lock for lock in paths.locks()
-                        if (found := read_lock(lock)) is not None and found.loop == holder]
+                # The worktrees go while the lock still holds the head, so no setup can take it and add a
+                # worktree at a path this removes. One whose head another loop's lock holds is that loop's.
+                held, others = [], set()
+                for lock in paths.locks():
+                    found = read_lock(lock)
+                    if found is not None and found.loop == holder:
+                        held.append(lock)
+                    else:
+                        others.add(lock.stem[:SHORT])
+                result["worktrees"] = remove_worktrees(paths, state, frozenset(others))
                 for lock in held:
                     lock.unlink(missing_ok=True)
                 result["released"] = [str(lock) for lock in held]
@@ -1472,7 +1481,8 @@ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], f
                 delete_comment(repo, comment, token)
             if labels:
                 result["labels"] = clear_reviewing(repo, number, state["reviewer"], token)
-        result["worktrees"] = remove_worktrees(paths, state)
+        if holder is None:
+            result["worktrees"] = remove_worktrees(paths, state)
     if holder is None:
         result["released"] = [str(lock) for lock in release(paths)]
         paths.request.unlink(missing_ok=True)
@@ -1513,14 +1523,15 @@ def finished_starts(state: dict, recorded: Optional[int]) -> list[int]:
     return [comment["id"] for comment in starts if comment["id"] == recorded or not is_live(comment, reviews, at)]
 
 
-def remove_worktrees(paths: Paths, state: dict) -> list[str]:
-    """Remove every scratch worktree the state lists, then prune the checkout's record of them, and return
-    those removed. When the checkout that made one is gone or no longer lists it, a worktree in the review's
-    own worktree folder is deleted outright; Git refuses to remove any other path."""
+def remove_worktrees(paths: Paths, state: dict, kept: frozenset[str] = frozenset()) -> list[str]:
+    """Remove every scratch worktree the state lists, except one named by a short SHA in `kept`, then prune
+    the checkout's record of them, and return those removed. When the checkout that made one is gone or no
+    longer lists it, a worktree in the review's own worktree folder is deleted outright; Git refuses to remove
+    any other path."""
     checkout = state["checkout"]
     removed = []
     for path in map(Path, dict.fromkeys(state["worktrees"])):
-        if not path.exists():
+        if not path.exists() or path.name in kept:
             continue
         remove_worktree(checkout, path, paths.worktrees)
         removed.append(str(path))

@@ -14,6 +14,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from typing import Callable, Optional
 from unittest import mock
 
 from projector import cli, review, run
@@ -62,6 +63,8 @@ class FakeGitHub:
         self.starts: list[dict] = []
         self.posted: list[str] = []
         self.deleted: list[str] = []
+        # Called when the run's cleanup lists start comments, after the agent ran.
+        self.on_cleanup: Optional[Callable[[], None]] = None
 
     def listed_reviews(self) -> list[dict]:
         published = self.agent_folder / "published.json"
@@ -82,6 +85,8 @@ class FakeGitHub:
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
             return "".join(json.dumps(r) + "\n" for r in self.listed_reviews())
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/issues/1/comments"]:
+            if self.on_cleanup is not None and (self.agent_folder / "seen.json").exists():
+                self.on_cleanup()
             return "".join(json.dumps(c) + "\n" for c in self.starts)
         if args[:2] == ["api", f"repos/{REPO}/issues/1/comments"] and args[2] == "-f":
             self.posted.append(args[3].removeprefix("body="))
@@ -236,6 +241,32 @@ class RunTests(unittest.TestCase):
                 self.assertEqual(1, self.review_run())
 
                 self.assertEqual([], [path for path in files if Path(path).exists()], why)
+
+    def test_a_failed_run_keeps_the_worktree_of_a_review_set_up_during_its_cleanup(self) -> None:
+        # Cleanup released the head's lock before it removed the worktrees, so a setup for the same head that took
+        # the lock while cleanup read GitHub recreated the worktree path, and cleanup then removed it.
+        paths = review.Paths(self.tmp / "state" / "projector" / "reviews", REPO, 1, MODEL)
+        worktree = paths.worktree(HEAD)
+        files = self.review_files("run", 501)
+        files[str(paths.state)]["worktrees"] = [str(worktree)]
+        (self.agent / "setup.json").write_text(json.dumps(files))
+        self.behave("nothing")
+        worktree.mkdir(parents=True)
+
+        released: list[bool] = []
+
+        def next_setup() -> None:
+            if not paths.lock(HEAD).exists():
+                released.append(worktree.exists())
+                review.take_lock(paths, HEAD, "laptop")
+                worktree.mkdir(parents=True, exist_ok=True)
+        self.github.on_cleanup = next_setup
+
+        self.assertEqual(1, self.review_run())
+
+        self.assertEqual([False], released, "the run's own worktree is gone by the time its lock is")
+        self.assertTrue(worktree.is_dir(), "the next review's worktree stands")
+        self.assertEqual("laptop", review.read_lock(paths.lock(HEAD)).loop)
 
     def test_a_failed_run_leaves_a_review_handed_over_during_it_alone(self) -> None:
         # The watch daemon cleared the run's lock and the new owner's setup took its own before writing the state,
