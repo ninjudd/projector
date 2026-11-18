@@ -1,0 +1,99 @@
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 06579d26..e207aa5e 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1309,6 +1309,8 @@ def roles(parsed: argparse.ArgumentParser) -> None:
+ # A line `key grant` prints is 318 characters, so a longer paste is something else.
+ MAX_PASTE = 4096
+ STORED_NOTHING = "nothing was stored"
++# A prompt waits for its line in slices this long, so it notices a Ctrl-C within one.
++INTERRUPT_CHECK = 0.1
+ 
+ 
+ def add_agent_parser(subcommands) -> None:
+@@ -1366,8 +1368,11 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+ def terminal_line(prompt: str, deadline: float, outcome: str) -> str:
+     """A line typed at the terminal by `deadline`, of at most `MAX_PASTE` bytes, or an error that ends with
+     `outcome`, such as "nothing was stored". A thread reads standard input's file descriptor a byte at a time, so a
+-    read that never returns cannot hold the process, and no byte after the line is consumed."""
+-    print(prompt, end="", flush=True)
++    read that never returns cannot hold the process, and no byte after the line is consumed.
++
++    Ctrl-C raises KeyboardInterrupt here only between waits. Raised by Python's own handler, it can land inside
++    `threading`'s lock code, which then fails with a RuntimeError, and a wait that the signal arrives just before,
++    or that another thread takes the signal during, sleeps through it to its timeout."""
+     stream = sys.stdin.fileno()
+     lines: queue.Queue = queue.Queue()
+ 
+@@ -1380,11 +1385,22 @@ def read() -> None:
+             pass
+         lines.put(bytes(data))
+ 
+-    threading.Thread(target=read, name="terminal", daemon=True).start()
++    interrupted: list[int] = []
++    previous = signal.signal(signal.SIGINT, lambda number, frame: interrupted.append(number))
+     try:
+-        data = lines.get(timeout=max(0.0, deadline - time.monotonic()))
+-    except queue.Empty:
+-        raise relay.RelayError(f"nothing was entered within {JOIN_TIMEOUT / 60:g} minutes, so {outcome}") from None
++        print(prompt, end="", flush=True)
++        threading.Thread(target=read, name="terminal", daemon=True).start()
++        data = None
++        while data is None and not interrupted:
++            remaining = deadline - time.monotonic()
++            if remaining <= 0:
++                raise relay.RelayError(f"nothing was entered within {JOIN_TIMEOUT / 60:g} minutes, so {outcome}")
++            with contextlib.suppress(queue.Empty):
++                data = lines.get(timeout=min(remaining, INTERRUPT_CHECK))
++    finally:
++        signal.signal(signal.SIGINT, previous)
++    if interrupted:
++        raise KeyboardInterrupt
+     if len(data) > MAX_PASTE:
+         raise relay.RelayError(f"the line is longer than {MAX_PASTE} bytes, so {outcome}")
+     return data.decode("utf-8", "replace").strip()
+diff --git a/tests/test_relay.py b/tests/test_relay.py
+index 2c83175b..af95d876 100644
+--- a/tests/test_relay.py
++++ b/tests/test_relay.py
+@@ -814,6 +814,40 @@ def files_under(*folders: Path) -> set[Path]:
+     return {path for folder in folders if folder.exists() for path in folder.rglob("*")}
+ 
+ 
++class TerminalLineTests(unittest.TestCase):
++    def test_a_prompt_ends_on_a_ctrl_c_that_its_wait_for_the_line_would_sleep_through(self) -> None:
++        # A SIGINT that another thread takes trips Python's signal flag without waking the main thread's wait, as
++        # one arriving just before the wait does; the striker sends it once the prompt waits for its line.
++        read, write = os.pipe()
++        typed = io.FileIO(read, "r")
++        self.addCleanup(typed.close)
++        self.addCleanup(os.close, write)
++        waiting = threading.Event()
++
++        class Watched(cli.queue.Queue):
++            def get(self, *args, **kwargs):
++                waiting.set()
++                return super().get(*args, **kwargs)
++
++        def strike() -> None:
++            waiting.wait()
++            signal.pthread_kill(threading.get_ident(), signal.SIGINT)
++
++        handler = signal.getsignal(signal.SIGINT)
++        striker = threading.Thread(target=strike)
++        deadline = time.monotonic() + 10
++        with (mock.patch.object(cli.queue, "Queue", Watched), mock.patch.object(sys, "stdin", typed),
++              redirect_stdout(io.StringIO())):
++            striker.start()
++            with self.assertRaises(KeyboardInterrupt):
++                cli.terminal_line("Paste the line it prints here: ", deadline, cli.STORED_NOTHING)
++        ended = time.monotonic()
++        striker.join()
++
++        self.assertLess(ended, deadline)
++        self.assertIs(handler, signal.getsignal(signal.SIGINT))
++
++
+ class KeyTests(RelayCase):
+     def config(self) -> str:
+         return (self.one.home / ".projector.toml").read_text()

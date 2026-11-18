@@ -1,0 +1,68 @@
+{
+ "version": 1,
+ "name": "Terminal prompt cancellation",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 558,
+  "title": "Let Ctrl-C end a `key join` prompt every time, instead of sometimes hanging or crashing",
+  "head": "9126e629c6f2deeace56b8e57454bc6946390181",
+  "headRef": "fix-flaky-join-interrupt",
+  "base": "12625138ef55bba429d1e9e24026500049f57501",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector copies the relay key between machines through terminal prompts. Previously, Ctrl-C could leave a prompt waiting until its deadline or interrupt Python while it held a threading lock.",
+   "This change records the interrupt, checks that record between queue waits of at most 0.1 seconds, and raises cancellation after restoring the prior signal handler. A regression test sends the interrupt to a worker thread so the main thread’s wait must notice it itself."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "prompt",
+   "title": "End a terminal prompt safely",
+   "kicker": "Record Ctrl-C and check for it between short waits.",
+   "intro": [
+    "The terminal reader runs in a background thread so a blocked read cannot hold the process open. The main thread waits for the reader to put a line into a queue. Python runs signal handlers on the main thread, but a signal delivered to a worker does not wake that queue wait.",
+    "The temporary SIGINT handler now records cancellation without raising inside a lock. The main thread waits in slices, restores the previous handler in a finally block, and then raises KeyboardInterrupt so the existing caller can stop the operation."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Change the shared input helper used by the key join and grant prompts.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1399,
+       "text": "Normal input, oversized input, an expired deadline, and Ctrl-C during Thread.start all preserve the prior SIGINT handler in focused probes. The relay suite also checks that cancelling key join stores nothing."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "regression",
+   "title": "Reproduce the sleeping wait",
+   "kicker": "Send SIGINT to a worker after the prompt begins waiting.",
+   "intro": [
+    "The regression test replaces the line queue with one that signals when the prompt starts waiting. Another thread then sends SIGINT to itself. The prompt must raise KeyboardInterrupt before its ten-second deadline and restore the original handler."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_relay.py",
+     "note": "Add a deterministic signal-delivery regression alongside the existing terminal pairing tests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 847,
+       "text": "The new test passes on this head. Substituting the base implementation makes its before-deadline assertion fail after ten seconds. The full relay module passes all 75 tests."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
