@@ -1,0 +1,182 @@
+{
+ "version": 1,
+ "name": "Reviews in GitHub Actions",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 574,
+  "title": "Review a pull request's head with an agent and no session, through project review run",
+  "head": "11886370341edd6afa65d63bade2e3c60b0981af",
+  "headRef": "review-ci-run",
+  "base": "781038b99b05b922c33fcd773ffbed47c55719a5",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector normally needs a running agent session to review a pull request. This layer adds <code>project review run</code>, which starts an agent for one ready head, checks that it published a verdict, and reports failure when it did not.",
+   "The runner supports Claude Code, Codex, or a configured command. It also lets existing review readers recognize a configured bot account and lets the review job leave a checked summary for a separate job that can push it. The action and this repository’s workflow arrive in the layers above.",
+   "The exact-head gate passed, including 256 hook tests and GitHub’s <code>check</code> job. The focused six-module run completed 833 tests with 104 prerequisite skips. Three P2 findings remain in runner failure handling; this head is not signed off."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "The pieces of a CI review",
+    "html": "<ul class=\"tight\"><li><b>Reviewer:</b> the GitHub account that posts the review.</li><li><b>Loop:</b> the session or runner ID that owns local review state and published-review records.</li><li><b>Handoff:</b> a summary and diff written to a folder for another job to publish.</li></ul>"
+   },
+   {
+    "id": "checks",
+    "title": "What was verified",
+    "html": "<ul class=\"tight\"><li>The gate and focused runner, review, watcher, summary, site, and permissions tests passed.</li><li>Temporary fixtures confirmed the moved-head and ownership failures.</li><li>A mocked Windows timeout confirmed the missing termination branch; no Windows machine or live agent was used.</li><li>Node and site dependency prerequisites were unavailable for 104 focused tests.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "identity",
+   "title": "Count the account that posts the review",
+   "kicker": "GitHub tokens and configured reviewers",
+   "intro": [
+    "A workflow token can act as a bot without belonging to a GitHub user, so the ordinary user lookup can fail. The identity helper now accepts <code>PROJECTOR_TOKEN_LOGIN</code> after GitHub returns that specific integration-token refusal; a person’s successful lookup still wins.",
+    "<code>review.reviewers</code> names additional GitHub accounts whose labeled Projector verdicts count. The CLI, watcher, and site apply the same list so a trusted bot verdict can sign off a public-repository head."
+   ],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers the reviewer-account list and runner command as typed configuration settings."
+    },
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds integration-token identity fallback and threads configured reviewer accounts through verdict and sign-off readers.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "RunnerTokenTests passed: the environment fallback does not rename a successful person-token lookup, and an active token is reused only for its matching account."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Reads configured reviewer accounts from live checkouts and uses them for sign-off and suggestion events."
+    },
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Lets the review pages count verdicts from configured accounts alongside repository members."
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "Checks token fallback, matching-account token reuse, and configured bot verdicts."
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Checks that the configured bot suppresses unreviewed work while an unlisted account does not."
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Checks that the site recognizes a configured bot without trusting an unlisted reviewer."
+    }
+   ]
+  },
+  {
+   "id": "runner",
+   "title": "Run one review without a conversation",
+   "kicker": "Agent startup, timeout and completion",
+   "intro": [
+    "<code>project review run</code> reads the pull request, refuses forks and drafts, skips an already reviewed head unless re-review is requested, and starts a preset or configured command. The environment gives the agent the model, loop, scratch folder, and any start comment to replace.",
+    "The runner then looks for a new verdict and reports failure when none is found. The three open findings concern a head moving during the review, cleanup touching another loop, and timeout behavior on Windows."
+   ],
+   "files": [
+    {
+     "path": "src/projector/run.py",
+     "note": "Introduces the agent presets, head checks, process timeout, verdict detection, and failed-run cleanup.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "A successful review moved to a new pushed head is rejected because completion still filters only the initial SHA. Recognize a newly published verdict on the head actually reviewed, without accepting earlier IDs.",
+       "line": 256
+      },
+      {
+       "kind": "flag",
+       "text": "Forced failure cleanup can remove another loop’s live state, lock, and worktree after this run never acquired them. Check ownership before deleting review state.",
+       "line": 268
+      },
+      {
+       "kind": "flag",
+       "text": "Windows lacks os.killpg and SIGKILL, so timeout raises before stopping the agent or reporting failure. Use platform-appropriate process termination and reap the child.",
+       "line": 193
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Exposes the runner options and passes reviewer configuration through review, site, and summary commands."
+    },
+    {
+     "path": "tests/test_run.py",
+     "note": "Exercises runner refusal, skipping, re-review, cancelled-start replacement, timeout, failure comments, and preset restrictions.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The existing suite passes, but it does not cover the three failure sequences flagged in run.py."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "summaries",
+   "title": "Let another job publish the summary",
+   "kicker": "Checked artifact handoff",
+   "intro": [
+    "A review job does not need permission to push repository contents. When <code>PROJECTOR_SUMMARY_HANDOFF</code> names a folder and the site is hosted, summary publication validates the page and writes its JSON and diff there instead of pushing.",
+    "The later publishing job can require a particular pull request number with <code>--pr</code>. Publication also checks the current head before replacing GitHub summary links, while older-head summaries remain available on the site."
+   ],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Shares pre-publication validation with handoff, reads the current head, and includes review authors in site status data."
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "Checks handoff files without pushes, invalid-summary refusal, wrong-PR refusal, and old-head link preservation.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused summary tests passed, including a temporary bare remote whose summaries ref remains unchanged during handoff."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "policy",
+   "title": "Document the unattended review contract",
+   "kicker": "Permissions, skill behavior and plan state",
+   "intro": [
+    "The headless skill takes its loop and model from the runner, skips subscriptions, and writes questions to a report because nobody can answer interactively. Its normal review and summary method still applies.",
+    "The permission configuration asks before a person’s session starts another review agent. The CLI reference describes the new runner and summary flow, while the project plan moves to in-progress and records implementation decisions."
+   ],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Adds the no-session mode and its environment, scratch, question-reporting, and handoff rules."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Makes project review run an explicit ask in Claude Code and leaves Codex to its usual approval."
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Checks that runner startup does not inherit the broad automatic project-command allowance."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the runner presets, reviewer list, summary handoff, and current-head linking."
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "note": "Marks implementation in progress and records loop, identity, effort, and handoff decisions."
+    }
+   ]
+  }
+ ]
+}
