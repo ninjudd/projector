@@ -27,6 +27,7 @@ from urllib.request import Request, url2pathname, urlopen
 
 from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
                summary, watch)
+from . import ci
 from . import run as headless
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
@@ -236,6 +237,7 @@ def init_digests() -> dict[str, dict[str, str]]:
         "instructions": ("the Projector section in AGENTS.md and CLAUDE.md", instructions.render("docs/projects", ios=True)),
         "site-workflow": (f"the site workflow, {WORKFLOW_PATH}", summary.workflow_text("v0")),
         "clean-workflow": (f"the clean label workflow, {review.CLEAN_WORKFLOW_PATH}", review.clean_workflow_text()),
+        "ci-review-workflow": (f"the CI review workflow, {ci.WORKFLOW_PATH}", ci.workflow_text("v0", ("claude",))),
         "permission-rules": (
             "the permission rules in your Claude Code settings and Codex rules",
             json.dumps([permissions.ALLOW, permissions.ASK, permissions.SUPERSEDED, permissions.RETIRED_ASK,
@@ -603,6 +605,23 @@ def parser() -> argparse.ArgumentParser:
         "--no-require-review", action="store_false", dest="require_review",
         help="record that this repository requires no Projector review before merge, so init stops asking",
     )
+    ci_choice = init.add_mutually_exclusive_group()
+    ci_choice.add_argument(
+        "--ci-review",
+        action="store_true",
+        default=None,
+        help=f"review this repository's pull requests in GitHub Actions: write {ci.WORKFLOW_PATH}, record the "
+        "settings, and set the agents' credential secrets (default: ask at a terminal)",
+    )
+    ci_choice.add_argument(
+        "--no-ci-review", action="store_false", dest="ci_review",
+        help="record that this repository's pull requests get no review in GitHub Actions, so init stops asking",
+    )
+    init.add_argument("--ci-agents", help="the agents that review in GitHub Actions, separated by commas, from "
+                                          f"{', '.join(ci.AGENTS)} (default: review.ci_agents, then claude)")
+    init.add_argument("--ci-credential", choices=ci.KINDS,
+                      help="the credential secret init asks for when an agent has none (default: subscription for "
+                           "claude, api-key for codex)")
     rule_choice = init.add_mutually_exclusive_group()
     rule_choice.add_argument(
         "--publish-rule",
@@ -819,6 +838,13 @@ def parser() -> argparse.ArgumentParser:
     review_commands.add_parser(
         "workflow", help=f"print the {review.CLEAN_WORKFLOW_PATH} that project init writes, to compare with yours"
     )
+    review_ci_workflow = review_commands.add_parser(
+        "ci-workflow", help=f"print the {ci.WORKFLOW_PATH} that project init --ci-review writes, to compare with yours"
+    )
+    review_ci_workflow.add_argument("--agents", help="the agents, separated by commas (default: review.ci_agents, "
+                                                     "then claude)")
+    review_ci_workflow.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow "
+                                                                       "runs (default: v0)")
     review_status = review_commands.add_parser(
         "status", help="report the newest Projector verdict on a pull request's current head"
     )
@@ -2486,6 +2512,10 @@ def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "workflow":
         print(review.clean_workflow_text(), end="")
         return 0
+    if arguments.review_command == "ci-workflow":
+        agents = arguments.agents or load_config(discover_git_root(Path.cwd())).get("review.ci_agents") or "claude"
+        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents)), end="")
+        return 0
     if arguments.review_command in ("hold", "ready"):
         return review_draft(arguments)
     if arguments.review_command == "run":
@@ -3557,9 +3587,132 @@ def init_labels(root: Path) -> None:
         print(f"project: {change} on {repo}", file=sys.stderr)
 
 
+def record_setting(root: Path, key: str, value: object) -> None:
+    """Write an answer `init` records to the repository's `.projector.toml`, and say so."""
+    change = write_value(root / CONFIG_NAME, key, value)
+    print(f"project: {change.action} {key} = {format_value(value)} in {change.path}", file=sys.stderr)
+
+
 def record_required_check(root: Path, value: bool) -> None:
-    change = write_value(root / CONFIG_NAME, "review.require_check", value)
-    print(f"project: {change.action} review.require_check = {format_value(value)} in {change.path}", file=sys.stderr)
+    record_setting(root, "review.require_check", value)
+
+
+CI_REVIEW_QUESTION = "Review this repository's pull requests in GitHub Actions? [y/N] "
+CI_REVIEWER = "github-actions[bot]"
+
+
+def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAction]) -> None:
+    """`init`'s setup of CI review, as docs/projects/review-in-ci/readme.md § 2.10 describes: it acts only in a
+    repository whose origin is on GitHub, asks only at a terminal while `review.ci` is unset, and once the answer
+    is yes writes the workflow, records the settings, and sets the credential secrets, refreshing the workflow
+    on every later run."""
+    answer = arguments.ci_review
+    try:
+        repo = review.origin_repo(root)
+    except review.ReviewError:
+        if answer:
+            raise InitError("--ci-review writes a GitHub Actions workflow, and this checkout has no origin on GitHub",
+                            files) from None
+        return
+    config = load_config(root)
+    recorded = config.get("review.ci")
+    if answer is False or answer is None and recorded is False:
+        if answer is False and recorded is not False:
+            record_setting(root, "review.ci", False)
+        return
+    if answer is None and recorded is None:
+        # Without a person to ask, an unanswered question changes nothing.
+        if not sys.stdin.isatty():
+            return
+        print(CI_REVIEW_QUESTION, end="", file=sys.stderr, flush=True)
+        if sys.stdin.readline().strip().lower() not in ("y", "yes"):
+            record_setting(root, "review.ci", False)
+            return
+    agents = ci.parse_agents(arguments.ci_agents or config.get("review.ci_agents") or "claude")
+    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents)))
+    if recorded is not True:
+        record_setting(root, "review.ci", True)
+    if config.get("review.ci_agents") != ", ".join(agents):
+        record_setting(root, "review.ci_agents", ", ".join(agents))
+    reviewers = review.extra_reviewers(config.get("review.reviewers"))
+    if CI_REVIEWER not in {login.lower() for login in reviewers}:
+        record_setting(root, "review.reviewers", ", ".join((*reviewers, CI_REVIEWER)))
+    set_ci_secrets(repo, agents, arguments.ci_credential)
+    site, why = summary.push_decision(repo)
+    if site is None:
+        print(f"project: CI reviews publish no summaries until the site is set up, because {why}", file=sys.stderr)
+    if config.get("review.gate"):
+        print("project: CI reviews run review.gate on a hosted runner; for a step the runner cannot run, give the "
+              "workflow's review step a config input with an `[override.50.review]` table that sets a gate it can "
+              "run", file=sys.stderr)
+
+
+def write_ci_workflow(root: Path, text: str) -> FileAction:
+    """Write the CI review workflow, replacing one `init` wrote that nobody edited but keeping one edited by
+    hand."""
+    path = root / ci.WORKFLOW_PATH
+    action = "created"
+    if path.is_file():
+        current = path.read_text(encoding="utf-8")
+        if current == text:
+            return FileAction(ci.WORKFLOW_PATH, "unchanged")
+        if not ci.unedited(current):
+            return FileAction(ci.WORKFLOW_PATH, "kept",
+                              f"{ci.WORKFLOW_PATH} has changes Projector did not write, so it was left alone; compare "
+                              f"it with `project review ci-workflow | diff -u {ci.WORKFLOW_PATH} -`")
+        action = "updated"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return FileAction(ci.WORKFLOW_PATH, action,
+                      f"commit {ci.WORKFLOW_PATH} and .projector.toml through a pull request, which is the first one "
+                      "the workflow reviews; readers count its verdicts once review.reviewers reaches the default "
+                      "branch")
+
+
+def run_interactive(argv: list[str], source: Optional[Path] = None) -> int:
+    """Run `argv` with the terminal as its input, or the file `source`, so a secret it reads never passes through
+    Projector or a command line."""
+    if source is None:
+        return subprocess.call(argv)
+    with source.open("rb") as handle:
+        return subprocess.call(argv, stdin=handle)
+
+
+def set_ci_secrets(repo: str, agents: tuple[str, ...], kind: Optional[str]) -> None:
+    """Report each agent's credential secret, and at a terminal have `gh` set a missing one, so the workflow can
+    start the agent."""
+    wanted = {agent: ci.CREDENTIALS[agent][kind or ci.DEFAULT_KIND[agent]] for agent in agents}
+    commands = [f"gh secret set {name} --repo {repo}" for name in wanted.values()]
+    try:
+        listed = {found["name"] for found in json.loads(summary.gh("secret", "list", "--repo", repo, "--json", "name"))}
+    except (summary.SummaryError, ValueError) as error:
+        print(f"project: could not list {repo}'s secrets: {error}; setting a secret takes admin access, so an admin "
+              f"of {repo} can run {', '.join(f'`{c}`' for c in commands)}", file=sys.stderr)
+        return
+    for agent, name in wanted.items():
+        present = [secret for secret in ci.CREDENTIALS[agent].values() if secret in listed]
+        command = f"gh secret set {name} --repo {repo}"
+        if len(present) > 1:
+            print(f"project: both {' and '.join(present)} are set, so the {agent} review refuses to start; delete "
+                  "the one you do not mean to use", file=sys.stderr)
+        elif present:
+            print(f"project: {present[0]} is set for the {agent} review", file=sys.stderr)
+        elif not sys.stdin.isatty():
+            print(f"project: the {agent} review needs {name}; {ci.WHERE[name]}, with `{command}`", file=sys.stderr)
+        else:
+            source = None
+            if name == "CODEX_AUTH_JSON":
+                source = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
+                print(f"project: a ChatGPT login goes stale on a hosted runner, which throws away the tokens Codex "
+                      f"refreshes; set {source} as {name} anyway? [y/N] ", end="", file=sys.stderr, flush=True)
+                if sys.stdin.readline().strip().lower() not in ("y", "yes"):
+                    print(f"project: left {name} unset; run `{command}` when you want it", file=sys.stderr)
+                    continue
+            else:
+                print(f"project: the {agent} review needs {name}: {ci.WHERE[name]}", file=sys.stderr)
+            if run_interactive(["gh", "secret", "set", name, "--repo", repo], source):
+                print(f"project: could not set {name}; setting a secret takes admin access, so an admin of {repo} "
+                      f"can run `{command}`", file=sys.stderr)
 
 
 def write_clean_workflow(root: Path) -> FileAction:
@@ -3729,6 +3882,7 @@ def run(arguments: argparse.Namespace) -> int:
                     if needs_admin:
                         print(f"project: to finish setting it up, {error.steps()}", file=sys.stderr)
             init_required_check(arguments, root, files)
+            init_ci_review(arguments, root, files)
             init_labels(root)
         except InitError as error:
             # Say what was written before saying what could not be.

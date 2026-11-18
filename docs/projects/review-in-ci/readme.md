@@ -898,3 +898,23 @@ These tests fail before the change, and each catches the bug it names:
 - **The handoff runs only where the site is hosted.** Elsewhere
   `project summary publish` keeps the summary in the checkout, as it does
   in a session, and the action uploads nothing.
+- **The workflow passes both credentials of each agent.** A secret that is
+  not set reads as empty, and the action's check accepts exactly one, so the
+  workflow does not depend on the kind of credential you chose.
+  `--ci-credential` only picks the secret `init` asks for.
+- **A digest line marks a workflow nobody edited.** The workflow's second
+  line records the SHA-256 of the rest, and `init` replaces the file only
+  while the two agree. The site workflow's way, matching each earlier
+  template with its variable parts left free, would need a pattern for every
+  combination of agents, and the clean label workflow's list of earlier
+  digests would need one for every agent list and ref.
+- **Codex reads Projector's skills from a link.** The action links
+  `$CODEX_HOME/skills` to the skills in its own checkout, because a
+  downloaded action is not a Git checkout that `install.sh codex` can install
+  a marketplace from.
+- **`project` is a shim on `PATH`.** The agent runs `project` by name, so the
+  action writes a script that runs the action's own `src` with `python3 -P`.
+- **The app comes later.** `--ci-app` and the `app-id` input ship with
+  context repositories in the later pull request § 6 step 4 names.
+- **A runner fact to check:** that `actions/download-artifact` succeeds when
+  no artifact matches its pattern, as in a repository that hosts no site.

@@ -1,0 +1,73 @@
+name: Projector review
+
+# Reviews each ready pull request whose head is in this repository with
+# `project review run`, one job for each agent, and publishes each review's
+# summary from a second job that runs no agent. `project review run` refuses a
+# fork's pull request and a draft however the workflow starts, so a manual run
+# cannot review either. Each agent's job reads the one credential secret that
+# is set for it: a subscription's or an API key. Secrets that are not set read
+# as empty.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: The pull request to review
+        required: true
+      rereview:
+        description: Review a head this model already reviewed
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  review:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (!github.event.pull_request.draft &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      statuses: write
+      checks: read
+      actions: read
+      pages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [@AGENTS@]
+    concurrency:
+      group: projector-review-${{ github.event.pull_request.number || inputs.pr }}-${{ matrix.agent }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: ninjudd/projector/actions/review@@REF@
+        with:
+          agent: ${{ matrix.agent }}
+          pr: ${{ github.event.pull_request.number || inputs.pr }}
+          rereview: ${{ inputs.rereview || false }}
+        env:
+@ENV@
+
+  summary:
+    needs: review
+    if: ${{ !cancelled() && needs.review.result != 'skipped' }}
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      pages: read
+    concurrency:
+      group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: ninjudd/projector/actions/review@@REF@
+        with:
+          step: summary
+          pr: ${{ github.event.pull_request.number || inputs.pr }}
