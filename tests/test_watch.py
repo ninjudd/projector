@@ -2689,5 +2689,97 @@ class SettingTests(unittest.TestCase):
             watch.user_settings()
 
 
+class DefaultBranchFetchTests(WatchCase):
+    """Each full pass fetches a live checkout's default branch into Projector's own ref, and no ref you use."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from tests.scratch import copy_of
+        from tests.test_config import cloned_repository
+        base, _ = copy_of(cloned_repository)
+        self.base = base.resolve()
+        self.home = self.base / "home"
+        self.repo = self.home / "work" / "repo"
+        environment = mock.patch.dict(os.environ, {"HOME": str(self.home), "XDG_STATE_HOME": str(self.scratch / "state")})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.addCleanup(self.daemon.relay.close)
+        self.renew("s1")
+        write_json(self.folder("s1") / "agent.json", {"schema_version": 1, "cwd": str(self.repo)})
+
+    def git(self, cwd: Path, *arguments: str) -> str:
+        from tests.test_config import git
+        return git(cwd, *arguments)
+
+    def merge_on_origin(self, text: str, *, amend: bool = False) -> str:
+        """Commit `text` as the policy on `origin`'s default branch, or replace its last commit, without fetching."""
+
+        seed = self.base / "seed"
+        (seed / ".projector.toml").write_text(text)
+        self.git(seed, "commit", "-q", "-a", *(["--amend"] if amend else []), "-m", "Change policy")
+        self.git(self.base / "origin.git", "fetch", "-q", str(seed), "+main:main")
+        return self.git(seed, "rev-parse", "HEAD")
+
+    def full_pass(self) -> None:
+        self.daemon.tick()
+        for _, future in list(self.daemon.fetching.values()):
+            future.result(60)
+        self.daemon.fetch_defaults(False)
+        self.daemon.write_status(self.clock.wall())
+
+    def ref(self, name: str) -> str:
+        """The commit `name` names in the clone, or an empty string when it names none."""
+        return subprocess.run(["git", "rev-parse", "--verify", "-q", name], cwd=self.repo, capture_output=True,
+                              text=True).stdout.strip()
+
+    def gate_checks(self) -> object:
+        from projector.config import load
+        return load(self.repo).get("review.gate_checks")
+
+    def test_a_merged_policy_applies_after_a_full_pass_and_your_refs_stay_put(self) -> None:
+        before = self.ref("refs/remotes/origin/main")
+        merged = self.merge_on_origin('[review]\ngate_checks = "check"\n')
+
+        self.full_pass()
+
+        self.assertEqual(("check", merged, before), (self.gate_checks(), self.ref("refs/projector/default/origin/main"),
+                                                     self.ref("refs/remotes/origin/main")))
+        self.assertNotIn("behind", self.git(self.repo, "status", "-sb"))
+        self.assertEqual("ok", watch.status(self.root, self.clock.wall())["default_branches"][str(self.repo)]["state"])
+        self.git(self.repo, "fetch", "-q", "origin")
+        self.assertEqual(merged, self.ref("refs/remotes/origin/main"))
+
+    def test_after_a_force_push_your_own_fetch_wins(self) -> None:
+        self.merge_on_origin('[review]\ngate_checks = "check"\n')
+        self.full_pass()
+
+        forced = self.merge_on_origin('[review]\ngate_checks = "forced"\n', amend=True)
+        self.git(self.repo, "fetch", "-q", "origin")
+
+        self.assertEqual((forced, "forced"), (self.ref("refs/remotes/origin/main"), self.gate_checks()))
+
+    def test_a_failed_fetch_keeps_the_last_commit_and_reports_the_error(self) -> None:
+        merged = self.merge_on_origin('[review]\ngate_checks = "check"\n')
+        self.full_pass()
+        self.git(self.repo, "remote", "set-url", "origin", str(self.base / "missing.git"))
+        self.merge_on_origin('[review]\ngate_checks = "later"\n')
+
+        self.advance(self.settings.full_every + 1)
+        self.full_pass()
+
+        found = watch.status(self.root, self.clock.wall())["default_branches"][str(self.repo)]
+        self.assertEqual(("error", merged, "check"),
+                         (found["state"], self.ref("refs/projector/default/origin/main"), self.gate_checks()))
+        self.assertIn("missing.git", found["error"])
+
+    def test_fetch_default_false_fetches_nothing(self) -> None:
+        (self.home / ".projector.toml").write_text("[watch]\nfetch_default = false\n")
+        self.merge_on_origin('[review]\ngate_checks = "check"\n')
+
+        self.full_pass()
+
+        self.assertEqual(("", {}), (self.ref("refs/projector/default/origin/main"), self.daemon.fetched))
+
+
 if __name__ == "__main__":
     unittest.main()

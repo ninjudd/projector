@@ -800,10 +800,33 @@ directory. A repository with no `origin/HEAD` reads every file from disk.
 `git clone` sets `origin/HEAD`, and `git remote set-head origin --auto` sets
 it in a clone that lacks one.
 
-The default branch is as new as your last fetch. Projector caches each blob it
-reads under `$XDG_STATE_HOME/projector/config-cache/`, by commit and path, so
-reading configuration starts no Git process until the default branch moves
-or the index changes.
+The default branch is the newer of two commits: the one `origin/HEAD` names,
+which your own fetches move, and the one the watch daemon fetched. On each
+full pass, every `watch.full_every` seconds, the daemon fetches the default
+branch of each repository a live registered session works in, into a ref of
+Projector's own:
+
+```console
+$ git fetch --quiet --no-write-fetch-head --no-tags --no-recurse-submodules --refmap= origin +refs/heads/main:refs/projector/default/origin/main
+```
+
+The empty `--refmap=` keeps Git from also moving `refs/remotes/origin/main`,
+which a fetch from a named remote otherwise updates through
+`remote.origin.fetch`. So the fetch leaves your remote-tracking refs, your
+branches, your tags, and `git status` as they were, and a fetch you run
+yourself never finds a ref locked. A merged change to a committed
+`.projector.toml` then applies within one full pass, about 10 minutes, while
+reading configuration never touches the network. When the two commits have
+diverged, as after a force-push to the default branch, yours wins. A fetch
+that fails leaves the last commit in place, and `project watch status`
+prints the error. Set `watch.fetch_default = false` to stop the fetch for
+the checkouts that file covers. Without a running daemon, the default branch
+is as new as your last fetch.
+
+Projector caches each blob it reads under
+`$XDG_STATE_HOME/projector/config-cache/`, by commit and path, so reading
+configuration starts no Git process until the default branch moves or the
+index changes.
 
 `config list` prints each value with its source, and notes on stderr each
 walked file whose working copy does not apply:
@@ -1006,6 +1029,7 @@ reads, which are these:
 | `watch.full_every` | whole number | `600` | the watch daemon, from `~/.projector.toml` only, as the most seconds a pull request goes without a GraphQL query |
 | `watch.renotify` | whole number | `900` | the watch daemon, from `~/.projector.toml` only, as the seconds before work that still stands is announced again |
 | `watch.review_stall` | whole number | `1800` | the watch daemon, from `~/.projector.toml` only, as the seconds a review's lock can go unchanged before the daemon treats the review as stalled |
+| `watch.fetch_default` | boolean | `true` | the watch daemon, from the configuration of each checkout a live session works in, to fetch the checkout's default branch on each full pass into `refs/projector/default/origin/<branch>`; `false` fetches nothing for it |
 | `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
 | `agent.message_limit` | whole number | `12` | `project agent send` and `reply`, from the checkout the sending session works in, as the most messages one session sends to one other session in a rolling hour; at least `1` |
 | `agent.auto_register` | boolean | `true` | `project watch add` and the Codex hooks, from the checkout the session works in, to register a session that subscribes to a pull request for agent messages, with a generated summary; `false` subscribes it without registering it, as [Registered when it subscribes](#registered-when-it-subscribes) describes. A session that ran `project agent unregister` is never registered this way, whatever the setting says |
@@ -3565,8 +3589,14 @@ named. With `--json`, it prints `subscriptions`.
 
 `status` prints the daemon's pid, version, start time, and operator, the live
 sessions, the pull requests and repositories it polls, its last pass, and the
-GraphQL points it spent in the last hour. With `--json`, it prints the same
-fields, and `daemon`, which is `running`, `started`, or `replaced`.
+GraphQL points it spent in the last hour. It also prints a
+`default branch <checkout>` line for each checkout whose default branch it
+fetched, with `ok`, `error` and Git's message, or `skipped` when the checkout
+has no `origin/HEAD`, as
+[Read committed files from the default branch](#read-committed-files-from-the-default-branch)
+describes. With `--json`, it prints the same fields, the fetches as
+`default_branches`, and `daemon`, which is `running`, `started`, or
+`replaced`.
 
 `stop` asks the running daemon to exit, waits up to 10 seconds, and prints
 its pid, or says that none is running. The next `project watch` command

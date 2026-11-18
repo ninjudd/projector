@@ -1723,6 +1723,9 @@ def run_watch(arguments: argparse.Namespace) -> int:
                        if latest else "")
                 print(f"relay {repo}: {found.get('state')}, {found.get('queued', 0)} queued, "
                       f"{found.get('rejected', 0)} rejected{why}" + (f"; {problems}" if problems else ""))
+            for checkout, found in report["default_branches"].items():
+                print(f"default branch {checkout}: {found.get('state')} at {found.get('at')}"
+                      + (f"; {found['error']}" if found.get("error") else ""))
             if report["codex_hooks"]:
                 print(f"codex hooks: {report['codex_hooks']}")
             for session, found in report["deliveries"].items():
