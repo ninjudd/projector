@@ -4273,7 +4273,9 @@ Its fetch names only `refs/projector/` refspecs, so no branch is
 transferred. The clone has no hooks of its own, and a global
 `core.hooksPath` still applies. Once no registration names the location,
 the clone still pushes what is queued there, such as the deletion of a
-session's refs after it moves to another location.
+session's refs after it moves to another location. A location the relay
+refused stays refused then: its deletions go, and every record a command
+queued outside a checkout of it stays behind.
 
 ### Messages that cross repositories
 

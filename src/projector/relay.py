@@ -955,11 +955,14 @@ class Job:
         """Read the location's visibility and your permission there on each full pass, and when a session that
         `agent.relay` sent here first uses it. While the location is not private or internal, or you cannot write
         to it, the relay is off for those sessions: they count as lapsed, so their refs are deleted and nothing
-        new of theirs is pushed."""
+        new of theirs is pushed. A location with a bare clone, which exists only for one `agent.relay` named, stays
+        refused once no registration names it, so the records still queued there stay behind while its deletions
+        go."""
         chose = {name for name, found in self.sessions.items() if self.chose(found)}
         if self.full or (chose and not self.cache["checked_at"]):
             self.read_location()
-        self.refused = refusal(self.location, self.cache["visibility"], self.cache["permission"]) if chose else ""
+        named = chose or (clone_path(self.root, self.location) / "HEAD").is_file()
+        self.refused = refusal(self.location, self.cache["visibility"], self.cache["permission"]) if named else ""
         if self.refused:
             self.live -= chose
             self.withheld = {self.sessions[name]["relay_id"] for name in chose}

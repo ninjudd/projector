@@ -2117,6 +2117,32 @@ class SharedRelayTests(RelayCase):
         self.assertEqual([], relay.outbox_items(self.one.root, "acme/agents"))
         self.assertTrue(any(relay_id in ref for ref in self.relay_refs("acme/api")))
 
+    def test_moving_the_last_session_off_a_refused_relay_deletes_its_refs_and_publishes_no_record(self) -> None:
+        api = self.checkout(self.one, "acme/api")
+        self.team(self.one)
+        self.one.claude(A)
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+        self.one.run_pass()
+        relay_id = agents.record(self.one.root, A)["relay_id"]
+        before = [ref for ref in self.relay_refs("acme/agents") if relay_id in ref]
+        relay.queue_message(self.one.root, "acme/agents", str(api), self.key,
+                            self.message("m-" + "7" * 32, to="0" * 16), self.now)
+        self.github.repository("acme/agents")["visibility"] = "PUBLIC"
+        self.advance(watch.Settings().full_every)
+        self.one.claude(A)
+        self.one.run_pass()
+
+        self.team(self.one, "origin")
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+        self.one.run_pass()
+        self.one.run_pass()
+
+        self.assertTrue(before)
+        self.assertEqual("acme/api", agents.record(self.one.root, A)["location"])
+        self.assertEqual([], self.relay_refs("acme/agents"))
+        self.assertEqual(["m-" + "7" * 32], [item["ref"].rsplit("/", 1)[1]
+                                             for item in relay.outbox_items(self.one.root, "acme/agents")])
+
     def test_a_registration_and_outbox_from_before_shared_relays_still_push_where_they_did(self) -> None:
         self.one.claude(A)
         self.one.register(A, "--name", "parser-refactor")

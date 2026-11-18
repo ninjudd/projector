@@ -353,7 +353,9 @@ repository, so a peers item never goes where no job polls for its replies.
   record a command queued outside a checkout of the location, so a record
   queued before the first check never lands on a public repository.
   Deletions always go. A session whose own repository is the location keeps
-  relaying.
+  relaying. A location with a bare clone stays refused after the last
+  registration leaves it, so the clone's push of that session's deletions
+  never releases a record held back there.
 - **The check keeps its last answer.** The location's cache records
   `permission` and `checked_at` beside `visibility`. When `gh` cannot say,
   the job keeps the values the last check found, and a location never read
