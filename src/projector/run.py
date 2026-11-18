@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import signal
 import subprocess
 import sys
 import tempfile
@@ -19,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from . import review
+from . import core, review
 from .review import ReviewError
 
 PRESETS = ("claude", "codex")
@@ -178,10 +177,10 @@ def report_text(path: Path) -> str:
 
 
 def start(invocation: Invocation, environ: dict[str, str], cwd: Path, timeout: float) -> tuple[Optional[int], bool]:
-    """Run the agent in its own process group, so a run out of time ends with every process it started. Returns
-    its exit code, or None when it could not start, and whether it ran out of time."""
+    """Run the agent in its own process group, so a run out of time ends with every process it started, on
+    Windows too. Returns its exit code, or None when it could not start, and whether it ran out of time."""
     try:
-        process = subprocess.Popen(invocation.argv, cwd=cwd, env=environ, start_new_session=True,
+        process = subprocess.Popen(invocation.argv, cwd=cwd, env=environ, **core.process_group(),
                                    stdin=subprocess.PIPE if invocation.stdin is not None else subprocess.DEVNULL)
     except OSError as error:
         print(f"project: could not start {invocation.argv[0]}: {error}", file=sys.stderr)
@@ -190,7 +189,7 @@ def start(invocation: Invocation, environ: dict[str, str], cwd: Path, timeout: f
         process.communicate(invocation.stdin.encode() if invocation.stdin is not None else None, timeout=timeout)
         return process.returncode, False
     except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
+        core.kill_group(process)
         process.wait()
         return process.returncode, True
 

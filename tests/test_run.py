@@ -198,6 +198,26 @@ class RunTests(unittest.TestCase):
 
         self.assertIn("ran out of its 0.02 minutes", self.github.posted[0])
 
+    def test_a_windows_agent_out_of_time_is_killed_and_reaped(self) -> None:
+        # Windows has no os.killpg or signal.SIGKILL, so a timeout that reached for them raised, left the agent
+        # running, and skipped the run's cleanup and failure comment.
+        process = mock.Mock(pid=4242, returncode=1)
+        process.communicate.side_effect = subprocess.TimeoutExpired("agent", 1)
+        cwd = Path.cwd()
+        with mock.patch.object(subprocess, "Popen", return_value=process) as popen, \
+                mock.patch.object(subprocess, "run") as taskkill, \
+                mock.patch.object(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, create=True), \
+                mock.patch.object(os, "killpg", side_effect=AttributeError("module 'os' has no attribute 'killpg'")), \
+                mock.patch.object(os, "name", "nt"):
+            result = run.start(run.Invocation(["agent"]), {}, cwd, 1)
+
+        self.assertEqual((1, True), result)
+        self.assertEqual(0x200, popen.call_args.kwargs.get("creationflags"))
+        self.assertNotIn("start_new_session", popen.call_args.kwargs)
+        self.assertEqual(["taskkill", "/F", "/T", "/PID", "4242"], taskkill.call_args.args[0],
+                         "the agent's whole process tree ends, not only the agent")
+        process.wait.assert_called_once()
+
     def test_runner_takes_the_agent_then_review_runner_then_claude(self) -> None:
         self.assertEqual(("claude", None), run.runner(None, None))
         self.assertEqual(("codex", None), run.runner(None, "codex"))
