@@ -391,3 +391,9 @@ observed delivery time in this plan.
   The connection keeps the host's name for TLS and the signed `Host`
   header. A lookup that never returns leaves its thread behind until the
   resolver gives up.
+- **Keys a refresh gives are judged by the clock after it.** A
+  `credential_process` can take most of its 30 seconds, so the provider
+  reads the clock again once it answers. Keys that have expired by then,
+  or that expire within the 5-minute refresh margin, are an `expired`
+  error rather than signing anything: the source has no fresher keys, so
+  each request would only run it again.

@@ -237,25 +237,31 @@ class Provider:
             return None
 
     def get(self) -> Credentials:
-        """Credentials good for at least 5 more minutes, or the freshest the source has, never ones that have
-        expired."""
+        """Credentials good for at least 5 more minutes, never ones that expire sooner.
+
+        Keys a refresh gives are judged by the clock after it, since a `credential_process` can take most of its
+        30 seconds to answer. Keys that expire within 5 minutes of a refresh are an error, as keys that have expired
+        are: the source has no fresher ones, so each request would only run it again."""
         with self.lock:
-            now = self.clock()
             signature = tuple(file_signature(path) for path in aws_files(self.environ))
             cached = self.cached
             if cached is not None and cached.source == "environment":
                 cached = None
             if cached is not None and cached.expires is None and signature != self.signature:
                 cached = None
-            if cached is None or (cached.expires is not None and cached.expires - now < REFRESH):
-                cached = self.find(now)
-            if cached.expires is not None and cached.expires <= now:
-                raise CredentialsError(f"the credentials from {cached.source} expired at {stamp_of(cached.expires)}",
-                                       "expired", cached.source, self.sign_in_fix())
+            if cached is None or (cached.expires is not None and cached.expires - self.clock() < REFRESH):
+                cached = self.find()
+                now = self.clock()
+                if cached.expires is not None and cached.expires - now < REFRESH:
+                    when = stamp_of(cached.expires)
+                    said = (f"expired at {when}" if cached.expires <= now
+                            else f"expire at {when}, within {REFRESH / 60:g} minutes, and no fresher ones came")
+                    raise CredentialsError(f"the credentials from {cached.source} {said}", "expired", cached.source,
+                                           self.sign_in_fix())
             self.cached, self.signature = cached, signature
             return cached
 
-    def find(self, now: float) -> Credentials:
+    def find(self) -> Credentials:
         environ = self.environ
         if environ.get("AWS_ACCESS_KEY_ID") and environ.get("AWS_SECRET_ACCESS_KEY"):
             token = environ.get("AWS_SESSION_TOKEN") or ""

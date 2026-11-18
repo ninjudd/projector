@@ -23,12 +23,15 @@ SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 TOKEN = "IQoJb3JpZ2luX2VjEXAMPLETOKEN"
 
 # Records one run of the credential process, then prints what `credentials.json` beside it holds, or fails the way
-# `mode` says: as an expired AWS sign-in does, with another error, or by hanging.
+# `mode` says: as an expired AWS sign-in does, with another error, or by hanging. A mode of `slow <seconds>` moves
+# the test's clock that far on while the process runs, as a process that takes that long to answer would.
 PROCESS = '''import json, pathlib, sys, time
 here = pathlib.Path(__file__).parent
 with (here / "runs.jsonl").open("a") as log:
     log.write(json.dumps(sys.argv[1:]) + "\\n")
 mode = (here / "mode").read_text().strip() if (here / "mode").exists() else ""
+if mode.startswith("slow "):
+    (here / "elapsed").write_text(mode.split()[1])
 if mode == "hang":
     time.sleep(60)
     (here / "finished").write_text("yes")
@@ -360,6 +363,33 @@ class CredentialTests(ServerCase):
 
         self.assertEqual("expired", lapsed.exception.cause)
         self.assertEqual(1, len(self.server.requests))
+
+    def test_keys_a_slow_credential_process_gives_are_judged_by_the_clock_after_it_answers(self) -> None:
+        """Keys that expire, or come within the 5-minute refresh margin, while the process that gives them runs
+        sign nothing."""
+        expires = self.now + 600
+        self.server.grant("AKIAONE", SECRET, TOKEN, expires)
+        folder = self.process({"Version": 1, "AccessKeyId": "AKIAONE", "SecretAccessKey": SECRET,
+                               "SessionToken": TOKEN, "Expiration": s3.stamp_of(expires)})
+        elapsed = folder / "elapsed"
+
+        def clock() -> float:
+            return self.now + (float(elapsed.read_text()) if elapsed.exists() else 0.0)
+
+        self.server.clock = clock
+        for seconds, said in ((601, "expired at"), (400, "expire at")):
+            with self.subTest(seconds=seconds):
+                (folder / "mode").write_text(f"slow {seconds}")
+                elapsed.unlink(missing_ok=True)
+                client = s3.Client("team", endpoint=self.server.endpoint, environ=self.environ, clock=clock,
+                                   profile="acme-relay")
+                with self.assertRaises(s3.CredentialsError) as lapsed:
+                    client.list_objects("relay/")
+                self.assertEqual("expired", lapsed.exception.cause)
+                self.assertIn(said, str(lapsed.exception))
+
+        self.assertEqual(2, len(self.runs(folder)))
+        self.assertEqual([], self.server.requests)
 
     def test_no_error_repr_or_process_argument_holds_the_secret_key_or_the_token(self) -> None:
         self.server.grant("AKIAONE", SECRET, TOKEN, self.now + 3600)
