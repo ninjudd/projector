@@ -1,0 +1,111 @@
+{
+ "version": 1,
+ "name": "Immediate pull request refresh",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 565,
+  "title": "Refresh a pull request's state right after a push, instead of on the next pass",
+  "head": "02c0a0a649322534d4c0fab618bf94474c09cec5",
+  "headRef": "refresh-after-push",
+  "base": "5ccfbcb3795c2482ddca76775ef3c5baada22ee2",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s watch daemon is the background process that reads pull requests and sends work to subscribed agent sessions. After a push, it previously waited for its regular polling interval, so the panel and event lines could keep showing the previous head’s conflict or review state.",
+   "The commands that subscribe a session after a push now leave a small refresh request for the daemon. Its next one-second tick starts a pass that queries each named pull request even when GitHub’s conditional responses report no change. Draft-state transitions use the same path when a daemon is running.",
+   "GitHub reports mergeability as <code>UNKNOWN</code> while it computes whether branches conflict. After a refresh request, the daemon polls open pull requests in that state every five seconds for up to a minute. A separate visual “checking” state remains outside this change."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used below",
+    "html": "<ul class=\"tight\"><li><b>Tick:</b> one turn of the daemon’s loop, normally once a second.</li><li><b>Pass:</b> the work that reads subscriptions, checks GitHub, and routes events.</li><li><b>ETag:</b> GitHub’s token for a cached response; an unchanged token normally avoids a full query.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Review and validation",
+    "html": "<ul class=\"tight\"><li>The exact head has a clean review with no findings or suggestions.</li><li>The configured gate and CI <code>check</code> passed, including 247 hook tests.</li><li>All 311 focused watch, Codex delivery, agent, and relay tests passed.</li><li>Disabling refresh request consumption made all three selected daemon regressions fail.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "Consume refresh requests and bound quick polling",
+   "kicker": "The daemon refreshes a named pull request before its next scheduled pass.",
+   "intro": [
+    "A command writes refresh requests atomically into the watch state directory. The daemon reads and deletes them on each tick, normalizes repository names, and forces the next pass to query the named pull requests that live sessions subscribe to. Requests older than a minute are discarded.",
+    "The same pass records its results for the polling decision. An open pull request with <code>UNKNOWN</code> mergeability keeps the next pass within five seconds until GitHub gives a settled answer or the one-minute window ends. Settled, closed, or unsubscribed pull requests leave that window."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Adds atomic refresh requests, consumes them on each tick, bypasses unchanged ETags for the first query, and shortens polling while mergeability is unknown.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Traced request consumption through the next pass and its cached results. Regression tests verify that a pushed head replaces a conflicting head without retaining the old conflict.",
+       "line": 1157
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Adds daemon regressions for unchanged ETags, stale requests, pushed heads, and the polling limit, plus command-level request checks.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused suite passed. Disabling request consumption made the pushed-head, unchanged-ETag, and polling-window regressions fail.",
+       "line": 896
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "commands",
+   "title": "Request fresh state after commands change a pull request",
+   "kicker": "Existing push hooks gain the refresh through their subscription commands.",
+   "intro": [
+    "Both host integrations already run <code>project watch add --from-output</code> after supported push commands. That shared path now requests a refresh for pull requests it adds and ones the session already subscribes to, while preserving exclusions and the automatic-subscription setting.",
+    "An explicit pull request subscription also requests a refresh. <code>project review hold</code> and <code>project review ready</code> request one only when the draft state actually changes and the daemon holds its lock."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Connects explicit subscription commands and successful draft transitions to the shared refresh request writer.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Traced both draft commands through the shared helper and ran the command tests for unchanged draft state, a stopped daemon, and an actual transition.",
+       "line": 2218
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Document the immediate refresh contract",
+   "kicker": "The command reference and plugin guide explain when a refresh happens.",
+   "intro": [
+    "The documentation lists the commands that trigger refreshes, the one-second request scan, the five-second polling interval, and the one-minute bound. It also explains why a new head cannot retain a conflict event keyed to the previous head."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describes refresh requests, stale-file handling, bounded mergeability polling, and conflict records keyed by head."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Explains that the existing post-push subscription step also requests fresh pull request state."
+    }
+   ]
+  }
+ ]
+}

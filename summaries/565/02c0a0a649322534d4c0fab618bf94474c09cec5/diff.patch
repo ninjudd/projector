@@ -1,0 +1,387 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 7ea27a52..e4234b66 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2389,7 +2389,10 @@ converted example/app#66 to a draft at 4f2a9c1
+ ```
+ 
+ GitHub can take a few seconds to show a head you just pushed, so a command
+-you run right after a push can still name the head before it.
++you run right after a push can still name the head before it. A command
++that changes the draft state also asks a running watch daemon to read the
++pull request again right away, as [Refresh after a push](#refresh-after-a-push)
++describes.
+ 
+ When the pull request is already in that state, the line reads
+ `example/app#66 is already ready for review at 4f2a9c1` or
+@@ -3466,6 +3469,34 @@ with a `MISSING` line.
+ A lookup that fails is named on stderr, and the command still exits 0. When
+ `watch.auto_start` is `false`, it adds nothing and says so.
+ 
++### Refresh after a push
++
++The daemon reads a pull request on its regular pass, every `watch.interval`
++seconds. A command that changes a pull request asks the daemon to read it
++again right away, so the panel and the event lines stop showing its old
++state, such as a conflict a push just resolved, within a few seconds:
++
++- `add` of a pull request, which `fix-pr` runs after each push.
++- `add --from-output`, for each pull request it subscribes the session to or
++  finds the session already subscribes to, which the mod and the Codex hook
++  run after each push.
++- `project review hold` and `project review ready`, when they change the
++  draft state while a daemon runs.
++
++Each request is a file under `refresh/` in the state directory, naming one
++or more pull requests. The daemon reads and deletes those files once a
++second, and deletes unread a file older than 60 seconds. On its next tick,
++it runs a pass that queries each named pull request that a live session
++subscribes to, whatever its ETags say.
++
++Right after a push, GitHub reports a pull request's mergeability as
++`UNKNOWN` while it recomputes it. While a named pull request is open and its
++mergeability is `UNKNOWN`, the daemon runs a pass every 5 seconds instead of
++waiting for `watch.interval`, for up to 60 seconds after the request. A
++conflict is announced for one head, so a push that changes the head drops
++the old head's conflict at the first pass that reads the new head, and
++`UNKNOWN` never carries it over.
++
+ ### End or exclude a subscription
+ 
+ `remove`, `drop`, and `restore` take a target and `--role`, which is `fix`
+diff --git a/docs/plugins.md b/docs/plugins.md
+index f0652d10..03ad0f08 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -562,7 +562,9 @@ the daemon's events into the conversation, so no watcher runs in it:
+   output to `project watch add --from-output -`. The CLI subscribes the
+   session to fix each open pull request that the output shows it opened or
+   pushed to, in the checkout's repository or one the output pushed to, and
+-  adds nothing when `watch.auto_start` is `false`. The command's result does not
++  adds nothing when `watch.auto_start` is `false`. It also asks the watch
++  daemon to read each of those pull requests again right away, so the
++  panel shows the push within seconds rather than at the next pass. The command's result does not
+   wait for it.
+ 
+ Each event line names what to do, such as
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 12c5df67..6b437543 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1733,6 +1733,8 @@ def run_watch(arguments: argparse.Namespace) -> int:
+         repo, number = watch.parse_target(arguments.target)
+         wanted = watch_subscription(arguments, repo, number)
+         line = watch.add(root, session, wanted)
++        if number is not None:
++            watch.request_refresh(root, [(repo, number)])
+         agents.register_subscriber(root, session, Path.cwd(), time.time(), here_config())
+         report_added(root, session, [line] if line else [], json_output,
+                      f"the session already subscribes to {wanted.target} {wanted.role}")
+@@ -2212,6 +2214,9 @@ def review_draft(arguments: argparse.Namespace) -> int:
+     repo = review.named_repo(arguments.repo, Path.cwd(),
+                              "to hold a pull request in" if hold else "to mark a pull request ready in")
+     result = review.set_draft(repo, arguments.pr, hold)
++    root = watch.state_root()
++    if result["changed"] and watch.held(root):
++        watch.request_refresh(root, [(repo, arguments.pr)])
+     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.draft_lines(result)))
+     return 0
+ 
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index affb3f91..cd2519d2 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -50,7 +50,7 @@
+ from dataclasses import dataclass
+ from datetime import datetime, timezone
+ from pathlib import Path
+-from typing import Callable, Iterator, Optional
++from typing import Callable, Iterable, Iterator, Optional
+ from urllib.parse import quote
+ 
+ from . import codex_watch, config, review
+@@ -62,6 +62,8 @@
+ LAPSE = 300.0
+ IDLE = 300.0
+ SLEPT = 60.0
++SETTLE = 60.0
++SETTLE_EVERY = 5.0
+ FORGET = 7 * 24 * 3600.0
+ STOP_WAIT = 10.0
+ RENEW_EVERY = 30.0
+@@ -209,6 +211,14 @@ def write_text(path: Path, text: str) -> None:
+             os.unlink(temporary)
+ 
+ 
++def request_refresh(root: Path, pulls: Iterable[tuple[str, int]]) -> None:
++    """Ask the daemon to query each pull request on its next tick rather than its next pass, as after a push,
++    with one file under `refresh/` that the daemon reads and deletes."""
++    text = "".join(f"{repo}#{number}\n" for repo, number in pulls)
++    if text:
++        write_text(root / "refresh" / f"{time.time_ns()}-{os.getpid()}", text)
++
++
+ def file_signature(path: Path) -> Optional[tuple[int, int, int]]:
+     try:
+         found = path.stat()
+@@ -527,9 +537,10 @@ def unique(pairs: list[tuple[str, object]]) -> list[tuple[str, object]]:
+ 
+ 
+ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tuple[list[str], list[str], bool]:
+-    """Subscribe the session to `fix auto` on each pull request the output opened or pushed to, and answer
+-    the lines added, a problem for each pull request that could not be looked up, and whether the session
+-    now subscribes to any of those pull requests, through a line added or one it already had.
++    """Subscribe the session to `fix auto` on each pull request the output opened or pushed to, ask the
++    daemon to refresh each one, and answer the lines added, a problem for each pull request that could not be
++    looked up, and whether the session now subscribes to any of those pull requests, through a line added or
++    one it already had.
+ 
+     A linked pull request counts only in a repository the output pushed to or opened a pull request in, or
+     the checkout's origin, so a link to another repository, or an example in help text, adds nothing. Each
+@@ -574,16 +585,17 @@ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tupl
+         found += [(repo, pull["number"]) for pull in listed if isinstance(pull, dict)
+                   and isinstance(pull.get("number"), int)]
+     added = []
+-    subscribed = False
++    refreshed = []
+     for repo, number in unique(found):
+         try:
+             line = add(root, session, Subscription(repo, number, "fix", auto=True))
+         except Excluded:
+             continue
+-        subscribed = True
++        refreshed.append((repo, number))
+         if line:
+             added.append(line)
+-    return added, problems, subscribed
++    request_refresh(root, refreshed)
++    return added, problems, bool(refreshed)
+ 
+ 
+ # GitHub
+@@ -909,6 +921,11 @@ def __init__(self, root: Path, *, version: str = "unknown", gh: Optional[Callabl
+         self.last_live = mono()
+         self.next_pass = mono()
+         self.wanted = False
++        # Pull requests a refresh request named: those the next pass queries whatever their ETags say, and those
++        # it polls every `SETTLE_EVERY` seconds, until the daemon's clock reaches each one's time, while GitHub
++        # still computes whether they can merge.
++        self.forced: set[tuple[str, int]] = set()
++        self.settling: dict[tuple[str, int], float] = {}
+         self.last_pass: Optional[float] = None
+         self.codex = codex_watch.Dispatcher(wall=wall)
+         from . import relay
+@@ -977,6 +994,7 @@ def tick(self) -> bool:
+                 self.log("stopping: the stop file names this daemon")
+                 return False
+             self.scan(now)
++            self.take_refreshes(now)
+             if self.live:
+                 self.last_live = now
+             elif now - self.last_live >= IDLE and not self.relay.busy() and not self.fetching:
+@@ -1074,6 +1092,41 @@ def scan(self, now: float) -> None:
+             self.wanted = True
+         self.live = live
+ 
++    def take_refreshes(self, now: float) -> None:
++        """Read and delete each refresh request, and ask for a pass at once that queries the pull requests it
++        names. A request older than `SETTLE`, written while no daemon ran, is deleted unread."""
++        folder = self.root / "refresh"
++        try:
++            paths = sorted(path for path in folder.iterdir() if not path.name.startswith("."))
++        except OSError:
++            return
++        wall = self.wall()
++        for path in paths:
++            try:
++                fresh = wall - path.stat().st_mtime < SETTLE
++                text = path.read_text(encoding="utf-8", errors="replace") if fresh else ""
++                path.unlink()
++            except OSError:
++                continue
++            for line in text.splitlines():
++                match = PULL.match(line.strip())
++                if match:
++                    pull = (match["repo"].lower(), int(match["number"]))
++                    self.forced.add(pull)
++                    self.settling[pull] = now + SETTLE
++                    self.wanted = True
++
++    def settle(self, results: dict, now: float) -> None:
++        """Keep polling each open pull request a refresh named, every `SETTLE_EVERY` seconds for up to
++        `SETTLE`, while GitHub reports its mergeability as unknown, as it does for a while after a push."""
++        def unknown(pr: dict) -> bool:
++            return pr.get("state") == "OPEN" and (pr.get("mergeable") or "UNKNOWN") == "UNKNOWN"
++
++        self.settling = {pull: until for pull, until in self.settling.items()
++                         if now < until and unknown(pull_request(results.get(pull)))}
++        if self.settling:
++            self.next_pass = min(self.next_pass, now + SETTLE_EVERY)
++
+     def lacks_result(self, name: str) -> bool:
+         for line in subscriptions(self.root / "sessions" / name):
+             if line.excluded:
+@@ -1097,7 +1150,10 @@ def run_pass(self) -> None:
+         self.scan(now_mono)
+         now = self.wall()
+         self.read_operator(now)
+-        Pass(self, now, now_mono).run()
++        forced, self.forced = self.forced, set()
++        done = Pass(self, now, now_mono, forced)
++        done.run()
++        self.settle(done.results, now_mono)
+         self.last_pass = now
+         self.forget_sessions(now)
+         self.write_status(now)
+@@ -1223,8 +1279,11 @@ def save(self) -> None:
+ class Pass:
+     """One pass over every live session's subscriptions: gather, adopt, ask, query, choose owners, announce."""
+ 
+-    def __init__(self, daemon: Daemon, now: float, now_mono: float) -> None:
++    def __init__(self, daemon: Daemon, now: float, now_mono: float,
++                 forced: Optional[set[tuple[str, int]]] = None) -> None:
+         self.daemon = daemon
++        self.forced = forced or set()
++        self.results: dict[tuple[str, int], dict] = {}
+         self.root = daemon.root
+         self.settings = daemon.settings
+         self.now = now
+@@ -1256,7 +1315,7 @@ def run(self) -> None:
+         self.covering.update(adopted)
+         roles, spellings = self.claims(lines, adopted)
+         fixed = {pull for pull, name in roles if name == "fix"}
+-        results = {}
++        results = self.results
+         for pull, spelling in sorted(spellings.items()):
+             result = self.refresh(pull, spelling, pull in fixed)
+             if result is GONE:
+@@ -1380,14 +1439,15 @@ def claims(self, lines: dict[str, list[Subscription]], adopted: dict[str, set[in
+ 
+     def refresh(self, pull: tuple[str, int], repo: str, fixed: bool) -> object:
+         """The pull request's result, queried again when a conditional request says it changed or failed, when
+-        its base moved and a session fixes it, while its mergeability is unknown, and when a full query is due.
+-        A failed query carries the last result forward. Answers GONE when GitHub says it does not exist."""
++        its base moved and a session fixes it, while its mergeability is unknown, when a refresh request named
++        it, and when a full query is due. A failed query carries the last result forward. Answers GONE when
++        GitHub says it does not exist."""
+         number = pull[1]
+         path = pull_cache(self.root, repo, number)
+         entry = read_json(path) or {}
+         etags = entry.get("etags") if isinstance(entry.get("etags"), dict) else {}
+         pending = dict(etags)
+-        dirty = not pull_request(entry)
++        dirty = not pull_request(entry) or pull in self.forced
+         probe = self.daemon.conditional(f"repos/{repo}/pulls/{number}", etags.get("pull"))
+         if probe.status == 404:
+             return GONE
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index fdf6d688..6fea003a 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -884,6 +884,69 @@ def test_an_unsettled_mergeability_is_queried_each_pass_and_is_not_a_conflict(se
+         self.assertEqual([], settled)
+         self.assertEqual({}, self.state("fixer")["fix"]["acme/app#1 fix"])
+ 
++    def ticked(self, seconds: float) -> list[str]:
++        """Move the clocks, run one turn of the daemon's loop, and answer the pull requests it queried."""
++        self.advance(seconds)
++        self.github.calls.clear()
++        self.daemon.tick()
++        return self.github.queried()
++
++    def test_a_refresh_request_queries_a_pushed_pull_request_on_the_next_tick_and_until_it_settles(self) -> None:
++        self.github.pull_request(1, mergeable="CONFLICTING")
++        self.fixer("acme/app#1 fix")
++        self.assertEqual(["acme/app#1"], self.ticked(0))
++        self.assertTrue(self.take("fixer")[0].startswith("CONFLICT acme/app#1 head=aaaaaaaa"))
++
++        self.github.pull_request(1, head=SHA_B, mergeable="UNKNOWN")
++        waiting = self.ticked(1)
++        watch.request_refresh(self.root, [("Acme/App", 1)])
++        pushed = self.ticked(1)
++        settling = self.ticked(watch.SETTLE_EVERY)
++        self.github.pull_request(1, head=SHA_B, mergeable="MERGEABLE")
++        settled = self.ticked(watch.SETTLE_EVERY)
++        after = self.ticked(watch.SETTLE_EVERY)
++
++        self.assertEqual([], waiting, "a push alone waits for the next pass")
++        self.assertEqual((["acme/app#1"], ["acme/app#1"], ["acme/app#1"], []), (pushed, settling, settled, after))
++        self.assertEqual([], self.take("fixer"), "no conflict is announced for the old head after the push")
++        self.assertEqual({}, self.state("fixer")["fix"]["acme/app#1 fix"])
++        self.assertEqual([], list((self.root / "refresh").iterdir()))
++
++    def test_a_refresh_request_queries_a_pull_request_whose_etag_did_not_change(self) -> None:
++        self.github.pull_request(1)
++        self.fixer("acme/app#1 fix")
++        self.ticked(0)
++
++        watch.request_refresh(self.root, [("acme/app", 1), ("acme/app", 9)])
++        refreshed = self.ticked(1)
++        after = self.ticked(watch.SETTLE_EVERY)
++
++        self.assertEqual((["acme/app#1"], []), (refreshed, after))
++
++    def test_a_refresh_request_older_than_a_minute_is_deleted_unread(self) -> None:
++        self.github.pull_request(1)
++        self.fixer("acme/app#1 fix")
++        self.ticked(0)
++        watch.request_refresh(self.root, [("acme/app", 1)])
++        stale = self.clock.wall() - watch.SETTLE - 1
++        for path in (self.root / "refresh").iterdir():
++            os.utime(path, (stale, stale))
++
++        self.assertEqual([], self.ticked(1))
++        self.assertEqual([], list((self.root / "refresh").iterdir()))
++
++    def test_quick_polling_after_a_refresh_stops_after_a_minute_while_github_still_computes(self) -> None:
++        self.github.pull_request(1, mergeable="UNKNOWN")
++        self.fixer("acme/app#1 fix")
++        self.ticked(0)
++        watch.request_refresh(self.root, [("acme/app", 1)])
++        self.ticked(1)
++
++        polled = [bool(self.ticked(watch.SETTLE_EVERY)) for _ in range(int(watch.SETTLE // watch.SETTLE_EVERY) + 2)]
++
++        self.assertEqual(int(watch.SETTLE // watch.SETTLE_EVERY), sum(polled), polled)
++        self.assertFalse(any(polled[-2:]), "after a minute, the pull request waits for the next pass again")
++
+     def test_a_failed_check_is_announced_once_and_again_only_after_the_renotify_interval(self) -> None:
+         self.github.pull_request(1, contexts=[check_run("check", "FAILURE"), check_run("lint", "FAILURE"),
+                                               check_run("docs"), commit_status("deploy")])
+@@ -2418,6 +2481,28 @@ def project(self, *args: str, stdin: str = "") -> tuple[int, str, str]:
+     def lines(self, session: str = "top-level") -> list[str]:
+         return watch.read_lines(self.root / "sessions" / session)
+ 
++    def refreshes(self) -> list[str]:
++        folder = self.root / "refresh"
++        if not folder.exists():
++            return []
++        return [line for path in sorted(folder.iterdir()) for line in path.read_text().splitlines()]
++
++    def test_add_of_a_pull_request_asks_the_daemon_to_refresh_it_and_a_repository_does_not(self) -> None:
++        self.project("add", "acme/app#12")
++        self.project("add", "acme/app", "--role", "review", "--model", MODEL, "--reviewer", "octocat")
++
++        self.assertEqual(["acme/app#12"], self.refreshes())
++
++    def test_review_ready_asks_a_running_daemon_to_refresh_a_pull_request_whose_draft_state_it_moved(self) -> None:
++        for changed, running in ((False, True), (True, False), (True, True)):
++            result = {"repo": "acme/app", "number": 12, "head": SHA_A, "draft": False, "changed": changed}
++            with mock.patch.object(review, "set_draft", return_value=result), \
++                    mock.patch.object(watch, "held", return_value=running), \
++                    contextlib.chdir(self.cwd), redirect_stdout(io.StringIO()):
++                self.assertEqual(0, cli.main(["review", "ready", "12", "--repo", "acme/app"]))
++
++        self.assertEqual(["acme/app#12"], self.refreshes())
++
+     def origin(self, url: str) -> None:
+         for args in (["init", "-q"], ["remote", "add", "origin", url]):
+             subprocess.run(["git", *args], cwd=self.cwd, check=True, capture_output=True)
+@@ -2537,6 +2622,7 @@ def test_add_from_output_subscribes_to_each_pull_request_a_push_or_create_shows(
+         self.assertEqual(["acme/app#13 fix auto", "acme/app#12 fix auto"], json.loads(out)["added"])
+         self.assertEqual(["acme/app#13 fix auto", "acme/app#12 fix auto"], self.lines())
+         self.assertIn(["api", "repos/acme/app/pulls?head=acme:lonely&state=open"], self.github.calls)
++        self.assertEqual(["acme/app#13", "acme/app#12"], self.refreshes())
+ 
+     def test_add_from_output_keeps_an_existing_fix_line_and_skips_a_dropped_pull_request(self) -> None:
+         self.origin("git@github.com:acme/app.git")
