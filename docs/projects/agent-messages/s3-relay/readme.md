@@ -450,7 +450,11 @@ observed delivery time in this plan.
   nor the console offers Snooze. The job posts and withdraws it on its worker thread, so a busy
   mirror never holds up the daemon's loop. `notice.json` records a text
   only once the mirror holds it, so a notice that a busy mirror kept out
-  posts on the next job.
+  posts on the next job. It records the notice's ID before the mirror
+  shows it, and a withdrawal removes every `local` entry, so a post that
+  stops between the two writes leaves nothing a withdrawal misses.
+  Dismissing the notice reads no relay key, in the console or with
+  `project inbox dismiss`, since nothing about it is sealed.
 - **A notice is withdrawn on the first signed request that succeeds,** a
   listing, the probe's first write, or a change applied, even while the
   probe refuses the store, since the notice is about the credentials.

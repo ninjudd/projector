@@ -2749,6 +2749,10 @@ def run_repo_inbox(arguments: argparse.Namespace, ref: Optional[str], letter: Op
         raise inbox.InboxError(f"`{command}` takes a session's item, not a repository inbox entry such as {ref}")
     if getattr(arguments, "note", None):
         raise UsageError("--note goes with a session's item; put what the peer should read in --text")
+    if entry["role"] == repo_inbox.LOCAL:
+        repo_inbox.change_local(root, repo, entry, command)
+        print(json_text({"items": [entry]}) if arguments.json_output else f"dismissed {ref} on this machine")
+        return 0
     key = repo_inbox.sealing_key()
     if command in RESPONSES and (entry["role"] == "incoming" or command != "dismiss"):
         if arguments.responder is None:

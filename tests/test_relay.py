@@ -2762,6 +2762,36 @@ class LapseNoticeTests(S3RelayCase):
         self.assertEqual([self.EXPIRED], [entry["line"] for entry in self.notices()])
         self.assertEqual([self.EXPIRED], [entry["line"] for entry in self.notices(C)])
 
+    def test_a_notice_whose_first_post_stopped_before_recording_its_text_is_withdrawn_once_a_request_succeeds(
+            self) -> None:
+        """The job stops after the mirror shows the notice and before `notice.json` records its text, as a crash
+        would. The notice still goes once the credentials work."""
+        real = repo_inbox.mirror
+
+        def stops(*args, **options) -> Optional[dict]:
+            real(*args, **options)
+            raise inbox.InboxBusy("stopped after the mirror")
+
+        with mock.patch.object(repo_inbox, "mirror", side_effect=stops):
+            self.one.run_pass()
+        stopped = self.notices()
+        self.mode("")
+        self.next_pass()
+
+        self.assertEqual([self.EXPIRED], [entry["line"] for entry in stopped])
+        self.assertEqual([], self.notices())
+        self.assertEqual([], self.notices(C))
+
+    def test_a_notice_dismisses_with_no_relay_key(self) -> None:
+        """Dismissing Projector's own notice seals and relays nothing, so it works while the key cannot be read."""
+        self.one.run_pass()
+        [shown] = self.notices()
+        with mock.patch.object(relay, "command_key", return_value=(None, "no agent.key")):
+            code, out, err = self.one.project("inbox", "dismiss", shown["ref"], claude=A, cwd=self.api)
+
+        self.assertEqual((0, f"dismissed {shown['ref']} on this machine\n"), (code, out), err)
+        self.assertEqual(([], []), (self.notices(), self.notices(C)))
+
     def test_a_dismissed_notice_stays_hidden_while_the_relay_is_off_and_shows_again_when_it_next_turns_off(
             self) -> None:
         self.one.run_pass()

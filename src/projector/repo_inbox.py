@@ -185,14 +185,17 @@ def post_local(root: Path, location: str, text: str, now: float) -> None:
     new text replaces under the same number. A notice you dismissed stays hidden, whatever its text becomes, until
     `withdraw_local` withdraws it.
 
-    `notice.json` records the text only once the mirror holds it, so a mirror that stays busy past the lock's wait
-    leaves the text unrecorded, and the next job posts it again."""
+    `notice.json` records the notice's ID before the mirror can show it, so `withdraw_local` finds a notice whose
+    post stopped before it recorded the text. It records the text only once the mirror holds it, so a mirror that
+    stays busy past the lock's wait leaves the text unrecorded, and the next job posts it again."""
     store = folder(root, location)
     with locked(store / "notice"):
         found = read_json(store / "notice.json") or {}
         if found.get("text") == text:
             return
         entry_id = found.get("id") or new_id()
+        if not found.get("id"):
+            write_json(store / "notice.json", {"id": entry_id, "dismissed": False})
         if not found.get("dismissed"):
             mirror(root, location, {"schema_version": 1, "id": entry_id, "location": location, "kind": "notice",
                                     "subject": text, "sent_at": now_ms(now)},
@@ -201,14 +204,15 @@ def post_local(root: Path, location: str, text: str, now: float) -> None:
 
 
 def withdraw_local(root: Path, location: str) -> None:
-    """Withdraw the location's local notice, so the next one shows even if you dismissed this one."""
+    """Withdraw the location's local notice, so the next one shows even if you dismissed this one. Every local
+    entry goes with it, so one whose ID `notice.json` no longer holds, as after the file was damaged, never stays."""
     store = folder(root, location)
     if not (store / "notice.json").exists():
         return
     with locked(store / "notice"):
         found = read_json(store / "notice.json") or {}
-        if found.get("id"):
-            forget(root, location, [found["id"]])
+        forget(root, location, [*([found["id"]] if found.get("id") else []),
+                                *(entry["id"] for entry in entries(root, location) if entry["role"] == LOCAL)])
         (store / "notice.json").unlink(missing_ok=True)
 
 
@@ -220,6 +224,16 @@ def dismiss_local(root: Path, location: str, entry: dict) -> None:
         if found.get("id") == entry["id"]:
             write_json(store / "notice.json", {**found, "dismissed": True})
         forget(root, location, [entry["id"]])
+
+
+def change_local(root: Path, location: str, entry: dict, command: str) -> dict:
+    """Dismiss Projector's local notice `entry`, or refuse any other command on it. The notice lives on this
+    machine alone and nothing about it is sealed or relayed, so this needs no relay key."""
+    if command != "dismiss":
+        raise RepoInboxError(f"{entry['ref']} is Projector's own notice, which takes no {command}; dismiss it to "
+                             "hide it until it is withdrawn")
+    dismiss_local(root, location, entry)
+    return entry
 
 
 def mark_woken(root: Path, repo: str, ref: str, now: float) -> bool:
@@ -838,6 +852,9 @@ def change_for(root: Path, session: str, ref: str, command: str, now: float, min
     location, _, cwd = place(root, session)
     if not location:
         raise RepoInboxError(f"session {session} relays through no location")
+    entry = by_ref(root, location, ref)
+    if entry["role"] == LOCAL:
+        return change_local(root, location, entry, command)
     key = sealing_key()
     if command == "dismiss":
         return dismiss(root, location, cwd, key, ref, now)[0]

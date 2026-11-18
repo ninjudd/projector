@@ -4394,7 +4394,8 @@ The notice is local: no relay carries it, and it exists only on the
 machine whose credentials lapsed. A new reason replaces its text under the
 same number, and the daemon withdraws it once a signed request succeeds
 again. `project inbox dismiss` hides it until the next time the location
-turns `off`, and it takes no response or snooze.
+turns `off`, and it takes no response or snooze. Dismissing it needs no
+relay key, so it works while the key cannot be read.
 
 Each person needs this IAM policy, with your bucket and prefix:
 
