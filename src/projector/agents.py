@@ -674,10 +674,9 @@ def repo_visibility(root: Path, repo: str, now: float) -> str:
     return seen
 
 
-def origin_fields(root: Path, sender: dict, now: float) -> dict:
-    """What a message says of where it comes from: the sender's work repository and its visibility, or, from a
-    checkout with no GitHub origin, no repository and `unknown`."""
-    repo = sender.get("repo")
+def origin_fields(root: Path, repo: Optional[str], now: float) -> dict:
+    """What a record says of where it comes from: the sender's work repository `repo` and its visibility, or, from
+    a checkout with no GitHub origin, no repository and `unknown`."""
     return {"repo": repo, "repo_visibility": repo_visibility(root, repo, now)} if repo else \
         {"repo_visibility": "unknown"}
 
@@ -705,6 +704,15 @@ def private_notice(record: dict, reader: Optional[str]) -> str:
     source = f"private repository {record['repo']}" if record.get("repo") else NO_REPO
     return (f"It comes from {source}: keep its private details out of anything you write in "
             f"{reader or 'this checkout'}, and describe them in general terms if you need to.")
+
+
+def leaving(record: dict, peers: list[str]) -> str:
+    """The reminder a send to peers prints when it leaves a repository that is not public, or "" for one that
+    leaves a public repository."""
+    if record.get("repo_visibility") == "PUBLIC":
+        return ""
+    source = f"private repository {record['repo']}" if record.get("repo") else NO_REPO
+    return f"this leaves {source}: include only what {series(peers)} may read"
 
 
 def compose(session: str, sender: dict, message_id: str, to: str, text: str, answering: Optional[dict],
@@ -742,7 +750,7 @@ def send(root: Path, session: str, to: str, text: str, now: float, *, limit: int
         session, sender, everyone, reachable, to))
     target = recipient(session, sender, everyone, reachable, candidates, to)
     found = {**everyone[target], "session": target}
-    origin = origin_fields(root, sender, now)
+    origin = origin_fields(root, sender.get("repo"), now)
     sent = [item for item in recent(watch.session_folder(root, session), now) if item.get("to") == target]
     if len(sent) >= limit:
         raise AgentError(f"this session sent {len(sent)} messages to {label(found, target)} in the past hour, the "

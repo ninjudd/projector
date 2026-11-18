@@ -20,7 +20,7 @@ import {
   relayNote,
   replyNote,
   reportArguments,
-  repoOf,
+  locationOf,
   REQUEST_DESCRIPTION,
   REQUEST_SCHEMA,
   requestArguments,
@@ -1131,13 +1131,16 @@ test('a press on a peer’s entry records it as yours, with --as user, and a pre
   expect(entryArguments(sent, 's1', { kind: 'dismiss' })).toEqual(['inbox', 'dismiss', 'r2', ...tail])
 })
 
-test('the repository inbox lives under the state directory, and a registration names its repository', () => {
+test('the repository inbox lives under the state directory, and a registration names its relay location', () => {
   const env = (name: string) => (name === 'HOME' ? '/home/ada' : undefined)
   expect(entriesStoreOf(env, 'Acme/App')).toBe('/home/ada/.local/state/projector/repo-inbox/acme/app')
-  expect(repoOf('{"schema_version": 1, "repo": "acme/app"}')).toBe('acme/app')
-  expect(repoOf('{"schema_version": 1}')).toBeUndefined()
-  expect(repoOf('{"repo": "../../etc"}')).toBeUndefined()
-  expect(repoOf(undefined)).toBeUndefined()
+  expect(locationOf('{"schema_version": 1, "repo": "acme/app"}')).toBe('acme/app')
+  expect(locationOf('{"repo": "acme/api", "location": "acme/agents", "relay": "published"}')).toBe('acme/agents')
+  expect(locationOf('{"location": "acme/agents", "relay": "pending"}')).toBe('acme/agents')
+  expect(locationOf('{"repo": "acme/api", "location": "acme/agents", "relay": "waiting"}')).toBeUndefined()
+  expect(locationOf('{"schema_version": 1}')).toBeUndefined()
+  expect(locationOf('{"repo": "../../etc"}')).toBeUndefined()
+  expect(locationOf(undefined)).toBeUndefined()
   expect(isEntry(entry())).toBe(true)
   expect(isEntry(question())).toBe(false)
 })

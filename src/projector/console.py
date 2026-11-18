@@ -443,7 +443,7 @@ class Console:
                 seen = signature(folder)
                 items = None if name in work.signatures and seen == work.signatures[name] else inbox.load_items(folder)
                 found.live[name] = (*describe(self.root, name, delivery, self.checkouts), seen, items)
-                found.entries[name] = repo_inbox.repo_items(self.root, name)
+                found.entries[name] = repo_inbox.repo_items(self.root, name, everything=True)
             names = list(found.live)
         for name in names:
             if work.rows or name not in work.signatures:
@@ -491,7 +491,7 @@ class Console:
             folder = inbox.store_root() / session.name
             session.signature, session.items = signature(folder), inbox.load_items(folder)
             session.rows = rows.rows_for(self.root, session.name)
-            session.entries = repo_inbox.repo_items(self.root, session.name)
+            session.entries = repo_inbox.repo_items(self.root, session.name, everything=True)
         self.settle_view()
 
     def settle_view(self) -> None:

@@ -1775,7 +1775,7 @@ class PushTests(RelayCase):
 SHARED = "https://github.com/acme/agents.git"
 
 
-class SharedRelayTests(RelayCase):
+class SharedRelayCase(RelayCase):
     """`agent.relay` set in a parent directory of checkouts of `acme/api` and `acme/web`, under each machine's home,
     names `acme/agents`, a third bare repository that the relay's bare clone reaches through a global `insteadOf`."""
 
@@ -1834,6 +1834,8 @@ class SharedRelayTests(RelayCase):
             machine.run_pass()
         return api, web
 
+
+class SharedRelayTests(SharedRelayCase):
     def test_a_team_relay_carries_agents_and_messages_between_repositories(self) -> None:
         api, web = self.teams()
 

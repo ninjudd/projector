@@ -15,7 +15,7 @@ from typing import Optional
 from unittest import mock
 
 from projector import agents, codex_watch as codex, crypto, relay, repo_inbox, watch
-from tests.test_relay import A, B, C, D, LOGIN, Machine, RelayCase, git, public_of
+from tests.test_relay import A, B, C, D, LOGIN, Machine, RelayCase, SharedRelayCase, git, public_of
 
 JASON = bytes(range(40, 72))
 AMY = bytes(range(80, 112))
@@ -110,6 +110,151 @@ class PeersCase(RelayCase):
         self.plant(ref, {"sealed.json": json.dumps(sealed).encode()})
 
 
+class SharedInboxTests(SharedRelayCase):
+    """The repository inbox on a team relay: you work in `acme/api` on machine one, and Jason in `acme/api` and
+    `acme/web` on machine two, under parents that name `acme/agents`, and each lists the other as a peer."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        for machine, private, peers in ((self.one, self.private, {"jason": JASON}),
+                                        (self.two, JASON, {"justin": self.private})):
+            path = machine.home / ".projector.toml"
+            path.write_text(settings(private, peers))
+            path.chmod(0o600)
+            self.team(machine)
+        self.api = self.checkout(self.one, "acme/api")
+        self.jason_api, self.jason_web = self.checkout(self.two, "acme/api"), self.checkout(self.two, "acme/web")
+        self.places = {A: (self.one, self.api), B: (self.two, self.jason_api), D: (self.two, self.jason_web)}
+        for session, (machine, cwd) in self.places.items():
+            machine.claude(session)
+            machine.register(session, "--name", f"agent-{session[0]}", "--model", "claude-opus-5-5", cwd=cwd)
+        self.everyone()
+
+    def everyone(self) -> None:
+        for machine in (self.one, self.two, self.one, self.two):
+            machine.run_pass()
+
+    def inbox(self, session: str, *args: str) -> tuple[int, str, str]:
+        machine, cwd = self.places[session]
+        return machine.project("inbox", *args, "--session", session, cwd=cwd)
+
+    def ok(self, session: str, *args: str) -> str:
+        code, out, err = self.inbox(session, *args)
+        self.assertEqual(0, code, err)
+        return out
+
+    def listed(self, session: str, *flags: str) -> dict[str, dict]:
+        items = json.loads(self.ok(session, "list", "--repo", "--json", *flags))["items"]
+        return {entry["subject"]: entry for entry in items if entry["role"] == "incoming"}
+
+    def test_the_inbox_is_the_locations_and_a_scoped_item_shows_only_in_its_repository(self) -> None:
+        asked = self.ok(A, "ask", "--to", "jason", "Ship it?", "--recommend", "Yes")
+        self.ok(A, "tell", "--to", "jason", "--repo", "acme/web", "Web only")
+        self.ok(A, "tell", "--to", "jason", "--repo", "acme/docs", "Docs only")
+        self.everyone()
+
+        api, web = self.listed(B), self.listed(D)
+        relayed = self.listed(B, "--relay")
+        console = [entry["line"] for entry in repo_inbox.repo_items(self.two.root, B, everything=True)]
+        shown = self.ok(D, "show", web["Ship it?"]["ref"])
+        self.ok(D, "reply", web["Web only"]["ref"], "--text", "Seen on the web", "--as", "agent")
+        self.ok(B, "reply", relayed["Docs only"]["ref"], "--text", "Seen for the docs", "--as", "agent")
+        self.everyone()
+        woken = self.one.events(A)
+
+        self.assertIn("this leaves private repository acme/api: include only what jason may read", asked)
+        self.assertEqual({"Ship it?"}, set(api))
+        self.assertEqual({"Ship it?", "Web only"}, set(web))
+        self.assertEqual("justin's agent agent-a asks: Ship it?", api["Ship it?"]["line"])
+        self.assertEqual("justin's agent agent-a asks: Ship it? (from acme/api)", web["Ship it?"]["line"])
+        self.assertEqual("justin's agent agent-a tells you: Web only (from acme/api)", web["Web only"]["line"])
+        self.assertEqual({"Ship it?", "Web only", "Docs only"}, set(relayed))
+        self.assertEqual("justin's agent agent-a tells you: Web only (for acme/web)", relayed["Web only"]["line"])
+        self.assertIn("justin's agent agent-a tells you: Docs only (for acme/docs)", console)
+        self.assertIn("\nfrom acme/api\n", shown)
+        self.assertIn(f"{repo_inbox.NOTICE}\n\nIt comes from private repository acme/api: keep its private details "
+                      "out of anything you write in acme/web, and describe them in general terms if you need to.",
+                      shown)
+        self.assertEqual(2, len([line for line in woken if line.startswith("PEER REPLY")]), woken)
+        web_reply = next(line for line in woken if "Seen on the web" in line)
+        self.assertIn("from jason's agent agent-d in acme/web to your", web_reply)
+        self.assertNotIn("It comes from", web_reply)
+        self.assertEqual([], self.relay_refs("acme/api") + self.relay_refs("acme/web"))
+        self.assertTrue(any(ref.startswith(relay.USER) for ref in self.relay_refs("acme/agents")))
+
+    def test_a_reply_shown_under_its_sent_item_names_its_private_source_before_its_words(self) -> None:
+        self.ok(D, "ask", "--to", "justin", "Which endpoint?", "--recommend", "v2")
+        self.everyone()
+        [incoming] = [entry for entry in json.loads(self.ok(A, "list", "--repo", "--json"))["items"]
+                      if entry["role"] == "incoming"]
+        self.ok(A, "reply", incoming["ref"], "--text", "Use the internal v3 endpoint", "--as", "agent")
+        self.everyone()
+        [sent] = [entry for entry in json.loads(self.ok(D, "list", "--repo", "--json"))["items"]
+                  if entry["role"] == "sent"]
+        [reply] = sent["replies"]
+
+        shown = self.ok(D, "show", sent["ref"])
+        alone = self.ok(D, "show", reply)
+
+        notice = ("It comes from private repository acme/api: keep its private details out of anything you write in "
+                  "acme/web, and describe them in general terms if you need to.")
+        self.assertIn(notice, alone)
+        self.assertIn(f"\n{reply} from justin's agent agent-a in acme/api\n\n{repo_inbox.NOTICE}\n\n{notice}\n\n"
+                      "replied: Use the internal v3 endpoint", shown)
+
+    def test_a_checkout_with_no_github_origin_posts_to_a_peer_and_is_named_as_one(self) -> None:
+        loose = self.one.home / "acme" / "notes"
+        loose.mkdir()
+        self.one.claude(C)
+        self.one.register(C, "--name", "note-taker", cwd=loose)
+        self.places[C] = (self.one, loose)
+
+        out = self.ok(C, "tell", "--to", "jason", "From the notes")
+        refused = self.inbox(C, "tell", "--to", "jason", "About a pull request", "--pr", "acme/api#3")
+        self.everyone()
+        [entry] = [found for found in self.listed(D).values() if found["subject"] == "From the notes"]
+        shown = self.ok(D, "show", entry["ref"])
+
+        self.assertIn("this leaves a checkout with no GitHub repository: include only what jason may read", out)
+        self.assertNotEqual(0, refused[0])
+        self.assertIn("no GitHub repository", refused[2])
+        self.assertEqual("justin's agent note-taker tells you: From the notes (from a checkout with no GitHub "
+                         "repository)", entry["line"])
+        self.assertIn("It comes from a checkout with no GitHub repository: keep its private details out of anything "
+                      "you write in acme/web", shown)
+
+    def test_a_scope_goes_with_a_peer_and_names_a_repository(self) -> None:
+        alone = self.inbox(A, "tell", "Just for me", "--repo", "acme/web")
+        bogus = self.inbox(A, "tell", "--to", "jason", "Somewhere", "--repo", "not a repository")
+
+        self.assertEqual(2, alone[0])
+        self.assertIn("--repo scopes an item you post to a peer, so it goes with --to", alone[2])
+        self.assertNotEqual(0, bogus[0])
+        self.assertIn("--repo takes a repository as owner/repo", bogus[2])
+
+    def test_a_peer_record_that_names_its_source_in_part_is_rejected(self) -> None:
+        base = {"schema_version": 1, "id": repo_inbox.new_id(), "location": "acme/agents", "kind": "notice",
+                "subject": "Hi", "detail": "", "from_host": "claude", "sent_at": int(self.now * 1000)}
+        cases = {"neither": ({}, True), "both": ({"repo": "acme/web", "repo_visibility": "PUBLIC"}, True),
+                 "scoped": ({"repo": "acme/web", "repo_visibility": "PUBLIC", "scope_repo": "acme/api"}, True),
+                 "repository alone": ({"repo": "acme/web"}, False),
+                 "prose scope": ({"scope_repo": "every repository"}, False),
+                 "a pull request in its repository": ({"repo": "acme/web", "repo_visibility": "PUBLIC",
+                                                       "pr": "acme/web#4"}, True),
+                 "a pull request in the location": ({"repo": "acme/web", "repo_visibility": "PUBLIC",
+                                                     "pr": "acme/agents#4"}, False),
+                 "a pull request from no repository": ({"repo_visibility": "unknown", "pr": "acme/web#4"}, False),
+                 "an older record's pull request": ({"pr": "acme/agents#4"}, True)}
+
+        for case, (fields, expected) in cases.items():
+            self.assertEqual(expected, repo_inbox.well_formed_item({**base, **fields}, "acme/agents"), case)
+        reply = {"schema_version": 1, "id": repo_inbox.new_id(), "location": "acme/agents", "answers": base["id"],
+                 "subject": "Hi", "outcome": "reply", "text": "Hello", "by": "user", "closes": False,
+                 "sent_at": int(self.now * 1000)}
+        self.assertTrue(repo_inbox.well_formed_reply({**reply, "repo": "acme/web", "repo_visibility": "PUBLIC"}))
+        self.assertFalse(repo_inbox.well_formed_reply({**reply, "repo_visibility": "PRIVATE"}))
+
+
 class ExchangeTests(PeersCase):
     def test_a_question_reaches_every_session_of_the_peer_and_its_sent_copy_both_of_your_machines(self) -> None:
         sent = self.question()
@@ -170,6 +315,21 @@ class ExchangeTests(PeersCase):
         self.assertTrue(shown.startswith(f"{reply['ref']} from jason's agent agent-b (claude claude-opus-5-5"), shown)
         self.assertLess(shown.index(repo_inbox.NOTICE), shown.index("Neither; rewrite it"))
 
+    def test_a_reply_listed_under_its_sent_item_carries_the_authority_notice_before_its_words(self) -> None:
+        self.status_request()
+        self.everyone()
+        self.ok(self.two, B, "reply", "r1", "--text", "Half the parser is done", "--as", "agent")
+        self.everyone()
+        [sent] = self.by_role(self.one, A, "sent")
+        [reply] = sent["replies"]
+
+        shown = self.ok(self.one, A, "show", sent["ref"])
+
+        listed = shown[shown.index(f"\n{reply} "):]
+        self.assertIn(repo_inbox.NOTICE, listed, shown)
+        self.assertLess(listed.index("jason's agent agent-b"), listed.index(repo_inbox.NOTICE), shown)
+        self.assertLess(listed.index(repo_inbox.NOTICE), listed.index("Half the parser is done"), shown)
+
     def test_a_status_request_gathers_one_reply_from_each_agent_and_stays_open(self) -> None:
         self.status_request()
         self.everyone()
@@ -227,7 +387,8 @@ class ExchangeTests(PeersCase):
         amy_id = crypto.key_id(crypto.public_key(AMY))
 
         self.assertEqual(0, code, err)
-        self.assertEqual(2, len(out.splitlines()) - 1, out)
+        self.assertEqual(2, len([line for line in out.splitlines() if " delivery: relay (queued)" in line]), out)
+        self.assertIn("this leaves private repository acme/app: include only what jason and amy may read", out)
         self.assertEqual({("jason", self.jason.id), ("amy", amy_id)},
                          {(entry["peer"], entry["to"]) for entry in copies})
         for entry in copies:
