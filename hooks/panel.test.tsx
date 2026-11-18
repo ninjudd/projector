@@ -3683,6 +3683,37 @@ test('the repository inbox’s entries are drawn when they are all the panel has
   await ui.unmount()
 })
 
+test('Projector’s local notice in the repository inbox dismisses and offers no snooze, which the CLI refuses', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const notice: Entry = {
+    scope: 'repo',
+    id: 'u-44444444444444444444444444444444',
+    ref: 'r4',
+    role: 'local',
+    kind: 'notice',
+    subject: 'Relay off: the AWS sign-in for profile acme-relay expired.',
+    line: 'Projector: Relay off: the AWS sign-in for profile acme-relay expired.',
+    state: 'open',
+    peer: null,
+    opened_at: NOW,
+  }
+  const session = questionWorld(on, clock, [], { entries: [notice] })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: notice.line })).toBeDefined()
+  await ui.press({ key: 'entry:r4' })
+  const snooze = await ui.find({ type: 'Button', key: 'snooze:r4' })
+  await ui.press({ key: 'dismiss:r4' })
+  await clock.settle()
+
+  expect(snooze).toBeUndefined()
+  expect(session.project().filter(command => /^inbox (dismiss|snooze)/.test(command))).toEqual([
+    'inbox dismiss r4 --session s1 --json',
+  ])
+})
+
 test('a snoozed entry comes back to a shown panel when its snooze ends', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

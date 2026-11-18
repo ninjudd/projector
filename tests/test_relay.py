@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Optional
 from unittest import mock
 
-from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, s3, watch
+from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, repo_inbox, s3, watch
 from projector.inbox import read_json, try_lock, unlock, write_json
 from tests.fake_s3 import FakeS3, plain
 from tests.scratch import copy_of
@@ -2184,14 +2184,21 @@ S3_SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 S3_TOKEN = "IQoJb3JpZ2luX2VjEXAMPLETOKEN"
 TEAM = "s3://team/relay"
 
-# A credential_process that logs its arguments and prints `credentials.json` beside it, or hangs while `mode` says
-# so.
+# A credential_process that logs its arguments and prints `credentials.json` beside it, or, as `mode` says, hangs,
+# fails as an expired AWS sign-in does, or fails another way.
 CREDENTIAL_PROCESS = '''import json, pathlib, sys, time
 here = pathlib.Path(__file__).parent
 with (here / "runs.jsonl").open("a") as log:
     log.write(json.dumps(sys.argv[1:]) + "\\n")
-if (here / "mode").exists() and (here / "mode").read_text().strip() == "hang":
+mode = (here / "mode").read_text().strip() if (here / "mode").exists() else ""
+if mode == "hang":
     time.sleep(60)
+if mode == "expired":
+    print("Error when retrieving token from sso: Token has expired and refresh failed", file=sys.stderr)
+    sys.exit(255)
+if mode == "fail":
+    print("Unable to locate credentials", file=sys.stderr)
+    sys.exit(253)
 print((here / "credentials.json").read_text())
 '''
 
@@ -2681,6 +2688,135 @@ class S3RelayTests(S3RelayCase):
         self.assertIn("did not finish within 1 seconds", hung["error"])
         self.assertEqual("error", declared["state"])
         self.assertIn("declares a document type", declared["error"])
+
+
+class LapseNoticeTests(S3RelayCase):
+    """A and C on machine one, in `acme/api` and `acme/docs`, relaying through the bucket with profile `acme-relay`,
+    whose credential_process fails as `mode` says."""
+
+    EXPIRED = ("Projector: Relay off: the AWS sign-in for profile acme-relay expired. Run "
+               "`aws sso login --profile acme-sso`.")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.folder = self.credential_process(self.one, self.now + 3600)
+        self.aws_file(self.one, "credentials", "")
+        self.s3_team(self.one, extra='s3_profile = "acme-relay"\n')
+        self.api, self.docs = self.checkout(self.one, "acme/api"), self.checkout(self.one, "acme/docs")
+        self.mode("expired")
+        for session, cwd in ((A, self.api), (C, self.docs)):
+            self.one.claude(session)
+            self.one.register(session, "--name", f"agent-{session[0]}", cwd=cwd)
+
+    def mode(self, mode: str) -> None:
+        (self.folder / "mode").write_text(mode)
+
+    def notices(self, session: str = A) -> list[dict]:
+        cwd = self.api if session == A else self.docs
+        listed = json.loads(self.one.project("inbox", "list", "--repo", "--json", claude=session, cwd=cwd)[1])
+        return [entry for entry in listed["items"] if entry["role"] == "local"]
+
+    def next_pass(self) -> None:
+        self.advance(3)
+        for session in (A, C):
+            self.one.claude(session)
+        self.one.run_pass()
+
+    def test_a_lapse_shows_one_notice_in_every_session_replaced_as_its_reason_changes_until_a_request_succeeds(
+            self) -> None:
+        self.one.run_pass()
+        expired = {session: self.notices(session) for session in (A, C)}
+        self.mode("fail")
+        self.next_pass()
+        self.next_pass()
+        failed = self.notices()
+        self.mode("")
+        self.next_pass()
+
+        [shown] = expired[A]
+        self.assertEqual(expired[A], expired[C])
+        self.assertEqual(self.EXPIRED, shown["line"])
+        [replaced] = failed
+        self.assertEqual(shown["ref"], replaced["ref"])
+        self.assertIn("Relay off: the credential_process of profile acme-relay failed: Unable to locate credentials",
+                      replaced["line"])
+        self.assertEqual([], self.notices())
+        self.assertEqual(2, len(self.server.names("team", f"relay/{self.key.id}/agents/")),
+                         "the presences queued while the relay was off")
+
+    def test_a_notice_a_busy_inbox_kept_out_shows_on_the_next_job(self) -> None:
+        """Another command holds the location's inbox for longer than the job waits, so the job cannot post its
+        notice. The next job posts it."""
+        store = repo_inbox.folder(self.one.root, self.identity())
+        store.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(store / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, descriptor)
+        self.assertTrue(try_lock(descriptor))
+        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.1):
+            self.one.run_pass()
+        busy = self.notices()
+        unlock(descriptor)
+        self.next_pass()
+
+        self.assertEqual([], busy)
+        self.assertEqual([self.EXPIRED], [entry["line"] for entry in self.notices()])
+        self.assertEqual([self.EXPIRED], [entry["line"] for entry in self.notices(C)])
+
+    def test_a_notice_whose_first_post_stopped_before_recording_its_text_is_withdrawn_once_a_request_succeeds(
+            self) -> None:
+        """The job stops after the mirror shows the notice and before `notice.json` records its text, as a crash
+        would. The notice still goes once the credentials work."""
+        real = repo_inbox.mirror
+
+        def stops(*args, **options) -> Optional[dict]:
+            real(*args, **options)
+            raise inbox.InboxBusy("stopped after the mirror")
+
+        with mock.patch.object(repo_inbox, "mirror", side_effect=stops):
+            self.one.run_pass()
+        stopped = self.notices()
+        self.mode("")
+        self.next_pass()
+
+        self.assertEqual([self.EXPIRED], [entry["line"] for entry in stopped])
+        self.assertEqual([], self.notices())
+        self.assertEqual([], self.notices(C))
+
+    def test_a_notice_dismisses_with_no_relay_key(self) -> None:
+        """Dismissing Projector's own notice seals and relays nothing, so it works while the key cannot be read."""
+        self.one.run_pass()
+        [shown] = self.notices()
+        with mock.patch.object(relay, "command_key", return_value=(None, "no agent.key")):
+            code, out, err = self.one.project("inbox", "dismiss", shown["ref"], claude=A, cwd=self.api)
+
+        self.assertEqual((0, f"dismissed {shown['ref']} on this machine\n"), (code, out), err)
+        self.assertEqual(([], []), (self.notices(), self.notices(C)))
+
+    def test_a_dismissed_notice_stays_hidden_while_the_relay_is_off_and_shows_again_when_it_next_turns_off(
+            self) -> None:
+        self.one.run_pass()
+        [shown] = self.notices()
+        snoozed = self.one.project("inbox", "snooze", shown["ref"], "--for", "30", claude=A, cwd=self.api)
+        code, _, err = self.one.project("inbox", "dismiss", shown["ref"], claude=A, cwd=self.api)
+        hidden = self.notices(C)
+        self.mode("fail")
+        self.next_pass()
+        still = self.notices()
+        self.mode("")
+        self.next_pass()
+        self.mode("expired")
+        self.advance(3600)
+        for session in (A, C):
+            self.one.claude(session)
+        self.one.run_pass()
+
+        self.assertEqual(0, code, err)
+        self.assertNotEqual(0, snoozed[0])
+        self.assertIn("is Projector's own notice, which takes no snooze", snoozed[2])
+        self.assertEqual(([], []), (hidden, still))
+        self.assertEqual([self.EXPIRED], [entry["line"] for entry in self.notices()])
+        self.assertEqual([], [item for item in relay.outbox_items(self.one.root, self.identity())
+                              if "/user" in item["ref"]], "the notice reaches no relay")
 
 
 class LifecycleTests(RelayCase):

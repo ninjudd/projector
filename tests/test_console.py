@@ -22,7 +22,7 @@ from typing import Optional
 from unittest import mock
 
 from projector import cli, console, inbox, repo_inbox, watch
-from projector.inbox import write_json
+from projector.inbox import read_json, write_json
 
 SOURCE = Path(cli.__file__).resolve().parents[1]
 
@@ -263,6 +263,22 @@ class RepositoryInbox(ConsoleCase):
 
         self.assertIn("jason replied: Half done", self.screen().split("you requested of jason", 1)[1])
         self.assertIn("6: Close", self.screen())
+
+    def test_projectors_local_notice_offers_dismiss_and_no_snooze(self) -> None:
+        """A local notice takes a dismissal and nothing else, so its drawer offers no Snooze. Dismissing it seals and
+        relays nothing, so it needs no relay key, which a notice that the relay is off may well have none of."""
+        repo_inbox.post_local(self.root, "acme/app", "Relay off: the AWS sign-in for profile acme expired.",
+                              self.clock.now)
+        self.open_entry("s1", "repo:r4")
+        drawer = self.screen()
+        with mock.patch.object(repo_inbox.relay, "command_key", return_value=(None, "no agent.key")):
+            self.press("8")
+
+        self.assertIn("Relay off: the AWS sign-in for profile acme expired.", drawer)
+        self.assertIn("8: Dismiss", drawer)
+        self.assertNotIn("Snooze", drawer)
+        self.assertIsNone(repo_inbox.by_id(self.root, "acme/app", read_json(
+            repo_inbox.folder(self.root, "acme/app") / "notice.json")["id"]))
 
 
 class Messages(ConsoleCase):

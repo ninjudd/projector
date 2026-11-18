@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -440,3 +440,50 @@ observed delivery time in this plan.
 - **The lease test changes the object between the listing and the
   renewal,** as a second job's renewal would, since the daemon never runs
   two jobs for one location at once.
+- **The credential notice is a mirror entry with the role `local`.** It
+  lives in the location's inbox mirror beside the relayed entries, with
+  `notice.json` holding its ID, its text, and whether you dismissed it. It
+  shows as `Projector: Relay off: …` in `project inbox list`, the panel,
+  and the console, `inbox show` names it as from Projector on this machine,
+  and it takes a dismissal and nothing else: a response or a snooze is
+  refused, so no state record of it is ever queued, and neither the panel
+  nor the console offers Snooze. The job posts and withdraws it on its worker thread, so a busy
+  mirror never holds up the daemon's loop. `notice.json` records a text
+  only once the mirror holds it, so a notice that a busy mirror kept out
+  posts on the next job. It records the notice's ID before the mirror
+  shows it, and a withdrawal removes every `local` entry, so a post that
+  stops between the two writes leaves nothing a withdrawal misses.
+  Dismissing the notice reads no relay key, in the console or with
+  `project inbox dismiss`, since nothing about it is sealed.
+- **A notice is withdrawn on the first signed request that succeeds,** a
+  listing, the probe's first write, or a change applied, even while the
+  probe refuses the store, since the notice is about the credentials.
+
+## 9. Outcome
+
+Shipped as four layers: the transport, the S3 client, the S3 relay, and the
+credential notice. The criteria in § 4 have these tests, each of which
+failed with its fault introduced:
+
+| Criterion | Evidence |
+| --- | --- |
+| Signatures from AWS's test suite | `tests.test_s3.SignatureTests.test_each_signature_matches_the_aws_signature_version_4_test_suite` |
+| Agents and messages through a bucket, with no Git ref | `S3RelayTests.test_an_s3_location_carries_agents_and_messages_and_no_ref_reaches_git` |
+| Delivery within `agent.s3_poll` plus 2 seconds | `S3RelayTests.test_a_message_arrives_within_the_poll_interval_with_no_watch_pass` |
+| A renewal's lease | `S3RelayTests.test_a_renewal_whose_object_another_job_changed_gets_412_and_lands_on_the_next_listing` |
+| A deletion already done | `S3RelayTests.test_a_deletion_of_an_object_already_gone_counts_as_deleted` |
+| A large object, a malformed name, and a flood | `S3RelayTests.test_a_large_or_misnamed_object_and_a_flood_are_bounded_before_any_read` |
+| An interrupted probe and its sweep | `S3RelayTests.test_a_probe_interrupted_by_a_restart_leaves_no_object_after_the_next_full_pass` |
+| Stores that ignore a condition, and a public bucket | `S3RelayTests.test_a_store_that_ignores_a_condition_or_lets_anyone_list_turns_the_location_off` |
+| One bucket and prefix on two endpoints | `S3RelayTests.test_one_bucket_and_prefix_on_two_endpoints_are_two_locations` |
+| A committed endpoint and profile | `S3RelayTests.test_an_endpoint_and_a_profile_a_repository_commits_wait_until_you_allow_each`, `test_a_registration_written_while_admission_checks_another_waits_for_its_own_values` |
+| Credentials from the environment, a profile, and a process, refreshed early, never leaked | `tests.test_s3.CredentialTests`, `S3RelayTests.test_no_output_log_status_or_process_argument_holds_the_secret_key_or_the_token` |
+| The credential notice | `LapseNoticeTests.test_a_lapse_shows_one_notice_in_every_session_replaced_as_its_reason_changes_until_a_request_succeeds`, `test_a_dismissed_notice_stays_hidden_while_the_relay_is_off_and_shows_again_when_it_next_turns_off`, `test_a_notice_a_busy_inbox_kept_out_shows_on_the_next_job` |
+| A hung process or store | `tests.test_s3.CredentialTests.test_a_credential_process_that_hangs_is_killed_at_its_timeout`, `OperationTests.test_a_request_that_hangs_or_trickles_is_stopped_at_its_timeout`, `test_a_name_lookup_that_never_returns_is_stopped_at_the_timeout`, `S3RelayTests.test_a_hung_credential_process_or_store_is_stopped_and_stalls_no_codex_event` |
+| A `<!DOCTYPE` listing and one over 1 MiB | `OperationTests.test_a_response_that_declares_a_document_type_is_refused_in_any_encoding`, `test_a_listing_that_holds_more_than_1_mib_is_not_parsed`, and the last part of the hung-store test |
+| The Git relay tests unchanged | `tests.test_relay` before the S3 layers, which passed with no change to a test |
+| No plaintext in the bucket | `S3RelayTests.test_no_object_in_the_bucket_holds_a_name_summary_or_text_in_plain_form` |
+
+The relay between two real machines through an S3 bucket, with the IAM
+policy in `docs/cli.md`, waits until after the merge, for the user to run.
+Its observed delivery time goes here once it runs.
