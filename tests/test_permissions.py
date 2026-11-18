@@ -68,6 +68,8 @@ DECISIONS = (
     ("project upgrade status", "ask", "none"),
     ("project config set review.allow_approve true", "ask", "none"),
     ("project config unset review.allow_approve", "ask", "none"),
+    ("project config allow agent.relay github:acme/agents", "ask", "none"),
+    ("project config allow --list", "ask", "none"),
     ("project init --root .", "ask", "none"),
     ("project config set review.allow_approve true --root=.", "ask", "none"),
     ("project list --root=. --projects-dir=plans", "allow", "allow"),
@@ -120,7 +122,7 @@ DECISIONS = (
 # What the Codex rules leave to Codex's usual approval: each command with the
 # subcommands left out, or None where the whole command is.
 CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None, "agent": {"key"},
-                  "config": {"set", "unset"},
+                  "config": {"set", "unset", "allow"},
                   "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},
                   "review": {"gate"},
                   "site": {"build", "serve"}, "ios": {"build", "logs"}}

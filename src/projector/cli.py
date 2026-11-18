@@ -31,11 +31,18 @@ from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
     CONFIG_NAME,
+    DESTINATIONS,
     PRIORITY,
     SECRETS,
+    SETTINGS,
     Change,
     ConfigError,
     Config,
+    allow,
+    allowed_path,
+    approvals,
+    disallow,
+    is_destination,
     parse_value,
     redact,
     same_value,
@@ -60,6 +67,7 @@ from .core import (
     grouped_projects,
     json_scalar,
     json_text,
+    state_home,
 )
 
 
@@ -686,6 +694,17 @@ def parser() -> argparse.ArgumentParser:
     )
     add_output(config_paths)
 
+    config_allow = config_commands.add_parser(
+        "allow", help="allow a destination a committed file sets, in a terminal, or list or remove approvals",
+        parents=[root_option],
+    )
+    config_allow.add_argument("key", nargs="?", help="a destination setting, such as agent.relay")
+    config_allow.add_argument("value", nargs="?", help="the value to allow, as the committed file sets it")
+    allow_mode = config_allow.add_mutually_exclusive_group()
+    allow_mode.add_argument("--list", action="store_true", help="print your approvals and the file each was for")
+    allow_mode.add_argument("--remove", action="store_true", help="remove the approval of the key and value")
+    add_output(config_allow)
+
     upgrade = subcommands.add_parser("upgrade", help="run the checkout's install.sh from anywhere")
     upgrade.add_argument(
         "target",
@@ -1187,6 +1206,16 @@ def add_ios_parser(subcommands) -> None:
     command("cleanup", "remove the worktree, DerivedData, and every kept build", chooses=False)
 
 
+def ios_output(config: Config, checkout: Path) -> Path:
+    """Where `project ios crashes` and `logs` write: `ios.output`, or `~/Desktop`. Only `~/.projector.toml`, which
+    you wrote yourself, may send them outside the checkout and Projector's state directory."""
+
+    output = Path(config.setting("ios.output") or "~/Desktop").expanduser()
+    if config.setting("ios.output") is not None and not config.from_user("ios.output"):
+        config.confine("ios.output", checkout / output, (checkout, state_home()))
+    return output
+
+
 def run_ios(arguments: argparse.Namespace) -> int:
     command = arguments.ios_command
     if command == "devices":
@@ -1207,7 +1236,7 @@ def run_ios(arguments: argparse.Namespace) -> int:
     config = load_config(checkout)
     app = arguments.app or config.setting("ios.app")
     where = {"app": app, "wanted": arguments.device, "kind": arguments.kind, "mac": arguments.mac}
-    output = Path(config.setting("ios.output") or "~/Desktop").expanduser()
+    output = ios_output(config, checkout)
     if command == "build":
         ios.build(checkout, arguments.target, project_setting=config.setting("ios.project"), install=arguments.install,
                   verbose=arguments.verbose, allow_untrusted=arguments.allow_untrusted, **where)
@@ -1902,9 +1931,54 @@ def change_config(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def allow_destination(arguments: argparse.Namespace) -> int:
+    path = allowed_path()
+    if arguments.list:
+        if arguments.key is not None:
+            raise UsageError("config allow --list takes no key or value")
+        entries = approvals(path)
+        if arguments.json_output:
+            print(json_text({"allowed": entries}))
+            return 0
+        for entry in entries:
+            print(f"{entry.get('key')} = {format_value(entry.get('value'))}  # for {entry.get('source') or 'no file'}, "
+                  f"allowed {entry.get('allowed_at')}")
+        return 0
+    if arguments.key is None or arguments.value is None:
+        raise UsageError("config allow needs a key and a value, or --list")
+    key = arguments.key
+    value = parse_value(key, arguments.value) if key in SETTINGS else arguments.value
+    if arguments.remove:
+        removed = disallow(path, key, value)
+        print(f"{'removed' if removed else 'no approval of'} {key} = {format_value(value)}")
+        return 0 if removed else 1
+    if not is_destination(key):
+        raise UsageError(f"{key} is not a destination, so it needs no allowing; the destinations are "
+                         f"{', '.join(sorted(DESTINATIONS)) or 'none yet'}")
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise EnvironmentError("project config allow records your consent, so it runs only with a terminal on "
+                               "standard input and output, where no agent can run it; run it yourself in a terminal")
+    config = load_config(config_start(arguments))
+    source = config.source(key)
+    if source is not None and same_value(config.get(key), value):
+        print(f"{source} sets {key} = {format_value(value)}.")
+    else:
+        source = None
+        print(f"No file here sets {key} = {format_value(value)}.")
+    answer = input(f"Send your data to {format_value(value)} wherever a committed file sets {key} to it? [y/N] ")
+    if answer.strip().lower() not in ("y", "yes"):
+        print(f"{key} = {format_value(value)} is not allowed")
+        return 1
+    allow(path, key, value, str(source.path) if source else None, time.time())
+    print(f"allowed {key} = {format_value(value)}")
+    return 0
+
+
 def run_config(arguments: argparse.Namespace) -> int:
     if arguments.config_command in ("set", "unset"):
         return change_config(arguments)
+    if arguments.config_command == "allow":
+        return allow_destination(arguments)
     config = load_config(config_start(arguments))
     warn_ignored(config)
     command = arguments.config_command
@@ -2011,10 +2085,15 @@ def instructions_ios(root: Path) -> Optional[bool]:
 
 
 def configured_projects_dir(root: Path) -> Optional[Path]:
-    """`projects.dir` from configuration, when the flag did not supply one."""
+    """`projects.dir` from configuration, when the flag did not supply one, refused when it leads outside the
+    repository, whichever file sets it, since a project's plans live in its repository."""
 
-    configured = load_config(root).setting("projects.dir")
-    return None if configured is None else Path(configured)
+    config = load_config(root)
+    configured = config.setting("projects.dir")
+    if configured is None:
+        return None
+    config.confine("projects.dir", root / configured, (root,))
+    return Path(configured)
 
 
 def configured_prepare(root: Path) -> Optional[str]:

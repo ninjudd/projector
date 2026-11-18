@@ -414,3 +414,33 @@ full pass, which transfers only commits this clone lacks.
   ordinary key, so an override's copy would outlive a removal or
   replacement. `config unset agent.key --override <priority>` still removes a
   copy that is there.
+
+### 8.3 Destinations and paths
+
+- **Which values need allowing.** `Config.setting` raises `NotAllowed` for a
+  destination whose effective value comes from a default-branch blob,
+  ordinary or override. `NotAllowed` is a `ConfigError`, so a caller that does
+  not yet treat it as unset still stops with its message, which names the
+  source and the exact `project config allow` command.
+- **The prompt.** `config allow` needs a terminal on standard input and
+  output and exits 69 without one, as `project agent key join` does. It
+  prints the source that sets the value here, or says no file here sets it,
+  and still lets you allow the value ahead of time. Anything but `y` or `yes`
+  exits 1. A key outside `DESTINATIONS` exits 2.
+- **What an approval records.** `source` is the walked file the value came
+  from, as an absolute path, or `null` for an approval granted where no file
+  set it.
+- **Listing and removing need no terminal.** Both only read or narrow your
+  approvals. `--remove` takes any key, so an approval outlives its key's
+  place in `DESTINATIONS` only until you remove it, and exits 1 when there was
+  no such approval.
+- **The ask rule.** `Bash(project config allow *)` joins the ask rules `init`
+  writes, and Codex's rules leave `config allow` to its usual approval, so an
+  agent's attempt reaches you as a prompt before it reaches the terminal
+  check.
+- **Where the path checks sit.** The checks run where the CLI reads each
+  setting, in `cli.py`'s `configured_projects_dir` and `ios_output`, through
+  `Config.confine`, because that is where the value's source is known, rather
+  than in `core.py` and `ios.py`. A path resolves with symbolic links
+  followed, so a link inside the repository that leads out is refused too.
+  `--projects-dir` on the command line is yours and is not checked.

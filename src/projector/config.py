@@ -47,6 +47,10 @@ and at equal priority the farthest file wins, with the user layer farthest of
 all, so a team can outrank a company by choosing a higher number and a person
 can outrank everyone.
 
+A destination, a setting in `DESTINATIONS` that says where your data goes,
+applies from a file the repository commits only once you allow its value with
+`project config allow`, recorded in the state directory's `allowed.json`.
+
 `project config set` and `unset` change one file, one line at a time, so the
 comments and layout a person wrote survive every change.
 """
@@ -59,6 +63,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import stat
 import subprocess
 import tempfile
@@ -128,6 +133,11 @@ USER_ONLY = frozenset({"agent.key"})
 OVERRIDE = "override"
 PRIORITY = re.compile(r"[1-9][0-9]?")
 
+# The settings that say where your data goes. The owner of a repository's
+# default branch may not be you, so a value read from it applies only once you
+# allow it with `project config allow`. The relay plans add their settings.
+DESTINATIONS: frozenset[str] = frozenset()
+
 # Keys whose value can be a secret. A value under `keychain:` names an item in
 # the OS keychain and holds no secret; any other value is the secret itself.
 SECRETS = frozenset({"agent.key"})
@@ -137,6 +147,68 @@ INLINE_KEY = "x25519:"
 
 class ConfigError(ProjectorError):
     exit_code = 78
+
+
+class NotAllowed(ConfigError):
+    """A destination that a file the repository commits sets, which you have not allowed. A caller treats the
+    setting as unset, with this as the reason."""
+
+    def __init__(self, key: str, value: Any, source: "Source") -> None:
+        self.key, self.value, self.source = key, value, source
+        super().__init__(f"{source} sets {key} = {value!r}, which sends your data where that file's owner chooses; "
+                         f"run `project config allow {key} {shlex.quote(str(value))}` in a terminal to use it")
+
+
+def is_destination(key: str) -> bool:
+    return key in DESTINATIONS
+
+
+def allowed_path(environ: Optional[dict[str, str]] = None) -> Path:
+    """Where the destinations you allowed are recorded: this machine's state, not a checkout or its config."""
+
+    return state_home(environ) / "allowed.json"
+
+
+def approvals(path: Path) -> list[dict[str, Any]]:
+    try:
+        found = json.loads(path.read_bytes())
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as error:
+        raise ConfigError(f"{path}: cannot read the destinations you allowed: {error}") from error
+    if not isinstance(found, dict) or found.get("schema_version") != 1 or not isinstance(found.get("allowed"), list):
+        raise ConfigError(f"{path}: not a record of allowed destinations")
+    return [entry for entry in found["allowed"] if isinstance(entry, dict)]
+
+
+def _write_approvals(path: Path, entries: list[dict[str, Any]]) -> None:
+    write_through(path, json.dumps({"schema_version": 1, "allowed": entries}, indent=2, sort_keys=True) + "\n")
+
+
+def is_allowed(path: Path, key: str, value: Any) -> bool:
+    return any(entry.get("key") == key and same_value(entry.get("value"), value) for entry in approvals(path))
+
+
+def allow(path: Path, key: str, value: Any, source: Optional[str], now: float) -> bool:
+    """Record that you allowed `key` to be `value`, answering False when you already had."""
+
+    entries = approvals(path)
+    if any(entry.get("key") == key and same_value(entry.get("value"), value) for entry in entries):
+        return False
+    allowed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+    _write_approvals(path, [*entries, {"key": key, "value": value, "source": source, "allowed_at": allowed_at}])
+    return True
+
+
+def disallow(path: Path, key: str, value: Any) -> bool:
+    """Remove the approval of `key` as `value`, answering whether there was one."""
+
+    entries = approvals(path)
+    kept = [entry for entry in entries if not (entry.get("key") == key and same_value(entry.get("value"), value))]
+    if len(kept) == len(entries):
+        return False
+    _write_approvals(path, kept)
+    return True
 
 
 def is_secret(key: str, value: Any) -> bool:
@@ -622,18 +694,21 @@ class Source:
 
 class Config:
     """A merged configuration, the sources it read lowest precedence first, where each value came from, the
-    user-only keys a walked file set, a note for each walked file whose working copy does not apply, and the
-    default branch each file in the repository waits on to change."""
+    user-only keys a walked file set, a note for each walked file whose working copy does not apply, the default
+    branch each file in the repository waits on to change, the user layer, and where your approvals live."""
 
     def __init__(self, values: dict[str, Any], sources: dict[str, Source], paths: list[Source],
                  ignored: Optional[list[tuple[Source, str]]] = None, notes: Optional[list[tuple[Path, str]]] = None,
-                 committed: Optional[dict[Path, str]] = None) -> None:
+                 committed: Optional[dict[Path, str]] = None, user: Optional[Path] = None,
+                 approvals: Optional[Path] = None) -> None:
         self.values = values
         self.sources = sources
         self.paths = paths
         self.ignored = ignored or []
         self.notes = notes or []
         self.committed = committed or {}
+        self.user = user
+        self.approvals = approvals
 
     def get(self, key: str, default: Any = None) -> Any:
         """Look a value up by dotted key, so `review.username` reaches a table."""
@@ -646,7 +721,8 @@ class Config:
         return current
 
     def setting(self, key: str) -> Any:
-        """A key from `SETTINGS`, or None when unset; a value of another type is an error naming the key."""
+        """A key from `SETTINGS`, or None when unset; a value of another type is an error naming the key, and a
+        destination a committed file sets that you have not allowed raises `NotAllowed`."""
 
         value = self.get(key)
         kind = SETTINGS[key]
@@ -654,10 +730,28 @@ class Config:
         if value is not None and (not isinstance(value, kind) or (kind is int and isinstance(value, bool))):
             expected = {bool: "true or false", int: "a whole number"}.get(kind, "a string")
             raise ConfigError(f"{key} must be {expected}, not {type(value).__name__}")
+        source = self.sources.get(key)
+        if value is not None and is_destination(key) and source is not None and source.blob is not None and (
+                self.approvals is None or not is_allowed(self.approvals, key, value)):
+            raise NotAllowed(key, value, source)
         return value
 
     def source(self, key: str) -> Optional[Source]:
         return self.sources.get(key)
+
+    def from_user(self, key: str) -> bool:
+        """Whether `key`'s value comes from the user layer, which you wrote yourself."""
+
+        source = self.sources.get(key)
+        return source is not None and source.blob is None and source.path == self.user
+
+    def confine(self, key: str, path: Path, places: tuple[Path, ...]) -> None:
+        """Refuse `path`, where `key`'s value leads, unless it resolves inside one of `places`."""
+
+        resolved = path.resolve()
+        if not any(_within(resolved, place.resolve()) for place in places):
+            raise ConfigError(f"{self.source(key)} sets {key} = {self.get(key)!r}, which resolves to {resolved}, "
+                              f"outside {' and '.join(str(place) for place in places)}")
 
     def flat(self) -> dict[str, Any]:
         return _flatten(self.values)
@@ -743,7 +837,7 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
     user = found.resolve() if found.is_file() else None
     walked = _walk(start, home, user, env)
     config = layered(walked.layers, user)
-    config.notes, config.committed = walked.notes, walked.committed
+    config.notes, config.committed, config.approvals = walked.notes, walked.committed, allowed_path(env)
     return config
 
 
@@ -810,7 +904,7 @@ def layered(layers: list[tuple[Source, dict[str, Any]]], user: Optional[Path]) -
     # key the merged result does not actually have.
     final = _flatten(values)
     sources = {key: source for key, source in sources.items() if key in final}
-    return Config(values, sources, [source for source, _ in layers], ignored)
+    return Config(values, sources, [source for source, _ in layers], ignored, user=user)
 
 
 @dataclass(frozen=True)
