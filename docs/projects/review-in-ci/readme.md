@@ -157,8 +157,14 @@ whatever the mode decides:
 | --- | --- | --- |
 | Command | `claude -p --plugin-dir <projector> --model <model> --effort <effort> --output-format stream-json` | `codex exec --model <model> --json -o <report>`, with `CODEX_HOME` holding Projector's plugin, installed by `install.sh codex` |
 | Mode | `--permission-mode auto --permission-prompts none`: a classifier decides each action no rule covers, and anything that would still prompt is denied | `--sandbox workspace-write --approve-for-me -c sandbox_workspace_write.network_access=true`: Codex's automatic review decides approvals, inside its sandbox, with network on so `gh` can reach GitHub |
-| Allowed | `--allowedTools` with `Read`, `Grep`, `Glob`, `Edit` and `Write` in the scratch folder, and `Bash` for `project *`, `gh pr view *`, `gh pr diff *`, `gh api *`, and read-only `git` (`diff`, `log`, `show`, `status`, `rev-parse`, `merge-base`, `ls-files`, `cat-file`) | The sandbox's workspace and the scratch folder |
-| Denied | `--disallowedTools` with `Bash` for `git push *`, `git commit *`, `gh pr merge *`, `gh pr ready *`, `gh pr close *`, `gh repo *`, `gh secret *`, `curl *`, and `wget *` | The same commands, refused by an `execpolicy` rule file the preset passes |
+| Allowed | `--allowedTools` with `Read`, `Grep`, `Glob`, `Edit` and `Write` in the scratch folder, and `Bash` for `project *`, `gh pr view *`, `gh pr diff *`, `gh repo view *`, `gh api *`, and read-only `git` (`diff`, `log`, `show`, `status`, `rev-parse`, `merge-base`, `ls-files`, `cat-file`) | The sandbox's workspace and the scratch folder |
+| Denied | `--disallowedTools` with `Bash` for `git push *`, `git commit *`, `gh pr merge *`, `gh pr ready *`, `gh pr close *`, each `gh repo` subcommand that changes a repository (`archive`, `autolink`, `create`, `delete`, `deploy-key`, `edit`, `fork`, `rename`, `sync`, and `unarchive`), `gh secret *`, `curl *`, and `wget *` | The same commands, refused by an `execpolicy` rule file the preset passes |
+
+The deny rules name each `gh repo` subcommand that changes a repository
+instead of denying `gh repo *`. A deny rule wins over every allow rule, and
+a repository's instructions can require
+`gh repo view <owner>/<repo> --json visibility` before the review writes
+anything, so a broad deny would stop that review without a verdict.
 
 `--permission-mode allowlist` replaces the mode with one that runs only the
 allowed rules and denies the rest: Claude's `dontAsk`, and Codex with
@@ -628,7 +634,7 @@ file:
 | Run `project review status` on the reviewed pull request from a session with `review.reviewers` set, and without it | The bot's verdict signs the head off with the setting, and is ignored without it |
 | List a private repository in `review.context_repos` of a public repository | The run warns and leaves it out, and the agent's working folders do not include it |
 | List a private repository in `review.context_repos`, and make the reviewed repository's own visibility check fail | The run warns and leaves it out, as it does for a public repository |
-| Inside the agent, run `git push` and `gh pr merge` | Both are refused, in auto mode and in allowlist mode |
+| Inside the agent, run `git push`, `gh pr merge`, `gh repo edit`, and `gh repo view --json visibility` | The first three are refused and the visibility check runs, in auto mode and in allowlist mode |
 | Review a pull request in Projector's repository, which hosts its site | The `summary` job pushes the summary, the site workflow deploys it, and the pull request gets the link comment and the description line |
 | Push a new head while an older run's `summary` job waits | The older summary is pushed to the site, but the comment and the description link only the newer head's summary |
 | Run `project init --ci-review` at a terminal in a repository with no CI review, as an admin | The workflow and `.projector.toml` are written, `gh` prompts for the missing secret without showing it, and the report ends by telling you to open a pull request |
@@ -647,9 +653,11 @@ These tests fail before the change, and each catches the bug it names:
   publishing makes the command exit 1, delete the start comment, and post
   the failure comment. Catches a silent pass.
 - **`test_claude_preset_allows_every_review_command`.** Reads every
-  `project review` command in the `review-pr` skill's code blocks and checks
-  that the Claude preset's allowed rules match it and no deny rule does.
-  Catches a skill change that adds a command CI then refuses.
+  `project review` command in the `review-pr` skill's code blocks, and
+  `gh repo view <owner>/<repo> --json visibility`, and checks that the
+  Claude preset's allowed rules match each one and no deny rule does.
+  Catches a skill change that adds a command CI then refuses, and a deny
+  rule broad enough to block the visibility check.
 - **`test_presets_never_skip_permissions`.** Builds every preset in both
   modes and checks that no command carries a flag that skips the permission
   system or the sandbox. Catches a "quick fix" that makes a stuck run pass
