@@ -55,10 +55,16 @@ and the controls in `../shared-relay/readme.md` § 2.3.
 ### 2.1 Runtime flow
 
 1. **Configure.** You set `agent.relay = "s3://acme-agents/relay"` in the
-   `.projector.toml` whose reach you want, and run `project agent relay
-   allow s3://acme-agents/relay` when that file is not `~/.projector.toml`,
-   as for any location. `agent.s3_region`, `agent.s3_endpoint`, and
-   `agent.s3_profile` say where the bucket is and which credentials to use.
+   `.projector.toml` whose reach you want. `agent.s3_region`,
+   `agent.s3_endpoint`, and `agent.s3_profile` say where the bucket is and
+   which credentials to use. `agent.s3_endpoint` and `agent.s3_profile` are
+   destination settings, as `agent.relay` is (`../../config-trust/readme.md`
+   § 2.1 step 5). An endpoint can name any HTTPS server, which would accept
+   every write without needing your credentials, and a profile picks which of
+   your AWS identities signs. So when a tracked file sets any of the three,
+   each value is used only once you run `project config allow <key> <value>`
+   in a terminal. Values from untracked files and `~/.projector.toml` need no
+   allowing.
 2. **Find credentials.** The S3 client takes the first of these that is
    present, reads it again when it expires, and never prints, logs, or
    passes a secret as a process argument:
@@ -131,7 +137,8 @@ and the controls in `../shared-relay/readme.md` § 2.3.
 | `agent.s3_poll` | `int`, default 10 (kept in `relay.py`), minimum 2. Seconds between polls of an S3 location. |
 
 Every one of these is read from every layer, like `agent.relay`, and none
-holds a secret.
+holds a secret. `agent.s3_endpoint` and `agent.s3_profile` join `agent.relay`
+in `config.DESTINATIONS`.
 
 ### 2.3 Objects
 
@@ -159,7 +166,7 @@ location itself.
 | --- | --- |
 | New `src/projector/s3.py` | A small S3 client from the standard library. It signs requests with Signature Version 4 over `hmac` and `hashlib`, and sends them with `urllib.request` and the default `ssl` context, with a 30-second timeout. It finds credentials as § 2.1 step 2 describes. It provides `list_objects(prefix)`, `get_object(name, if_match)`, `put_object(name, body, if_match=None, if_none_match=False)`, and `delete_object(name, if_match)`, and raises `PreconditionFailed`, `NotFound`, and `S3Error`. It reads at most 1 MiB of any response, refuses an XML body that holds a `<!DOCTYPE`, and parses listings with `xml.etree.ElementTree`. Its errors and its `repr` never include a secret key or a session token. |
 | `src/projector/relay.py` | Add the `Transport` interface: `snapshot(prefixes)`, `read(ref, version)`, and `apply(items)`. Move today's fetch, `for-each-ref`, `ls-tree`, `cat-file`, `write_commit`, and push code into `GitTransport`, without changing its behavior. Add `S3Transport` with the mapping in § 2.3 and the requests in § 2.1 step 6, and the probe in § 2.1 step 3. `Job` takes a transport, and its examine step asks the transport whether an object is too large before it reads one. Key caches and outboxes of S3 locations as § 2.3 says. |
-| `src/projector/config.py` | Accept `s3://` in `relay_location`. Add the four `agent.s3_*` settings, and `agent.s3_poll` to `MINIMUMS` with 2. |
+| `src/projector/config.py` | Accept `s3://` in `relay_location`. Add the four `agent.s3_*` settings, `agent.s3_poll` to `MINIMUMS` with 2, and `agent.s3_endpoint` and `agent.s3_profile` to `DESTINATIONS`. |
 | `src/projector/watch.py` | Start an S3 location's job every `agent.s3_poll` seconds as well as when its outbox changes, and report its probe result and credential source in `watch status`. |
 | `src/projector/cli.py` | Show S3 locations in `project agent relay show`, as § 2.1 step 7 says. |
 | `docs/cli.md` | Document the S3 relay. Give the IAM policy each person needs: `s3:ListBucket` on the bucket with an `s3:prefix` condition, and `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on `<prefix>/*`. Recommend a lifecycle rule that expires objects after 8 days, as a backstop for the relay's own 7-day sweep. Say that a bucket with versioning keeps deleted records. |
@@ -213,6 +220,7 @@ the relay tests' two-machine setup with an S3 location.
 | Delete an object another machine already deleted. | The `404` counts as deleted, and the outbox empties. Catches a deletion retried forever. |
 | List an object of 33 KiB, an object with a malformed name, and 300 new valid objects. | The first is rejected with no `GetObject`, the second is ignored, and the job examines 256 and opens 64. Catches a transport that reads unbounded input. |
 | Make the fake server ignore `If-None-Match`, then let it answer an unsigned listing. | The location is `off` with each reason, and nothing else is written. Catches a relay on a store that breaks leases, or on a public bucket. |
+| Commit `agent.s3_endpoint` and `agent.s3_profile` to the default branch's `.projector.toml`, and allow neither. | No request is sent to the endpoint and no credentials are read for the profile, and `list` names `project config allow` for each. Catches a repository that points your relay at its own server, or signs with an identity you did not choose. |
 | Give credentials through the environment, then a profile, then a `credential_process` whose credentials expire during the test. | Each signs correctly, and the expired credentials are read again. No output, log line, `watch status`, or process argument holds the secret key or the token. Catches a credential leak and a stale session. |
 | Make `credential_process` hang, and make the server hang on a request. | The process is killed after 30 seconds and the request times out, each with the error in `watch status`. A Codex event for an unrelated session still arrives within 2 seconds. Catches an S3 call that stalls the daemon's loop. |
 | Answer a listing with a `<!DOCTYPE` body, and with a body over 1 MiB. | Each is an error for that job, and nothing is parsed. Catches an XML entity attack and unbounded reads. |
