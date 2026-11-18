@@ -1,0 +1,82 @@
+{
+ "version": 1,
+ "name": "S3 relay transport",
+ "project": "agent-messages/s3-relay",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 567,
+  "title": "Reach a relay location through a transport, and move the Git code behind GitTransport",
+  "head": "bfa35d893216c5f3c824c9492264dc26ae8f2613",
+  "headRef": "s3-relay/transport",
+  "base": "67710fa783a8598744a00043b70589c02cde82e4",
+  "baseRef": "shared-relay/inbox",
+  "basePr": 566
+ },
+ "overview": {
+  "summary": [
+   "The relay carries encrypted agent presence, messages, and repository inbox records between machines. Its job currently reads and writes those records through Git commands. This layer introduces a store interface so an S3 implementation can share the existing delivery and outbox rules.",
+   "<code>GitTransport</code> keeps the current Git behavior. The job asks it to list versions, check a record before reading, read its bytes, and apply queued changes under their expected versions. S3 requests, configuration, and credentials belong to later layers."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used here",
+    "html": "<ul class=\"tight\"><li><b>Transport:</b> the store-specific operations a relay job calls.</li><li><b>Version:</b> a Git commit here; a queued change expects this version before replacing or deleting a record.</li><li><b>Outbox:</b> the local queue of sealed records and deletions waiting to reach the store.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "transport",
+   "title": "Keep store operations behind one interface",
+   "kicker": "The job retains delivery and queue bookkeeping.",
+   "intro": [
+    "A relay job must preserve the same sealing, limits, and concurrent-update rules regardless of its store. <code>Transport</code> describes that boundary, and <code>GitTransport</code> implements it using the existing Git commands.",
+    "The separate <code>check</code> operation rejects an invalid tree or oversized record before a read uses an opening slot. Applying changes returns an outcome for each record, including its landed version and whether its expected-version check failed. The job uses those outcomes to settle the outbox and update its cache."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/relay.py",
+     "note": "Move Git operations into a transport and route the job through its four operations.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Compared the moved fetch, tree check, blob read, leased push, and tracking-ref commands with the base, and traced every changed caller."
+      },
+      {
+       "kind": "verify",
+       "text": "Seventeen focused tests passed for Git exchange, push races and partial lease failures, timeout recovery, bare clones, pre-read rejection limits, state merging, and per-record failures."
+      },
+      {
+       "kind": "context",
+       "line": 1345,
+       "text": "Job.open remains a Git-blob reader for existing callers in the tests; production examination uses transport reads followed by unseal."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "plan",
+   "title": "Record the boundary chosen during implementation",
+   "kicker": "The S3 plan enters implementation.",
+   "intro": [
+    "The plan moves from ready to in progress and records why checking and reading are separate operations. It also assigns tracking-ref updates to the Git transport so the job can keep its store-independent bookkeeping."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/s3-relay/readme.md",
+     "note": "Start implementation and append the four-operation transport and tracking-ref decisions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Read the plan against the implemented boundary. Hosted service and instance or container credentials remain explicitly deferred."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

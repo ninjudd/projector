@@ -1,0 +1,439 @@
+diff --git a/docs/projects/agent-messages/s3-relay/readme.md b/docs/projects/agent-messages/s3-relay/readme.md
+index 2b0e0f7d..9b0e3da5 100644
+--- a/docs/projects/agent-messages/s3-relay/readme.md
++++ b/docs/projects/agent-messages/s3-relay/readme.md
+@@ -1,6 +1,6 @@
+ ---
+-status: ready
+-priority: next
++status: in-progress
++priority: now
+ ---
+ 
+ # Relay through an S3 bucket
+@@ -346,3 +346,17 @@ observed delivery time in this plan.
+   (§ 2.1 step 2). When credentials stop working, the daemon posts one local
+   notice to the location's inbox naming the fix, and withdraws it once
+   requests succeed again (§ 2.1 step 8).
++
++## 8. What building settled
++
++- **The transport has four operations.** `Transport` in `relay.py` has
++  `snapshot(prefixes)`, `check(ref, version)`, `read(handle)`, and
++  `apply(items)`. `check` is the examine step's question before a read: Git
++  answers it from the commit's tree and S3 from the listing's size, and a
++  record it refuses never counts toward `OPEN_LIMIT`, as a refused tree
++  never did. `apply` answers each item's outcome: whether it landed, what
++  the store said, whether its lease failed, and the version it left.
++- **`GitTransport` moves the tracking refs itself.** It runs the
++  `update-ref` that follows a push inside `apply`, so the job's bookkeeping
++  after a push names no Git command. `Job.open` still reads a Git blob, for
++  the tests that open a record on the bare repository.
+diff --git a/src/projector/relay.py b/src/projector/relay.py
+index 64784262..b2bde464 100644
+--- a/src/projector/relay.py
++++ b/src/projector/relay.py
+@@ -7,10 +7,11 @@
+ machines holding the key can read or write the records.
+ 
+ Commands never push and never write a Git object: they queue each ref change in the location's outbox. The watch
+-daemon runs one job per location on a pool of worker threads, never on the loop that delivers events. A job
+-fetches the key's refs, opens and checks what is new, delivers messages to the sessions on this machine, queues
+-renewals and cleanup, then writes each queued record as a commit in a checkout of the location, or in a bare clone
+-of it, and pushes every queued change in one `git push`.
++daemon runs one job per location on a pool of worker threads, never on the loop that delivers events. A job reads
++the key's records, opens and checks what is new, delivers messages to the sessions on this machine, queues
++renewals and cleanup, then applies every queued change. It reaches the location through a transport: for a Git
++repository, `GitTransport` fetches the key's refs, writes each queued record as a commit in a checkout of the
++location or in a bare clone of it, and pushes every queued change in one `git push`.
+ 
+ Files under the watch state root, each named by the location:
+ 
+@@ -45,7 +46,7 @@
+ from concurrent.futures import Future, ThreadPoolExecutor
+ from contextlib import AbstractContextManager
+ from pathlib import Path
+-from typing import Callable, Optional
++from typing import Callable, NamedTuple, Optional, Protocol
+ 
+ from . import agents, config, crypto, keychain, repo_inbox, review, summary, watch
+ from .config import INLINE_KEY, KEYCHAIN, ConfigError, inline_key, unset_value, user_config_path, write_value
+@@ -854,6 +855,113 @@ def bare_clone(root: Path, location: str) -> Path:
+     return path
+ 
+ 
++# Transports
++
++class Outcome(NamedTuple):
++    """What applying one queued change did: whether it landed, what the store said, whether its lease failed, and
++    the version it left, which is None for a deletion and for a change that did not land."""
++
++    ok: bool
++    said: str
++    stale: bool
++    version: Optional[str]
++
++
++class Transport(Protocol):
++    """Where a location's records live, behind what a job asks of it. Each record is named by its ref, and its
++    version is what a lease expects."""
++
++    def snapshot(self, prefixes: tuple[str, ...]) -> dict[str, str]:
++        """Every record under `prefixes`, by ref, with its version."""
++        ...
++
++    def check(self, ref: str, version: str) -> str:
++        """What `read` takes to read the record at `ref`, raising `Rejected` for one the relay refuses unread."""
++        ...
++
++    def read(self, handle: str) -> bytes:
++        """The bytes of a record that `check` admitted, raising `Rejected` when they cannot be read."""
++        ...
++
++    def apply(self, items: list[dict]) -> tuple[dict[str, Outcome], str]:
++        """Apply each queued item under its lease, and answer each one's outcome by ref, with why the ones that
++        did not land failed."""
++        ...
++
++
++class GitTransport:
++    """Records as refs in a Git repository, each a commit holding one `sealed.json`, reached from a checkout or a
++    bare clone at `cwd` whose Git commands take `options`. A version is a commit."""
++
++    def __init__(self, cwd: Path, options: tuple[str, ...] = ()) -> None:
++        self.cwd = cwd
++        self.options = options
++
++    def snapshot(self, prefixes: tuple[str, ...]) -> dict[str, str]:
++        done = git(self.cwd, "fetch", "--prune", "--quiet", "--no-write-fetch-head", REMOTE,
++                   *[f"+{prefix}*:{tracking(prefix)}*" for prefix in prefixes], options=self.options)
++        if done.returncode != 0:
++            raise RelayError(f"git fetch failed: {last_line(done)}")
++        listed = checked(self.cwd, "for-each-ref", "--format=%(objectname) %(refname)",
++                         *[tracking(prefix) for prefix in prefixes], options=self.options)
++        fetched = {}
++        for line in listed.splitlines():
++            sha, name = line.split(" ", 1)
++            fetched[name.replace(f"refs/projector/remotes/{REMOTE}/", "refs/projector/", 1)] = sha
++        return fetched
++
++    def check(self, ref: str, version: str) -> str:
++        """The blob of a commit whose tree is exactly one `sealed.json` of at most 32 KiB."""
++        done = git(self.cwd, "ls-tree", "-l", version, options=self.options)
++        lines = text(done.stdout).splitlines()
++        found = TREE.fullmatch(lines[0]) if done.returncode == 0 and len(lines) == 1 else None
++        if found is None:
++            raise Rejected("tree-shape")
++        if int(found[2]) > MAX_SEALED:
++            raise Rejected("too-large")
++        return found[1]
++
++    def read(self, handle: str) -> bytes:
++        done = git(self.cwd, "cat-file", "blob", handle, options=self.options)
++        if done.returncode != 0:
++            raise Rejected("unreadable")
++        return done.stdout
++
++    def apply(self, items: list[dict]) -> tuple[dict[str, Outcome], str]:
++        """Write each record as a commit, push every change in one `git push`, and move each landed ref's tracking
++        ref to what the push left on origin."""
++        commits: dict[str, str] = {}
++        results: dict[str, tuple[bool, str]] = {}
++        try:
++            for item in items:
++                if item["sealed"] is not None:
++                    commits[item["ref"]] = write_commit(self.cwd, item["sealed"], self.options)
++            # An item you sent to a peer is published again with no lease: only your machines write it, and the
++            # peer may have deleted it since this machine last pushed it.
++            forced = {item["ref"] for item in items
++                      if item["sealed"] is not None and (item.get("meta") or {}).get("force")}
++            leases = [f"--force-with-lease={item['ref']}:{item['old']}" for item in items
++                      if item["old"] and item["ref"] not in forced]
++            specs = [f"{'+' if item['ref'] in forced else ''}{commits[item['ref']]}:{item['ref']}"
++                     if item["sealed"] is not None else f":{item['ref']}" for item in items]
++            done = git(self.cwd, "push", "--porcelain", *leases, REMOTE, *specs, timeout=PUSH_TIMEOUT,
++                       options=self.options)
++            results = push_results(text(done.stdout))
++            failed = f"git push failed: {last_line(done)}"
++        except RelayError as error:
++            failed = str(error)
++        outcomes = {}
++        for item in items:
++            ok, said = results.get(item["ref"], (False, failed))
++            outcomes[item["ref"]] = Outcome(ok, said, not ok and any(word in said for word in STALE),
++                                            commits.get(item["ref"]) if ok else None)
++        lines = "".join(f"update {tracking(ref)} {outcome.version}\n" if outcome.version
++                        else f"delete {tracking(ref)}\n" for ref, outcome in outcomes.items() if outcome.ok)
++        if lines:
++            git(self.cwd, "update-ref", "--stdin", input=lines.encode(), options=self.options)
++        return outcomes, failed
++
++
+ # One repository's job
+ 
+ class Job:
+@@ -897,34 +1005,36 @@ def __init__(self, root: Path, location: str, key: Optional[Key], live: set[str]
+         # The Git options of a bare clone, which every command in it takes.
+         self.options: tuple[str, ...] = ()
+         self.checkouts: dict[str, bool] = {}
++        # Where the location's records live, once the job finds a way to reach them.
++        self.transport: Optional[Transport] = None
+ 
+     def run(self) -> dict:
+         self.attempted = pending(read_outbox(repo_file(self.root, "outbox", self.location)))
+-        cwd = None
+         try:
+             self.check_location()
+             if self.full:
+                 self.refresh_visibility()
+             cwd = self.checkout()
+-            if self.poll and cwd is not None and self.key_ids():
+-                self.fetch(cwd, self.key_ids())
+-                self.rebase(cwd)
++            self.transport = GitTransport(cwd, self.options) if cwd is not None else None
++            if self.poll and self.transport is not None and self.key_ids():
++                self.fetch(self.key_ids())
++                self.rebase()
+                 if self.key is not None:
+-                    self.examine(cwd)
++                    self.examine()
+                     if self.full:
+                         self.sweep()
+             self.maintain()
+             queue(self.root, self.location, None, self.changes, self.now, self.cache["remote"])
+             self.attempted |= {change(ref, sealed) for ref, sealed, _ in self.changes}
+-            if cwd is not None:
+-                self.push(cwd)
++            if self.transport is not None:
++                self.push()
+         except RelayError as error:
+             self.error = str(error)
+         finally:
+             path = repo_file(self.root, "relay", self.location)
+             path.parent.mkdir(parents=True, exist_ok=True)
+             write_json(path, self.cache)
+-        if cwd is None and not self.error:
++        if self.transport is None and not self.error:
+             return self.result("waiting", NO_CHECKOUT)
+         if self.refused and all(self.chose(found) for found in self.sessions.values()):
+             return self.result("off", self.refused)
+@@ -1039,18 +1149,11 @@ def prefixes(self, key_ids: Optional[list[str]] = None) -> tuple[str, ...]:
+             found += (f"{USER}{self.held}/", f"{USER_STATE}{self.held}/")
+         return found
+ 
+-    def fetch(self, cwd: Path, key_ids: list[str]) -> None:
++    def fetch(self, key_ids: list[str]) -> None:
++        """Record what the location holds under the keys' prefixes, forgetting what it no longer holds."""
++        assert self.transport is not None
+         prefixes = self.prefixes(key_ids)
+-        done = git(cwd, "fetch", "--prune", "--quiet", "--no-write-fetch-head", REMOTE,
+-                   *[f"+{prefix}*:{tracking(prefix)}*" for prefix in prefixes], options=self.options)
+-        if done.returncode != 0:
+-            raise RelayError(f"git fetch failed: {last_line(done)}")
+-        listed = checked(cwd, "for-each-ref", "--format=%(objectname) %(refname)",
+-                         *[tracking(prefix) for prefix in prefixes], options=self.options)
+-        fetched = {}
+-        for line in listed.splitlines():
+-            sha, name = line.split(" ", 1)
+-            fetched[name.replace(f"refs/projector/remotes/{REMOTE}/", "refs/projector/", 1)] = sha
++        fetched = self.transport.snapshot(prefixes)
+         kept = {ref: sha for ref, sha in self.cache["remote"].items() if not ref.startswith(prefixes)}
+         self.cache["remote"] = {**kept, **fetched}
+         self.cache["seen"] = {ref: seen for ref, seen in self.cache["seen"].items() if ref in self.cache["remote"]}
+@@ -1059,7 +1162,7 @@ def fetch(self, cwd: Path, key_ids: list[str]) -> None:
+                                     if presence_ref(self.key.id, relay_id) in fetched}
+         self.cache["polled_at"] = watch.stamp(self.now)
+ 
+-    def rebase(self, cwd: Path) -> None:
++    def rebase(self) -> None:
+         """Give each change whose lease failed the commit the fetch found, so it lands on a later push. A deletion
+         of a ref another machine owns is dropped instead: the ref moved, so that machine renewed it. A repository
+         inbox entry's deletion is dropped too, since another machine or the peer already deleted or replaced it.
+@@ -1084,7 +1187,8 @@ def rebase(self, cwd: Path) -> None:
+                             items.append(item)
+                         elif remote.get(item["ref"]) is not None:
+                             found = remote[item["ref"]]
+-                            item.update(sealed=self.merged_state(cwd, found, item["sealed"]), old=found, stale=False)
++                            item.update(sealed=self.merged_state(item["ref"], found, item["sealed"]), old=found,
++                                        stale=False)
+                             items.append(item)
+                         # With no record at the ref, the entry was deleted, and its state goes with it.
+                         continue
+@@ -1095,11 +1199,11 @@ def rebase(self, cwd: Path) -> None:
+             box["items"] = items
+             write_json(path, box)
+ 
+-    def merged_state(self, cwd: Path, sha: str, queued: dict) -> dict:
+-        """The state record queued, merged with the one origin holds at `sha`, sealed again."""
+-        assert self.key is not None
++    def merged_state(self, ref: str, version: str, queued: dict) -> dict:
++        """The state record queued, merged with the one the location holds at `ref` in `version`, sealed again."""
++        assert self.key is not None and self.transport is not None
+         try:
+-            _, found = self.open(cwd, self.sealed_blob(cwd, sha))
++            _, found = self.unseal(self.transport.read(self.transport.check(ref, version)))
+         except Rejected:
+             found = None
+         sealed, merged = merged_seal(self.key, queued, found)
+@@ -1107,9 +1211,10 @@ def merged_state(self, cwd: Path, sha: str, queued: dict) -> dict:
+             repo_inbox.take_state(self.root, self.location, merged)
+         return sealed
+ 
+-    def examine(self, cwd: Path) -> None:
+-        """Open at most `OPEN_LIMIT` new records, checking each ref's name and tree before reading its blob, so a
+-        flood of refs delays the relay without stalling it."""
++    def examine(self) -> None:
++        """Open at most `OPEN_LIMIT` new records, checking each ref's name, and having the transport check the
++        record, before reading it, so a flood of refs delays the relay without stalling it."""
++        assert self.transport is not None
+         prefixes = self.prefixes()
+         seen = self.cache["seen"]
+         new = sorted(ref for ref, sha in self.cache["remote"].items()
+@@ -1128,15 +1233,15 @@ def examine(self, cwd: Path) -> None:
+                 self.note_rejection(ref, "ref-name")
+                 continue
+             try:
+-                blob = self.sealed_blob(cwd, sha)
++                handle = self.transport.check(ref, sha)
+                 opened += 1
+                 kind, _, name = parsed
+                 if kind == "user":
+-                    sender, record = self.open(cwd, blob, self.user_senders())
++                    sender, record = self.unseal(self.transport.read(handle), self.user_senders())
+                     if not self.take_user(ref, sha, name, sender, record):
+                         waiting.append((ref, sha, name, sender, record))
+                     continue
+-                _, record = self.open(cwd, blob)
++                _, record = self.unseal(self.transport.read(handle))
+                 if kind == "agent":
+                     self.take_presence(ref, sha, name, record)
+                 elif kind == "message":
+@@ -1237,26 +1342,17 @@ def forget_entries(self, ids: list[str]) -> None:
+             self.delete(state_ref(self.key.id, entry_id))
+         repo_inbox.forget(self.root, self.location, ids)
+ 
+-    def sealed_blob(self, cwd: Path, sha: str) -> str:
+-        """The blob of a commit whose tree is exactly one `sealed.json` of at most 32 KiB."""
+-        done = git(cwd, "ls-tree", "-l", sha, options=self.options)
+-        lines = text(done.stdout).splitlines()
+-        found = TREE.fullmatch(lines[0]) if done.returncode == 0 and len(lines) == 1 else None
+-        if found is None:
+-            raise Rejected("tree-shape")
+-        if int(found[2]) > MAX_SEALED:
+-            raise Rejected("too-large")
+-        return found[1]
+-
+     def open(self, cwd: Path, blob: str, senders: Optional[set[bytes]] = None) -> tuple[bytes, dict]:
+-        """The key that sealed a blob, and the record the blob holds, when it opens with this machine's key and was
+-        sealed by one of `senders`, by default this machine's own key."""
++        """The key that sealed a blob in the Git repository at `cwd`, and the record it holds, as `unseal` finds
++        them."""
++        return self.unseal(GitTransport(cwd, self.options).read(blob), senders)
++
++    def unseal(self, data: bytes, senders: Optional[set[bytes]] = None) -> tuple[bytes, dict]:
++        """The key that sealed a record's bytes, and the record they hold, when they open with this machine's key
++        and were sealed by one of `senders`, by default this machine's own key."""
+         assert self.key is not None
+-        done = git(cwd, "cat-file", "blob", blob, options=self.options)
+-        if done.returncode != 0:
+-            raise Rejected("unreadable")
+         try:
+-            sender, plaintext = crypto.unseal(self.key.private, parse(done.stdout))
++            sender, plaintext = crypto.unseal(self.key.private, parse(data))
+         except crypto.TagMismatch:
+             raise Rejected("tag-mismatch") from None
+         except crypto.CryptoError:
+@@ -1390,7 +1486,9 @@ def maintain(self) -> None:
+ 
+     # Push
+ 
+-    def push(self, cwd: Path) -> None:
++    def push(self) -> None:
++        """Apply every queued change that the location's refusal does not withhold, through the transport."""
++        assert self.transport is not None
+         path = repo_file(self.root, "outbox", self.location)
+         with locked(path.parent):
+             box = read_outbox(path)
+@@ -1400,52 +1498,32 @@ def push(self, cwd: Path) -> None:
+                 return
+             box["pushing"] = [item["ref"] for item in snapshot]
+             write_json(path, box)
+-        commits: dict[str, str] = {}
+-        results: dict[str, tuple[bool, str]] = {}
+-        try:
+-            for item in snapshot:
+-                if item["sealed"] is not None:
+-                    commits[item["ref"]] = write_commit(cwd, item["sealed"], self.options)
+-            # An item you sent to a peer is published again with no lease: only your machines write it, and the
+-            # peer may have deleted it since this machine last pushed it.
+-            forced = {item["ref"] for item in snapshot
+-                      if item["sealed"] is not None and (item.get("meta") or {}).get("force")}
+-            leases = [f"--force-with-lease={item['ref']}:{item['old']}" for item in snapshot
+-                      if item["old"] and item["ref"] not in forced]
+-            specs = [f"{'+' if item['ref'] in forced else ''}{commits[item['ref']]}:{item['ref']}"
+-                     if item["sealed"] is not None else f":{item['ref']}" for item in snapshot]
+-            done = git(cwd, "push", "--porcelain", *leases, REMOTE, *specs, timeout=PUSH_TIMEOUT,
+-                       options=self.options)
+-            results = push_results(text(done.stdout))
+-            failed = f"git push failed: {last_line(done)}"
+-        except RelayError as error:
+-            failed = str(error)
+-        landed = self.settle(path, snapshot, commits, results, failed)
+-        self.record(cwd, landed, snapshot)
+-        if any(not results.get(item["ref"], (False, ""))[0] for item in snapshot):
++        outcomes, failed = self.transport.apply(snapshot)
++        landed = self.settle(path, snapshot, outcomes)
++        self.record(landed, snapshot)
++        if any(not outcome.ok for outcome in outcomes.values()):
+             self.error = self.error or failed
+ 
+-    def settle(self, path: Path, snapshot: list[dict], commits: dict[str, str],
+-               results: dict[str, tuple[bool, str]], failed: str) -> dict[str, Optional[str]]:
++    def settle(self, path: Path, snapshot: list[dict], outcomes: dict[str, Outcome]) -> dict[str, Optional[str]]:
+         """Remove each item that landed and has not changed since the push took it, give one that changed the
+-        pushed commit as its new `old`, and keep each failure with its error. Answers what landed."""
++        version it landed as its new `old`, and keep each failure with its error. Answers what landed."""
+         landed: dict[str, Optional[str]] = {}
+         with locked(path.parent):
+             box = read_outbox(path)
+             items = {item["ref"]: item for item in box["items"]}
+             for taken in snapshot:
+                 ref = taken["ref"]
+-                ok, said = results.get(ref, (False, failed))
++                outcome = outcomes[ref]
+                 item = items.get(ref)
+-                if ok:
+-                    landed[ref] = commits.get(ref)
++                if outcome.ok:
++                    landed[ref] = outcome.version
+                     if item is not None and item["sealed"] == taken["sealed"]:
+                         del items[ref]
+                         continue
+                     if item is not None:
+-                        item.update(old=commits.get(ref), last_error="", stale=False)
++                        item.update(old=outcome.version, last_error="", stale=False)
+                 elif item is not None:
+-                    item.update(last_error=said, stale=any(word in said for word in STALE))
++                    item.update(last_error=outcome.said, stale=outcome.stale)
+                 if item is not None and item["sealed"] is None and item["old"] is None:
+                     del items[ref]
+             box["items"] = list(items.values())
+@@ -1456,15 +1534,10 @@ def settle(self, path: Path, snapshot: list[dict], commits: dict[str, str],
+             write_json(path, box)
+         return landed
+ 
+-    def record(self, cwd: Path, landed: dict[str, Optional[str]], snapshot: list[dict]) -> None:
+-        """Move each landed ref's tracking ref and the cache to what the push left on origin, and mark each
+-        landed presence of this machine's sessions published."""
+-        if not landed:
+-            return
++    def record(self, landed: dict[str, Optional[str]], snapshot: list[dict]) -> None:
++        """Move the cache to what the push left in the location, and mark each landed presence of this machine's
++        sessions published."""
+         metas = {item["ref"]: item.get("meta") or {} for item in snapshot}
+-        lines = "".join(f"update {tracking(ref)} {sha}\n" if sha else f"delete {tracking(ref)}\n"
+-                        for ref, sha in landed.items())
+-        git(cwd, "update-ref", "--stdin", input=lines.encode(), options=self.options)
+         published: dict[str, Optional[str]] = {}
+         for ref, sha in landed.items():
+             parsed = parse_ref(ref)
