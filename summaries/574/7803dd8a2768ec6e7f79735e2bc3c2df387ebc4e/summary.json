@@ -31,7 +31,7 @@
    {
     "id": "rereview",
     "title": "Finding verification",
-    "html": "<ul class=\"tight\"><li>Newer-head verdict detection and Windows timeout termination remain fixed.</li><li>The new mutex-and-lock check fixes handover before cleanup begins.</li><li>The existing cleanup thread is reopened for releasing ownership before worktree removal, with no duplicate thread.</li><li>Checks used local fixtures and mocked GitHub responses; no live agent or real credential was used.</li></ul>"
+    "html": "<ul class=\"tight\"><li>Newer-head verdict detection, Windows timeout termination, and the initial handover fence remain fixed.</li><li>The author accepted the remaining cleanup-ordering issue and described retaining ownership through worktree removal, but that fix is not pushed onto this head yet.</li><li>The real temporary Git-worktree reproduction still deletes the next review’s worktree while leaving its state and lock. The existing finding stays open, with no duplicate thread.</li><li>The configured gate passed again on the unchanged SHA.</li></ul>"
    }
   ]
  },
