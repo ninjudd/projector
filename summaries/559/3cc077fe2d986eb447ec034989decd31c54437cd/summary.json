@@ -1,0 +1,82 @@
+{
+ "version": 1,
+ "name": "Stack fixer event names",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 559,
+  "title": "Name one fixer per stack in the daemon's event lines, for the stack's bottom layer",
+  "head": "3cc077fe2d986eb447ec034989decd31c54437cd",
+  "headRef": "stack-fixer/event-names",
+  "base": "db2d800f84785bfa8cfa1c8c9b7a6bfab726f356",
+  "baseRef": "repo-inbox/panel",
+  "basePr": 553
+ },
+ "overview": {
+  "summary": [
+   "Projector’s watcher sends review findings, failed checks and conflicts to the session fixing a pull request. A stack is a chain of pull requests built on one another; fixing a lower layer also updates branches above it, so every layer needs the same fixing subagent.",
+   "This change names that subagent <code>fix-stack-&lt;bottom pull request&gt;</code>. The watcher recognizes branch chains from the repository’s open pull requests and uses GitHub’s stack record to keep the original bottom after it merges. Once a bottom is known, an unavailable or empty lookup preserves it. A pull request outside a chain keeps <code>fix-&lt;pull request&gt;</code>."
+  ],
+  "cards": [
+   {
+    "id": "review-result",
+    "title": "Review result",
+    "html": "<p>The earlier P2 is fixed: failed, malformed and empty stack replies keep the existing fixer after a partial merge. No new findings or suggestions. The configured gate and all 148 watcher tests passed.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "routing",
+   "title": "Find the stack and route its work",
+   "kicker": "One fixer owns every layer",
+   "intro": [
+    "The watcher stores each open pull request’s base and head branches, excluding fork heads from local branch chains. It shares one conditional listing within each pass and refreshes older cached pages that lack branch information.",
+    "For a chain, GitHub’s stack answer supplies the bottom pull request and is cached for every layer until the next full pass. A later lookup that fails or finds no stack preserves the known bottom; an authoritative replacement or a branch chain reaching below it changes the name. Work events, ownership moves and closing events all use that name, and closing one layer leaves its worker available for the others."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Recognizes stack membership, caches its bottom layer and uses one fixing subagent in every relevant event.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1801,
+       "text": "The original partial-merge sequence now keeps fix-stack-5 after HTTP 503, malformed JSON and a successful empty answer. Temporary reproductions also confirmed that a deeper branch chain and an authoritative replacement can update the bottom."
+      },
+      {
+       "kind": "verify",
+       "text": "All 148 watcher tests passed, including old cached pages, fork exclusion, lookup reuse, ownership moves, partial merges and both new retained-name regressions."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Exercise and explain the event names",
+   "kicker": "Standalone pulls, stacks and partial merges",
+   "intro": [
+    "The tests extend the fake GitHub service with branch ownership and stack responses, then assert the actual event lines and lookup counts. The CLI guide explains how stacks share a fixer and why merging a lower layer leaves that worker running."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_watch.py",
+     "note": "Covers stack names, branch fallback, fork exclusion, old cache pages, lookup reuse, ownership moves and partial merges.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All 148 watcher tests passed, including all 11 stack-fixer cases."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the shared worker name, stack lookup, retained names after a partial merge and the instructions sent when a layer closes."
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,523 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 66a632cb..5a6f801b 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3531,6 +3531,33 @@ NEW HEAD acme/app#14 (feature): 4f2a9c1 -> 9f3c2a1, needs an exact-head review 
+ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagent review-14 and run no project review finish
+ ```
+ 
++A `fix` line names the subagent that fixes the pull request: `fix-<number>`
++for a pull request alone, and `fix-stack-<number>` for a layer of a stack,
++named for the stack's bottom layer. One subagent fixes every layer of a
++stack, because a fix to a layer is carried up into each layer above it, so
++two subagents would push the same branches. A finding on layer 13 of a stack
++whose bottom layer is 12 reads:
++
++```text
++FINDING acme/app#13 src/x.py:7 [bugbot]: P1 nil deref — run fix-pr on acme/app#13 in subagent fix-stack-12
++```
++
++The daemon finds the stack from the repository's open pull requests, which it
++lists once a pass. A pull request whose base branch is no other open pull
++request's head, and whose head no open pull request is based on, is alone,
++and costs no further request. For any other, the daemon asks GitHub which
++stack holds it, with `gh api "repos/<owner>/<repo>/stacks?pull_request=<number>"`,
++once each full pass, and one answer covers every layer of the stack. GitHub
++still lists a layer that merged, so the name holds while the user merges a
++stack's lower layers first. Where GitHub records no stack, or cannot answer,
++the daemon follows base branches down to the bottom layer. Once it names a
++layer's bottom, the name holds until GitHub names another bottom or the base
++branches reach below that bottom, so a lookup that fails or finds no stack
++after the bottom layer merges keeps the name. `MOVED`,
++`MERGED`, and `CLOSED` use the same name. For a layer of a stack, `MERGED`
++and `CLOSED` tell the session to send the subagent no more work for that
++layer and to finish it once no layer of its stack is open.
++
+ | Kind | Role | Reports |
+ | --- | --- | --- |
+ | `FINDING` | `fix` | An unresolved review thread |
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 62c63a35..3f3f3e8b 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -638,9 +638,14 @@ def standing_suggestions(reviews: list[dict], head: str, operator: str, visibili
+     return {found["id"]: review.listed_suggestions(found) for found in chosen}
+ 
+ 
+-def open_pull(found: dict) -> dict:
++def open_pull(found: dict, repo: str) -> dict:
++    """What a pass keeps of an open pull request from the repository's list: who wrote it, whose review it
++    requests, and its branches. A head branch in a fork is kept as None, since no layer here builds on it."""
++    head = found.get("head") or {}
++    own = ((head.get("repo") or {}).get("full_name") or "").lower() == repo.lower()
+     return {"number": found.get("number"), "author": (found.get("user") or {}).get("login"),
+-            "requested": [(person or {}).get("login") for person in found.get("requested_reviewers") or []]}
++            "requested": [(person or {}).get("login") for person in found.get("requested_reviewers") or []],
++            "base": (found.get("base") or {}).get("ref"), "head": head.get("ref") if own else None}
+ 
+ 
+ def nodes(value: Optional[dict], key: str) -> list[dict]:
+@@ -883,6 +888,8 @@ def __init__(self, root: Path, *, version: str = "unknown", gh: Optional[Callabl
+         self.fetching: dict[str, tuple[Path, Future]] = {}
+         self.fetched: dict[str, dict] = {}
+         self.last_fetch: Optional[float] = None
++        # By pull request, when GitHub's stacks were last asked about it, and the bottom layer of its stack.
++        self.stacks: dict[tuple[str, int], tuple[float, Optional[int]]] = {}
+ 
+     def log(self, message: str) -> None:
+         print(f"{stamp(self.wall())} {message}", flush=True)
+@@ -1140,6 +1147,23 @@ def read_contexts(self, owner: str, name: str, pr: dict, now: float) -> None:
+         contexts["nodes"] = read
+         contexts["pageInfo"] = page
+ 
++    def stack(self, repo: str, number: int, now: float) -> Optional[int]:
++        """The bottom layer of the open GitHub stack of two or more that holds the pull request, recorded for each
++        of the stack's layers, or None when GitHub lists no such stack or cannot answer. A stack lists a merged
++        layer still, so its bottom stays the bottom."""
++        result = self.gh(["api", f"repos/{repo}/stacks?pull_request={number}"])
++        try:
++            found = json.loads(result.stdout) if result.returncode == 0 else None
++        except ValueError:
++            found = None
++        stack = found[0] if isinstance(found, list) and found and isinstance(found[0], dict) else {}
++        layers = [layer["number"] for layer in stack.get("pull_requests") or []
++                  if isinstance(layer, dict) and isinstance(layer.get("number"), int)]
++        bottom = layers[0] if stack.get("open", True) and len(layers) > 1 and number in layers else None
++        for layer in layers if bottom is not None else []:
++            self.stacks[repo.lower(), layer] = (now, bottom)
++        return bottom
++
+     def read_reviews(self, repo: str, number: int) -> Optional[list[dict]]:
+         result = self.gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews?per_page={PAGE}"])
+         found = decode_pages(result.stdout) if result.returncode == 0 else None
+@@ -1203,6 +1227,9 @@ def __init__(self, daemon: Daemon, now: float, now_mono: float) -> None:
+         # By repository, what `adopt` found, and the review targets of the operator's sessions on other machines.
+         self.covering: dict[str, Optional[set[int]]] = {}
+         self.remote: dict[str, Optional[list[list[dict]]]] = {}
++        # By repository, its open pull requests, and by pull request, the subagent that fixes it.
++        self.listings: dict[str, object] = {}
++        self.fixers: dict[tuple[str, int], str] = {}
+ 
+     def tell(self, session: str, *lines: str) -> None:
+         self.outbox.setdefault(session, []).extend(lines)
+@@ -1229,7 +1256,8 @@ def run(self) -> None:
+             else:
+                 results[pull] = result
+         roles = {role: claims for role, claims in roles.items() if role[0] in results}
+-        owners = self.choose(roles, spellings)
++        self.daemon.stacks = {pull: found for pull, found in self.daemon.stacks.items() if pull in results}
++        owners = self.choose(roles, spellings, results)
+         closing = self.route(roles, owners, results, spellings)
+         for pull in closing:
+             self.close(pull, roles, owners, results[pull], spellings[pull], adopted)
+@@ -1282,35 +1310,53 @@ def adopt(self, repo: str) -> Optional[set[int]]:
+         operator = (self.daemon.operator or "").lower()
+         if not operator:
+             return adopted
+-        found: set[int] = set()
++        pulls = self.open_pulls(repo)
++        if pulls is GONE:
++            return None
++        if not isinstance(pulls, list):
++            return adopted
++        found = {pull["number"] for pull in pulls if isinstance(pull.get("number"), int)
++                 and ((pull.get("author") or "").lower() == operator
++                      or operator in [(person or "").lower() for person in pull.get("requested") or []])}
++        if found - closed - adopted:
++            adopted |= found - closed
++            folder.mkdir(parents=True, exist_ok=True)
++            write_json(folder / "adopted.json", {"numbers": sorted(adopted), "closed": sorted(closed)})
++        return adopted
++
++    def open_pulls(self, repo: str) -> object:
++        """The repository's open pull requests as `open_pull` keeps them, read once a pass by conditional
++        requests for its cached pages, None when a request failed, or GONE when the repository does not exist."""
++        name = repo.lower()
++        if name in self.listings:
++            return self.listings[name]
++        folder = cache_dir(self.root, repo)
++        found: list[dict] = []
+         page = 1
+         while True:
+             path = folder / "open" / f"{page}.json"
+             cached = read_json(path) or {}
++            kept = cached.get("pulls")
++            # A page cached before the list kept each pull request's branches is read again whole.
++            current = isinstance(kept, list) and all(isinstance(pull, dict) and "base" in pull for pull in kept)
+             response = self.daemon.conditional(f"repos/{repo}/pulls?state=open&per_page={PAGE}&page={page}",
+-                                               cached.get("etag"))
++                                               cached.get("etag") if current else None)
+             body = response.json()
+             if response.status == 200 and isinstance(body, list):
+-                pulls = [open_pull(item) for item in body if isinstance(item, dict)]
++                pulls = [open_pull(item, repo) for item in body if isinstance(item, dict)]
+                 path.parent.mkdir(parents=True, exist_ok=True)
+                 write_json(path, {"etag": response.etag, "pulls": pulls})
+-            elif response.status == 304 and isinstance(cached.get("pulls"), list):
+-                pulls = cached["pulls"]
+-            elif response.status == 404 and page == 1:
+-                return None
++            elif response.status == 304 and current:
++                pulls = kept
+             else:
+-                return adopted
+-            found |= {pull["number"] for pull in pulls if isinstance(pull.get("number"), int)
+-                      and ((pull.get("author") or "").lower() == operator
+-                           or operator in [(person or "").lower() for person in pull.get("requested") or []])}
++                self.listings[name] = GONE if response.status == 404 and page == 1 else None
++                return self.listings[name]
++            found += pulls
+             if len(pulls) < PAGE:
+                 break
+             page += 1
+-        if found - closed - adopted:
+-            adopted |= found - closed
+-            folder.mkdir(parents=True, exist_ok=True)
+-            write_json(folder / "adopted.json", {"numbers": sorted(adopted), "closed": sorted(closed)})
+-        return adopted
++        self.listings[name] = found
++        return found
+ 
+     def claims(self, lines: dict[str, list[Subscription]], adopted: dict[str, set[int]]
+                ) -> tuple[dict[tuple[tuple[str, int], str], dict[str, Claim]], dict[tuple[str, int], str]]:
+@@ -1470,7 +1516,8 @@ def close(self, pull: tuple[str, int], roles: dict, owners: dict[str, str], entr
+             closed = self.states[session].data["closed"]
+             if pull_label(pull) not in closed:
+                 closed[pull_label(pull)] = self.now
+-                self.tell(session, f"{detail} — {closing_actions(repo, number, names)}")
++                fixer = self.fixer(pull, repo, pr) if "fix" in names else ""
++                self.tell(session, f"{detail} — {closing_actions(repo, number, names, fixer)}")
+         for name in session_names(self.root):
+             remove(self.root, name, repo, number, None)
+         for state in self.states.values():
+@@ -1483,7 +1530,7 @@ def close(self, pull: tuple[str, int], roles: dict, owners: dict[str, str], entr
+ 
+     # Owners
+ 
+-    def choose(self, roles: dict, spellings: dict[tuple[str, int], str]) -> dict[str, str]:
++    def choose(self, roles: dict, spellings: dict[tuple[str, int], str], results: dict) -> dict[str, str]:
+         previous = {label: owner for label, owner in (read_json(self.root / "owners.json") or {}).items()
+                     if isinstance(owner, str)}
+         self.release_lapsed(previous, spellings)
+@@ -1494,7 +1541,7 @@ def choose(self, roles: dict, spellings: dict[tuple[str, int], str]) -> dict[str
+             desired = max(bucket.values(), key=lambda claim: (claim.rank, claim.session)).session
+             repo = spellings[pull]
+             if name == "fix":
+-                owner = self.move_fix(pull, repo, current, desired)
++                owner = self.move_fix(pull, repo, pull_request(results.get(pull)), current, desired)
+             else:
+                 owner = self.move_review(pull, name, repo, current, desired)
+             owners[label] = owner
+@@ -1509,11 +1556,12 @@ def release_lapsed(self, previous: dict[str, str], spellings: dict[tuple[str, in
+                     if lock.loop == owner:
+                         self.clear(pull, lock)
+ 
+-    def move_fix(self, pull: tuple[str, int], repo: str, current: Optional[str], desired: str) -> str:
++    def move_fix(self, pull: tuple[str, int], repo: str, pr: dict, current: Optional[str], desired: str) -> str:
+         if current == desired:
+             return current
+         if current in self.daemon.live:
+-            self.tell(current, f"MOVED {repo}#{pull[1]} fix to another session — stop subagent fix-{pull[1]}")
++            self.tell(current, f"MOVED {repo}#{pull[1]} fix to another session — stop subagent "
++                               f"{self.fixer(pull, repo, pr)}")
+         self.gain(desired, pull, "fix")
+         return desired
+ 
+@@ -1613,7 +1661,7 @@ def route_fix(self, session: str, pull: tuple[str, int], repo: str, pr: dict, re
+         announced = self.states[session].data["fix"].get(label) or {}
+         kept: dict[str, float] = {}
+         lines: list[str] = []
+-        action = f"run fix-pr on {ref} in subagent fix-{number}"
++        action = f"run fix-pr on {ref} in subagent {self.fixer(pull, repo, pr)}"
+ 
+         def standing(key: str, first: str, again: Optional[str], revision: object = None) -> None:
+             last = announced.get(key)
+@@ -1709,6 +1757,53 @@ def standing(key: str, first: str, again: Optional[str], revision: object = None
+         self.states[session].data["fix"][label] = kept
+         return lines + self.route_labels(session, label, ref, pr, head)
+ 
++    def fixer(self, pull: tuple[str, int], repo: str, pr: dict) -> str:
++        """The subagent that fixes the pull request: `fix-stack-<number>`, named for the bottom layer, for a
++        layer of a stack, or else `fix-<number>`. A fix to a layer is carried up into each layer above it, so
++        two subagents on one stack would push the same branches."""
++        if pull not in self.fixers:
++            bottom = self.bottom(pull, repo, pr)
++            self.fixers[pull] = f"fix-stack-{bottom}" if bottom is not None else f"fix-{pull[1]}"
++        return self.fixers[pull]
++
++    def bottom(self, pull: tuple[str, int], repo: str, pr: dict) -> Optional[int]:
++        """The bottom layer of the stack that holds the pull request, or None when it is in none. GitHub's
++        stack answers, asked once each full pass for all its layers, and a chain of base branches answers where
++        GitHub records none. A pull request the open ones show in no chain costs no request, unless it was in a
++        stack before. Once named, a bottom holds until GitHub names another or the chain reaches below it: a
++        merged bottom drops out of the chain, and a lookup that fails or finds no stack names no other, so
++        neither gives a layer a second fixer."""
++        number = pull[1]
++        pulls = self.open_pulls(repo)
++        listed = [found for found in pulls if isinstance(found.get("number"), int)] if isinstance(pulls, list) else []
++        bases = {found["number"]: found.get("base") for found in listed}
++        heads = {found["head"]: found["number"] for found in listed if found.get("head")}
++        own = next((found for found in listed if found["number"] == number), None)
++        base = own.get("base") if own else pr.get("baseRefName")
++        head = own.get("head") if own else pr.get("headRefName")
++        chained = base in heads or head is not None and head in bases.values()
++        cached = self.daemon.stacks.get(pull)
++        known = cached[1] if cached is not None else None
++        fresh = cached is not None and self.now - cached[0] < self.settings.full_every
++        if fresh and known is not None:
++            return known
++        asked = cached[0] if fresh else None
++        if not fresh and (chained or not isinstance(pulls, list) or known is not None):
++            asked = self.now
++            bottom = self.daemon.stack(repo, number, self.now)
++            if bottom is not None:
++                return bottom
++        bottom, seen = (number if chained else None), {number}
++        while chained and base in heads and heads[base] not in seen:
++            bottom = heads[base]
++            seen.add(bottom)
++            base = bases[bottom]
++        if known is not None and (bottom is None or known not in seen):
++            bottom = known
++        if asked is not None:
++            self.daemon.stacks[pull] = (asked, bottom)
++        return bottom
++
+     def remote_reviews(self, repo: str) -> Optional[list[list[dict]]]:
+         """The review targets of the operator's live sessions on other machines that share the repository's relay,
+         one list for each session, or None when the relay is not on for the repository."""
+@@ -1915,10 +2010,15 @@ def newest_answer(unresolved: list[dict]) -> Optional[int]:
+     return max(answers) if answers else None
+ 
+ 
+-def closing_actions(repo: str, number: int, names: list[str]) -> str:
++def closing_actions(repo: str, number: int, names: list[str], fixer: str) -> str:
++    """What each role's owner does once the pull request merges or closes. A stack's fixer goes on fixing the
++    layers still open, because the user can merge a stack's lower layers first."""
+     actions = []
+-    if "fix" in names:
+-        actions.append(f"finish subagent fix-{number}")
++    if "fix" in names and fixer.startswith("fix-stack-"):
++        actions.append(f"send subagent {fixer} no more work for {repo}#{number}, and finish it once no layer of "
++                       "its stack is open")
++    elif "fix" in names:
++        actions.append(f"finish subagent {fixer}")
+     for name in names:
+         if name != "fix":
+             model = name.split(" ", 1)[1]
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index afc1f350..0726ea23 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -145,12 +145,23 @@ def repository(self, name="acme/app", visibility=None) -> dict:
+         return found
+ 
+     def pull_request(self, number, *, repo="acme/app", reviews=(), requested=(), teams=(), contexts=(),
+-                     **fields) -> None:
++                     fork=None, **fields) -> None:
+         """A pull request, with `contexts` its head's whole rollup, which the GraphQL queries page through as
+-        GitHub does. The REST pull request does not show `contexts`, so only a full pass sees them change."""
++        GitHub does, and `fork` the repository its head branch is in when that is not `repo`. The REST pull
++        request does not show `contexts`, so only a full pass sees them change."""
+         self.repository(repo)["pulls"][number] = {"node": node(number, repo=repo, **fields), "requested": list(requested),
+                                                   "teams": list(teams), "reviews": list(reviews),
+-                                                  "contexts": list(contexts)}
++                                                  "contexts": list(contexts), "fork": fork}
++
++    def stack(self, number, *layers, repo="acme/app", open_layers=None, is_open=True) -> None:
++        """A GitHub stack of the pull requests `layers`, bottom first, of which `open_layers` are open."""
++        still = set(layers if open_layers is None else open_layers)
++        self.repository(repo).setdefault("stacks", []).append({
++            "number": number, "open": is_open, "base": {"ref": "main"},
++            "pull_requests": [{"number": layer, "state": "open" if layer in still else "closed"} for layer in layers]})
++
++    def stack_lookups(self) -> list[str]:
++        return [call[-1] for call in self.calls if call[:1] == ["api"] and "/stacks?" in call[-1]]
+ 
+     def queried(self) -> list[str]:
+         found = []
+@@ -283,9 +294,16 @@ def rest(self, path: str, include: bool, etag: Optional[str], paginate: bool) ->
+             listed = [{"number": number, "user": {"login": pull["node"]["author"]["login"]},
+                        "requested_reviewers": [{"login": login} for login in pull["requested"]],
+                        "requested_teams": [{"slug": slug} for slug in pull["teams"]],
+-                       "head": {"sha": pull["node"]["headRefOid"]}, "draft": pull["node"]["isDraft"]}
++                       "head": {"sha": pull["node"]["headRefOid"], "ref": pull["node"]["headRefName"],
++                                "repo": {"full_name": pull.get("fork") or repo["name"]}},
++                       "base": {"ref": pull["node"]["baseRefName"]}, "draft": pull["node"]["isDraft"]}
+                       for number, pull in open_pulls]
+             return self.answer(200, listed[(page - 1) * 100:page * 100], include, etag)
++        if tail == ["stacks"] and set(query) == {"pull_request"}:
++            number = int(query["pull_request"])
++            return self.answer(200, [stack for stack in repo.get("stacks", [])
++                                     if number in [layer["number"] for layer in stack["pull_requests"]]],
++                               include, etag)
+         if tail[:1] == ["pulls"] and len(tail) >= 2 and tail[1].isdigit():
+             pull = repo["pulls"].get(int(tail[1]))
+             if pull is None:
+@@ -2042,6 +2060,166 @@ def test_the_older_of_two_auto_lines_keeps_the_role(self) -> None:
+         self.assertEqual({"acme/app#1 fix": "A"}, self.owners())
+ 
+ 
++class StackFixerTests(WatchCase):
++    """A stack gets one fixing subagent, named for its bottom layer, because two would push the same branches."""
++
++    def layers(self, *numbers: int, fields: Optional[dict] = None) -> None:
++        """Open drafts chained by base branch, the first based on main, with `fields` for some by number."""
++        base = "main"
++        for number in numbers:
++            self.github.pull_request(number, ref=f"layer-{number}", base=base, draft=True,
++                                     **(fields or {}).get(number, {}))
++            base = f"layer-{number}"
++
++    def live(self, session: str, *lines: str) -> None:
++        self.subscribe(session, *lines)
++        self.renew(session)
++
++    def test_each_fix_line_for_a_layer_of_a_github_stack_names_the_stacks_fixer(self) -> None:
++        self.github.stack(20, 4, 5, 6, 7, open_layers=(5, 6, 7))
++        self.layers(5, 6, 7, fields={6: {"threads": [thread("T6")], "mergeable": "CONFLICTING",
++                                       "contexts": [check_run("check", "FAILURE")], "decision": "CHANGES_REQUESTED",
++                                       "changes": {"author": {"login": "teammate"}, "body": "Split",
++                                                   "commit": {"oid": SHA_A}}}})
++        self.live("fixer", "acme/app#6 fix")
++
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(["CONFLICT", "CHECKS", "VERDICT", "FINDING"], [line.split()[0] for line in events])
++        for line in events:
++            self.assertTrue(line.endswith(" — run fix-pr on acme/app#6 in subagent fix-stack-4"), line)
++
++    def test_a_pull_request_in_no_chain_keeps_its_own_fixer_and_costs_no_stack_lookup(self) -> None:
++        self.github.pull_request(1, threads=[thread("T1")], draft=True)
++        self.github.pull_request(2, ref="other")
++        self.live("fixer", "acme/app#1 fix")
++
++        events = self.cycle()["fixer"]
++
++        self.assertEqual([f"FINDING acme/app#1 src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}"], events)
++        self.assertEqual([], self.github.stack_lookups())
++
++    def test_a_fork_branch_named_like_the_base_is_not_a_layer_below(self) -> None:
++        self.github.pull_request(1, threads=[thread("T1")], draft=True)
++        self.github.pull_request(2, ref="main", fork="someone/app")
++        self.live("fixer", "acme/app#1 fix")
++
++        events = self.cycle()["fixer"]
++
++        self.assertEqual([f"FINDING acme/app#1 src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}"], events)
++        self.assertEqual([], self.github.stack_lookups())
++
++    def test_a_chain_of_base_branches_that_github_records_no_stack_for_names_its_bottom(self) -> None:
++        self.layers(5, 6, 7, fields={7: {"threads": [thread("T7")]}})
++        self.live("fixer", "acme/app#7 fix")
++
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(["FINDING acme/app#7 src/x.py:3 [bugbot]: P1 nil deref — run fix-pr on acme/app#7 in "
++                          "subagent fix-stack-5"], events)
++        self.assertEqual(["repos/acme/app/stacks?pull_request=7"], self.github.stack_lookups())
++
++    def test_a_list_page_cached_without_branches_is_read_again_whole(self) -> None:
++        self.layers(5, 6, fields={6: {"threads": [thread("T6")]}})
++        page = watch.cache_dir(self.root, "acme/app") / "open" / "1.json"
++        page.parent.mkdir(parents=True)
++        write_json(page, {"etag": 'W/"old"', "pulls": [{"number": 5, "author": "operator", "requested": []}]})
++        self.live("fixer", "acme/app#6 fix")
++
++        events = self.cycle()["fixer"]
++
++        listing = next(call for call in self.github.calls if "pulls?state=open" in call[-1])
++        self.assertNotIn("-H", listing)
++        self.assertTrue(events[0].endswith(" subagent fix-stack-5"), events)
++
++    def test_a_chain_names_its_bottom_when_github_cannot_list_stacks(self) -> None:
++        self.github.failing["repos/acme/app/stacks"] = 404
++        self.layers(5, 6, fields={5: {"threads": [thread("T5")]}})
++        self.live("fixer", "acme/app#5 fix")
++
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(["FINDING acme/app#5 src/x.py:3 [bugbot]: P1 nil deref — run fix-pr on acme/app#5 in "
++                          "subagent fix-stack-5"], events)
++
++    def test_the_stack_is_looked_up_once_for_all_its_layers_until_the_next_full_pass(self) -> None:
++        self.github.stack(20, 5, 6, 7)
++        self.layers(5, 6, 7, fields={number: {"threads": [thread(f"T{number}")]} for number in (5, 6, 7)})
++        self.live("fixer", "acme/app#5 fix", "acme/app#6 fix", "acme/app#7 fix")
++
++        first = self.cycle()["fixer"]
++        lookups = [self.github.stack_lookups()]
++        self.advance(60)
++        self.cycle()
++        lookups.append(self.github.stack_lookups())
++        self.advance(self.settings.renotify - 60)
++        again = self.cycle()["fixer"]
++        lookups.append(self.github.stack_lookups())
++
++        self.assertEqual([1, 0, 1], [len(found) for found in lookups])
++        self.assertEqual(3, len(first))
++        self.assertEqual(3, len(again))
++        for line in first + again:
++            self.assertTrue(line.endswith(" subagent fix-stack-5"), line)
++
++    def test_a_moved_layer_stops_the_stacks_fixer(self) -> None:
++        self.github.stack(20, 5, 6)
++        self.layers(5, 6)
++        self.live("A", "acme/app#6 fix")
++        self.cycle()
++        self.live("B", "acme/app#6 fix")
++
++        events = self.cycle()
++
++        self.assertEqual(["MOVED acme/app#6 fix to another session — stop subagent fix-stack-5"], events["A"])
++
++    def test_a_merged_layer_leaves_the_stacks_fixer_to_its_open_layers(self) -> None:
++        self.github.stack(20, 5, 6)
++        self.layers(5, 6)
++        self.live("fixer", "acme/app#5 fix", "acme/app#6 fix")
++        self.cycle()
++
++        self.github.pull_request(5, ref="layer-5", state="MERGED")
++        self.github.pull_request(6, ref="layer-6", base="main", draft=True)
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(["MERGED acme/app#5 into main — send subagent fix-stack-5 no more work for acme/app#5, and "
++                          "finish it once no layer of its stack is open"], events)
++
++    def merge_the_bottom_and_refresh(self) -> list[str]:
++        """Merge layer 5, retarget layer 6 to main, and run the pass after the next full pass's lookup."""
++        self.github.pull_request(5, ref="layer-5", state="MERGED")
++        self.github.pull_request(6, ref="layer-6", base="main", draft=True, threads=[thread("T6")])
++        self.cycle()
++        self.advance(self.settings.renotify)
++        return self.cycle()["fixer"]
++
++    def test_a_failed_stack_refresh_keeps_the_fixer_after_the_bottom_merges(self) -> None:
++        self.github.stack(20, 5, 6)
++        self.layers(5, 6, fields={6: {"threads": [thread("T6")]}})
++        self.live("fixer", "acme/app#6 fix")
++        first = self.cycle()["fixer"]
++        self.github.failing["repos/acme/app/stacks"] = 500
++
++        events = self.merge_the_bottom_and_refresh()
++
++        self.assertTrue(first[0].endswith(" subagent fix-stack-5"), first)
++        self.assertEqual(["FINDING acme/app#6 (still open) src/x.py:3 [bugbot]: P1 nil deref — run fix-pr on "
++                          "acme/app#6 in subagent fix-stack-5"], events)
++
++    def test_a_chain_keeps_its_fixer_after_its_bottom_merges_out_of_view(self) -> None:
++        self.layers(5, 6, fields={6: {"threads": [thread("T6")]}})
++        self.live("fixer", "acme/app#6 fix")
++        first = self.cycle()["fixer"]
++
++        events = self.merge_the_bottom_and_refresh()
++
++        self.assertTrue(first[0].endswith(" subagent fix-stack-5"), first)
++        self.assertEqual(["FINDING acme/app#6 (still open) src/x.py:3 [bugbot]: P1 nil deref — run fix-pr on "
++                          "acme/app#6 in subagent fix-stack-5"], events)
++        self.assertEqual(["repos/acme/app/stacks?pull_request=6"], self.github.stack_lookups())
++
++
+ class AdoptionTests(WatchCase):
+     def repository_reviewer(self, *extra: str) -> None:
+         self.subscribe("reviewer", f"acme/app review {MODEL} operator", *extra)
