@@ -27,6 +27,11 @@
     "id": "checks",
     "title": "What was verified",
     "html": "<ul class=\"tight\"><li>The gate and focused runner, review, watcher, summary, site, and permissions tests passed.</li><li>Temporary fixtures confirmed the moved-head and ownership failures.</li><li>A mocked Windows timeout confirmed the missing termination branch; no Windows machine or live agent was used.</li><li>Node and site dependency prerequisites were unavailable for 104 focused tests.</li></ul>"
+   },
+   {
+    "id": "rereview",
+    "title": "Author-response re-review",
+    "html": "The author accepted all three findings and described fixes, but the pull request still points to the reviewed head without those fixes. The three failure cases still reproduce. The gate passed again, and the 12 runner tests passed; the existing finding flags remain open until a fixed head is pushed and verified."
    }
   ]
  },
