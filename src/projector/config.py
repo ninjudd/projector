@@ -103,6 +103,7 @@ SETTINGS: dict[str, type] = {
     "watch.full_every": int,
     "watch.renotify": int,
     "watch.review_stall": int,
+    "watch.fetch_default": bool,
     "panel.background": str,
     "agent.message_limit": int,
     "agent.auto_register": bool,
@@ -342,6 +343,9 @@ def parse_config(data: bytes, label: str) -> dict[str, Any]:
 # Git
 
 ORIGIN_HEAD = "refs/remotes/origin/HEAD"
+# Where the watch daemon fetches each default branch, as `refs/projector/default/origin/main`, so the fetch
+# moves no ref you use.
+DEFAULT_REFS = "refs/projector/default/"
 OBJECT_ID = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 GIT_TIMEOUT = 30.0
 # The variables that point Git at another repository, index, or object store
@@ -442,29 +446,68 @@ def resolve_ref(common: Path, name: str) -> Optional[str]:
     return found if found and OBJECT_ID.fullmatch(found) else None
 
 
-def default_branch(tree: WorkingTree) -> Optional[DefaultBranch]:
-    """The default branch of the repository `tree` belongs to, or None when it has no `origin/HEAD`."""
+def default_branch(tree: WorkingTree, cache: Path) -> Optional[DefaultBranch]:
+    """The default branch of the repository `tree` belongs to, or None when it has no `origin/HEAD`.
 
-    if (tree.common / "reftable").is_dir():
-        return _rev_parse_branch(tree)
-    head = _text(tree.common / ORIGIN_HEAD)
-    if head is None or not head.startswith("ref:"):
+    Its commit is the newer of the one `origin/HEAD` names, which your own
+    fetches move, and the one in `refs/projector/default/<branch>`, which the
+    watch daemon's fetch moves. When neither descends from the other, as after
+    a force-push, yours wins.
+    """
+
+    target = _origin_head(tree)
+    if target is None:
         return None
-    target = head[len("ref:"):].strip()
-    commit = resolve_ref(tree.common, target)
-    return DefaultBranch(target.removeprefix("refs/remotes/"), commit) if commit else None
+    origin = _commit_of(tree, target)
+    if origin is None:
+        return None
+    name = target.removeprefix("refs/remotes/")
+    return DefaultBranch(name, _newer(tree.common, origin, _commit_of(tree, DEFAULT_REFS + name), cache))
 
 
-def _rev_parse_branch(tree: WorkingTree) -> Optional[DefaultBranch]:
-    """The default branch read through Git, for a ref storage, such as reftable, that has no files to read."""
+def _reftable(tree: WorkingTree) -> bool:
+    """Whether the repository keeps its refs in a reftable, which has no files to read, so Git reads them."""
 
+    return (tree.common / "reftable").is_dir()
+
+
+def _origin_head(tree: WorkingTree) -> Optional[str]:
+    if _reftable(tree):
+        try:
+            return os.fsdecode(git_output(["symbolic-ref", "-q", ORIGIN_HEAD], cwd=tree.top)).strip() or None
+        except ConfigError:
+            return None
+    head = _text(tree.common / ORIGIN_HEAD)
+    return head[len("ref:"):].strip() if head is not None and head.startswith("ref:") else None
+
+
+def _commit_of(tree: WorkingTree, name: str) -> Optional[str]:
+    if not _reftable(tree):
+        return resolve_ref(tree.common, name)
     try:
-        target = os.fsdecode(git_output(["symbolic-ref", "-q", ORIGIN_HEAD], cwd=tree.top)).strip()
-        commit = os.fsdecode(git_output(["rev-parse", "-q", "--verify", f"{target}^{{commit}}"],
-                                        cwd=tree.top)).strip()
+        found = os.fsdecode(git_output(["rev-parse", "-q", "--verify", f"{name}^{{commit}}"], cwd=tree.top)).strip()
     except ConfigError:
         return None
-    return DefaultBranch(target.removeprefix("refs/remotes/"), commit) if OBJECT_ID.fullmatch(commit) else None
+    return found if OBJECT_ID.fullmatch(found) else None
+
+
+def _newer(common: Path, origin: str, fetched: Optional[str], cache: Path) -> str:
+    """`fetched` when it descends from `origin`, and `origin` otherwise, asking `git merge-base` once a pair."""
+
+    if fetched is None or fetched == origin:
+        return origin
+    record = cache / f"{origin}-{fetched}.newer"
+    known = _text(record)
+    if known is not None and known in (origin, fetched):
+        return known
+    try:
+        base = os.fsdecode(git_output(["--git-dir", str(common), "merge-base", origin, fetched])).strip()
+    except ConfigError:
+        # Unrelated histories have no merge base, and a ref whose commit is gone has nothing to read.
+        return origin
+    chosen = fetched if base == origin else origin
+    _store(record, chosen.encode("ascii"))
+    return chosen
 
 
 def _trees(directories: list[Path]) -> list[Optional[WorkingTree]]:
@@ -513,7 +556,7 @@ def _prune(cache: Path) -> None:
     cutoff = time.time() - CACHE_LIFETIME
     try:
         for path in cache.iterdir():
-            if path.suffix in (".toml", ".absent") and path.stat().st_mtime < cutoff:
+            if path.suffix in (".toml", ".absent", ".newer") and path.stat().st_mtime < cutoff:
                 path.unlink(missing_ok=True)
     except OSError:
         pass
@@ -771,7 +814,8 @@ def _walk(start: Path, home: Path, user: Optional[Path], environ: dict[str, str]
     directories = walked_directories(start, home)
     trees = _trees(directories)
     repository = trees[0]
-    branch = default_branch(repository) if repository is not None else None
+    cache = cache_dir(environ)
+    branch = default_branch(repository, cache) if repository is not None else None
     # Each walked file, farthest first, with its path in the repository when it lies in one of its working trees.
     candidates: list[tuple[Path, Optional[WorkingTree], Optional[str]]] = []
     for directory, tree in zip(reversed(directories), reversed(trees)):
@@ -790,7 +834,6 @@ def _walk(start: Path, home: Path, user: Optional[Path], environ: dict[str, str]
         walked.layers.extend((Source(path), read_config_file(path)) for path, _, _ in candidates)
         return walked
 
-    cache = cache_dir(environ)
     blobs = default_blobs(repository.common, branch.commit,
                           list(dict.fromkeys(path for _, _, path in candidates if path is not None)), cache,
                           label=branch.name)

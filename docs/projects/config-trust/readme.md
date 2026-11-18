@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -452,3 +452,51 @@ full pass, which transfers only commits this clone lacks.
   `configured_projects_dir` still returns `projects.dir` as written, because
   the site workflow Projector generates names that relative form, and
   every caller joins it to the same root the check used.
+
+### 8.4 Keeping the default branch fresh
+
+- **Which checkouts the daemon fetches.** A session records the directory it
+  works in only in its `agent.json`, which `project watch add` writes when
+  `agent.auto_register` is on, as it is by default. So the daemon fetches the
+  repository of each live session that has registered, one checkout per
+  common Git directory. A live session that opted out of registering does not
+  bring its repository into the fetch, and its configuration is as new as
+  your last fetch.
+- **Whose `watch.fetch_default` counts.** The daemon reads it from each
+  checkout's own configuration, so a parent directory's file or
+  `~/.projector.toml` can turn the fetch off for the checkouts it covers.
+  A repository's committed file can too, which costs only freshness.
+- **The fetch's flags.** Besides the empty `--refmap=`, the fetch passes
+  `--no-tags`, because Git otherwise follows tags that point into the fetched
+  history and writes `refs/tags/*`, and `--no-recurse-submodules`, so it
+  fetches nothing for a submodule. Both keep the promise that the fetch moves
+  no ref you use.
+- **The fetch's environment.** The fetch runs through `relay.git`, which now
+  drops the `config.GIT_LOCATION` variables as the configuration reader
+  does. A daemon started with an inherited `GIT_DIR`, as from a Git hook,
+  would otherwise fetch into that repository and report the checkout it
+  named as fetched. The relay's own Git commands gain the same guard.
+- **Choosing the newer commit.** One `git merge-base` answers which of the two
+  commits descends from the other, and the answer is cached per pair as
+  `<origin>-<fetched>.newer`, so a warm load still starts no process. A
+  failed `merge-base`, as for unrelated histories, chooses your `origin/HEAD`.
+- **Reported state.** `watch status` gains a `default branch <checkout>` line
+  for each checkout, `ok`, `error` with Git's message, or `skipped` without
+  an `origin/HEAD`, and `--json` gains `default_branches`. The daemon also
+  waits for a running fetch before it exits for idleness.
+- **A concurrent fetch of your own.** The test runs your `git fetch` after the
+  daemon's rather than during it. The daemon's fetch writes no ref under
+  `refs/remotes/`, which the test checks, so the lock your fetch takes is
+  never held by the daemon; timing the two to overlap would make the test
+  flaky without catching anything more.
+
+## 9. Outcome
+
+Shipped. Every row of § 4 has a test in `tests/test_config.py`,
+`tests/test_watch.py`, or `tests/test_permissions.py`, and each was seen to
+fail with the fault it names introduced. § 8 records the details building
+settled and the few places the work differs from § 2: the default branch's
+blob applies even where a branch deletes the file, the path checks sit in
+`cli.py`, and the daemon fetches only for registered sessions. `DESTINATIONS`
+is empty, as § 2.2 says, until the shared relay and S3 relay plans add their
+settings.

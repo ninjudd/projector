@@ -4,7 +4,9 @@ A session subscribes by writing lines to its folder under the state root, and ev
 command but `serve` starts the daemon when no process holds its lock. Each pass, the daemon asks
 GitHub a conditional question about each pull request a live session subscribes to, runs the GraphQL
 query only for one that changed or is due a full query, picks one owner for each pull request and
-role, and appends what the owner should do to the owner's `events`. It exits once no session has
+role, and appends what the owner should do to the owner's `events`. On each full pass it also fetches the
+default branch of each repository a live session works in, so configuration reads a merged change to a
+committed `.projector.toml` within one full pass. It exits once no session has
 been live for five minutes.
 
 Layout of the state root, `$XDG_STATE_HOME/projector/watch/`:
@@ -13,7 +15,8 @@ Layout of the state root, `$XDG_STATE_HOME/projector/watch/`:
     daemon.json                                 its pid, version, start time, and operator
     daemon.log                                  its output
     stop                                        a pid: the daemon with that pid exits
-    status.json                                 live sessions, targets, the last pass, and GraphQL spent
+    status.json                                 live sessions, targets, the last pass, GraphQL spent, and each
+                                                checkout's last default-branch fetch
     owners.json                                 the session that owns each pull request and role
     sessions/<session>/subscriptions            one subscription a line
     sessions/<session>/session.json             the deliverer, and when it last renewed the session
@@ -43,13 +46,14 @@ import sys
 import tempfile
 import time
 import traceback
+from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 from urllib.parse import quote
 
-from . import codex_watch, review
+from . import codex_watch, config, review
 from .config import MINIMUMS, ConfigError
 from .config import load as load_config
 from .core import ProjectorError, UsageError
@@ -769,6 +773,47 @@ def user_settings() -> Settings:
                        if value is not None})
 
 
+# The default branches configuration reads
+
+def live_checkouts(root: Path, live: set[str]) -> dict[str, Path]:
+    """One checkout of each repository a live registered session works in, by the repository's common Git
+    directory, from the `cwd` each session's `agent.json` records."""
+
+    found: dict[str, Path] = {}
+    for name in sorted(live):
+        cwd = (read_json(session_folder(root, name) / "agent.json") or {}).get("cwd")
+        tree = config.working_tree(Path(cwd).resolve()) if isinstance(cwd, str) and cwd else None
+        if tree is not None:
+            found.setdefault(str(tree.common), tree.top)
+    return found
+
+
+def fetch_default(top: Path) -> dict:
+    """Fetch the default branch of the repository at `top` into Projector's own ref under `DEFAULT_REFS`.
+
+    The empty `--refmap=` stops Git from also moving the remote-tracking ref
+    `remote.origin.fetch` maps the branch to, so the fetch changes no ref you
+    use, `git status` says nothing new, and a fetch of yours never finds
+    `refs/remotes/origin/*` locked. It fetches no tags and no submodules for
+    the same reason.
+    """
+
+    from . import relay
+    tree = config.working_tree(top)
+    branch = config.default_branch(tree, config.cache_dir()) if tree is not None else None
+    if branch is None or not branch.name.startswith("origin/"):
+        return {"state": "skipped", "error": "no origin/HEAD names a default branch"}
+    name = branch.name.removeprefix("origin/")
+    try:
+        done = relay.git(top, "fetch", "--quiet", "--no-write-fetch-head", "--no-tags", "--no-recurse-submodules",
+                         "--refmap=", "origin", f"+refs/heads/{name}:{config.DEFAULT_REFS}origin/{name}")
+    except relay.RelayError as error:
+        return {"state": "error", "error": str(error)}
+    if done.returncode:
+        return {"state": "error", "error": done.stderr.decode("utf-8", "replace").strip()}
+    return {"state": "ok", "error": ""}
+
+
 # The daemon
 
 @dataclass
@@ -833,6 +878,11 @@ class Daemon:
         self.codex = codex_watch.Dispatcher(wall=wall)
         from . import relay
         self.relay = relay.Relay(root, gh=self.gh, wall=wall, log=self.log)
+        # Each repository's running fetch of its default branch, by common Git directory, with the checkout it
+        # runs in, and the last result for each checkout.
+        self.fetching: dict[str, tuple[Path, Future]] = {}
+        self.fetched: dict[str, dict] = {}
+        self.last_fetch: Optional[float] = None
 
     def log(self, message: str) -> None:
         print(f"{stamp(self.wall())} {message}", flush=True)
@@ -894,18 +944,50 @@ class Daemon:
             self.scan(now)
             if self.live:
                 self.last_live = now
-            elif now - self.last_live >= IDLE and not self.relay.busy():
+            elif now - self.last_live >= IDLE and not self.relay.busy() and not self.fetching:
                 self.log("stopping: no session has been live for 5 minutes")
                 return False
             polled = self.wanted or now >= self.next_pass
             if polled:
                 self.run_pass()
-            if self.relay.tick(self.live, polled, self.settings.full_every):
+            changed = self.relay.tick(self.live, polled, self.settings.full_every)
+            if self.fetch_defaults(polled) or changed:
                 self.write_status(self.wall())
             self.codex.tick([self.root / "sessions" / name for name in session_names(self.root)])
             return True
         finally:
             self.last_tick = self.mono()
+
+    def fetch_defaults(self, polled: bool) -> bool:
+        """Read finished fetches, and on a full pass, every `full_every` seconds, start a fetch of the default
+        branch of each repository a live session works in, on the relay's worker pool, unless the checkout's
+        configuration sets `watch.fetch_default` to false. Answers whether a result changed."""
+        changed = False
+        for common, (top, future) in list(self.fetching.items()):
+            if future.done():
+                del self.fetching[common]
+                try:
+                    result = future.result()
+                except Exception as error:
+                    result = {"state": "error", "error": f"{type(error).__name__}: {error}"}
+                self.fetched[str(top)] = {**result, "at": stamp(self.wall())}
+                changed = True
+        now = self.wall()
+        if not polled or (self.last_fetch is not None and now - self.last_fetch < self.settings.full_every):
+            return changed
+        self.last_fetch = now
+        for common, top in live_checkouts(self.root, self.live).items():
+            if common in self.fetching:
+                continue
+            try:
+                wanted = load_config(top).setting("watch.fetch_default") is not False
+            except ConfigError as error:
+                self.fetched[str(top)] = {"state": "error", "error": str(error), "at": stamp(now)}
+                changed = True
+                continue
+            if wanted:
+                self.fetching[common] = (top, self.relay.pool.submit(fetch_default, top))
+        return changed
 
     def forgive(self, now: float) -> None:
         """Count every live session as seen, and every lock as changed, now: a gap in the loop is the machine
@@ -1006,6 +1088,7 @@ class Daemon:
             "repositories": self.repositories,
             "graphql": [{"at": stamp(at), "cost": cost} for at, cost in self.spent],
             "relay": self.relay.status(),
+            "default_branches": dict(sorted(self.fetched.items())),
         })
 
     def conditional(self, path: str, etag: Optional[str]) -> Response:
@@ -1954,6 +2037,7 @@ def status(root: Path, now: float) -> dict:
             "last_pass": report.get("last_pass"), "graphql_points_last_hour": points,
             "relay": report.get("relay") or {"key": {"state": "off", "id": None, "store": None, "error": ""},
                                               "repositories": {}},
+            "default_branches": report.get("default_branches") or {},
             "deliveries": {name: found for name in session_names(root)
                            if (found := codex_watch.report(session_folder(root, name), now))}}
 
