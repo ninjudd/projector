@@ -884,6 +884,69 @@ class FixRoleTests(WatchCase):
         self.assertEqual([], settled)
         self.assertEqual({}, self.state("fixer")["fix"]["acme/app#1 fix"])
 
+    def ticked(self, seconds: float) -> list[str]:
+        """Move the clocks, run one turn of the daemon's loop, and answer the pull requests it queried."""
+        self.advance(seconds)
+        self.github.calls.clear()
+        self.daemon.tick()
+        return self.github.queried()
+
+    def test_a_refresh_request_queries_a_pushed_pull_request_on_the_next_tick_and_until_it_settles(self) -> None:
+        self.github.pull_request(1, mergeable="CONFLICTING")
+        self.fixer("acme/app#1 fix")
+        self.assertEqual(["acme/app#1"], self.ticked(0))
+        self.assertTrue(self.take("fixer")[0].startswith("CONFLICT acme/app#1 head=aaaaaaaa"))
+
+        self.github.pull_request(1, head=SHA_B, mergeable="UNKNOWN")
+        waiting = self.ticked(1)
+        watch.request_refresh(self.root, [("Acme/App", 1)])
+        pushed = self.ticked(1)
+        settling = self.ticked(watch.SETTLE_EVERY)
+        self.github.pull_request(1, head=SHA_B, mergeable="MERGEABLE")
+        settled = self.ticked(watch.SETTLE_EVERY)
+        after = self.ticked(watch.SETTLE_EVERY)
+
+        self.assertEqual([], waiting, "a push alone waits for the next pass")
+        self.assertEqual((["acme/app#1"], ["acme/app#1"], ["acme/app#1"], []), (pushed, settling, settled, after))
+        self.assertEqual([], self.take("fixer"), "no conflict is announced for the old head after the push")
+        self.assertEqual({}, self.state("fixer")["fix"]["acme/app#1 fix"])
+        self.assertEqual([], list((self.root / "refresh").iterdir()))
+
+    def test_a_refresh_request_queries_a_pull_request_whose_etag_did_not_change(self) -> None:
+        self.github.pull_request(1)
+        self.fixer("acme/app#1 fix")
+        self.ticked(0)
+
+        watch.request_refresh(self.root, [("acme/app", 1), ("acme/app", 9)])
+        refreshed = self.ticked(1)
+        after = self.ticked(watch.SETTLE_EVERY)
+
+        self.assertEqual((["acme/app#1"], []), (refreshed, after))
+
+    def test_a_refresh_request_older_than_a_minute_is_deleted_unread(self) -> None:
+        self.github.pull_request(1)
+        self.fixer("acme/app#1 fix")
+        self.ticked(0)
+        watch.request_refresh(self.root, [("acme/app", 1)])
+        stale = self.clock.wall() - watch.SETTLE - 1
+        for path in (self.root / "refresh").iterdir():
+            os.utime(path, (stale, stale))
+
+        self.assertEqual([], self.ticked(1))
+        self.assertEqual([], list((self.root / "refresh").iterdir()))
+
+    def test_quick_polling_after_a_refresh_stops_after_a_minute_while_github_still_computes(self) -> None:
+        self.github.pull_request(1, mergeable="UNKNOWN")
+        self.fixer("acme/app#1 fix")
+        self.ticked(0)
+        watch.request_refresh(self.root, [("acme/app", 1)])
+        self.ticked(1)
+
+        polled = [bool(self.ticked(watch.SETTLE_EVERY)) for _ in range(int(watch.SETTLE // watch.SETTLE_EVERY) + 2)]
+
+        self.assertEqual(int(watch.SETTLE // watch.SETTLE_EVERY), sum(polled), polled)
+        self.assertFalse(any(polled[-2:]), "after a minute, the pull request waits for the next pass again")
+
     def test_a_failed_check_is_announced_once_and_again_only_after_the_renotify_interval(self) -> None:
         self.github.pull_request(1, contexts=[check_run("check", "FAILURE"), check_run("lint", "FAILURE"),
                                               check_run("docs"), commit_status("deploy")])
@@ -2418,6 +2481,28 @@ class CommandTests(unittest.TestCase):
     def lines(self, session: str = "top-level") -> list[str]:
         return watch.read_lines(self.root / "sessions" / session)
 
+    def refreshes(self) -> list[str]:
+        folder = self.root / "refresh"
+        if not folder.exists():
+            return []
+        return [line for path in sorted(folder.iterdir()) for line in path.read_text().splitlines()]
+
+    def test_add_of_a_pull_request_asks_the_daemon_to_refresh_it_and_a_repository_does_not(self) -> None:
+        self.project("add", "acme/app#12")
+        self.project("add", "acme/app", "--role", "review", "--model", MODEL, "--reviewer", "octocat")
+
+        self.assertEqual(["acme/app#12"], self.refreshes())
+
+    def test_review_ready_asks_a_running_daemon_to_refresh_a_pull_request_whose_draft_state_it_moved(self) -> None:
+        for changed, running in ((False, True), (True, False), (True, True)):
+            result = {"repo": "acme/app", "number": 12, "head": SHA_A, "draft": False, "changed": changed}
+            with mock.patch.object(review, "set_draft", return_value=result), \
+                    mock.patch.object(watch, "held", return_value=running), \
+                    contextlib.chdir(self.cwd), redirect_stdout(io.StringIO()):
+                self.assertEqual(0, cli.main(["review", "ready", "12", "--repo", "acme/app"]))
+
+        self.assertEqual(["acme/app#12"], self.refreshes())
+
     def origin(self, url: str) -> None:
         for args in (["init", "-q"], ["remote", "add", "origin", url]):
             subprocess.run(["git", *args], cwd=self.cwd, check=True, capture_output=True)
@@ -2537,6 +2622,7 @@ for line in sys.stdin:
         self.assertEqual(["acme/app#13 fix auto", "acme/app#12 fix auto"], json.loads(out)["added"])
         self.assertEqual(["acme/app#13 fix auto", "acme/app#12 fix auto"], self.lines())
         self.assertIn(["api", "repos/acme/app/pulls?head=acme:lonely&state=open"], self.github.calls)
+        self.assertEqual(["acme/app#13", "acme/app#12"], self.refreshes())
 
     def test_add_from_output_keeps_an_existing_fix_line_and_skips_a_dropped_pull_request(self) -> None:
         self.origin("git@github.com:acme/app.git")

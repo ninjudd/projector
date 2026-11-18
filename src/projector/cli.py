@@ -1733,6 +1733,8 @@ def run_watch(arguments: argparse.Namespace) -> int:
         repo, number = watch.parse_target(arguments.target)
         wanted = watch_subscription(arguments, repo, number)
         line = watch.add(root, session, wanted)
+        if number is not None:
+            watch.request_refresh(root, [(repo, number)])
         agents.register_subscriber(root, session, Path.cwd(), time.time(), here_config())
         report_added(root, session, [line] if line else [], json_output,
                      f"the session already subscribes to {wanted.target} {wanted.role}")
@@ -2212,6 +2214,9 @@ def review_draft(arguments: argparse.Namespace) -> int:
     repo = review.named_repo(arguments.repo, Path.cwd(),
                              "to hold a pull request in" if hold else "to mark a pull request ready in")
     result = review.set_draft(repo, arguments.pr, hold)
+    root = watch.state_root()
+    if result["changed"] and watch.held(root):
+        watch.request_refresh(root, [(repo, arguments.pr)])
     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.draft_lines(result)))
     return 0
 

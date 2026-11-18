@@ -50,7 +50,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterator, Optional
+from typing import Callable, Iterable, Iterator, Optional
 from urllib.parse import quote
 
 from . import codex_watch, config, review
@@ -62,6 +62,8 @@ from .inbox import PULL, SESSION, locked, read_json, try_lock, unlock, write_jso
 LAPSE = 300.0
 IDLE = 300.0
 SLEPT = 60.0
+SETTLE = 60.0
+SETTLE_EVERY = 5.0
 FORGET = 7 * 24 * 3600.0
 STOP_WAIT = 10.0
 RENEW_EVERY = 30.0
@@ -207,6 +209,14 @@ def write_text(path: Path, text: str) -> None:
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(temporary)
+
+
+def request_refresh(root: Path, pulls: Iterable[tuple[str, int]]) -> None:
+    """Ask the daemon to query each pull request on its next tick rather than its next pass, as after a push,
+    with one file under `refresh/` that the daemon reads and deletes."""
+    text = "".join(f"{repo}#{number}\n" for repo, number in pulls)
+    if text:
+        write_text(root / "refresh" / f"{time.time_ns()}-{os.getpid()}", text)
 
 
 def file_signature(path: Path) -> Optional[tuple[int, int, int]]:
@@ -527,9 +537,10 @@ def unique(pairs: list[tuple[str, object]]) -> list[tuple[str, object]]:
 
 
 def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tuple[list[str], list[str], bool]:
-    """Subscribe the session to `fix auto` on each pull request the output opened or pushed to, and answer
-    the lines added, a problem for each pull request that could not be looked up, and whether the session
-    now subscribes to any of those pull requests, through a line added or one it already had.
+    """Subscribe the session to `fix auto` on each pull request the output opened or pushed to, ask the
+    daemon to refresh each one, and answer the lines added, a problem for each pull request that could not be
+    looked up, and whether the session now subscribes to any of those pull requests, through a line added or
+    one it already had.
 
     A linked pull request counts only in a repository the output pushed to or opened a pull request in, or
     the checkout's origin, so a link to another repository, or an example in help text, adds nothing. Each
@@ -574,16 +585,17 @@ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tupl
         found += [(repo, pull["number"]) for pull in listed if isinstance(pull, dict)
                   and isinstance(pull.get("number"), int)]
     added = []
-    subscribed = False
+    refreshed = []
     for repo, number in unique(found):
         try:
             line = add(root, session, Subscription(repo, number, "fix", auto=True))
         except Excluded:
             continue
-        subscribed = True
+        refreshed.append((repo, number))
         if line:
             added.append(line)
-    return added, problems, subscribed
+    request_refresh(root, refreshed)
+    return added, problems, bool(refreshed)
 
 
 # GitHub
@@ -909,6 +921,11 @@ class Daemon:
         self.last_live = mono()
         self.next_pass = mono()
         self.wanted = False
+        # Pull requests a refresh request named: those the next pass queries whatever their ETags say, and those
+        # it polls every `SETTLE_EVERY` seconds, until the daemon's clock reaches each one's time, while GitHub
+        # still computes whether they can merge.
+        self.forced: set[tuple[str, int]] = set()
+        self.settling: dict[tuple[str, int], float] = {}
         self.last_pass: Optional[float] = None
         self.codex = codex_watch.Dispatcher(wall=wall)
         from . import relay
@@ -977,6 +994,7 @@ class Daemon:
                 self.log("stopping: the stop file names this daemon")
                 return False
             self.scan(now)
+            self.take_refreshes(now)
             if self.live:
                 self.last_live = now
             elif now - self.last_live >= IDLE and not self.relay.busy() and not self.fetching:
@@ -1074,6 +1092,41 @@ class Daemon:
             self.wanted = True
         self.live = live
 
+    def take_refreshes(self, now: float) -> None:
+        """Read and delete each refresh request, and ask for a pass at once that queries the pull requests it
+        names. A request older than `SETTLE`, written while no daemon ran, is deleted unread."""
+        folder = self.root / "refresh"
+        try:
+            paths = sorted(path for path in folder.iterdir() if not path.name.startswith("."))
+        except OSError:
+            return
+        wall = self.wall()
+        for path in paths:
+            try:
+                fresh = wall - path.stat().st_mtime < SETTLE
+                text = path.read_text(encoding="utf-8", errors="replace") if fresh else ""
+                path.unlink()
+            except OSError:
+                continue
+            for line in text.splitlines():
+                match = PULL.match(line.strip())
+                if match:
+                    pull = (match["repo"].lower(), int(match["number"]))
+                    self.forced.add(pull)
+                    self.settling[pull] = now + SETTLE
+                    self.wanted = True
+
+    def settle(self, results: dict, now: float) -> None:
+        """Keep polling each open pull request a refresh named, every `SETTLE_EVERY` seconds for up to
+        `SETTLE`, while GitHub reports its mergeability as unknown, as it does for a while after a push."""
+        def unknown(pr: dict) -> bool:
+            return pr.get("state") == "OPEN" and (pr.get("mergeable") or "UNKNOWN") == "UNKNOWN"
+
+        self.settling = {pull: until for pull, until in self.settling.items()
+                         if now < until and unknown(pull_request(results.get(pull)))}
+        if self.settling:
+            self.next_pass = min(self.next_pass, now + SETTLE_EVERY)
+
     def lacks_result(self, name: str) -> bool:
         for line in subscriptions(self.root / "sessions" / name):
             if line.excluded:
@@ -1097,7 +1150,10 @@ class Daemon:
         self.scan(now_mono)
         now = self.wall()
         self.read_operator(now)
-        Pass(self, now, now_mono).run()
+        forced, self.forced = self.forced, set()
+        done = Pass(self, now, now_mono, forced)
+        done.run()
+        self.settle(done.results, now_mono)
         self.last_pass = now
         self.forget_sessions(now)
         self.write_status(now)
@@ -1223,8 +1279,11 @@ class SessionState:
 class Pass:
     """One pass over every live session's subscriptions: gather, adopt, ask, query, choose owners, announce."""
 
-    def __init__(self, daemon: Daemon, now: float, now_mono: float) -> None:
+    def __init__(self, daemon: Daemon, now: float, now_mono: float,
+                 forced: Optional[set[tuple[str, int]]] = None) -> None:
         self.daemon = daemon
+        self.forced = forced or set()
+        self.results: dict[tuple[str, int], dict] = {}
         self.root = daemon.root
         self.settings = daemon.settings
         self.now = now
@@ -1256,7 +1315,7 @@ class Pass:
         self.covering.update(adopted)
         roles, spellings = self.claims(lines, adopted)
         fixed = {pull for pull, name in roles if name == "fix"}
-        results = {}
+        results = self.results
         for pull, spelling in sorted(spellings.items()):
             result = self.refresh(pull, spelling, pull in fixed)
             if result is GONE:
@@ -1380,14 +1439,15 @@ class Pass:
 
     def refresh(self, pull: tuple[str, int], repo: str, fixed: bool) -> object:
         """The pull request's result, queried again when a conditional request says it changed or failed, when
-        its base moved and a session fixes it, while its mergeability is unknown, and when a full query is due.
-        A failed query carries the last result forward. Answers GONE when GitHub says it does not exist."""
+        its base moved and a session fixes it, while its mergeability is unknown, when a refresh request named
+        it, and when a full query is due. A failed query carries the last result forward. Answers GONE when
+        GitHub says it does not exist."""
         number = pull[1]
         path = pull_cache(self.root, repo, number)
         entry = read_json(path) or {}
         etags = entry.get("etags") if isinstance(entry.get("etags"), dict) else {}
         pending = dict(etags)
-        dirty = not pull_request(entry)
+        dirty = not pull_request(entry) or pull in self.forced
         probe = self.daemon.conditional(f"repos/{repo}/pulls/{number}", etags.get("pull"))
         if probe.status == 404:
             return GONE
