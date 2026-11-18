@@ -506,12 +506,11 @@ These tests fail before the change, and each catches the bug it names:
 - **The app model.** Recommended: each owner creates their own app and
   passes `app-id` and `app-private-key`. One shared app that Projector hosts
   is rejected in § 3. This needs the user's decision.
-- **Approvals.** Recommended: no change. A clean CI review posts a `COMMENT`,
+- **Approvals.** Decided: no change. A clean CI review posts a `COMMENT`,
   `review.allow_approve` alone permits a real `APPROVE`, and the `clean`
-  label with the `projector/review` status stays the sign-off. With the
-  workflow's token, an `APPROVE` also needs the repository's setting that
-  allows GitHub Actions to approve pull requests. This needs the user's
-  decision.
+  label with the `projector/review` status stays the sign-off, as § 2.4
+  says. With the workflow's token, an `APPROVE` also needs the repository's
+  setting that allows GitHub Actions to approve pull requests.
 - **Summaries in CI.** Deferred. `project summary publish` pushes
   `refs/projector/summaries`, which needs `contents: write`. That would let a
   misled agent push to branches. A later change can have the command, not
