@@ -114,8 +114,9 @@ peer can post.
    must match the shapes in § 2.3, and its `id` must match its ref. For a
    peer's record, the daemon counts that peer's entries opened on this machine
    in the past hour in `<root>/peers.json`. A reply to an item you sent counts
-   instead toward that item's replies, so a burst of replies to one status
-   request does not crowd out new items. An entry beyond `agent.peer_limit`
+   instead toward that item's replies, once it passes the sender check in
+   step 5, so a burst of replies to one status request does not crowd out
+   new items. An entry beyond `agent.peer_limit`
    in its count is rejected as `peer-limit`, and its ref is deleted.
 5. **Mirror.** The job writes each opened entry to the repository's local
    store, `$XDG_STATE_HOME/projector/repo-inbox/<owner>/<repo>/`, as
@@ -125,9 +126,15 @@ peer can post.
    - **Incoming.** A peer's item with no `answers`.
    - **Sent.** Your own `sent` copy.
    - **Reply.** A peer's record with `answers`. It is paired with the sent
-     copy of the same ID when this machine holds one, and shown alone,
-     quoting the question it carries, when it does not. One sent item can
-     gather several replies.
+     copy of that ID, and it opens only when the sent copy's `to` is the ID
+     of the key that sealed it. A reply sealed by any other key, such as
+     another peer who saw the item's ID among the refs, is rejected as
+     `sender-mismatch` and its ref deleted. It counts toward no limit, shows
+     nowhere, and wakes no one. When this machine has not mirrored the sent
+     copy but the fetch found its ref, the reply is examined again at the end
+     of the pass, or at a later pass. When no sent copy of that ID is
+     mirrored or found, the reply is rejected as `no-sent-copy`. One sent
+     item can gather several replies.
 6. **Show it everywhere in the repository.** `project inbox list --session
    <id>` appends the repository entries for the session's repository, which
    it reads from the session's `agent.json`. They come after the session's
@@ -287,7 +294,7 @@ The sealed plaintext:
 | --- | --- |
 | Item | `schema_version: 1`, `id`, `kind` (`question`, `request`, or `notice`), `subject` (one line, at most 120 characters), `detail` (at most 16 KiB), `choices` (a question's or a request's, as the inbox stores them), `pr` (optional, `owner/repo#number` in this repository), `from_name` (optional), `from_host`, `from_model` (optional), `branch` (optional), `sent_at`, and, on a reopened item, `reopened_at` and `follow_up` (optional, at most 16 KiB). Each sender field has the shape `agents.well_formed` requires. |
 | Sent copy | The item's fields, plus `sent: true`, `to` (the peer's key ID), `from` (the asking session's ID), and `from_machine` (the ID in `machine.json`). It is sealed to your own key, so only your machines read them. |
-| Reply | `schema_version: 1`, `id`, `answers` (the item's ID), `subject` (the item's subject, so a machine without the sent copy can show it), `outcome` (`answer`, `done`, `declined`, `dismissed`, or `reply`), `letter` and `choice` (optional), `text` (optional, at most 16 KiB), `by` (`user` or `agent`), `by_name`, `by_host`, `by_model`, and `by_branch` (when `by` is `agent`, each in the shape `agents.well_formed` requires), `closes` (whether the responder closed the item), `sent_at`. |
+| Reply | `schema_version: 1`, `id`, `answers` (the item's ID), `subject` (the item's subject, which `show` prints with the reply), `outcome` (`answer`, `done`, `declined`, `dismissed`, or `reply`), `letter` and `choice` (optional), `text` (optional, at most 16 KiB), `by` (`user` or `agent`), `by_name`, `by_host`, `by_model`, and `by_branch` (when `by` is `agent`, each in the shape `agents.well_formed` requires), `closes` (whether the responder closed the item), `sent_at`. |
 | State | `schema_version: 1`, `id` (the entry's), `snoozed_until` (optional, milliseconds) and `snoozed_at` (when it was set), `replied` (each `{session, machine, at}`), `closed_at` and `reopened_at` (optional, a sent copy's), `updated_at`. A lease failure merges it field by field (§ 2.1 step 12). |
 
 The local mirror, `repo-inbox/<owner>/<repo>/r<number>.json`, holds the
@@ -305,7 +312,7 @@ An `other-key` entry in the relay cache's `rejections` also carries `key_id`.
 | File | Change |
 | --- | --- |
 | `src/projector/config.py` | Add `agent.peers` (a table) and `agent.peer_limit` to `SETTINGS`, and the limit to `MINIMUMS`. Make the `USER_ONLY` walk match a key and every key under it, because `_flatten` yields `agent.peers.jason`, not `agent.peers`. Add `peers(environ)`, which reads the table from the user layer and checks each name, each key's shape, that no key repeats, and that no key is your own. Make `project config set` refuse any `agent.peers.*` key and name `project agent peer add`. |
-| `src/projector/relay.py` | Add `USER_REF`, `user_ref`, and `seal_to(key, recipient, record)`, of which `seal` becomes the case where the recipient is your own key. Pass the peers to `Job`. Fetch and examine `user/<your-key-id>/`, open its records from your key or a peer's, check their shapes, apply `agent.peer_limit`, and mirror them (§ 2.1 steps 4 and 5). Record `key_id` on `other-key` rejections, and add `peer-limit` to `REASONS`. Extend `parse_ref`, `rebase`, and `sweep` to `user/` refs, including the 7-day deletions of § 2.1 step 13. Fetch `user-state/<your-key-id>/`, open only your own key's records there, and apply them to the mirror (§ 2.1 step 12). In `rebase`, merge a stale `user-state/` change with the record the fetch found and reseal it, rather than retrying it as it stands. When it mirrors a reply, append its `PEER REPLY` line to the asking session under the conditions in § 2.1 step 10. |
+| `src/projector/relay.py` | Add `USER_REF`, `user_ref`, and `seal_to(key, recipient, record)`, of which `seal` becomes the case where the recipient is your own key. Pass the peers to `Job`. Fetch and examine `user/<your-key-id>/`, open its records from your key or a peer's, check their shapes, apply `agent.peer_limit`, and mirror them (§ 2.1 steps 4 and 5). Open a reply only when the key that sealed it is the one its sent copy's `to` names (§ 2.1 step 5). Record `key_id` on `other-key` rejections, and add `peer-limit`, `sender-mismatch`, and `no-sent-copy` to `REASONS`. Extend `parse_ref`, `rebase`, and `sweep` to `user/` refs, including the 7-day deletions of § 2.1 step 13. Fetch `user-state/<your-key-id>/`, open only your own key's records there, and apply them to the mirror (§ 2.1 step 12). In `rebase`, merge a stale `user-state/` change with the record the fetch found and reseal it, rather than retrying it as it stands. When it mirrors a reply, append its `PEER REPLY` line to the asking session under the conditions in § 2.1 step 10. |
 | New `src/projector/repo_inbox.py` | The local mirror's store, its numbering and lock, sealing and queuing an item, its sent copy, and a reply, the role of each entry, closing a sent entry, and the `PEER REPLY` line and `show` notice. It reuses `inbox.check`, `inbox.check_subject`, `inbox.write_json`, and `inbox.locked`, so a repository item passes the same checks as a session's. |
 | `src/projector/inbox.py` | Let `parse_reference` accept `r<number>` and `r<number>.<letter>`. Send `answer`, `done`, `decline`, `dismiss`, and `snooze` on an `r` reference to `repo_inbox`, which writes a snooze to the entry's state record. Add `repo_items(session)`, which `list` and the console call. |
 | `src/projector/cli.py` | Add `--to <peer>`, which repeats, to `project inbox ask`, `request`, and `tell`. Add `--repo` to `inbox list`, and `--as user` or `--as agent` to the commands that answer an `r` reference, which require it. Add `project inbox reply <r-ref> --text <text>`, which takes text or `-` for standard input (§ 2.1 step 9). Add `--close` and `--keep-open` to `answer`, `done`, `decline`, `dismiss`, and `reply` on an `r` reference (§ 2.1 step 7). Add `project inbox close <r-ref>` and `project inbox reopen <r-ref> [--text <follow-up>]`, which refuse an entry that is not a sent copy (§ 2.1 step 11). Let `inbox show` take an `r` reference. Add `project agent peer add <name> <public-key> [--replace]`, terminal only, with the confirmation in § 2.1 step 2, and `peer remove <name>` and `peer list [--json]`. `peer list` prints each peer's name, key ID, and when an entry from them last opened. It then lists the unknown key IDs from recent `other-key` rejections, each with the `peer add` command to run. `key show` adds `Give this public key to anyone whose agents should reach your inbox; it is not secret.` |
@@ -419,6 +426,7 @@ the first person's key stands in for their second machine.
 | A peer's record claims a `peer` name, a `from_name` holding prose, a 17 KiB `detail`, and an `id` that differs from its ref. | Each is rejected and its ref deleted, and nothing is mirrored. Catches a sender choosing how it is labeled, and unchecked shapes. |
 | A peer posts `agent.peer_limit` plus one items in an hour from a sender that skips any count. | The extra item is rejected as `peer-limit` and never shown. Catches a limit that trusts the sender. |
 | A key not in your table seals an item to you. Separately, your own key seals a record into `agents/` posing as a peer's. | The first is rejected as `other-key` with its key ID. The `agents/` and `inbox/` namespaces still reject every key but your own. Catches a peer reaching your agents in this version. |
+| You list Jason and Amy, and your agent asks Jason. Amy's key seals `agent.peer_limit` replies whose `answers` names that item, and Jason's key seals one whose `answers` names an item Amy sent you. Then Jason replies to his item, and on a machine that has not mirrored the sent copy, his reply sorts before the sent copy in one fetch. | Amy's replies are rejected as `sender-mismatch`, and the misdirected one as `no-sent-copy`, each with its ref deleted. None shows, and no session wakes. Jason's own reply then opens, paired with the sent copy, on both machines, and wakes the asker. Catches one peer answering for another, a rejected reply spending the item's cap, and a reply dropped because the fetch reached it before its sent copy. |
 | Remove Jason with `peer remove`, then he posts again. | His new item is rejected as `other-key`. Catches removal that does not stop new entries. |
 | Advance the clock 7 days past an unanswered item and an unread reply, and run a full pass on each side. | All their refs are deleted, and a deletion Jason already made is dropped without an error that stays. Catches entries that outlive their week, and a stale deletion retried forever. |
 | Run `peer add` without a terminal, with your own key, with a key under another name, with a malformed key, and with an existing name without `--replace`, and answer the confirmation `n`. | Each is refused and nothing is written. Catches an agent adding a peer, and a duplicate or invalid entry. |
