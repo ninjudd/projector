@@ -2772,6 +2772,20 @@ class DefaultBranchFetchTests(WatchCase):
                          (found["state"], self.ref("refs/projector/default/origin/main"), self.gate_checks()))
         self.assertIn("missing.git", found["error"])
 
+    def test_an_inherited_git_dir_does_not_send_the_fetch_to_another_repository(self) -> None:
+        other = self.base / "other"
+        self.git(self.base, "init", "-q", "-b", "main", str(other))
+        self.git(other, "remote", "add", "origin", str(self.base / "origin.git"))
+        merged = self.merge_on_origin('[review]\ngate_checks = "check"\n')
+
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other)}):
+            self.full_pass()
+
+        found = watch.status(self.root, self.clock.wall())["default_branches"][str(self.repo)]
+        stray = subprocess.run(["git", "for-each-ref", "refs/projector/"], cwd=other, capture_output=True,
+                               text=True).stdout
+        self.assertEqual(("ok", merged, ""), (found["state"], self.ref("refs/projector/default/origin/main"), stray))
+
     def test_fetch_default_false_fetches_nothing(self) -> None:
         (self.home / ".projector.toml").write_text("[watch]\nfetch_default = false\n")
         self.merge_on_origin('[review]\ngate_checks = "check"\n')

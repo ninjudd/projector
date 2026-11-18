@@ -546,9 +546,11 @@ def queue_message(root: Path, repo: str, cwd: str, key: Key, message: dict, now:
 
 def git(cwd: Path, *args: str, input: Optional[bytes] = None, env: Optional[dict] = None,
         timeout: float = FETCH_TIMEOUT) -> subprocess.CompletedProcess:
-    """Run Git in `cwd` with standard input closed or fed `input`, no terminal prompt, and a timeout after which
-    its process group is killed."""
-    environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0", **(env or {})}
+    """Run Git on the repository at `cwd` with standard input closed or fed `input`, no terminal prompt, and a
+    timeout after which its process group is killed. It drops the inherited `config.GIT_LOCATION` variables, such
+    as the `GIT_DIR` a Git hook sets, which would point Git at another repository than `cwd`'s."""
+    inherited = {name: value for name, value in os.environ.items() if name not in config.GIT_LOCATION}
+    environment = {**inherited, "GIT_TERMINAL_PROMPT": "0", **(env or {})}
     try:
         return run_bounded(["git", *args], cwd=cwd, input=input, env=environment, timeout=timeout)
     except subprocess.TimeoutExpired:

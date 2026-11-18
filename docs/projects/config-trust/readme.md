@@ -471,6 +471,11 @@ full pass, which transfers only commits this clone lacks.
   history and writes `refs/tags/*`, and `--no-recurse-submodules`, so it
   fetches nothing for a submodule. Both keep the promise that the fetch moves
   no ref you use.
+- **The fetch's environment.** The fetch runs through `relay.git`, which now
+  drops the `config.GIT_LOCATION` variables as the configuration reader
+  does. A daemon started with an inherited `GIT_DIR`, as from a Git hook,
+  would otherwise fetch into that repository and report the checkout it
+  named as fetched. The relay's own Git commands gain the same guard.
 - **Choosing the newer commit.** One `git merge-base` answers which of the two
   commits descends from the other, and the answer is cached per pair as
   `<origin>-<fetched>.newer`, so a warm load still starts no process. A
