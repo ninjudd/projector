@@ -1,0 +1,97 @@
+{
+ "version": 1,
+ "name": "Reviews in GitHub Actions",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 576,
+  "title": "Review Projector's own pull requests in GitHub Actions",
+  "head": "2bdcc9c3757b86f3da30e9bff30e02bc3d36ca93",
+  "headRef": "review-ci-own",
+  "base": "48f69086e4e132aa2896187ffaf974bc028973be",
+  "baseRef": "review-ci-setup",
+  "basePr": 575
+ },
+ "overview": {
+  "summary": [
+   "Projector currently reviews this repository’s pull requests from agent sessions. This layer enables the same review flow on GitHub-hosted runners, so ready pull requests with a branch in this repository can receive a review without a laptop session.",
+   "The workflow runs Claude through the shared review action and gives a separate job permission to publish the resulting review page. The committed settings identify the workflow’s bot as a trusted source of Projector verdicts. A runner-specific configuration replaces gate commands that cannot run on the hosted image while retaining the exact-head CI check."
+  ],
+  "cards": [
+   {
+    "id": "rollout",
+    "title": "What remains after merge",
+    "html": "<ul class=\"tight\"><li>The action is called at <code>@main</code>, so the first complete hosted review needs the stack to land there.</li><li>Set exactly one Claude credential secret: <code>CLAUDE_CODE_OAUTH_TOKEN</code> or <code>ANTHROPIC_API_KEY</code>. This review neither read nor changed either secret.</li><li>The first real run must still verify the hosted-runner facts listed in the CI review plan.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Review evidence",
+    "html": "<ul class=\"tight\"><li>The configured gate and exact-head <code>check</code> workflow passed, including 256 hook tests.</li><li>Fifteen focused tests passed for CI setup, credential selection, and bot verdict readers.</li><li>A local configuration check confirmed the gate override wins without dropping the exact-head check requirement.</li><li>The published review is clean, with no findings or suggestions.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "verdicts",
+   "title": "Count the workflow’s reviews",
+   "kicker": "Enable CI review and recognize its bot",
+   "intro": [
+    "A review posted by <code>github-actions[bot]</code> is not a human collaborator’s review. Public repositories ignore verdicts from untrusted accounts, so enabling the workflow also records that this bot’s Projector verdicts count.",
+    "The settings select Claude and enable later <code>init</code> refreshes. Once they reach the default branch, sessions, the panel, and the site can use the bot’s verdict in the same sign-off calculation as other trusted reviews."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".projector.toml",
+     "note": "Enable CI reviews with Claude and add the Actions bot to the counted reviewer list.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 11,
+       "text": "Focused status, watch, and site tests confirm that the named bot’s verdict counts on a public repository while an unlisted account’s verdict does not."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "workflow",
+   "title": "Run reviews with separate publication permissions",
+   "kicker": "Review ready branches and publish their summaries",
+   "intro": [
+    "The review job runs for ready pull requests whose heads are in this repository and can also be started manually. It calls the action from <code>main</code> to preview unreleased Projector changes. Each new head cancels an older review for the same pull request and agent.",
+    "The agent’s job can post reviews and statuses but cannot push code. A second job, which runs no agent, holds the write permission needed to publish summaries. The runner also refuses drafts and fork heads, so a manual trigger does not bypass that boundary.",
+    "The local review gate normally runs hook tests and a type-check that depends on declarations from an interactive Claude Code session. The workflow supplies a configuration override that runs plugin validation and the whitespace check on a hosted runner; the existing <code>check</code> workflow still supplies the suite and project checks."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".github/workflows/projector-review.yml",
+     "note": "Add the generated review workflow, with a preserved runner-specific gate override.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 32,
+       "text": "Traced the job condition and the runner’s own refusal: drafts and fork heads are excluded, including manual dispatch."
+      },
+      {
+       "kind": "verify",
+       "line": 60,
+       "text": "Compared the whole file with the generated main/Claude workflow: only these five override lines differ. A local configuration check confirms the override wins and keeps review.gate_checks=check; the edited digest makes init preserve this workflow."
+      },
+      {
+       "kind": "context",
+       "line": 62,
+       "text": "Exactly one of the two Claude secrets must be set. The action rejects both and neither; credential values were not read or changed during this review."
+      },
+      {
+       "kind": "verify",
+       "line": 69,
+       "text": "Traced the action’s two modes and the declared permissions: the review job lacks contents write, while only the summary job can push the page’s hidden ref."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
