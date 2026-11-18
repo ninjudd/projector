@@ -1,0 +1,2042 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index d3045778..65c1ceaa 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -115,7 +115,8 @@ what it did to each:
+     "Bash(project inbox discuss *)",
+     "Bash(project console)",
+     "Bash(project console *)",
+-    "Bash(project ios *allow-untrusted*)"
++    "Bash(project ios *allow-untrusted*)",
++    "Bash(project review run *)"
+   ]
+   ```
+ 
+@@ -134,6 +135,9 @@ what it did to each:
+   is not trusted, which runs that head's build scripts as you, so
+   `Bash(project ios *allow-untrusted*)` asks before it, and every
+   `project ios` command refuses an abbreviated option.
++  `project review run` starts another agent with its own credentials, or the
++  command `review.runner` names, so `Bash(project review run *)` asks before
++  it.
+   `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`,
+   `start`, and `unclear` record your answer to an item an agent posted, your
+   outcome for a request, your consent to a request's start action, your word
+@@ -1034,6 +1038,8 @@ reads, which are these:
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+ | `review.labels` | boolean | `true` | `project review setup`, `publish`, and `finish`, to add and remove the `reviewing` label, which shows a review in progress, and the `clean` label, which shows a signed-off head; `false` leaves both labels alone, as a repository whose own `clean` or `reviewing` label means something else needs |
+ | `review.require_check` | boolean | none | `init`, as your answer to whether the repository relies on Projector alone to sign off pull requests: none asks at a terminal, `true` keeps the ruleset and the label workflow in place, and `false` asks no more; `init` writes it when you answer, as [Require a clean review before merge](#require-a-clean-review-before-merge) describes |
++| `review.reviewers` | string | none | `project review status`, `suggestions`, `setup`, and `publish`, and the watch daemon from the configuration of a checkout a live session works in, as the logins whose Projector verdicts count beside the reviewer's and those of the repository's owner, members, and collaborators, separated by commas, as `github-actions[bot]`. On a public repository a review from any other account does not count, so name an account here, such as the one a CI review posts as, only when you trust every review it posts |
++| `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
+ | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
+@@ -1468,6 +1474,17 @@ Pass `--checkout <path>` to publish from that checkout rather than the
+ repository containing the current directory, so an agent whose shell is
+ elsewhere runs the publish as one command, with no `cd` before it.
+ `--summary` and `--diff` still name files relative to the current directory.
++Pass `--pr <number>` to refuse a summary of any other pull request, as the
++job that publishes a summary another job wrote does.
++
++Where `PROJECTOR_SUMMARY_HANDOFF` names a folder and the site is hosted,
++`summary publish` checks the summary exactly as it does before a push, then
++writes it to that folder as `summary.json` with its diff as `diff.patch`,
++and pushes nothing, starts no workflow, and links nothing. A CI review job
++sets the variable, because its token cannot push the summaries ref. A second
++job, whose token can and which runs no agent, publishes the folder's summary
++with `--summary`, `--diff`, and `--pr`. A summary that fails a check fails
++the handoff, so the review job reports it at once.
+ 
+ `summary publish` pushes only to a repository that hosts its site, which
+ `site status` reports as hosted. Anywhere else nothing on GitHub reads the
+@@ -1487,6 +1504,10 @@ Once the site is hosted, publish the summary again to push it.
+ 
+ When `summary publish` pushes to a hosted site, it then comments a link to
+ the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
++It links a summary only while its head is still the pull request's head. A
++publish of an earlier head, such as a CI job that finishes after the next
++head's, still pushes the summary, because the site keeps a page for every
++head, and says that it left the links alone.
+ It keeps one such comment per account and pull request, as the pull
+ request's last message: each publish posts the link again at the end, and
+ then deletes the account's older summary comments. A rerun on the same head
+@@ -1598,8 +1619,9 @@ the head of the full review it builds on, by the same model, and links that
+ review, while the row on Reviews shows **Clean** alone. Models are told apart
+ by their model ID, lowercased and without a trailing bracketed variant such as
+ `[1m]`. In a public repository a review counts only when its author owns the
+-repository, belongs to its organization, or collaborates on it, because anyone
+-can review a public repository's pull request. In a private or internal
++repository, belongs to its organization, or collaborates on it, or is a login
++that `review.reviewers` names, because anyone can review a public repository's
++pull request. In a private or internal
+ repository every review counts, because only an account that can see the
+ repository can review there. That keeps a verdict counting when its author
+ keeps their organization membership private, which the token the deploy
+@@ -1938,6 +1960,7 @@ project review hold 66
+ project review ready 66
+ project review rules
+ project review workflow
++project review run 66 --model claude-opus-5-5
+ ```
+ 
+ `setup` checks that pull request 66 is open, fetches its head into the
+@@ -2186,10 +2209,10 @@ and is another model's only when that model posted on the head in between.
+ In the same step `publish` counts the open finding threads again, so a
+ finding that another model posts after this review's census still keeps the
+ head from being signed off. It counts the reviewer's verdicts, the one it
+-just posted included, and those of the accounts the site's status counts:
+-in a public repository, any account that owns the repository, belongs to its
+-organization, or collaborates on it, and in a private or internal
+-repository, every account. Draft state plays no part in the sign-off, and
++just posted included, those of each login `review.reviewers` names, and
++those of the accounts the site's status counts: in a public repository, any
++account that owns the repository, belongs to its organization, or
++collaborates on it, and in a private or internal repository, every account. Draft state plays no part in the sign-off, and
+ `publish` never changes it, because a draft means that the pull request's
+ author is still working on it. The author moves it with `hold` and `ready`.
+ 
+@@ -2308,10 +2331,11 @@ A head with no Projector verdict is `unreviewed`. On an unlabeled draft that
+ no review has signed off, the last line reads
+ `not signed off, a draft; no Projector label`. `status` counts the
+ verdicts `publish` counts: those of the reviewer, found as `setup` finds it,
+-from `--reviewer`, then `review.username`, then the authenticated user, and
+-in a public repository those of any account that owns the repository, belongs
+-to its organization, or collaborates on it, or in a private or internal
+-repository those of every account. It reads the pull request, its reviews,
++from `--reviewer`, then `review.username`, then the authenticated user,
++those of each login `review.reviewers` names, and in a public repository
++those of any account that owns the repository, belongs to its organization,
++or collaborates on it, or in a private or internal repository those of every
++account. It reads the pull request, its reviews,
+ its threads, and its head's commit status, and runs from any directory. It
+ exits 0 whatever the verdict, and 1 only when it cannot read the pull
+ request. With `--json` it prints one object:
+@@ -2679,6 +2703,65 @@ jobs:
+       - run: make integration
+ ```
+ 
++### Review a head with no session
++
++`project review run` reviews one pull request's head with an agent and no
++session behind it, as a GitHub Actions job does. It starts the agent with
++the `review-pr` skill, waits for it, and checks that a verdict on the head
++was published:
++
++```console
++$ project review run 66 --model claude-opus-5-5
++reviewing owner/example#66 at 3f2a91c as github-actions[bot] with claude-opus-5-5 through claude
++published https://github.com/owner/example/pull/66#pullrequestreview-2211
++```
++
++Before it starts anything, the command reads the pull request. It refuses
++a pull request whose head is in a fork, and a draft, however the run was
++started. When the reviewer already has a verdict by this model on the head,
++it prints that review's address and exits 0, so a rerun of a finished job
++posts nothing. Pass `--rereview` to review the head again. A live start
++comment by this reviewer and model on the head can only be a cancelled
++run's, so the agent's `setup` replaces it.
++
++`--agent` picks how the agent starts, and `review.runner` sets the default:
++
++| Agent | Command |
++| --- | --- |
++| `claude` | `claude -p` with `/projector:review-pr`, `--permission-mode auto` and `--permission-prompts none`, so a classifier decides each action no rule covers and anything that would still prompt is refused. `--plugin-dir` loads Projector's plugin from a checkout. |
++| `codex` | `codex exec` in its `workspace-write` sandbox with network on, so `gh` reaches GitHub, and `--approve-for-me`, which sends approvals to Codex's automatic review. The review state and a scratch folder are writable beside the checkout. |
++| `command` | The command `review.runner` names, which reads the prompt on standard input. Name any other runner here, such as one with MCP servers. |
++
++`--permission-mode allowlist` refuses whatever no rule allows, in place of
++the automatic decision: Claude Code's `dontAsk`, and Codex with
++`approval_policy = "never"`. Both presets allow the commands the skill
++runs: `project`, `gh pr view`, `gh pr diff`, `gh api`, `gh repo view`,
++`gh auth status`, and the `git` commands that only read. Both refuse
++`git push`, `git commit`, `gh pr merge`, `gh pr ready`, `gh pr close`, every
++`gh repo` command that changes a repository, `gh secret`, `curl`, and
++`wget`, whatever the mode decides. No preset passes a flag that skips the
++permission checks or the sandbox.
++
++The agent sees these variables, which the skill's "Review without a
++session" section reads: `PROJECTOR_HEADLESS`, `PROJECTOR_LOOP` from
++`--loop`, `run` by default, `PROJECTOR_MODEL`, `PROJECTOR_REPLACE` for a
++cancelled run's start comment, `PROJECTOR_REREVIEW`, `PROJECTOR_SCRATCH`, a
++folder for the files it writes, and `PROJECTOR_RUN_REPORT`, a file for the
++question it would have asked.
++
++A verdict counts when the agent published it during the run, on the head
++or on a newer one: when a push lands while the agent reviews, the skill
++moves the review to the new head and publishes there. When the agent exits
++with no new verdict, or runs out of its `--timeout` minutes, 45 by default,
++the command runs
++`project review finish --force` for the review the agent set up, which
++deletes the start comment and takes `reviewing` off. A review another loop
++holds, which refused the agent's `setup`, keeps its state, lock, and
++worktrees, and a lock the agent's `setup` took and left with no state is
++removed. The command then posts one comment on the pull request that names
++the head, the report file's text or why there is none, and the Actions run
++when there is one, and exits 1.
++
+ ## Use the inbox
+ 
+ `project inbox` keeps what an agent puts in front of you: questions, which
+diff --git a/docs/projects/review-in-ci/readme.md b/docs/projects/review-in-ci/readme.md
+index c5d14e19..bf1163b3 100644
+--- a/docs/projects/review-in-ci/readme.md
++++ b/docs/projects/review-in-ci/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: in-progress
+ priority: now
+ ---
+ 
+@@ -107,9 +107,11 @@ author's sessions and the site, count that account's reviews.
+       (§ 2.2), and `--timeout`, 45 minutes by default.
+    4. **Check the verdict.** When the agent exits, the command reads the
+       reviewer's reviews. It succeeds when a Projector verdict by this model
+-      names the head and was submitted after the run started. Otherwise it
+-      runs `project review finish --force` for the pull request, which
+-      deletes the start comment and takes `reviewing` off. It then posts one
++      was submitted after the run started, on the head or on one pushed
++      while the agent ran (§ 9). Otherwise it
++      runs `project review finish --force` for the review the agent set up
++      (§ 9), which deletes the start comment and takes `reviewing` off. It
++      then posts one
+       comment that names the head, the reason the agent gave in its report
+       file or "the agent published no verdict", and the run's URL, and it
+       exits 1.
+@@ -137,7 +139,8 @@ to review pull request <number>". It also sets these environment variables:
+ | `PROJECTOR_REPLACE` | The start comment from step 6.2, when there is one |
+ | `PROJECTOR_RUN_REPORT` | A file in the run's scratch folder |
+ | `PROJECTOR_SUMMARY_HANDOFF` | A folder in the run's scratch space, where `project summary publish` leaves the summary for the summary job (§ 2.6) |
+-| `CLAUDE_EFFORT` | The effort the preset runs at, so the verdict marker records it, as `live_effort` reads it |
++| `PROJECTOR_REREVIEW` | `1` with `--rereview`, so `setup` reviews a head this model already reviewed |
++| `PROJECTOR_SCRATCH` | The run's scratch folder, the only place the agent writes files of its own |
+ 
+ A new section of `skills/review-pr/SKILL.md`, "Review without a session",
+ says what changes when `PROJECTOR_HEADLESS` is set:
+@@ -292,7 +295,7 @@ not have. So in CI the publish happens in two halves:
+ 2. **The summary job publishes it.** The job checks the repository out,
+    downloads the run's summary artifacts, and runs
+    `project summary publish --summary <folder>/summary.json --diff
+-   <folder>/diff --pr <number>` for each, in the matrix's order. The new
++   <folder>/diff.patch --pr <number>` for each, in the matrix's order. The new
+    `--pr` flag refuses a summary of any other pull request, because an
+    agent that read untrusted text wrote the artifact. The publish then
+    pushes the ref, sends the dispatch, and links the summary.
+@@ -847,3 +850,41 @@ These tests fail before the change, and each catches the bug it names:
+   0.169.0's `codex exec` takes `--sandbox`, `--approve-for-me`, which sends
+   approvals to automatic review inside the `workspace-write` sandbox, and
+   `--json` and `-o`. It has no flag that loads a plugin.
++
++## 9. What implementation settled
++
++- **The loop.** `project review run --loop` defaults to `run`, and the
++  action passes `actions`, so a laptop's run and a CI run keep separate
++  records of the reviews they published.
++- **The effort marker.** The run sets no `CLAUDE_EFFORT`. Claude Code sets
++  it for its own Bash tool, and Codex reports no effort, so a value the run
++  set could only disagree with the host.
++- **A run's own verdict.** The run notes the ids of the reviewer's
++  Projector reviews before the agent starts, and counts only a verdict by
++  the model with a new review id afterwards. A time comparison would depend
++  on the runner's clock agreeing with GitHub's, and a re-review of the same
++  head makes an earlier verdict look like this run's. The verdict may name
++  a newer head than the one the run started on, because the skill moves an
++  unpublished review to a head pushed while it runs.
++- **A failed run cleans up only its own review.** The run reads the
++  model's review state before the agent starts. Afterwards it runs
++  `project review finish --force` only when the state names the run's loop
++  and a start comment the earlier state did not, which only the agent's
++  `setup` writes. When another loop holds the lock, `setup` is refused, and
++  that loop's state, lock, and worktrees stay as they are. A lock that
++  names the run's loop and appeared during the run, when the agent wrote
++  no state, is a `setup` stopped partway, and the run removes it so the
++  cached state does not refuse the next run.
++- **Asking before a run.** `project review run` starts another agent with
++  its own credential, or the command `review.runner` names. Claude Code
++  asks before it through `Bash(project review run *)`, and Codex's rules
++  leave it to Codex's usual approval.
++- **`gh auth status` is allowed.** The skill runs it, so allowlist mode
++  would otherwise refuse a step the skill names.
++- **The site counts `review.reviewers` too.** The site build reads the
++  setting from the checkout it builds from, and the status query returns
++  each review's author, so a CI review's verdict sets a page's status on a
++  public repository.
++- **The handoff runs only where the site is hosted.** Elsewhere
++  `project summary publish` keeps the summary in the checkout, as it does
++  in a session, and the action uploads nothing.
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 9cfbd3ae..d103b504 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -24,6 +24,40 @@ gh pr view --json number,url,state,isDraft,headRefOid,baseRefName
+ When that finds no pull request, or finds one that is not open, ask the user
+ which pull request to review rather than guessing.
+ 
++## Review without a session
++
++`project review run` starts this skill with no session behind it and nobody
++to ask, as a GitHub Actions job does. It sets `PROJECTOR_HEADLESS` to `1`
++and names the pull request in the prompt. Once the agent exits, the command
++checks that a verdict on the head was published, and fails the job when
++none was. While `PROJECTOR_HEADLESS` is `1`, follow this skill with these
++differences:
++
++- **Take the loop and the model from the environment.** Pass `setup`
++  `--loop "$PROJECTOR_LOOP" --model "$PROJECTOR_MODEL"`, and pass the same
++  two flags to every later `project review` command. Add
++  `--replace "$PROJECTOR_REPLACE"` when that variable is set: it names the
++  start comment of a run that was cancelled. Add `--rereview` when
++  `PROJECTOR_REREVIEW` is `1`.
++- **Confirm no identity by hand.** The token can belong to no GitHub user,
++  so `gh api user` fails. `setup` reads the reviewer itself, from
++  `PROJECTOR_TOKEN_LOGIN` where the token belongs to no user.
++- **Do not subscribe.** Skip the subscription step. The workflow runs again
++  on the next head.
++- **Ask nobody.** Wherever this skill says to ask the user, write the
++  question and what you found to the file `$PROJECTOR_RUN_REPORT`, and stop
++  without publishing. `project review run` posts that text on the pull
++  request.
++- **Write files only under `$PROJECTOR_SCRATCH`**, such as a review body or
++  a threads file.
++- **Run nothing this skill does not name.** Push nothing, commit nothing,
++  and edit nothing outside the scratch worktree and `$PROJECTOR_SCRATCH`.
++  Never run `gh pr ready` or `gh pr merge`.
++- **Summarize as usual.** Where `PROJECTOR_SUMMARY_HANDOFF` is set,
++  `project summary publish` checks the summary and leaves it for the
++  workflow to publish, so run it exactly as
++  [Summarize the pull request](#summarize-the-pull-request) says.
++
+ ## Resolve identity
+ 
+ A review posts as one GitHub identity, the **reviewer**. By default that is
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 34a18ca7..e79e614f 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -27,6 +27,7 @@
+ 
+ from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
+                summary, watch)
++from . import run as headless
+ from .permissions import allow_commands
+ from .summary import WORKFLOW_PATH
+ from .config import (
+@@ -754,6 +755,9 @@ def parser() -> argparse.ArgumentParser:
+         help="the checkout to publish from, in place of a `cd` (default: the repository containing this directory)",
+     )
+     summary_publish.add_argument("--diff", help="publish the diff from this file instead of fetching it from GitHub")
++    summary_publish.add_argument(
++        "--pr", type=int, help="refuse the summary unless it is of this pull request, as a summary another job wrote"
++    )
+     summary_publish.add_argument(
+         "--no-dispatch", action="store_true", help="push the summary without starting the workflow"
+     )
+@@ -828,6 +832,27 @@ def parser() -> argparse.ArgumentParser:
+     review_ready = review_commands.add_parser(
+         "ready", help="mark your pull request ready for review once your work on it is done"
+     )
++    review_run = review_commands.add_parser(
++        "run", help="review a pull request's head with an agent and no session, as a CI job does"
++    )
++    review_run.add_argument("pr", type=int, help="the pull request number")
++    review_run.add_argument("--model", required=True, help="the model the agent runs, which names its review")
++    review_run.add_argument("--agent", help="claude, codex, or command, which runs the command review.runner names "
++                                            "(default: review.runner, then claude)")
++    review_run.add_argument("--effort", default=headless.DEFAULT_EFFORT,
++                            help=f"the reasoning effort the agent runs at (default: {headless.DEFAULT_EFFORT})")
++    review_run.add_argument("--permission-mode", choices=headless.MODES, default="auto",
++                            help="auto lets the agent's own judgment decide what no rule covers; allowlist refuses it "
++                                 "(default: auto)")
++    review_run.add_argument("--timeout", type=float, default=headless.DEFAULT_TIMEOUT_MINUTES, metavar="MINUTES",
++                            help=f"the agent's time limit (default: {headless.DEFAULT_TIMEOUT_MINUTES})")
++    review_run.add_argument("--rereview", action="store_true",
++                            help="review a head this reviewer and model already reviewed")
++    review_run.add_argument("--loop", default=headless.DEFAULT_LOOP,
++                            help=f"the id that keys the record of published reviews (default: {headless.DEFAULT_LOOP})")
++    review_run.add_argument("--plugin-dir", type=Path, help="load Projector's Claude Code plugin from this checkout")
++    review_run.add_argument("--checkout", type=Path,
++                            help="the checkout of the repository (default: the repository containing this directory)")
+     for command in (review_status, review_suggestions):
+         command.add_argument("pr", type=int, help="the pull request number")
+         command.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
+@@ -2384,7 +2409,7 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
+     """`review status`: the newest Projector verdict on a pull request's head, whatever it is; exit 1 only
+     when the pull request cannot be read."""
+     repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+-    result = review.status(repo, arguments.pr, counted_reviewer(arguments))
++    result = review.status(repo, arguments.pr, counted_reviewer(arguments), counted_logins(Path.cwd()))
+     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.status_lines(result)))
+     return 0
+ 
+@@ -2393,7 +2418,7 @@ def review_suggestions(root: Path, arguments: argparse.Namespace) -> int:
+     """`review suggestions`: the suggestions fix-pr decides on a pull request's head, printing nothing when
+     there are none; exit 1 only when the pull request cannot be read."""
+     repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+-    items = review.suggestions(repo, arguments.pr, counted_reviewer(arguments))
++    items = review.suggestions(repo, arguments.pr, counted_reviewer(arguments), counted_logins(Path.cwd()))
+     if arguments.json_output:
+         print(json.dumps(items, indent=2))
+     elif items:
+@@ -2415,6 +2440,15 @@ def review_draft(arguments: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def counted_logins(checkout: Path) -> tuple[str, ...]:
++    """The logins `review.reviewers` names in the checkout's configuration, whose verdicts count beside the
++    reviewer's; none when there is no checkout to read it from."""
++    try:
++        return review.extra_reviewers(load_config(review.checkout_root(checkout)).get("review.reviewers"))
++    except ProjectorError:
++        return ()
++
++
+ def labels_enabled(checkout: Path) -> bool:
+     """Whether `review.labels` lets the review commands change the `reviewing` and `clean` labels; on unless the
+     checkout's configuration turns it off, or when there is no checkout to read it from."""
+@@ -2433,6 +2467,19 @@ def label_lines(labeled: Optional[dict]) -> list[str]:
+     return lines + ([f"warning: {labeled['warning']}"] if labeled["warning"] else [])
+ 
+ 
++def review_run(arguments: argparse.Namespace) -> int:
++    """`review run`: one head's review by an agent, in the state the agent's own review commands use."""
++    checkout = review.checkout_root(arguments.checkout or Path.cwd())
++    config = load_config(checkout)
++    username = config.get("review.username")
++    return headless.run(review.state_dir(None), arguments.pr, checkout, model=arguments.model, agent=arguments.agent,
++                        configured_runner=config.get("review.runner"),
++                        configured_reviewer=username if isinstance(username, str) and username else None,
++                        effort=arguments.effort, mode=arguments.permission_mode, timeout_minutes=arguments.timeout,
++                        rereview=arguments.rereview, loop=arguments.loop, plugin_dir=arguments.plugin_dir,
++                        labels=labels_enabled(checkout))
++
++
+ def run_review(arguments: argparse.Namespace) -> int:
+     if arguments.review_command == "rules":
+         return review_rules(arguments.json_output)
+@@ -2441,6 +2488,8 @@ def run_review(arguments: argparse.Namespace) -> int:
+         return 0
+     if arguments.review_command in ("hold", "ready"):
+         return review_draft(arguments)
++    if arguments.review_command == "run":
++        return review_run(arguments)
+     root = review.state_dir(arguments.state_dir)
+     if arguments.review_command == "status":
+         return review_status(root, arguments)
+@@ -2465,7 +2514,8 @@ def run_review(arguments: argparse.Namespace) -> int:
+             configured = None
+         state = review.setup(root, arguments.pr, checkout, arguments.repo, arguments.reviewer,
+                              configured if isinstance(configured, str) else None,
+-                             arguments.model, loop, arguments.rereview, arguments.replace, labels_enabled(checkout))
++                             arguments.model, loop, arguments.rereview, arguments.replace, labels_enabled(checkout),
++                             counted_logins(checkout))
+     else:
+         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+         if command == "census":
+@@ -2512,7 +2562,8 @@ def run_review(arguments: argparse.Namespace) -> int:
+             enabled = incremental_enabled(Path(state["checkout"])) if arguments.incremental else True
+             result = review.publish(paths, loop, arguments.verdict, arguments.body,
+                                     arguments.threads, arguments.covered, arguments.second_verdict, allow,
+-                                    arguments.incremental, enabled, labels_enabled(Path(state["checkout"])))
++                                    arguments.incremental, enabled, labels_enabled(Path(state["checkout"])),
++                                    counted_logins(Path(state["checkout"])))
+             if arguments.json_output:
+                 print(json.dumps(result, indent=2))
+             else:
+@@ -2989,8 +3040,15 @@ def run_summary(arguments: argparse.Namespace) -> int:
+         if not checkout.is_dir():
+             raise UsageError(f"--checkout {checkout} is not a directory")
+         pr = summary.summary_pr(json.loads(summary_path.read_text(encoding="utf-8")))
++        if arguments.pr is not None and int(pr["number"]) != arguments.pr:
++            raise UsageError(f"the summary is of #{pr['number']}, not of #{arguments.pr}, which --pr names")
+         site, reason = (None, "--local asked for a local preview") if arguments.local \
+             else summary.push_decision(pr["repo"])
++        handoff = os.environ.get(summary.HANDOFF)
++        if handoff and site is not None:
++            with contextlib.chdir(checkout):
++                summary.hand_off(summary_path, Path(handoff).resolve(), arguments.remote, diff_path)
++            return 0
+         with contextlib.chdir(checkout):
+             summary.publish(
+                 summary_path,
+@@ -3000,8 +3058,13 @@ def run_summary(arguments: argparse.Namespace) -> int:
+                 push=site is not None,
+                 reason=reason,
+             )
+-        # A summary kept in this checkout has no page on GitHub to link.
+-        if site is not None:
++        current = summary.current_head(pr["repo"], pr["number"]) if site is not None else None
++        # A summary kept in this checkout has no page on GitHub to link, and an earlier head's summary, which a
++        # late publish can push after the next head's, must not take the link from it.
++        if site is not None and current not in (None, pr["head"]):
++            print(f"left the links on {pr['repo']}#{pr['number']} alone, because its head is {current[:7]} now, "
++                  f"not {str(pr['head'])[:7]}")
++        elif site is not None:
+             print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))
+             if arguments.no_describe:
+                 print("left the description alone, as --no-describe asked")
+@@ -3104,6 +3167,7 @@ def repo_stacks() -> Optional[tuple[list, int]]:
+         base=base,
+         lookup=base_pr if repo else None,
+         status_lookup=pr_status if repo else None,
++        counted=review.extra_reviewers(load_config(root).setting("review.reviewers")),
+         stacks_lookup=repo_stacks if repo else None,
+     )
+     return (f"{len(projects)} projects, {len(proposed)} proposed project{'' if len(proposed) == 1 else 's'}, "
+@@ -3459,7 +3523,8 @@ def init_required_check(arguments: argparse.Namespace, root: Path, files: list[F
+         try:
+             reviewer = review.reviewer_login(None, username if isinstance(username, str) else None,
+                                              review.authenticated_login())
+-            for posted in review.backfill_statuses(repo, reviewer):
++            also = review.extra_reviewers(config.get("review.reviewers"))
++            for posted in review.backfill_statuses(repo, reviewer, also):
+                 print(f"project: posted {review.REVIEW_CONTEXT} success on #{posted['number']} at "
+                       f"{posted['sha'][:7]}, which a review already signed off", file=sys.stderr)
+         except review.ReviewError as error:
+diff --git a/src/projector/config.py b/src/projector/config.py
+index b9dd74a4..de4029b8 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -98,6 +98,8 @@
+     "review.summarize": bool,
+     "review.labels": bool,
+     "review.require_check": bool,
++    "review.reviewers": str,
++    "review.runner": str,
+     "fix.resolve_human_threads": bool,
+     "watch.auto_start": bool,
+     "watch.interval": int,
+diff --git a/src/projector/core.py b/src/projector/core.py
+index 67a8e5cb..24f622dd 100644
+--- a/src/projector/core.py
++++ b/src/projector/core.py
+@@ -125,22 +125,45 @@ def run_bounded(args: list[str], *, timeout: float, cwd: Optional[Path] = None,
+     """Run `args` with standard input closed, or fed `input`, and capture its output as bytes. Once `timeout`
+     seconds pass, kill its whole process group, so a hook or helper it started dies with it, and raise
+     `subprocess.TimeoutExpired`."""
+-    group: dict = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+-                   else {"start_new_session": True})
+     process = subprocess.Popen(args, cwd=cwd, env=env, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
+-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, **group)
++                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, **process_group())
+     try:
+         stdout, stderr = process.communicate(input, timeout=timeout)
+     except subprocess.TimeoutExpired:
+-        if os.name == "nt":
+-            process.kill()
+-        else:
+-            os.killpg(process.pid, signal.SIGKILL)
++        kill_group(process)
+         process.communicate()
+         raise
+     return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+ 
+ 
++def process_group() -> dict:
++    """The `subprocess.Popen` arguments that start a process in a group of its own, which `kill_group` ends."""
++    if os.name == "nt":
++        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
++    return {"start_new_session": True}
++
++
++def kill_group(process: subprocess.Popen) -> None:
++    """Kill `process`, started with `process_group`, and every process it started. Windows has no group to
++    signal, so `taskkill /T` ends the process tree there. A process that already exited is no error. The caller
++    still waits for `process`."""
++    if os.name == "nt":
++        try:
++            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], stdin=subprocess.DEVNULL,
++                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
++        except (OSError, subprocess.TimeoutExpired):
++            pass
++        try:
++            process.kill()
++        except OSError:
++            pass
++        return
++    try:
++        os.killpg(process.pid, signal.SIGKILL)
++    except ProcessLookupError:
++        pass
++
++
+ @contextlib.contextmanager
+ def interruptible_waits() -> Iterator[Callable[[queue.Queue, float], object]]:
+     """Hold Ctrl-C off for the block, and give it a `wait(items, deadline)` that returns the next item from the
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 1ea23c66..d8502a1c 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -122,7 +122,7 @@
+        "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
+        "Bash(project inbox decline *)", "Bash(project inbox start *)",
+        "Bash(project inbox unclear *)", "Bash(project inbox discuss *)", "Bash(project console)",
+-       "Bash(project console *)", "Bash(project ios *allow-untrusted*)")
++       "Bash(project console *)", "Bash(project ios *allow-untrusted*)", "Bash(project review run *)")
+ # The narrower rules Projector wrote before `Bash(project *)` covered them,
+ # which `init` removes from `permissions.allow`.
+ SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
+@@ -133,7 +133,7 @@
+ 
+ ASKED = ("`project init`, `project upgrade`, `project config set`, `unset`, and `allow`, `project site` with "
+          "`--prepare` or `--allow-prepare`, `project ios build --allow-untrusted`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
+-         "`decline`, `start`, `unclear`, and `discuss`, and `project console`")
++         "`decline`, `start`, `unclear`, and `discuss`, `project console`, and `project review run`")
+ COMMANDS = "every `project` command but the few that reach outside Projector's own state"
+ 
+ # Each pattern Codex may run without asking, and outside its sandbox, with the
+@@ -191,7 +191,8 @@
+     "# `project config set`, `unset`, and `allow`, `project create` and `project edit`, which can open an\n"
+     "# editor, `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
+     "# the command line names, `project ios build` and `logs`, which run the repository's build scripts or\n"
+-    "# `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
++    "# `sudo`, `project review run`, which starts an agent or the command review.runner names,\n"
++    "# `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
+     "# `unclear`, and `discuss`, which record the person's choice or words, `project console`, which\n"
+     "# records them from a terminal, and a command line that starts with an option.\n"
+     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 676072c5..7ff5407c 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -148,8 +148,25 @@ def model_key(model: str) -> str:
+     return key
+ 
+ 
++# What GitHub answers `gh api user` with for a token that belongs to no user, such as a workflow's GITHUB_TOKEN
++# or a GitHub App's installation token.
++INTEGRATION_REFUSAL = "Resource not accessible by integration"
++# The login the review action names for its token, since GitHub tells a token that belongs to no user nothing
++# about whom it acts as. It is read only after that refusal, so it can never rename a person's token.
++TOKEN_LOGIN = "PROJECTOR_TOKEN_LOGIN"
++
++
+ def authenticated_login() -> str:
+-    login = run_gh(["api", "user", "--jq", ".login"]).strip()
++    try:
++        login = run_gh(["api", "user", "--jq", ".login"]).strip()
++    except ReviewError as error:
++        if INTEGRATION_REFUSAL not in str(error):
++            raise
++        named = os.environ.get(TOKEN_LOGIN, "").strip()
++        if not named:
++            raise ReviewError(f"this token belongs to no GitHub user, so GitHub does not say whom it acts as; set "
++                              f"{TOKEN_LOGIN} to the login it posts as, such as github-actions[bot]") from error
++        return named
+     if not login:
+         raise ReviewError("could not read the authenticated GitHub user; run `gh auth status`")
+     return login
+@@ -164,11 +181,15 @@ def reviewer_login(explicit: Optional[str], configured: Optional[str], operator:
+ 
+ 
+ def reviewer_token(login: str) -> str:
+-    """A token for the reviewer, for one call; the session's active account is left alone."""
++    """A token for the reviewer, for one call; the session's active account is left alone. Where `gh` stores no
++    login for the reviewer, as on a CI runner whose token comes from GH_TOKEN, the reviewer can still be the
++    account the active token acts as, and then that token is the one to use."""
+     try:
+         token = run_gh(["auth", "token", "--user", login]).strip()
+     except ReviewError as exc:
+-        raise ReviewError(f"no gh login for the reviewer {login}; run `gh auth login` for that account") from exc
++        if authenticated_login().lower() != login.lower():
++            raise ReviewError(f"no gh login for the reviewer {login}; run `gh auth login` for that account") from exc
++        token = run_gh(["auth", "token"]).strip()
+     if not token:
+         raise ReviewError(f"no gh login for the reviewer {login}; run `gh auth login` for that account")
+     return token
+@@ -1095,15 +1116,16 @@ def is_earlier_clean_workflow(text: str) -> bool:
+     return hashlib.sha256(text.encode("utf-8")).hexdigest() in EARLIER_CLEAN_WORKFLOWS
+ 
+ 
+-def backfill_statuses(repo: str, reviewer: str) -> list[dict]:
++def backfill_statuses(repo: str, reviewer: str, also: tuple[str, ...] = ()) -> list[dict]:
+     """Post the `success` status on the current head of each open pull request whose head is signed off, so a
+     ruleset that starts requiring the check holds back none that a review has already signed off. Counts the
+-    verdicts as `status` does for `reviewer`. Gives each pull request's `number` and the `sha` it posted on."""
++    verdicts as `status` does for `reviewer` and `also`. Gives each pull request's `number` and the `sha` it posted
++    on."""
+     rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls?state=open&per_page=100",
+                    "--jq", ".[] | {number, sha: .head.sha, visibility: .base.repo.visibility} | @json"]).splitlines()
+     posted = []
+     for pr in map(json.loads, filter(str.strip, rows)):
+-        verdict = sign_off(pr["sha"], verdicts(repo, pr["number"], reviewer, pr.get("visibility")),
++        verdict = sign_off(pr["sha"], verdicts(repo, pr["number"], reviewer, pr.get("visibility"), also),
+                            census(repo, pr["number"])["open"])
+         if verdict["signed_off"]:
+             post_status(repo, pr["sha"], verdict, None)
+@@ -1185,10 +1207,12 @@ def review_paths(root: Path, repo: str, number: int, model: Optional[str]) -> Pa
+ 
+ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer: Optional[str],
+           configured_reviewer: Optional[str], model: str, loop: Optional[str],
+-          rereview: bool, replace: Optional[int] = None, labels: bool = True) -> dict:
++          rereview: bool, replace: Optional[int] = None, labels: bool = True,
++          also: tuple[str, ...] = ()) -> dict:
+     """`review setup`: lock the pull request's head for the model, check it out in a scratch worktree, post
+     the start comment, and record the review. With `labels`, mark the pull request `reviewing`, and take off
+-    a `clean` that no clean verdict on this head supports, as a push leaves where no workflow removes it."""
++    a `clean` that no clean verdict on this head supports, as a push leaves where no workflow removes it. A
++    verdict by a login in `also`, which `review.reviewers` names, supports it as the reviewer's own does."""
+     checkout = checkout_root(checkout)
+     origin = origin_repo(checkout)
+     if repo and repo.lower() != origin.lower():
+@@ -1230,7 +1254,7 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
+         if CLEAN_LABEL in present:
+             # The start comment is posted and the lock held, so a failed read only keeps the label as it is.
+             try:
+-                newest = newest_verdicts(sha, verdicts(repo, number, reviewer, repo_visibility(pr)))
++                newest = newest_verdicts(sha, verdicts(repo, number, reviewer, repo_visibility(pr), also))
+             except ReviewError as exc:
+                 unread = f"kept the clean label on {repo}#{number}, because its verdicts could not be read: {exc}"
+             else:
+@@ -2494,23 +2518,32 @@ def repo_visibility(pr: dict) -> Optional[str]:
+     return ((pr.get("base") or {}).get("repo") or {}).get("visibility")
+ 
+ 
+-def verdicts(repo: str, number: int, reviewer: str, visibility: Optional[str]) -> list[dict]:
++def verdicts(repo: str, number: int, reviewer: str, visibility: Optional[str],
++             also: tuple[str, ...] = ()) -> list[dict]:
+     """Every Projector review on the pull request that can be its head's newest verdict, from every page:
+-    the reviewer's, and any other that `review_counts` counts in a repository of `visibility`. Each has its
+-    `id`, `url`, `at`, `login`, and `body`."""
++    the reviewer's, those of each login in `also`, and any other that `review_counts` counts in a repository
++    of `visibility`. Each has its `id`, `url`, `at`, `login`, and `body`."""
+     rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
+                    "--jq", '.[] | select(.body // "" | contains("projector-review")) '
+                            '| {id, url: .html_url, at: .submitted_at, login: .user.login, '
+                            'association: .author_association, body} | @json']).splitlines()
+-    return counted_reviews([json.loads(row) for row in rows if row.strip()], reviewer, visibility)
++    return counted_reviews([json.loads(row) for row in rows if row.strip()], reviewer, visibility, also)
+ 
+ 
+-def counted_reviews(reviews: list[dict], reviewer: str, visibility: Optional[str]) -> list[dict]:
+-    """The reviews among `reviews` that can give a verdict: the reviewer's, and any other that `review_counts`
+-    counts by its `association` in a repository of `visibility`. Each review names its author as `login`."""
++def counted_reviews(reviews: list[dict], reviewer: str, visibility: Optional[str],
++                    also: tuple[str, ...] = ()) -> list[dict]:
++    """The reviews among `reviews` that can give a verdict: the reviewer's, those of each login in `also`, which
++    `review.reviewers` names, and any other that `review_counts` counts by its `association` in a repository of
++    `visibility`. Each review names its author as `login`."""
++    named = {login.lower() for login in (reviewer, *also) if login}
+     return [r for r in reviews
+-            if reviewer and (r.get("login") or "").lower() == reviewer.lower()
+-            or review_counts(r.get("association"), visibility)]
++            if (r.get("login") or "").lower() in named or review_counts(r.get("association"), visibility)]
++
++
++def extra_reviewers(setting: object) -> tuple[str, ...]:
++    """The logins `review.reviewers` names, separated by commas, whose Projector verdicts count beside the
++    reviewer's and those of the repository's own accounts."""
++    return parse_checks(setting) if isinstance(setting, str) else ()
+ 
+ 
+ def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
+@@ -2559,14 +2592,14 @@ def thread_model(thread: dict) -> Optional[str]:
+     return found.group(1) if found else None
+ 
+ 
+-def status(repo: str, number: int, reviewer: str) -> dict:
++def status(repo: str, number: int, reviewer: str, also: tuple[str, ...] = ()) -> dict:
+     """The newest Projector verdict on the pull request's current head, with each account's newest verdict by
+     each model on it, every open Projector finding thread, whether the head is `signed_off` as `sign_off`
+     decides, the Projector `labels` on the pull request, and the `projector/review` status on the head as
+     `check`. Its `suggestions` count those `review suggestions` lists for the head."""
+     pr = read_pull_request(repo, number)
+     head = pr["head"]["sha"]
+-    found = verdicts(repo, number, reviewer, repo_visibility(pr))
++    found = verdicts(repo, number, reviewer, repo_visibility(pr), also)
+     threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
+     verdict = sign_off(head, found, len(threads))
+     newest = verdict["newest"]
+@@ -2609,13 +2642,13 @@ def status_lines(result: dict) -> list[str]:
+     return lines
+ 
+ 
+-def suggestions(repo: str, number: int, reviewer: str) -> list[dict]:
++def suggestions(repo: str, number: int, reviewer: str, also: tuple[str, ...] = ()) -> list[dict]:
+     """`review suggestions`: the suggestions `fix-pr` decides on the pull request's current head, from the
+     reviews `suggesting_reviews` picks among those `status` counts, which `status` counts them from too. Each
+     has its review's `url` and the head `sha` that review's marker names, and the item's `path`, `line`, and
+     `text`."""
+     pr = read_pull_request(repo, number)
+-    reviews = suggesting_reviews(pr["head"]["sha"], verdicts(repo, number, reviewer, repo_visibility(pr)))
++    reviews = suggesting_reviews(pr["head"]["sha"], verdicts(repo, number, reviewer, repo_visibility(pr), also))
+     return [{"url": r.get("url"), "sha": verdict_marker(r.get("body") or "").sha, **item}
+             for r in reviews for item in parse_suggestions(r.get("body") or "") or []]
+ 
+@@ -2744,7 +2777,8 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
+ 
+ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path: Path,
+             threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
+-            incremental: bool = False, enabled: bool = True, labels: bool = True) -> dict:
++            incremental: bool = False, enabled: bool = True, labels: bool = True,
++            also: tuple[str, ...] = ()) -> dict:
+     """Submit the review, then re-read it, act on whether the head is signed off, record, delete the start
+     comment, and release the lock, in that order. Every refusal leaves the lock held for this review to
+     retry, except the fence's: once the lock names another loop, or a loop's lock is gone, the state and
+@@ -2758,7 +2792,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+ 
+     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
+     review, published only while `incremental_rules` passes, with `enabled` from
+-    `review.incremental`."""
++    `review.incremental`. The head's newest verdict counts the logins in `also`, which `review.reviewers`
++    names, as `status` does."""
+     root, number = paths.root, paths.number
+     state = read_state(paths)
+     loop = loop if loop is not None else state.get("loop")
+@@ -2858,7 +2893,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+     posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
+               "login": reviewer, "body": read["body"]}
+     current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
+-    counted = [r for r in verdicts(repo, number, reviewer, repo_visibility(current)) if r.get("id") != review_id]
++    counted = [r for r in verdicts(repo, number, reviewer, repo_visibility(current), also)
++               if r.get("id") != review_id]
+     counted.append(posted)
+     verdict_now = sign_off(sha, counted, census(repo, number)["open"])
+     newest, signed_off = verdict_now["newest"], verdict_now["signed_off"]
+diff --git a/src/projector/run.py b/src/projector/run.py
+new file mode 100644
+index 00000000..3583bbd7
+--- /dev/null
++++ b/src/projector/run.py
+@@ -0,0 +1,305 @@
++"""`project review run`: review one pull request's head with an agent and no session, as a CI job does.
++
++The command checks that the head may be reviewed here, starts the agent through a preset or a command the
++repository names, in a permission mode where nobody is asked, and checks once the agent exits that it
++published a verdict on the head. When it did not, the command cleans the review up, says why on the pull
++request, and fails. docs/projects/review-in-ci/readme.md § 2 describes the flow.
++"""
++
++from __future__ import annotations
++
++import json
++import os
++import shlex
++import subprocess
++import sys
++import tempfile
++from dataclasses import dataclass, field
++from pathlib import Path
++from typing import Optional
++
++from . import core, review
++from .review import ReviewError
++
++PRESETS = ("claude", "codex")
++MODES = ("auto", "allowlist")
++DEFAULT_LOOP = "run"
++DEFAULT_EFFORT = "high"
++DEFAULT_TIMEOUT_MINUTES = 45
++REPORT_LIMIT = 4000
++
++# The commands `review-pr` has an agent run, and the reads around them. A preset allows them outright, so the
++# permission mode decides only what the skill does not name.
++ALLOWED_COMMANDS = (
++    "project *", "gh pr view *", "gh pr diff *", "gh api *", "gh repo view *", "gh auth status *",
++    "git diff *", "git log *", "git show *", "git status *", "git rev-parse *", "git merge-base *",
++    "git ls-files *", "git cat-file *",
++)
++# What a reviewer never does, refused whatever the permission mode decides, because the agent reads a diff
++# someone else wrote. `gh repo view` stays allowed: a repository's instructions can require a visibility
++# check before a write, and in Claude Code a deny rule beats every allow rule.
++CHANGING_REPO_COMMANDS = ("archive", "autolink", "create", "delete", "deploy-key", "edit", "fork", "rename", "sync",
++                          "unarchive")
++DENIED_COMMANDS = (
++    "git push *", "git commit *", "gh pr merge *", "gh pr ready *", "gh pr close *",
++    *(f"gh repo {command} *" for command in CHANGING_REPO_COMMANDS),
++    "gh secret *", "curl *", "wget *",
++)
++READ_TOOLS = ("Read", "Grep", "Glob")
++CODEX_RULES_NAME = "projector-review-run.rules"
++# Claude Code's modes: `auto` has a classifier decide what no rule covers, and `dontAsk` refuses it.
++CLAUDE_MODES = {"auto": "auto", "allowlist": "dontAsk"}
++
++
++@dataclass
++class Invocation:
++    """How to start the agent: its command line, what it reads on standard input, and the files the run writes
++    for it and removes afterwards."""
++
++    argv: list[str]
++    stdin: Optional[str] = None
++    written: list[Path] = field(default_factory=list)
++
++
++def prompt(number: int, repo: str) -> str:
++    return (f"Use the review-pr skill to review pull request {number} in {repo}. No session runs this review, "
++            "and nobody can answer a question, so follow the skill's \"Review without a session\" section.")
++
++
++def claude_invocation(number: int, repo: str, model: str, effort: str, mode: str, scratch: Path,
++                      plugin_dir: Optional[Path]) -> Invocation:
++    """`claude -p` with Projector's plugin, in a mode that never waits for a prompt."""
++    writable = f"/{scratch}/**"
++    allowed = [*READ_TOOLS, f"Edit({writable})", f"Write({writable})",
++               *(f"Bash({command})" for command in ALLOWED_COMMANDS)]
++    argv = ["claude", "-p", f"/projector:review-pr {number}\n\n{prompt(number, repo)}",
++            "--model", model, "--effort", effort, "--output-format", "stream-json", "--verbose",
++            "--permission-mode", CLAUDE_MODES[mode], "--permission-prompts", "none",
++            "--add-dir", str(scratch),
++            "--allowedTools", *allowed,
++            "--disallowedTools", *(f"Bash({command})" for command in DENIED_COMMANDS)]
++    if plugin_dir is not None:
++        argv[2:2] = ["--plugin-dir", str(plugin_dir)]
++    return Invocation(argv)
++
++
++def codex_rules() -> str:
++    """The Codex rules that refuse what a reviewer never does, in the format `permissions.CODEX_RULES` uses."""
++    rules = ["# Written by `project review run` for one run, and removed when it ends.\n"]
++    for command in DENIED_COMMANDS:
++        pattern = command.removesuffix(" *").split(" ")
++        rules.append(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "forbidden",\n'
++                     f'    justification = "a review never runs `{" ".join(pattern)}`",\n)\n')
++    return "".join(rules)
++
++
++def codex_invocation(number: int, repo: str, model: str, effort: str, mode: str, scratch: Path,
++                     state: Path, checkout: Path, environ: dict[str, str]) -> Invocation:
++    """`codex exec` in its workspace-write sandbox, with network on so `gh` reaches GitHub, and the review
++    state and the scratch folder writable beside the checkout."""
++    home = Path(environ.get("CODEX_HOME") or Path(environ.get("HOME") or Path.home()) / ".codex")
++    rules = home / "rules" / CODEX_RULES_NAME
++    approval = ["--approve-for-me"] if mode == "auto" else ["-c", 'approval_policy="never"']
++    argv = ["codex", "exec", "--model", model, "-c", f'model_reasoning_effort="{effort}"', "--json",
++            "--sandbox", "workspace-write", *approval, "-c", "sandbox_workspace_write.network_access=true",
++            "--cd", str(checkout), "--add-dir", str(state), "--add-dir", str(scratch), prompt(number, repo)]
++    return Invocation(argv, written=[rules])
++
++
++def command_invocation(command: str, number: int, repo: str) -> Invocation:
++    """A command `review.runner` names, which reads the prompt on standard input."""
++    argv = shlex.split(command)
++    if not argv:
++        raise ReviewError("review.runner names an empty command")
++    return Invocation(argv, stdin=prompt(number, repo))
++
++
++def runner(agent: Optional[str], configured: object) -> tuple[str, Optional[str]]:
++    """The preset to run, `claude`, `codex`, or `command`, and the command for `command`: `--agent`, then
++    `review.runner`, which names a preset or any other command, then `claude`."""
++    command = configured if isinstance(configured, str) and configured.strip() else None
++    chosen = agent or ("command" if command and command not in PRESETS else command) or "claude"
++    if chosen == "command" and (command is None or command in PRESETS):
++        raise ReviewError("--agent command runs the command review.runner names, and review.runner names none")
++    if chosen not in (*PRESETS, "command"):
++        raise ReviewError(f"--agent {chosen!r} is not claude, codex, or command")
++    return chosen, command if chosen == "command" else None
++
++
++def refusal(pr: dict, repo: str) -> Optional[str]:
++    """Why a run must not review the pull request, whatever started it, or None. A fork's head is code an
++    outsider wrote, and a draft waits on its author."""
++    head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name")
++    if (head_repo or "").lower() != repo.lower():
++        return f"its head is in {head_repo or 'a deleted fork'}, not {repo}, and a run reviews no fork's head"
++    if pr.get("draft"):
++        return "it is a draft, and a draft waits on its author"
++    return None
++
++
++def verdicts_on(reviews: list[dict], head: Optional[str], model: str) -> list[dict]:
++    """The reviewer's Projector verdicts by `model` on `head`, or on any head when `head` is None, among
++    `reviews`, as `reviewer_reviews` lists them, newest first."""
++    found = [posted for posted in reviews
++             if (marker := review.verdict_marker(posted.get("body") or "")) is not None
++             and head in (None, marker.sha) and review.identity(marker.model) == review.identity(model)]
++    return sorted(found, key=lambda posted: posted.get("at") or "", reverse=True)
++
++
++def stored(paths: review.Paths) -> Optional[dict]:
++    """The model's review state for the pull request, or None when there is none or it cannot be read."""
++    try:
++        return review.stored_state(paths)
++    except (ReviewError, OSError, ValueError):
++        return None
++
++
++def set_up_here(before: Optional[dict], after: Optional[dict], loop: str) -> bool:
++    """Whether the review state `after` the agent ran is the one its `setup` wrote: it names the run's loop and
++    a start comment the state `before` the run did not. Otherwise the state, its lock, and its worktrees are
++    another review's, such as one another loop holds, whose lock refused the agent's `setup`."""
++    if after is None or after.get("loop") != loop:
++        return False
++    started = (after.get("start_comment") or {}).get("id")
++    return started is not None and started != ((before or {}).get("start_comment") or {}).get("id")
++
++
++def stale_start(starts: list[dict], reviews: list[dict], head: str, model: str) -> Optional[int]:
++    """The newest live start comment of `model` on `head`. Only one run of a reviewer and an agent holds a pull
++    request at a time, so such a comment comes from a run that was cancelled."""
++    at = review.now()
++    live = [comment for comment in starts if comment["sha"] == head
++            and review.identity(comment["model"]) == review.identity(model) and review.is_live(comment, reviews, at)]
++    return max(live, key=lambda comment: comment["created_at"])["id"] if live else None
++
++
++def run_link(environ: dict[str, str]) -> Optional[str]:
++    """The GitHub Actions run this command runs in, or None outside one."""
++    server, repository, run_id = (environ.get(name) for name in
++                                  ("GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "GITHUB_RUN_ID"))
++    return f"{server}/{repository}/actions/runs/{run_id}" if server and repository and run_id else None
++
++
++def failure_body(head: str, model: str, reason: str, link: Optional[str]) -> str:
++    where = f"\n\nThe run: {link}" if link else ""
++    return (f"<!-- projector-run v=1 sha={head} model={model} result=failed -->\n"
++            f"📽️ Projector's review of `{head[:7]}` by {model} did not finish: {reason}{where}")
++
++
++def report_text(path: Path) -> str:
++    try:
++        text = path.read_text(encoding="utf-8").strip()
++    except OSError:
++        return ""
++    return text if len(text) <= REPORT_LIMIT else text[:REPORT_LIMIT] + "…"
++
++
++def start(invocation: Invocation, environ: dict[str, str], cwd: Path, timeout: float) -> tuple[Optional[int], bool]:
++    """Run the agent in its own process group, so a run out of time ends with every process it started, on
++    Windows too. Returns its exit code, or None when it could not start, and whether it ran out of time."""
++    try:
++        process = subprocess.Popen(invocation.argv, cwd=cwd, env=environ, **core.process_group(),
++                                   stdin=subprocess.PIPE if invocation.stdin is not None else subprocess.DEVNULL)
++    except OSError as error:
++        print(f"project: could not start {invocation.argv[0]}: {error}", file=sys.stderr)
++        return None, False
++    try:
++        process.communicate(invocation.stdin.encode() if invocation.stdin is not None else None, timeout=timeout)
++        return process.returncode, False
++    except subprocess.TimeoutExpired:
++        core.kill_group(process)
++        process.wait()
++        return process.returncode, True
++
++
++def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[str] = None,
++        configured_runner: object = None, configured_reviewer: Optional[str] = None, effort: str = DEFAULT_EFFORT,
++        mode: str = "auto", timeout_minutes: float = DEFAULT_TIMEOUT_MINUTES, rereview: bool = False,
++        loop: str = DEFAULT_LOOP, plugin_dir: Optional[Path] = None, labels: bool = True,
++        environ: Optional[dict[str, str]] = None) -> int:
++    """Review the head of pull request `number` in the repository of `checkout` with an agent, as
++    docs/projects/review-in-ci/readme.md § 2.1 step 6 describes. Returns the exit code: 0 once a verdict on the
++    head stands, or the run published one on a head pushed while it ran, and 1 when the agent published none."""
++    review.model_key(model)
++    review.valid_loop(loop)
++    if mode not in MODES:
++        raise ReviewError(f"--permission-mode {mode!r} is not auto or allowlist")
++    chosen, command = runner(agent, configured_runner)
++    checkout = review.checkout_root(checkout)
++    repo = review.origin_repo(checkout)
++    pr = review.pull_request(repo, number)
++    why = refusal(pr, repo)
++    if why:
++        raise ReviewError(f"{repo}#{number} is not reviewed here: {why}")
++    head = pr["head"]["sha"]
++    reviewer = review.reviewer_login(None, configured_reviewer, review.authenticated_login())
++    reviews = review.reviewer_reviews(repo, number, reviewer)
++    earlier = verdicts_on(reviews, head, model)
++    if earlier and not rereview:
++        print(f"{reviewer} already reviewed {repo}#{number} at {head[:7]} with {model}: {earlier[0].get('url')}; "
++              "pass --rereview to review it again")
++        return 0
++    replace = stale_start(review.start_comments(repo, number, reviewer), reviews, head, model)
++
++    base = dict(os.environ if environ is None else environ)
++    scratch = Path(tempfile.mkdtemp(prefix="projector-review-run-"))
++    report = scratch / "report.md"
++    environment = dict(base, PROJECTOR_HEADLESS="1", PROJECTOR_LOOP=loop, PROJECTOR_MODEL=model,
++                       PROJECTOR_SCRATCH=str(scratch), PROJECTOR_RUN_REPORT=str(report),
++                       PROJECTOR_REREVIEW="1" if rereview else "")
++    environment.pop("PROJECTOR_REPLACE", None)
++    if replace is not None:
++        environment["PROJECTOR_REPLACE"] = str(replace)
++    if chosen == "claude":
++        invocation = claude_invocation(number, repo, model, effort, mode, scratch, plugin_dir)
++    elif chosen == "codex":
++        invocation = codex_invocation(number, repo, model, effort, mode, scratch, root, checkout, environment)
++    else:
++        invocation = command_invocation(command or "", number, repo)
++    for path in invocation.written:
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(codex_rules(), encoding="utf-8")
++
++    print(f"reviewing {repo}#{number} at {head[:7]} as {reviewer} with {model} through {chosen}"
++          + (f", in place of the cancelled run's start comment {replace}" if replace is not None else ""))
++    paths = review.Paths(root, repo, number, model)
++    before, held = stored(paths), set(paths.locks())
++    try:
++        code, timed_out = start(invocation, environment, checkout, timeout_minutes * 60)
++    finally:
++        for path in invocation.written:
++            path.unlink(missing_ok=True)
++
++    # A verdict counts only when the run posted it, which no clock can tell as surely as a review id can. It
++    # may name a newer head than `head`, because the agent moves its review to a head pushed while it runs.
++    seen = {posted["id"] for posted in reviews}
++    published = [posted for posted in verdicts_on(review.reviewer_reviews(repo, number, reviewer), None, model)
++                 if posted["id"] not in seen]
++    if published:
++        print(f"published {published[0].get('url')}")
++        return 0
++    if timed_out:
++        reason = f"the agent ran out of its {timeout_minutes:g} minutes"
++    elif code is None:
++        reason = f"`{invocation.argv[0]}` could not start"
++    else:
++        reason = report_text(report) or f"the agent exited {code} and published no verdict"
++    try:
++        if set_up_here(before, stored(paths), loop):
++            review.finish(root, number, repo, model, True, checkout, labels)
++        else:
++            # A setup stopped between taking its lock and writing the state, as a timeout can stop it, leaves
++            # only the lock, which would refuse the next run's setup for a day.
++            for path in paths.locks():
++                if path not in held and (lock := review.read_lock(path)) is not None and lock.loop == loop:
++                    path.unlink(missing_ok=True)
++            if before is not None:
++                print(f"project: left the review state of {repo}#{number} by {model} alone, because the agent did "
++                      "not set it up", file=sys.stderr)
++    except ReviewError as error:
++        print(f"project: could not clean the review up: {error}", file=sys.stderr)
++    review.run_gh(["api", f"repos/{repo}/issues/{number}/comments",
++                   "-f", f"body={failure_body(head, model, reason, run_link(base))}"],
++                  review.reviewer_token(reviewer))
++    print(f"project: {repo}#{number} at {head[:7]} has no verdict by {model}: {reason}", file=sys.stderr)
++    return 1
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index a49146fd..ebe4bc48 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -143,7 +143,8 @@ def summary_time(path: Path) -> int:
+     return int(path.stat().st_mtime)
+ 
+ 
+-def review_statuses(reviews: list[dict], visibility: str | None = None) -> dict[str, dict]:
++def review_statuses(reviews: list[dict], visibility: str | None = None,
++                    counted: tuple[str, ...] = ()) -> dict[str, dict]:
+     """Each head's newest Projector review among `reviews`: its verdict as `status`, and its page as `url`.
+ 
+     A review is Projector's when a line of its body is the marker a Projector
+@@ -151,7 +152,8 @@ def review_statuses(reviews: list[dict], visibility: str | None = None) -> dict[
+     model, and `review.review_counts` counts its author in a repository of
+     `visibility`: any author in a private or internal repository, and in a
+     public one, or one whose visibility is None, only an author who owns the
+-    repository, belongs to its organization, or collaborates on it. The newest
++    repository, belongs to its organization, or collaborates on it, or whose
++    `login` is in `counted`, the logins `review.reviewers` names. The newest
+     review decides, whichever model wrote it.
+     When it is a clean incremental review, the status also carries
+     `incrementalFrom`: the head of the full review it builds on, and that
+@@ -161,6 +163,7 @@ def review_statuses(reviews: list[dict], visibility: str | None = None) -> dict[
+     """
+     newest: dict[str, dict] = {}
+     full: dict[tuple[str, str], dict] = {}
++    named = {login.lower() for login in counted}
+ 
+     def keep(found_by: dict, key, found: dict) -> None:
+         if key not in found_by or found["at"] >= found_by[key]["at"]:
+@@ -169,7 +172,8 @@ def keep(found_by: dict, key, found: dict) -> None:
+     for review in reviews:
+         # Anyone can review a public repository's pull request, and GitHub shows a marker line as nothing, so
+         # there only a review by someone the repository let in can set a status, as it can sign a head off.
+-        if not review_counts(review.get("association"), visibility):
++        if not review_counts(review.get("association"), visibility) \
++                and (review.get("login") or "").lower() not in named:
+             continue
+         marker = verdict_marker(review.get("body") or "")
+         if marker is None:
+@@ -298,7 +302,8 @@ def add_context(payload: dict, stored: Path, out: Path, base: str, written: dict
+ 
+ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict] | None = None, trunk: str = "main",
+                     lookup=None, repo_root: Path | None = None, status_lookup=None,
+-                    projects_dir: str | None = None, stacks_lookup=None) -> tuple[list[dict], list[str], list[dict]]:
++                    projects_dir: str | None = None, stacks_lookup=None,
++                    counted: tuple[str, ...] = ()) -> tuple[list[dict], list[str], list[dict]]:
+     """Build every summary that can be built; report and skip the rest.
+ 
+     The entries come in the order the Reviews index lists them, as
+@@ -320,7 +325,8 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
+     cannot ask. From them each page carries `pr.state`, `pr.currentBaseRef`,
+     the base branch GitHub reports, or None once that branch is deleted, and
+     `review`, the
+-    newest Projector review of its head, as `review_statuses` gives it, or,
++    newest Projector review of its head, as `review_statuses` gives it with
++    `counted`, or,
+     when none names the head, `pending` or `unreviewed`, as `head_status`
+     decides given the pull request's heads with newer summaries. A page has
+     none of them when the lookup is missing or cannot ask, and each entry
+@@ -407,7 +413,8 @@ def skip(path: Path, reason: object) -> None:
+         segments = segmented[tuple(members[pull])]
+         header = next(s["header"] for s in segments if pull in s["members"])
+         status = asked[number]
+-        statuses = review_statuses(status["reviews"], status.get("visibility")) if status is not None else None
++        statuses = review_statuses(status["reviews"], status.get("visibility"), counted) \
++            if status is not None else None
+         for i, (_, payload, _) in enumerate(versions):
+             head = payload["pr"]["head"]
+             payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, segments=segments,
+@@ -1035,7 +1042,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+                projects: list[Project] | None = None, projects_dir: Path | None = None,
+                repo: str = "", branch: str = "main", base: str = "/",
+                trunk: str | None = None, lookup=None, status_lookup=None,
+-               stacks_lookup=None) -> tuple[list[dict], list[str], list[dict]]:
++               stacks_lookup=None, counted: tuple[str, ...] = ()) -> tuple[list[dict], list[str], list[dict]]:
+     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
+ 
+     `branch` is the checked-out branch the site's GitHub links point at, and
+@@ -1045,7 +1052,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     no GitHub stack that did not record the one it is stacked on.
+     `status_lookup` returns a pull request's state, reviews, whether it is
+     a fork's, and its repository's visibility, which decides whose reviews
+-    count, or None when it cannot ask, for each summary's file links and
++    count beside those of the logins in `counted`, or None when it cannot ask, for each summary's file links and
+     review status and for the projects open pull requests propose.
+     `projects_dir` is the configured projects directory, which a pull request
+     can propose the first plan of. Each project, proposed ones included,
+@@ -1065,7 +1072,8 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     projects_path = projects_dir.relative_to(repo_root).as_posix() \
+         if repo_root and projects_dir and projects_dir.is_relative_to(repo_root) else None
+     built = build_summaries(summaries, out, base, described, trunk=trunk, lookup=lookup, repo_root=repo_root,
+-                            status_lookup=status_lookup, projects_dir=projects_path, stacks_lookup=stacks_lookup) \
++                            status_lookup=status_lookup, projects_dir=projects_path, stacks_lookup=stacks_lookup,
++                            counted=counted) \
+         if summaries and summaries.is_dir() else ([], [], [])
+     entries, failures, proposed = built
+     described = sorted(described + proposed, key=lambda p: p["name"])
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index a0508c51..ebb09008 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -723,7 +723,7 @@ def base_pr(repo: str, base_ref: str) -> int | None:
+       isCrossRepository
+       baseRef { name }
+       reviews(first: 100, after: $endCursor) {
+-        nodes { body url submittedAt authorAssociation }
++        nodes { body url submittedAt authorAssociation author { login } }
+         pageInfo { hasNextPage endCursor }
+       }
+     }
+@@ -739,10 +739,10 @@ def pr_status(repo: str, number: int) -> dict:
+     or None once that branch is deleted. `fork` is True when its head branch
+     is in another repository, GitHub's `isCrossRepository`. `visibility` is
+     `public`, `private`, or `internal`, or None when GitHub does not say. Each
+-    review has its `body`, its page as `url`, its time as `at`, and its
+-    author's relation to the repository as `association`, GitHub's
+-    `authorAssociation`. One query answers them all, a page of reviews at a
+-    time.
++    review has its `body`, its page as `url`, its time as `at`, its author's
++    `login`, and its author's relation to the repository as `association`,
++    GitHub's `authorAssociation`. One query answers them all, a page of
++    reviews at a time.
+     """
+     owner, name = repo.split("/", 1)
+     pages = gh("api", "graphql", "--paginate", "-f", f"query={PR_STATUS_QUERY}", "-f", f"owner={owner}",
+@@ -750,7 +750,8 @@ def pr_status(repo: str, number: int) -> dict:
+                "--jq", ".data.repository | .visibility as $visibility | .pullRequest "
+                        "| {state, base: .baseRef.name, fork: .isCrossRepository, visibility: $visibility, "
+                        "reviews: [.reviews.nodes[] | select(.submittedAt != null) "
+-                       "| {body, url, at: .submittedAt, association: .authorAssociation}]} | @json")
++                       "| {body, url, at: .submittedAt, association: .authorAssociation, login: .author.login}]} "
++                       "| @json")
+     found = [json.loads(page) for page in pages.splitlines() if page.strip()]
+     if not found or not found[0].get("state"):
+         raise SummaryError(f"GitHub returned no state for {repo}#{number}")
+@@ -1245,6 +1246,46 @@ def head_blobs(root: Path, head: str, files: list[dict]) -> dict[str, str]:
+     return {path: blob for path, blob in found.items() if blob in small}
+ 
+ 
++# The folder a CI review job names for `publish` to leave the summary in, since that job's token cannot push the
++# summaries ref; a job that runs no agent publishes it from there.
++HANDOFF = "PROJECTOR_SUMMARY_HANDOFF"
++
++
++def checked(summary_path: Path, remote: str, diff_path: Path | None = None) -> tuple[dict, str, list[dict]]:
++    """The summary at `summary_path`, the diff it describes, and the diff's files, once the summary passes every
++    check `publish` makes before it writes anything: its shape, its stack choices, that `remote` is its
++    repository, and that each place it names is in the diff."""
++    summary = json.loads(summary_path.read_text(encoding="utf-8"))
++    pr = summary_pr(summary)
++    require_stack_choices(summary)
++    slug = repo_slug(git("remote", "get-url", remote))
++    if slug and slug.lower() != pr["repo"].lower():
++        raise SummaryError(f"{remote} is {slug}, but the summary is for {pr['repo']}")
++    diff = diff_path.read_text(encoding="utf-8") if diff_path else summary_diff(summary)
++    return summary, diff, prepare_page(summary, diff=diff, at_head=True, generated={})["files"]
++
++
++def hand_off(summary_path: Path, folder: Path, remote: str, diff_path: Path | None = None) -> None:
++    """Check the summary as `publish` checks it, and leave it and its diff in `folder`, as `summary.json` and
++    `DIFF_FILE`, for a job whose token can push the summaries ref, in place of pushing it."""
++    summary, diff, _ = checked(summary_path, remote, diff_path)
++    pr = summary["pr"]
++    folder.mkdir(parents=True, exist_ok=True)
++    write_summary(folder / "summary.json", summary)
++    write_through(folder / DIFF_FILE, diff)
++    print(f"left the summary of #{pr['number']} at {str(pr['head'])[:9]} in {folder}, where {HANDOFF} points, "
++          "for the workflow to publish; nothing was pushed")
++
++
++def current_head(repo: str, number: int) -> str | None:
++    """The head commit pull request `number` has now, or None when GitHub does not say."""
++    try:
++        found = gh_lookup("api", f"repos/{repo}/pulls/{number}", "--jq", ".head.sha")
++    except SummaryError:
++        return None
++    return (found or "").strip() or None
++
++
+ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
+             diff_path: Path | None = None, push: bool = True, reason: str = "") -> str | None:
+     """Commit the summary and its diff to the summaries ref, and push them unless `push` is false.
+@@ -1256,14 +1297,8 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
+     on this checkout's own `ref` and nothing leaves it, no dispatch included;
+     `reason` says why, for the report.
+     """
+-    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+-    pr = summary_pr(summary)
+-    require_stack_choices(summary)
+-    slug = repo_slug(git("remote", "get-url", remote))
+-    if slug and slug.lower() != pr["repo"].lower():
+-        raise SummaryError(f"{remote} is {slug}, but the summary is for {pr['repo']}")
+-    diff = diff_path.read_text(encoding="utf-8") if diff_path else summary_diff(summary)
+-    files = prepare_page(summary, diff=diff, at_head=True, generated={})["files"]
++    summary, diff, files = checked(summary_path, remote, diff_path)
++    pr = summary["pr"]
+     head = str(pr["head"])
+     top = readable_head(remote, head) if files else None
+     generated, blobs = None, {}
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 5284a702..a1dd0b1c 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -673,7 +673,8 @@ def trim_review(found: dict) -> dict:
+             "submitted_at": found.get("submitted_at"), "author_association": found.get("author_association")}
+ 
+ 
+-def standing_suggestions(reviews: list[dict], head: str, operator: str, visibility: Optional[str]) -> dict:
++def standing_suggestions(reviews: list[dict], head: str, operator: str, visibility: Optional[str],
++                         also: tuple[str, ...] = ()) -> dict:
+     """How many suggestions each review lists, for the reviews whose suggestions `project review suggestions`,
+     run by the operator, lists on `head`: each account's newest Projector verdict on it by each model, and the
+     full review an incremental one among them builds on, which can be of an earlier head. `reviews` are the
+@@ -681,7 +682,7 @@ def standing_suggestions(reviews: list[dict], head: str, operator: str, visibili
+     rows = [{"id": found.get("id"), "url": found.get("html_url"), "at": found.get("submitted_at"),
+              "login": (found.get("user") or {}).get("login"), "association": found.get("author_association"),
+              "body": found.get("body") or ""} for found in reviews if found.get("id") is not None]
+-    chosen = review.suggesting_reviews(head, review.counted_reviews(rows, operator, visibility))
++    chosen = review.suggesting_reviews(head, review.counted_reviews(rows, operator, visibility, also))
+     return {found["id"]: review.listed_suggestions(found) for found in chosen}
+ 
+ 
+@@ -1324,6 +1325,8 @@ def __init__(self, daemon: Daemon, now: float, now_mono: float,
+         # By repository, its open pull requests, and by pull request, the subagent that fixes it.
+         self.listings: dict[str, object] = {}
+         self.fixers: dict[tuple[str, int], str] = {}
++        # By repository, lowercased, the logins `review.reviewers` names in a live checkout of it.
++        self.logins: Optional[dict[str, tuple[str, ...]]] = None
+ 
+     def tell(self, session: str, *lines: str) -> None:
+         self.outbox.setdefault(session, []).extend(lines)
+@@ -1699,6 +1702,20 @@ def gain(self, session: str, pull: tuple[str, int], name: str) -> None:
+         else:
+             state["review"].pop(role_label(pull, name), None)
+ 
++    def counted_logins(self, repo: str) -> tuple[str, ...]:
++        """The logins whose verdicts count on `repo` beside the operator's, as `project review status` counts
++        them there: those `review.reviewers` names in a checkout of it that a live session works in, read once
++        a pass. A repository no live session works in counts none."""
++        if self.logins is None:
++            self.logins = {}
++            for top in live_checkouts(self.root, self.daemon.live).values():
++                try:
++                    named = review.origin_repo(top).lower()
++                    self.logins[named] = review.extra_reviewers(load_config(top).setting("review.reviewers"))
++                except (ProjectorError, ConfigError) as error:
++                    self.daemon.log(f"could not read review.reviewers in {top}: {error}")
++        return self.logins.get(repo.lower(), ())
++
+     def locks_for(self, repo: str, number: int) -> list:
+         pull = (repo.lower(), number)
+         if pull not in self.lock_lists:
+@@ -1776,10 +1793,11 @@ def standing(key: str, first: str, again: Optional[str], revision: object = None
+         # announced only once. A draft waits on its author, not on a review.
+         unreviewed = f"unreviewed:{number}:{head}"
+         if not pr.get("isDraft") and not reviewers \
+-                and not head_sign_off(pr, head, self.daemon.operator or "", visibility)["signed_off"]:
++                and not head_sign_off(pr, head, self.daemon.operator or "", visibility,
++                                      self.counted_logins(repo))["signed_off"]:
+             starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
+                       for comment, _ in self.live_starts(pr, head)]
+-            if review.counted_reviews(starts, self.daemon.operator or "", visibility) \
++            if review.counted_reviews(starts, self.daemon.operator or "", visibility, self.counted_logins(repo)) \
+                     or self.reviewed_remotely(repo, number):
+                 if unreviewed in announced:
+                     kept[unreviewed] = announced[unreviewed]
+@@ -1825,7 +1843,8 @@ def standing(key: str, first: str, again: Optional[str], revision: object = None
+             standing(thread["id"], f"FINDING {ref} {place} [{who}]{said} — {action}",
+                      f"FINDING {ref} (still open) {place} [{who}]{said} — {action}",
+                      [head, last.get("databaseId"), codex_watch.digest(last.get("body") or "")])
+-        suggesting = standing_suggestions(reviews, head, self.daemon.operator or "", visibility)
++        suggesting = standing_suggestions(reviews, head, self.daemon.operator or "", visibility,
++                                          self.counted_logins(repo))
+         for found in reviews:
+             if found.get("id") is None:
+                 continue
+@@ -1965,7 +1984,7 @@ def route_review(self, session: str, pull: tuple[str, int], name: str, repo: str
+         head = pr.get("headRefOid") or ""
+         branch = pr.get("headRefName") or "?"
+         action = f"run review-pr on {ref} in subagent review-{number} with --loop {session}"
+-        signed = head_sign_off(pr, head, reviewer, repository.get("visibility"))
++        signed = head_sign_off(pr, head, reviewer, repository.get("visibility"), self.counted_logins(repo))
+         reviewed = any(found["model"] == model and (found["login"] or "").lower() == reviewer
+                        for found in signed["models"])
+         newest = signed["newest"]["verdict"] if signed["newest"] else None
+@@ -2083,12 +2102,15 @@ def verdict_rows(pr: dict) -> list[dict]:
+             for node in nodes(pr, "reviews") if review.verdict_marker(node.get("body") or "")]
+ 
+ 
+-def head_sign_off(pr: dict, head: str, reviewer: str, visibility: Optional[str]) -> dict:
+-    """`review.sign_off` of the head from the reviewer's verdicts and those of every account `project review
+-    status` counts, and the open Projector finding threads in the daemon's query."""
++def head_sign_off(pr: dict, head: str, reviewer: str, visibility: Optional[str],
++                  also: tuple[str, ...] = ()) -> dict:
++    """`review.sign_off` of the head from the reviewer's verdicts, those of each login in `also`, and those of
++    every account `project review status` counts, and the open Projector finding threads in the daemon's
++    query."""
+     open_threads = sum(1 for thread in nodes(pr, "reviewThreads") if not thread.get("isResolved")
+                        and review.FINDING_MARKER in ((nodes(thread, "first") or [{}])[0].get("body") or ""))
+-    return review.sign_off(head, review.counted_reviews(verdict_rows(pr), reviewer, visibility), open_threads)
++    return review.sign_off(head, review.counted_reviews(verdict_rows(pr), reviewer, visibility, also),
++                           open_threads)
+ 
+ 
+ def newest_answer(unresolved: list[dict]) -> Optional[int]:
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 6a61d914..10289fa3 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -57,6 +57,7 @@
+     ("project inbox discuss 3 --text 'Why decline it?' --session s1", "ask", "none"),
+     ("project inbox discuss --pr acme/app#12 --text hello --session s1", "ask", "none"),
+     ("project console", "ask", "none"),
++    ("project review run 12 --model claude-opus-5-5 --agent codex", "ask", "none"),
+     ("project inbox reply r3 --text 'Half done' --as agent", "allow", "allow"),
+     ("project inbox close r3", "allow", "allow"),
+     ("project inbox answer r3.a --as agent", "ask", "none"),
+@@ -132,7 +133,7 @@
+                   "agent": {"key", "peer", "relay"},
+                   "config": {"set", "unset", "allow"},
+                   "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},
+-                  "review": {"gate"},
++                  "review": {"gate", "run"},
+                   "site": {"build", "serve"}, "ios": {"build", "logs"}}
+ 
+ # Some of the variables Claude Code lets an allow rule match past. Its list is
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 8805ce70..3726c9e5 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -3394,6 +3394,19 @@ def test_in_a_private_or_internal_repository_every_account_counts(self) -> None:
+                     self.assertEqual(("changes-requested", [newest, older]),
+                                      (result["verdict"], [m["review"] for m in result["models"]]))
+ 
++    def test_a_login_review_reviewers_names_counts_on_a_public_repository(self) -> None:
++        self.github.pr["base"]["repo"]["visibility"] = "public"
++        bot = self.add_verdict("claude-opus-5-5", login="github-actions[bot]", association="NONE")
++        self.add_verdict("gpt-5.5", login="passer-by", association="NONE", verdict="changes-requested")
++
++        before = json.loads(self.status("--json")[1])
++        (self.checkout / ".projector.toml").write_text('[review]\nreviewers = "someone, github-actions[bot]"\n')
++        after = json.loads(self.status("--json")[1])
++
++        self.assertEqual("unreviewed", before["verdict"])
++        self.assertEqual(("clean", [bot]), (after["verdict"], [m["review"] for m in after["models"]]),
++                         "the listed bot counts, and an account the list does not name still does not")
++
+     def test_a_pull_request_that_cannot_be_read_exits_one(self) -> None:
+         self.github.missing = True
+ 
+@@ -4310,6 +4323,64 @@ def test_two_versions_of_one_model_are_two_reviewers(self) -> None:
+         self.assertNotEqual(review.identity("claude-opus-5-5"), review.identity("claude-opus-5-6"))
+ 
+ 
++class RunnerTokenTests(unittest.TestCase):
++    """A CI runner's token belongs to no GitHub user, and gh stores no login for it."""
++
++    REFUSED = "gh api user --jq .login failed: Resource not accessible by integration (HTTP 403)"
++
++    @staticmethod
++    def gh(user: str | None = None, stored: tuple[str, ...] = ()):
++        """GitHub as a token sees it: one acting as `user`, or as no user when it is None, with gh holding a
++        stored login for each name in `stored`."""
++        def answer(args: list[str], token: str | None = None) -> str:
++            if args == ["api", "user", "--jq", ".login"]:
++                if user is None:
++                    raise ReviewError(RunnerTokenTests.REFUSED)
++                return f"{user}\n"
++            if args[:3] == ["auth", "token", "--user"]:
++                if args[3] not in stored:
++                    raise ReviewError(f"gh auth token --user {args[3]} failed: no oauth token found")
++                return f"stored-{args[3]}\n"
++            if args == ["auth", "token"]:
++                return "active\n"
++            raise AssertionError(f"unexpected gh call: {args}")
++        return mock.patch.object(review, "run_gh", answer)
++
++    def named(self, login: str | None):
++        environment = mock.patch.dict(os.environ)
++        environment.start()
++        self.addCleanup(environment.stop)
++        os.environ.pop(review.TOKEN_LOGIN, None)
++        if login is not None:
++            os.environ[review.TOKEN_LOGIN] = login
++
++    def test_a_token_of_no_user_is_the_login_the_variable_names(self) -> None:
++        self.named("github-actions[bot]")
++        with self.gh():
++            self.assertEqual("github-actions[bot]", review.authenticated_login())
++
++    def test_the_variable_never_renames_a_persons_token(self) -> None:
++        self.named("github-actions[bot]")
++        with self.gh(user="octocat"):
++            self.assertEqual("octocat", review.authenticated_login())
++
++    def test_a_token_of_no_user_without_the_variable_fails_naming_it(self) -> None:
++        self.named(None)
++        with self.gh(), self.assertRaisesRegex(ReviewError, review.TOKEN_LOGIN):
++            review.authenticated_login()
++
++    def test_the_active_token_posts_only_as_the_account_it_acts_as(self) -> None:
++        self.named("github-actions[bot]")
++        with self.gh():
++            self.assertEqual("active", review.reviewer_token("github-actions[bot]"))
++        with self.gh(user="octocat"):
++            self.assertEqual("active", review.reviewer_token("OctoCat"))
++            with self.assertRaisesRegex(ReviewError, "no gh login for the reviewer review-bot"):
++                review.reviewer_token("review-bot")
++        with self.gh(user="octocat", stored=("review-bot",)):
++            self.assertEqual("stored-review-bot", review.reviewer_token("review-bot"))
++
++
+ class ReviewCountsTests(unittest.TestCase):
+     def test_every_review_counts_in_a_private_or_internal_repository_in_either_case(self) -> None:
+         # GraphQL gives a repository's visibility in capitals and REST in lowercase. A visibility GitHub does
+diff --git a/tests/test_run.py b/tests/test_run.py
+new file mode 100644
+index 00000000..aaf5a76c
+--- /dev/null
++++ b/tests/test_run.py
+@@ -0,0 +1,350 @@
++"""`project review run`: one head's review by an agent with no session, as docs/projects/review-in-ci/readme.md § 2
++describes."""
++
++from __future__ import annotations
++
++import io
++import json
++import os
++import re
++import shlex
++import subprocess
++import sys
++import tempfile
++import unittest
++from contextlib import redirect_stderr, redirect_stdout
++from pathlib import Path
++from unittest import mock
++
++from projector import cli, review, run
++from projector.review import ReviewError
++
++REPO = "acme/app"
++HEAD = "a" * 40
++MODEL = "claude-opus-5-5"
++SKILLS = Path(cli.__file__).resolve().parents[2] / "skills"
++
++# The agent `review.runner` names in these tests. It records the environment it saw, writes the files a `setup`
++# would when its folder has `setup.json`, then does what the `behavior` file says: publish a verdict, write a
++# report and publish nothing, or outlast its time.
++AGENT = '''
++import json, os, pathlib, sys, time
++here = pathlib.Path(sys.argv[1])
++(here / "seen.json").write_text(json.dumps({"env": dict(os.environ), "stdin": sys.stdin.read()}))
++if (here / "setup.json").exists():
++    for path, content in json.loads((here / "setup.json").read_text()).items():
++        pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
++        pathlib.Path(path).write_text(json.dumps(content))
++behavior = (here / "behavior").read_text().strip()
++if behavior == "publish":
++    (here / "published.json").write_text(json.dumps({"id": 950, "sha": os.environ["HEAD_SHA"]}))
++elif behavior == "report":
++    pathlib.Path(os.environ["PROJECTOR_RUN_REPORT"]).write_text("the plan names no gate; which one runs?\\n")
++elif behavior == "sleep":
++    time.sleep(60)
++'''
++
++
++def verdict_body(sha: str, model: str = MODEL) -> str:
++    return (f"Projector review\n\n<!-- projector-review v=1 verdict=clean projector=1.2.3 model={model} effort=high "
++            f"sha={sha} findings=0 seconds=60 covered=1/1 -->\n\nClean.")
++
++
++class FakeGitHub:
++    """The calls `project review run` makes, for pull request 1 of acme/app."""
++
++    def __init__(self, agent_folder: Path) -> None:
++        self.agent_folder = agent_folder
++        self.pr = {"number": 1, "state": "open", "draft": False, "user": {"login": "operator"},
++                   "head": {"sha": HEAD, "ref": "feature", "repo": {"full_name": REPO}},
++                   "base": {"ref": "main", "repo": {"full_name": REPO}}}
++        self.reviews: list[dict] = []
++        self.starts: list[dict] = []
++        self.posted: list[str] = []
++        self.deleted: list[str] = []
++
++    def listed_reviews(self) -> list[dict]:
++        published = self.agent_folder / "published.json"
++        found = list(self.reviews)
++        if published.exists():
++            made = json.loads(published.read_text())
++            found.append({"id": made["id"], "url": f"https://github.com/{REPO}/pull/1#pullrequestreview-{made['id']}",
++                          "at": "2026-11-18T12:00:00Z", "body": verdict_body(made["sha"])})
++        return found
++
++    def __call__(self, args: list[str], token: str | None = None) -> str:
++        if args == ["api", f"repos/{REPO}/pulls/1"]:
++            return json.dumps(self.pr)
++        if args == ["api", "user", "--jq", ".login"]:
++            return "operator\n"
++        if args[:3] == ["auth", "token", "--user"]:
++            return f"token-{args[3]}\n"
++        if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
++            return "".join(json.dumps(r) + "\n" for r in self.listed_reviews())
++        if args[:3] == ["api", "--paginate", f"repos/{REPO}/issues/1/comments"]:
++            return "".join(json.dumps(c) + "\n" for c in self.starts)
++        if args[:2] == ["api", f"repos/{REPO}/issues/1/comments"] and args[2] == "-f":
++            self.posted.append(args[3].removeprefix("body="))
++            return "{}"
++        if args[:3] == ["api", "-X", "DELETE"]:
++            self.deleted.append(args[3])
++            return ""
++        raise AssertionError(f"unexpected gh call: {args}")
++
++
++class RunTests(unittest.TestCase):
++    def setUp(self) -> None:
++        scratch = tempfile.TemporaryDirectory()
++        self.addCleanup(scratch.cleanup)
++        self.tmp = Path(scratch.name)
++        self.checkout = self.tmp / "checkout"
++        subprocess.run(["git", "init", "-q", str(self.checkout)], check=True)
++        subprocess.run(["git", "-C", str(self.checkout), "remote", "add", "origin", f"https://github.com/{REPO}.git"],
++                       check=True)
++        self.agent = self.tmp / "agent"
++        self.agent.mkdir()
++        (self.agent / "agent.py").write_text(AGENT)
++        self.behave("publish")
++        self.runner = shlex.join([sys.executable, str(self.agent / "agent.py"), str(self.agent)])
++        self.github = FakeGitHub(self.agent)
++        for patcher in (mock.patch.object(review, "run_gh", self.github),
++                        mock.patch.dict(os.environ, {"HEAD_SHA": HEAD, "XDG_STATE_HOME": str(self.tmp / "state")})):
++            patcher.start()
++            self.addCleanup(patcher.stop)
++
++    def behave(self, behavior: str) -> None:
++        (self.agent / "behavior").write_text(behavior)
++
++    def review_run(self, **options: object) -> int:
++        settings = dict(model=MODEL, agent="command", configured_runner=self.runner)
++        settings.update(options)
++        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
++            return run.run(self.tmp / "state" / "projector" / "reviews", 1, self.checkout, **settings)
++
++    def seen(self) -> dict:
++        return json.loads((self.agent / "seen.json").read_text())
++
++    def started(self) -> bool:
++        return (self.agent / "seen.json").exists()
++
++    def test_a_published_verdict_passes(self) -> None:
++        self.assertEqual(0, self.review_run())
++
++        self.assertEqual([], self.github.posted)
++        environment = self.seen()["env"]
++        self.assertEqual(("1", "run", MODEL), (environment["PROJECTOR_HEADLESS"], environment["PROJECTOR_LOOP"],
++                                               environment["PROJECTOR_MODEL"]))
++        self.assertIn("review-pr skill to review pull request 1 in acme/app", self.seen()["stdin"])
++
++    def test_run_refuses_a_fork_or_a_draft_before_it_starts_anything(self) -> None:
++        # A manual dispatch can name any pull request, so the command, not the workflow's `if`, is the boundary.
++        for change, why in ((lambda pr: pr["head"].update(repo={"full_name": "outsider/app"}), "outsider/app"),
++                            (lambda pr: pr["head"].update(repo=None), "a deleted fork"),
++                            (lambda pr: pr.update(draft=True), "it is a draft")):
++            with self.subTest(why=why):
++                self.setUp()
++                change(self.github.pr)
++
++                with self.assertRaisesRegex(ReviewError, why):
++                    self.review_run()
++
++                self.assertFalse(self.started(), "no agent reads an outsider's diff or a draft")
++                self.assertEqual([], self.github.posted)
++
++    def test_run_skips_a_head_the_reviewer_and_model_already_reviewed(self) -> None:
++        self.github.reviews.append({"id": 900, "url": "https://example.test/900", "at": "2026-11-18T10:00:00Z",
++                                    "body": verdict_body(HEAD)})
++
++        self.assertEqual(0, self.review_run())
++        self.assertFalse(self.started(), "a re-run of a finished job posts nothing")
++
++        self.github.reviews[0]["body"] = verdict_body(HEAD, model="gpt-5.5")
++        self.assertEqual(0, self.review_run())
++        self.assertTrue(self.started(), "another model's verdict is a second opinion, not this review")
++
++    def test_a_rereview_fails_unless_the_run_itself_publishes(self) -> None:
++        # The earlier verdict is on the same head by the same model, so only a new review id shows this run's.
++        self.github.reviews.append({"id": 900, "url": "https://example.test/900", "at": "2026-11-18T13:00:00Z",
++                                    "body": verdict_body(HEAD)})
++        self.behave("nothing")
++
++        self.assertEqual(1, self.review_run(rereview=True))
++        self.assertEqual("1", self.seen()["env"]["PROJECTOR_REREVIEW"])
++
++    def test_a_verdict_on_a_head_pushed_during_the_run_passes(self) -> None:
++        # The skill moves an unpublished review to a head pushed while it runs, so the agent publishes on the
++        # newer head; a run that looked only at the head it started on failed a review that stood.
++        newer = "b" * 40
++        with mock.patch.dict(os.environ, {"HEAD_SHA": newer}):
++            self.assertEqual(0, self.review_run())
++        self.assertEqual([], self.github.posted)
++
++        # A verdict on that newer head from before the run is still not this run's.
++        self.setUp()
++        self.github.reviews.append({"id": 900, "url": "https://example.test/900", "at": "2026-11-18T10:00:00Z",
++                                    "body": verdict_body(newer)})
++        self.behave("nothing")
++        self.assertEqual(1, self.review_run())
++
++    def test_run_replaces_a_cancelled_runs_start_comment(self) -> None:
++        at = review.now().strftime("%Y-%m-%dT%H:%M:%SZ")
++        for comment_id, sha, model in ((301, HEAD, MODEL), (302, "b" * 40, MODEL), (303, HEAD, "gpt-5.5")):
++            self.github.starts.append({"id": comment_id, "url": f"https://example.test/{comment_id}", "login": "operator",
++                                       "body": review.start_comment(model, sha), "created_at": at, "updated_at": at})
++
++        self.assertEqual(0, self.review_run())
++
++        self.assertEqual("301", self.seen()["env"]["PROJECTOR_REPLACE"],
++                         "only this model's comment on this head blocks the agent's setup")
++
++    def test_run_fails_without_a_verdict_and_says_why_on_the_pull_request(self) -> None:
++        for behavior, reason in (("nothing", "the agent exited 0 and published no verdict"),
++                                 ("report", "the plan names no gate; which one runs?")):
++            with self.subTest(behavior=behavior):
++                self.setUp()
++                self.behave(behavior)
++                with mock.patch.dict(os.environ, {"GITHUB_SERVER_URL": "https://github.com",
++                                                  "GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "77"}):
++                    code = self.review_run()
++
++                self.assertEqual(1, code)
++                self.assertEqual(1, len(self.github.posted))
++                self.assertIn(reason, self.github.posted[0])
++                self.assertIn(f"https://github.com/{REPO}/actions/runs/77", self.github.posted[0])
++                self.assertIn(f"sha={HEAD}", self.github.posted[0])
++
++    def review_files(self, loop: str, start_comment: int) -> dict[str, dict]:
++        """The state and lock a `setup` in `loop` writes for HEAD, by path."""
++        paths = review.Paths(self.tmp / "state" / "projector" / "reviews", REPO, 1, MODEL)
++        state = {"repo": REPO, "number": 1, "sha": HEAD, "checkout": str(self.checkout), "worktrees": [],
++                 "reviewer": "operator", "model": MODEL, "identity": review.identity(MODEL), "loop": loop,
++                 "start_comment": {"id": start_comment, "created_at": "2026-11-18T11:00:00Z"}}
++        lock = {"sha": HEAD, "host": "runner", "loop": loop, "pid": 1, "taken_at": review.now().isoformat()}
++        return {str(paths.state): state, str(paths.lock(HEAD)): lock}
++
++    def test_a_failed_run_cleans_up_the_review_its_agent_set_up(self) -> None:
++        # A setup killed between taking its lock and writing its state leaves only the lock, which the state
++        # cache would carry into the next run and refuse its setup for a day.
++        for kept, why in ((slice(None), "the unpublished review's state and lock are discarded"),
++                          (slice(1, None), "a lock with no state is discarded")):
++            with self.subTest(why=why):
++                self.setUp()
++                files = dict(list(self.review_files("run", 501).items())[kept])
++                (self.agent / "setup.json").write_text(json.dumps(files))
++                self.behave("nothing")
++
++                self.assertEqual(1, self.review_run())
++
++                self.assertEqual([], [path for path in files if Path(path).exists()], why)
++
++    def test_a_failed_run_leaves_another_loops_live_review_alone(self) -> None:
++        # Another loop holds this pull request and model's lock, so the agent's setup is refused and it publishes
++        # nothing; cleaning up regardless deleted that loop's state, lock, and worktrees from under it.
++        files = self.review_files("laptop", 400)
++        for path, content in files.items():
++            Path(path).parent.mkdir(parents=True, exist_ok=True)
++            Path(path).write_text(json.dumps(content))
++        self.behave("nothing")
++
++        self.assertEqual(1, self.review_run())
++
++        self.assertEqual(list(files), [path for path in files if Path(path).exists()])
++        self.assertEqual([], self.github.deleted, "the other review's start comment stands")
++        self.assertEqual(1, len(self.github.posted), "the run still says on the pull request that it failed")
++
++    def test_an_agent_out_of_time_is_stopped_and_the_run_fails(self) -> None:
++        self.behave("sleep")
++
++        self.assertEqual(1, self.review_run(timeout_minutes=0.02))
++
++        self.assertIn("ran out of its 0.02 minutes", self.github.posted[0])
++
++    def test_a_windows_agent_out_of_time_is_killed_and_reaped(self) -> None:
++        # Windows has no os.killpg or signal.SIGKILL, so a timeout that reached for them raised, left the agent
++        # running, and skipped the run's cleanup and failure comment.
++        process = mock.Mock(pid=4242, returncode=1)
++        process.communicate.side_effect = subprocess.TimeoutExpired("agent", 1)
++        cwd = Path.cwd()
++        with mock.patch.object(subprocess, "Popen", return_value=process) as popen, \
++                mock.patch.object(subprocess, "run") as taskkill, \
++                mock.patch.object(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, create=True), \
++                mock.patch.object(os, "killpg", side_effect=AttributeError("module 'os' has no attribute 'killpg'")), \
++                mock.patch.object(os, "name", "nt"):
++            result = run.start(run.Invocation(["agent"]), {}, cwd, 1)
++
++        self.assertEqual((1, True), result)
++        self.assertEqual(0x200, popen.call_args.kwargs.get("creationflags"))
++        self.assertNotIn("start_new_session", popen.call_args.kwargs)
++        self.assertEqual(["taskkill", "/F", "/T", "/PID", "4242"], taskkill.call_args.args[0],
++                         "the agent's whole process tree ends, not only the agent")
++        process.wait.assert_called_once()
++
++    def test_runner_takes_the_agent_then_review_runner_then_claude(self) -> None:
++        self.assertEqual(("claude", None), run.runner(None, None))
++        self.assertEqual(("codex", None), run.runner(None, "codex"))
++        self.assertEqual(("command", "my-agent --fast"), run.runner(None, "my-agent --fast"))
++        self.assertEqual(("claude", None), run.runner("claude", "my-agent --fast"))
++        for agent, configured in (("command", None), ("command", "codex"), ("gemini", None)):
++            with self.subTest(agent=agent, configured=configured), self.assertRaises(ReviewError):
++                run.runner(agent, configured)
++
++
++def matches(rule: str, command: str) -> bool:
++    """Whether a Claude Code `Bash(...)` pattern's command part matches `command`: a trailing ` *` matches the bare
++    command and any arguments after it."""
++    prefix = rule.removesuffix(" *")
++    return command == prefix or command.startswith(prefix + " ")
++
++
++class PresetTests(unittest.TestCase):
++    def invocations(self) -> list[run.Invocation]:
++        scratch, state, checkout = Path("/tmp/scratch"), Path("/tmp/state"), Path("/tmp/checkout")
++        return [built for mode in run.MODES for built in (
++            run.claude_invocation(1, REPO, MODEL, "high", mode, scratch, Path("/tmp/projector")),
++            run.codex_invocation(1, REPO, "gpt-5.5", "high", mode, scratch, state, checkout, {"HOME": "/tmp/home"}))]
++
++    def test_presets_never_skip_permissions_or_wait_for_a_prompt(self) -> None:
++        # A stuck run tempts a fix that turns every check off; the runner holds a token and a model credential.
++        for invocation in self.invocations():
++            with self.subTest(argv=invocation.argv[:2]):
++                text = " ".join(invocation.argv)
++                self.assertNotRegex(text, r"dangerously|bypassPermissions|danger-full-access")
++                if invocation.argv[0] == "claude":
++                    self.assertIn("--permission-prompts none", text)
++                else:
++                    self.assertIn("--sandbox workspace-write", text)
++
++    def test_claude_preset_allows_every_command_the_review_skill_runs(self) -> None:
++        skill = (SKILLS / "review-pr" / "SKILL.md").read_text()
++        blocks = re.findall(r"^\s*```(?:sh|bash)\n(.*?)^\s*```", skill, re.M | re.S)
++        commands = [line.strip() for block in blocks for line in block.replace("\\\n", " ").splitlines()
++                    if line.strip().split(" ", 1)[0] in ("project", "gh", "git")]
++        commands.append("gh repo view acme/app --json visibility")
++        allowed = [rule.removeprefix("Bash(").removesuffix(")") for rule in run.claude_invocation(
++            1, REPO, MODEL, "high", "allowlist", Path("/tmp/s"), None).argv if rule.startswith("Bash(")]
++        denied = [f"{command}" for command in run.DENIED_COMMANDS]
++        self.assertGreater(len(commands), 5)
++        for command in commands:
++            with self.subTest(command=command):
++                self.assertTrue(any(matches(rule, command) for rule in allowed if rule not in denied))
++                self.assertFalse(any(matches(rule, command) for rule in denied))
++        for refused in ("git push origin HEAD", "gh pr merge 1", "gh repo edit --visibility public"):
++            with self.subTest(refused=refused):
++                self.assertTrue(any(matches(rule, refused) for rule in denied))
++
++    def test_the_codex_rules_forbid_what_a_reviewer_never_runs(self) -> None:
++        rules = run.codex_rules()
++        for command in run.DENIED_COMMANDS:
++            self.assertIn(json.dumps(command.removesuffix(" *").split(" ")), rules)
++        self.assertEqual(len(run.DENIED_COMMANDS), rules.count('decision = "forbidden"'))
++
++    def test_the_review_skill_reads_every_variable_the_run_sets(self) -> None:
++        skill = (SKILLS / "review-pr" / "SKILL.md").read_text()
++        source = Path(run.__file__).read_text()
++        for name in sorted(set(re.findall(r"\b(PROJECTOR_[A-Z_]+)=", source)) | {"PROJECTOR_REPLACE"}):
++            with self.subTest(name=name):
++                self.assertIn(name, skill, "a variable the skill never reads does nothing")
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_site.py b/tests/test_site.py
+index bee385c4..60de172d 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -493,6 +493,18 @@ def test_in_a_private_or_internal_repository_every_review_sets_the_status(self)
+                                  "a public repository, or one GitHub gives no visibility for, still ignores them")
+         self.assertEqual(counted, self.built_statuses(reviews, "private"), "the build reads the visibility GitHub reports")
+ 
++    def test_a_review_by_a_login_review_reviewers_names_sets_the_status_on_a_public_repository(self) -> None:
++        bot = dict(projector_review("clean", "d" * 40, "2026-10-02T10:00:00Z", 2, association="NONE"),
++                   login="github-actions[bot]")
++        stranger = dict(projector_review("changes-requested", "d" * 40, "2026-10-03T10:00:00Z", 3,
++                                         association="NONE"), login="passer-by")
++        (self.repo / ".projector.toml").write_text('[review]\nreviewers = "github-actions[bot]"\n')
++
++        statuses = self.built_statuses([bot, stranger])
++
++        self.assertEqual({"status": "clean", "url": review_url(2)}, statuses["d"],
++                         "the listed bot's review sets the status, and a newer one by an unlisted account does not")
++
+     # Decided directly
+ 
+     def test_each_head_shows_the_verdict_of_the_projector_review_that_names_it(self) -> None:
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index f4d9048a..daf8a16c 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import contextlib
+ import io
+ import json
+ import os
+@@ -928,6 +929,39 @@ def test_a_checkout_that_is_not_a_directory_is_refused(self) -> None:
+         self.assertNotEqual(0, code)
+         self.assertIn("is not a directory", err.getvalue())
+ 
++    def hand_off(self, groups: list[dict]) -> tuple[int, Path, str]:
++        """Run `summary publish` from this clone with PROJECTOR_SUMMARY_HANDOFF set, on a repository that hosts its
++        site, for a summary of `groups`. Returns the exit code, the handoff folder, and the error output."""
++        data = make_summary(groups)
++        data["pr"]["head"] = "a" * 40
++        self.summary_path.write_text(json.dumps(data))
++        diff = self.summary_path.with_name("pr.diff")
++        diff.write_text(DIFF)
++        folder = self.summary_path.with_name("handoff")
++        err = io.StringIO()
++        with mock.patch.dict(os.environ, {summary.HANDOFF: str(folder)}), \
++             mock.patch.object(summary, "hosting", return_value=("https://owner.github.io/repo/", "")), \
++             mock.patch.object(summary, "dispatch", side_effect=AssertionError("a handoff starts no build")), \
++             mock.patch.object(summary, "current_head", side_effect=AssertionError("a handoff links nothing")), \
++             contextlib.chdir(self.repo), redirect_stdout(io.StringIO()), redirect_stderr(err):
++            code = cli.main(["summary", "publish", "--summary", str(self.summary_path), "--diff", str(diff)])
++        return code, folder, err.getvalue()
++
++    def test_a_handoff_leaves_the_summary_and_its_diff_and_pushes_nothing(self) -> None:
++        code, folder, err = self.hand_off(GOOD_GROUPS)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(json.loads(self.summary_path.read_text()), json.loads((folder / "summary.json").read_text()))
++        self.assertEqual(DIFF, (folder / summary.DIFF_FILE).read_text())
++        self.assertEqual("", run(self.remote, "git", "for-each-ref", "refs/projector"), "the remote's ref never moves")
++
++    def test_a_handoff_refuses_a_summary_publish_would_refuse(self) -> None:
++        code, folder, err = self.hand_off([{"id": "all", "title": "All", "files": [{"path": "not/in/the/diff.py"}]}])
++
++        self.assertNotEqual(0, code)
++        self.assertIn("not/in/the/diff.py", err)
++        self.assertFalse((folder / "summary.json").exists(), "the job that publishes it gets nothing to publish")
++
+     def test_no_dispatch_pushes_without_starting_the_workflow(self) -> None:
+         self.publish("a" * 40, send_dispatch=False)
+         self.assertEqual([], self.dispatches)
+@@ -1796,11 +1830,13 @@ def test_a_site_that_is_not_hosted_gets_no_comment(self) -> None:
+              mock.patch.object(summary, "hosting", return_value=self.hosted):
+             self.assertIn("Pages is not enabled", summary.comment_summary("owner/repo", 7, HEAD))
+ 
+-    def cli_publish(self, hosted: tuple[str | None, str] | Exception, *flags: str) -> tuple[list[dict], list[tuple], str]:
++    def cli_publish(self, hosted: tuple[str | None, str] | Exception, *flags: str,
++                    current: str | None = HEAD) -> tuple[list[dict], list[tuple], str]:
+         """Run `summary publish` with the repository's hosting answering, or raising, `hosted`.
+ 
+         Returns the keyword arguments publish got, the comments made, and the output. The
+-        descriptions linked stand in `self.described`.
++        descriptions linked stand in `self.described`. GitHub gives the pull request's head as
++        `current`.
+         """
+         path = Path(tempfile.mkdtemp()) / "summary.json"
+         path.write_text(json.dumps({"version": summary.SUMMARY_VERSION, "pr": {"repo": "owner/repo", "number": 7, "head": HEAD}}))
+@@ -1811,6 +1847,7 @@ def cli_publish(self, hosted: tuple[str | None, str] | Exception, *flags: str) -
+         answer = {"side_effect": hosted} if isinstance(hosted, Exception) else {"return_value": hosted}
+         with mock.patch.object(summary, "publish", side_effect=lambda *a, **k: published.append(k)), \
+              mock.patch.object(summary, "hosting", **answer) as lookup, \
++             mock.patch.object(summary, "current_head", return_value=current), \
+              mock.patch.object(summary, "comment_summary",
+                                side_effect=lambda *a, **k: commented.append((*a, k)) or "done"), \
+              mock.patch.object(summary, "describe_summary",
+@@ -1858,6 +1895,31 @@ def test_summary_publish_keeps_the_summary_local_where_the_site_is_not_hosted(se
+         self.assertEqual([], commented, "a summary kept local has no page on GitHub to link")
+         self.assertEqual([], self.described)
+ 
++    def test_summary_publish_of_an_earlier_head_pushes_it_and_links_nothing(self) -> None:
++        published, commented, out = self.cli_publish(("https://owner.github.io/repo/", ""), current="f" * 40)
++
++        self.assertTrue(published[0]["push"], "the site keeps a page for every head")
++        self.assertEqual(([], []), (commented, self.described), "the newer head's summary keeps the links")
++        self.assertIn("left the links on owner/repo#7 alone, because its head is fffffff now", out)
++
++    def test_summary_publish_links_when_github_cannot_say_the_head(self) -> None:
++        _, commented, _ = self.cli_publish(("https://owner.github.io/repo/", ""), current=None)
++
++        self.assertEqual([("owner/repo", 7, HEAD, {"site": "https://owner.github.io/repo/"})], commented)
++
++    def test_summary_publish_refuses_a_summary_of_another_pull_request(self) -> None:
++        path = Path(tempfile.mkdtemp()) / "summary.json"
++        path.write_text(json.dumps({"version": summary.SUMMARY_VERSION, "pr": {"repo": "owner/repo", "number": 8,
++                                                                               "head": HEAD}}))
++        err = io.StringIO()
++        with mock.patch.object(summary, "publish", side_effect=AssertionError("nothing is published")), \
++             mock.patch.object(summary, "hosting", side_effect=AssertionError("nothing is asked")), \
++             redirect_stderr(err):
++            code = cli.main(["summary", "publish", "--summary", str(path), "--pr", "7"])
++
++        self.assertNotEqual(0, code)
++        self.assertIn("the summary is of #8, not of #7", err.getvalue())
++
+     def test_summary_publish_local_previews_even_where_the_site_is_hosted(self) -> None:
+         with mock.patch.object(summary, "push_decision", side_effect=AssertionError("--local asks GitHub nothing")):
+             published, commented, _ = self.cli_publish(("https://owner.github.io/repo/", ""), "--local")
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index d9f1bcf5..33f7acfb 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -571,6 +571,28 @@ def test_a_draft_or_a_signed_off_head_waits_on_no_review(self) -> None:
+         self.assertEqual([unreviewed(3), f"FINDING acme/app#3 src/x.py:3 [bugbot]: A nil deref — {fix_action(3)}"],
+                          events["fixer"], "an open finding keeps #3's clean verdict from signing it off")
+ 
++    def test_a_verdict_by_a_login_review_reviewers_names_signs_the_head_off(self) -> None:
++        home = self.scratch / "home"
++        checkout = home / "app"
++        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
++        subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", "https://github.com/acme/app.git"],
++                       check=True)
++        (checkout / ".projector.toml").write_text('[review]\nreviewers = "github-actions[bot]"\n')
++        environment = mock.patch.dict(os.environ, {"HOME": str(home)})
++        environment.start()
++        self.addCleanup(environment.stop)
++        self.github.pull_request(1, draft=False, verdicts=[
++            projector_verdict(SHA_A, "clean", who="github-actions[bot]", association="NONE")])
++        self.github.pull_request(2, draft=False, verdicts=[
++            projector_verdict(SHA_A, "clean", who="passerby", association="NONE")])
++        self.fixer("acme/app#1 fix", "acme/app#2 fix")
++        write_json(self.folder("fixer") / "agent.json", {"schema_version": 1, "cwd": str(checkout)})
++
++        events = self.cycle()
++
++        self.assertEqual([unreviewed(2)], events["fixer"],
++                         "the live checkout's review.reviewers counts the bot's verdict, and only the bot's")
++
+     def test_a_ready_pull_request_another_session_reviews_asks_the_fixer_for_nothing(self) -> None:
+         self.github.pull_request(1, draft=False)
+         self.fixer("acme/app#1 fix")
