@@ -148,20 +148,27 @@ depends on two open stacks. Before you start pieces side by side, check
 which files each changes and which depend on which, so that pieces that
 overlap go in one stack from the start.
 
+Questions do not stop the work. Post each call you want the user to
+confirm with `ask` as you make it, with what you built on it, and keep
+going, as [Decide what you can](#decide-what-you-can) describes. In the
+best case a session leaves a few such questions behind and still reaches
+the end.
+
 Stop only when every piece of the work is done or waits on something only
 the user can give, such as an answer, a test, or a sign-in. Never stop
 without posting to the inbox, because a user who is away sees only what is
-above their prompt. Post at least one item, chosen by why you stop, as
+above their prompt. Post the item that says why you stopped, as
 [Post what the user must see](#post-what-the-user-must-see) describes:
 
-- **The work is done.** Post a notice with `tell` that says so, naming in
-  its detail each pull request that is ready for the user to merge. Post it
-  even though the panel lists their state, because only the notice says the
-  session has nothing left to do.
-- **A decision only the user can make blocks the rest.** Post a question
-  with `ask`, with the answer you recommend.
-- **Something only the user can do blocks the rest.** Post a request with
-  `request`, with numbered steps.
+- **You reached the end of the work.** Post a notice with `tell` that says
+  so, naming in its detail each pull request that is ready for the user to
+  merge. Post it even though the panel lists their state, because only the
+  notice says the session has nothing left to do.
+- **You stopped before the end, for any reason.** Post a request with
+  `request` asking the user to do whatever blocked you, with numbered steps:
+  answer the question that holds the rest up, sign in to a service, test on
+  their device, or fix a failure you cannot. A block never ends the work
+  with nothing in the inbox.
 
 Then report, as a list, with what waits on the user first:
 
