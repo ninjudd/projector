@@ -438,7 +438,16 @@ sessions. Record the result in this plan.
   a pull request or paths, so the daemon wakes only matching sessions, with a
   claim so one agent acts. A standing instruction could then become a rule
   the daemon applies, rather than a check the agent runs.
-- **Threads.** Deferred. A follow-up is a new item for now.
+- **Threads.** Deferred, and decided by the user on 2026-11-17 to stay out
+  for now. An item gathers replies, and the asker follows up with
+  `project inbox reopen <ref> --text`, which covers most back-and-forth. A
+  reply cannot itself be replied to. `project console` built a thread on
+  every inbox item and dropped it before merging, because it put a second
+  copy of a session's conversation in an inbox meant to list only what needs
+  you (`../../console/readme.md` § 2.6 and § 3). Peers replies do not repeat
+  that: they come from another person, so the inbox is the only place you
+  see them. Real threads, where either side answers any reply, wait until
+  reopening proves cramped.
 - **A peer's key changes.** Deferred until key rotation exists
   (`../readme.md` § 6). Until then, the peer gives you a new key, and you run
   `peer add <name> <key> --replace`.
