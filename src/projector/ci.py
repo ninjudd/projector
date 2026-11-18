@@ -32,23 +32,51 @@ HEADER = "# Written by `project init --ci-review`, which replaces this file whil
 DIGEST = re.compile(r"\A" + re.escape(HEADER) + r"# projector-workflow sha256=([0-9a-f]{64})\n")
 
 
-def parse_agents(text: str) -> tuple[str, ...]:
-    """The agents a comma-separated list names, in order and once each, refusing a name that is not an agent."""
-    agents = tuple(dict.fromkeys(name.strip() for name in text.split(",") if name.strip()))
-    unknown = [name for name in agents if name not in AGENTS]
-    if not agents or unknown:
+# The agents the action gives a model when the workflow names none. Every other agent's job would stop before it
+# reviews anything, so setup refuses it without a model rather than guessing a model ID.
+DEFAULT_MODEL = {"claude": "claude-opus-5-5"}
+# A model ID as a plain YAML scalar can carry it: no space, quote, comma, or `=`, and no leading flow indicator.
+MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*\Z")
+
+
+def parse_agents(text: str) -> dict[str, str]:
+    """The agents a comma-separated list names, in order and once each, each with the model an `agent=model`
+    entry gives it, or "" for the action's default. Refuses a name that is not an agent, a model that is not a
+    model ID, and an agent the action has no default model for that the list gives none."""
+    agents: dict[str, str] = {}
+    for entry in (part.strip() for part in text.split(",")):
+        if not entry:
+            continue
+        name, _, model = (piece.strip() for piece in entry.partition("="))
+        if name not in AGENTS:
+            raise UsageError(f"the CI review agents must be {', '.join(AGENTS)}, separated by commas; got {text!r}")
+        if model and not MODEL.match(model):
+            raise UsageError(f"{model!r} in {text!r} is not a model ID")
+        agents.setdefault(name, model)
+    if not agents:
         raise UsageError(f"the CI review agents must be {', '.join(AGENTS)}, separated by commas; got {text!r}")
+    for name, model in agents.items():
+        if not model and name not in DEFAULT_MODEL:
+            raise UsageError(f"the {name} review needs a model, and the action has none for it; name one as "
+                             f"{name}=<model> in {text!r}")
     return agents
 
 
-def body(action_ref: str, agents: tuple[str, ...]) -> str:
+def format_agents(agents: dict[str, str]) -> str:
+    """`agents` as `review.ci_agents` records them, which `parse_agents` reads back."""
+    return ", ".join(f"{name}={model}" if model else name for name, model in agents.items())
+
+
+def body(action_ref: str, agents: dict[str, str]) -> str:
     template = resources.files("projector").joinpath("templates/review-workflow.yml").read_text(encoding="utf-8")
+    matrix = "\n".join(f"          - agent: {name}" + (f"\n            model: {model}" if model else "")
+                       for name, model in agents.items())
     env = "\n".join(f"          {name}: ${{{{ secrets.{name} }}}}"
                     for agent in agents for name in CREDENTIALS[agent].values())
-    return template.replace("@REF@", action_ref).replace("@AGENTS@", ", ".join(agents)).replace("@ENV@", env)
+    return template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@ENV@", env)
 
 
-def workflow_text(action_ref: str, agents: tuple[str, ...]) -> str:
+def workflow_text(action_ref: str, agents: dict[str, str]) -> str:
     """The review workflow for `agents`, calling the action at `action_ref`. Its second line records a digest of
     the rest, so a later `init` can tell a file nobody edited, which it replaces, from one somebody did."""
     text = body(action_ref, agents)

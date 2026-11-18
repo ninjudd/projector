@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from projector import ci, cli, review, summary
+from projector.core import UsageError
 from tests.test_projector import RepositoryTestCase, RulesetGitHub
 
 ACTION = Path(__file__).parents[1] / "actions" / "review" / "action.yml"
@@ -53,24 +56,25 @@ class InitCiReviewTests(RepositoryTestCase):
     def test_a_yes_writes_the_workflow_and_records_the_settings_keeping_every_reviewer(self) -> None:
         (self.root / ".projector.toml").write_text('[review]\nreviewers = "someone"\n')
 
-        code, out, err = self.init("--ci-review", "--ci-agents", "claude,codex")
+        code, out, err = self.init("--ci-review", "--ci-agents", "claude,codex=gpt-5.5")
         again, out_again, _ = self.init()
 
         self.assertEqual((0, 0), (code, again), err)
-        self.assertEqual(ci.workflow_text("v0", ("claude", "codex")), self.workflow().read_text())
+        self.assertEqual(ci.workflow_text("v0", {"claude": "", "codex": "gpt-5.5"}), self.workflow().read_text())
         self.assertIn(f"created {ci.WORKFLOW_PATH}", out)
-        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again, "the recorded agents rebuild the same workflow")
-        self.assertEqual((True, "claude, codex", "someone, github-actions[bot]"),
+        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again,
+                      "the recorded agents and models rebuild the same workflow")
+        self.assertEqual((True, "claude, codex=gpt-5.5", "someone, github-actions[bot]"),
                          (self.recorded()["ci"], self.recorded()["ci_agents"], self.recorded()["reviewers"]),
                          "the bot joins the reviewers the repository already counts, and joins them once")
 
     def test_init_replaces_a_workflow_nobody_edited_and_keeps_an_edited_one(self) -> None:
         self.workflow().parent.mkdir(parents=True)
-        self.workflow().write_text(ci.workflow_text("v0.0.1", ("codex",)))
+        self.workflow().write_text(ci.workflow_text("v0.0.1", {"codex": "gpt-5.5"}))
 
         _, out, _ = self.init("--ci-review")
         self.assertIn(f"updated {ci.WORKFLOW_PATH}", out)
-        self.assertEqual(ci.workflow_text("v0", ("claude",)), self.workflow().read_text())
+        self.assertEqual(ci.workflow_text("v0", {"claude": ""}), self.workflow().read_text())
 
         edited = self.workflow().read_text().replace("timeout-minutes: 60", "timeout-minutes: 90")
         self.workflow().write_text(edited)
@@ -98,18 +102,28 @@ class InitCiReviewTests(RepositoryTestCase):
                                                           "acme/app"], home / "auth.json")])):
             with self.subTest(answer=answer), mock.patch("sys.stdin.readline", return_value=answer):
                 self.set.clear()
-                self.init("--ci-review", "--ci-agents", "codex", "--ci-credential", "subscription")
+                self.init("--ci-review", "--ci-agents", "codex=gpt-5.5", "--ci-credential", "subscription")
                 self.assertEqual(expected, self.set)
 
     def test_a_present_secret_is_kept_and_two_of_one_agent_are_reported(self) -> None:
         self.at_a_terminal()
         self.secrets = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_AUTH_JSON"]
 
-        _, _, err = self.init("--ci-review", "--ci-agents", "claude,codex")
+        _, _, err = self.init("--ci-review", "--ci-agents", "claude,codex=gpt-5.5")
 
         self.assertEqual([], self.set)
         self.assertIn("ANTHROPIC_API_KEY is set for the claude review", err)
         self.assertIn("both CODEX_AUTH_JSON and OPENAI_API_KEY are set, so the codex review refuses to start", err)
+
+    def test_an_agent_the_action_has_no_model_for_is_refused_before_anything_is_written(self) -> None:
+        # Its job would stop before it reviewed anything, on every pull request.
+        code, _, err = self.init("--ci-review", "--ci-agents", "claude,codex")
+
+        self.assertNotEqual(0, code)
+        self.assertIn("codex=<model>", err)
+        self.assertFalse(self.workflow().exists())
+        self.assertEqual(([], None, None), (self.set, self.recorded().get("ci"), self.recorded().get("ci_agents")),
+                         "no secret is set and nothing is recorded")
 
     def test_without_a_terminal_or_a_flag_init_adds_no_ci_review(self) -> None:
         code, _, err = self.init()
@@ -133,27 +147,30 @@ class InitCiReviewTests(RepositoryTestCase):
 
 class WorkflowTests(unittest.TestCase):
     def test_a_workflow_init_wrote_reads_as_unedited_with_any_agents_and_ref(self) -> None:
-        for ref, agents in (("v0", ("claude",)), ("main", ("claude", "codex")), ("abc123", ("codex",))):
+        for ref, agents in (("v0", {"claude": ""}), ("main", {"claude": "", "codex": "gpt-5.5"}),
+                            ("abc123", {"codex": "gpt-5.5"})):
             with self.subTest(ref=ref, agents=agents):
                 text = ci.workflow_text(ref, agents)
                 self.assertTrue(ci.unedited(text))
                 self.assertFalse(ci.unedited(text.replace("cancel-in-progress: true", "cancel-in-progress: false")))
-        self.assertFalse(ci.unedited(ci.body("v0", ("claude",))), "a file with no digest line is a hand-written one")
+        self.assertFalse(ci.unedited(ci.body("v0", {"claude": ""})), "a file with no digest line is a hand-written one")
 
     def test_the_workflow_passes_both_credentials_of_each_agent(self) -> None:
         # The action reads the one that is set, so the workflow need not know which kind the repository chose.
-        text = ci.workflow_text("v0", ("claude", "codex"))
+        text = ci.workflow_text("v0", {"claude": "", "codex": "gpt-5.5"})
         for agent, names in ci.CREDENTIALS.items():
             for name in names.values():
                 with self.subTest(agent=agent, name=name):
                     self.assertIn(f"          {name}: ${{{{ secrets.{name} }}}}\n", text)
-        self.assertIn("agent: [claude, codex]", text)
         self.assertIn("uses: ninjudd/projector/actions/review@v0\n", text)
 
-    def test_parse_agents_refuses_what_is_not_an_agent(self) -> None:
-        self.assertEqual(("codex", "claude"), ci.parse_agents("codex, claude, codex"))
-        for text in ("", "claude,gemini", " , "):
-            with self.subTest(text=text), self.assertRaises(Exception):
+    def test_parse_agents_reads_what_format_agents_records_and_refuses_the_rest(self) -> None:
+        agents = ci.parse_agents("codex = gpt-5.5, claude, codex=other")
+        self.assertEqual({"codex": "gpt-5.5", "claude": ""}, agents, "the first entry for an agent wins")
+        self.assertEqual(agents, ci.parse_agents(ci.format_agents(agents)))
+        self.assertEqual({"claude": "claude-opus-5-5[1m]"}, ci.parse_agents("claude=claude-opus-5-5[1m]"))
+        for text in ("", "claude,gemini", " , ", "codex", "codex=", "codex=gpt 5", "codex='gpt'", "claude=[x]"):
+            with self.subTest(text=text), self.assertRaises(UsageError):
                 ci.parse_agents(text)
 
 
@@ -164,6 +181,25 @@ def step_script(name: str) -> str:
     start = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |") + 1
     end = next(i for i in range(start, len(lines)) if not lines[i].startswith("        ") and lines[i].strip())
     return "\n".join(line[8:] for line in lines[start:end]) + "\n"
+
+
+def review_jobs(workflow: str) -> list[dict[str, str]]:
+    """The inputs the review job of a workflow `ci.workflow_text` wrote gives the action, once for each entry of
+    its matrix's `include:` list, with each `${{ matrix.<key> }}` read from that entry, as GitHub reads it."""
+    lines = workflow.splitlines()
+    entries: list[dict[str, str]] = []
+    for line in lines[lines.index("        include:") + 1:]:
+        if line.startswith("          - "):
+            entries.append({})
+        elif not line.startswith("            "):
+            break
+        key, _, value = line.strip().removeprefix("- ").partition(": ")
+        entries[-1][key] = value
+    start = lines.index("        with:") + 1
+    given = dict(line.strip().partition(": ")[::2] for line in lines[start:lines.index("        env:", start)])
+    expression = re.compile(r"\$\{\{ matrix\.(\w+) \}\}")
+    return [{name: expression.sub(lambda found: entry.get(found.group(1), ""), value)
+             for name, value in given.items()} for entry in entries]
 
 
 @unittest.skipIf(shutil.which("bash") is None, "the action's steps run in bash")
@@ -184,6 +220,24 @@ class ActionTests(unittest.TestCase):
         self.assertIn("delete the secret", self.check("claude", CLAUDE_CODE_OAUTH_TOKEN="s",
                                                       ANTHROPIC_API_KEY="k").stdout)
         self.assertEqual(0, self.check("command").returncode, "a command the repository names brings its own")
+
+    def test_every_job_the_generated_workflow_runs_reaches_the_review_with_a_model(self) -> None:
+        # The workflow's matrix and `with:` are one side of the seam, and the action's review step the other.
+        jobs = review_jobs(ci.workflow_text("v0", ci.parse_agents("claude, codex=gpt-5.5")))
+        stub = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (stub / "project").write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$STUB/args"\n')
+        (stub / "project").chmod(0o755)
+        ran = {}
+        for inputs in jobs:
+            environment = {"PATH": f"{stub}{os.pathsep}{os.environ['PATH']}", "STUB": str(stub), "PR": "7",
+                           "AGENT": inputs["agent"], "MODEL": inputs.get("model", ""), "EFFORT": "high",
+                           "MODE": "auto", "REREVIEW": "false", "TIMEOUT": "45", "PROJECTOR_ROOT": str(stub)}
+            result = subprocess.run(["bash", "-eo", "pipefail", "-c", step_script("Review the pull request")],
+                                    env=environment, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            args = (stub / "args").read_text().splitlines()
+            ran[inputs["agent"]] = args[args.index("--model") + 1]
+        self.assertEqual({"claude": "claude-opus-5-5", "codex": "gpt-5.5"}, ran)
 
     def test_only_the_review_step_hands_its_summary_off(self) -> None:
         # The summary job's publish must push; a handoff there would publish nothing.

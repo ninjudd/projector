@@ -396,7 +396,8 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
       matrix:
-        agent: [claude]
+        include:
+          - agent: claude
     concurrency:
       group: projector-review-${{ github.event.pull_request.number || inputs.pr }}-${{ matrix.agent }}
       cancel-in-progress: true
@@ -406,6 +407,7 @@ jobs:
       - uses: ninjudd/projector/actions/review@v0
         with:
           agent: ${{ matrix.agent }}
+          model: ${{ matrix.model }}
           pr: ${{ github.event.pull_request.number || inputs.pr }}
           rereview: ${{ inputs.rereview || false }}
         env:
@@ -484,7 +486,7 @@ never adds a workflow by surprise. Once `review.ci` is `true`, every later
 | Flag | Default | Effect |
 | --- | --- | --- |
 | `--ci-review`, `--no-ci-review` | The recorded `review.ci`, then the prompt | Set CI review up, or record that the repository has none |
-| `--ci-agents <list>` | The recorded `review.ci_agents`, then `claude` | The agents in the workflow's matrix, such as `claude,codex` |
+| `--ci-agents <list>` | The recorded `review.ci_agents`, then `claude` | The agents in the workflow's matrix, each as `agent=<model>` to name its model, such as `claude,codex=<model>`. `codex` needs a model. |
 | `--ci-credential <kind>` | `subscription` for `claude`, `api-key` for `codex` | Which secret `init` asks for, as the credentials table in § 2.4 lists them |
 | `--ci-app <slug>` | None | Post as this GitHub App. `init` reads the app's ID with `gh api apps/<slug>`, which needs no credential. |
 | `--action-ref <ref>` | `v0` | The existing flag, which now sets the ref of the review action too |
@@ -918,3 +920,10 @@ These tests fail before the change, and each catches the bug it names:
   context repositories in the later pull request § 6 step 4 names.
 - **A runner fact to check:** that `actions/download-artifact` succeeds when
   no artifact matches its pattern, as in a repository that hosts no site.
+- **Setup names each agent's model.** `--ci-agents` and `review.ci_agents`
+  take `agent=<model>` entries, and the workflow's matrix lists each agent
+  with its model, which the job passes as the action's `model` input. The
+  action has a default model only for `claude`, so `init` refuses `codex`
+  without one rather than write a job that stops before every review.
+  Projector names no default Codex model, because a model ID it chose would
+  go stale as models change, and a wrong one fails every run.

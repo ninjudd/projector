@@ -38,8 +38,10 @@ jobs:
       pages: read
     strategy:
       fail-fast: false
+      # An agent with no model runs the action's default for it.
       matrix:
-        agent: [@AGENTS@]
+        include:
+@MATRIX@
     concurrency:
       group: projector-review-${{ github.event.pull_request.number || inputs.pr }}-${{ matrix.agent }}
       cancel-in-progress: true
@@ -49,6 +51,7 @@ jobs:
       - uses: ninjudd/projector/actions/review@@REF@
         with:
           agent: ${{ matrix.agent }}
+          model: ${{ matrix.model }}
           pr: ${{ github.event.pull_request.number || inputs.pr }}
           rereview: ${{ inputs.rereview || false }}
         env:

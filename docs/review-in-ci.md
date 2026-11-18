@@ -25,15 +25,20 @@ project: the claude review needs CLAUDE_CODE_OAUTH_TOKEN: run `claude setup-toke
 `init` does four things:
 
 1. **Writes the workflow**, `.github/workflows/projector-review.yml`, with
-   one review job for each agent. Pass `--ci-agents claude,codex` to have
-   two models review each pull request. A later `init`, such as the one you
-   run after an upgrade, replaces the workflow while nobody has edited it,
-   and keeps an edited one. `project review ci-workflow` prints the
-   workflow `init` would write, so you can compare it with yours.
+   one review job for each agent. Pass `--ci-agents claude,codex=<model>` to
+   have two models review each pull request. An entry `agent=<model>` names
+   the model that agent runs. `codex` needs one, because the action has no
+   default model for it, so `init` refuses `codex` alone rather than write a
+   job that would stop before every review. `claude` runs `claude-opus-5-5`
+   unless you name another. A later `init`, such as the one you run after an
+   upgrade, replaces the workflow while nobody has edited it, and keeps an
+   edited one. `project review ci-workflow` prints the workflow `init` would
+   write, so you can compare it with yours.
 2. **Records the settings** in the committed `.projector.toml`:
-   `review.ci`, `review.ci_agents`, and `github-actions[bot]` in
-   `review.reviewers`. That last setting lets your own sessions, the panel,
-   and the site count the bot's verdicts on a public repository.
+   `review.ci`, `review.ci_agents` with each agent's model, and
+   `github-actions[bot]` in `review.reviewers`. That last setting lets your
+   own sessions, the panel, and the site count the bot's verdicts on a
+   public repository.
 3. **Sets the credential secret** for each agent that has none. `gh`
    prompts for the value without showing it, so the value never passes
    through Projector or a command line. Without a terminal, `init` prints
@@ -131,6 +136,7 @@ a step of the gate needs a tool a hosted runner lacks, give the action a
       - uses: ninjudd/projector/actions/review@v0
         with:
           agent: ${{ matrix.agent }}
+          model: ${{ matrix.model }}
           pr: ${{ github.event.pull_request.number || inputs.pr }}
           config: |
             [override.50.review]
@@ -147,7 +153,7 @@ replaces.
 | `step` | `review` | `review` runs the agent. `summary` publishes the run's summaries and runs no agent. |
 | `pr` | The event's pull request | The pull request to review |
 | `agent` | `claude` | `claude`, `codex`, or `command`, which runs the command `review.runner` names |
-| `model` | `claude-opus-5-5` for `claude` | The model the agent runs and the review records. `codex` and `command` need one. |
+| `model` | `claude-opus-5-5` for `claude` | The model the agent runs and the review records. `codex` and `command` need one. The workflow `init` writes passes the model `review.ci_agents` names for the job's agent. |
 | `effort` | `high` | The agent's reasoning effort |
 | `permission-mode` | `auto` | `auto`, or `allowlist`, which refuses whatever no rule allows |
 | `rereview` | `false` | Review a head this model already reviewed |

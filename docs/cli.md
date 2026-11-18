@@ -608,8 +608,10 @@ a recorded answer, `init` asks nothing and changes nothing. A yes writes
 `.github/workflows/projector-review.yml`, records `review.ci` and
 `review.ci_agents`, adds `github-actions[bot]` to `review.reviewers`, and has
 `gh` prompt for each agent's missing credential secret. `--ci-agents` picks
-the agents, `claude` by default, and `--ci-credential` picks the kind of
-secret `init` asks for. Once `review.ci` is `true`, every later `init`
+the agents, `claude` by default, each as `agent=<model>` to name the model it
+runs, such as `claude,codex=<model>`. `codex` needs a model, so `init`
+refuses it without one. `--ci-credential` picks the kind of secret `init`
+asks for. Once `review.ci` is `true`, every later `init`
 refreshes the workflow, replacing one nobody edited and keeping an edited
 one. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
 setup, the credentials, and what each job does.
@@ -1062,7 +1064,7 @@ reads, which are these:
 | `review.reviewers` | string | none | `project review status`, `suggestions`, `setup`, and `publish`, and the watch daemon from the configuration of a checkout a live session works in, as the logins whose Projector verdicts count beside the reviewer's and those of the repository's owner, members, and collaborators, separated by commas, as `github-actions[bot]`. On a public repository a review from any other account does not count, so name an account here, such as the one a CI review posts as, only when you trust every review it posts |
 | `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
 | `review.ci` | boolean | none | `init`, as your answer to whether the repository's pull requests get a review in GitHub Actions: none asks at a terminal, `true` refreshes the workflow, and `false` asks no more; `init` writes it when you answer, as [Review pull requests in GitHub Actions](#review-pull-requests-in-github-actions) describes |
-| `review.ci_agents` | string | `claude` | `init` and `project review ci-workflow`, as the agents the CI review workflow runs, separated by commas, from `claude` and `codex` |
+| `review.ci_agents` | string | `claude` | `init` and `project review ci-workflow`, as the agents the CI review workflow runs, separated by commas, from `claude` and `codex`, each as `agent=<model>` to name the model its job runs, which `codex` needs, such as `claude, codex=<model>` |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
 | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |

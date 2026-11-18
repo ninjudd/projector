@@ -3026,7 +3026,7 @@ class UpgradeTests(unittest.TestCase):
             "clean-workflow": mock.patch.object(review, "clean_workflow_text",
                                                 return_value=review.clean_workflow_text() + "# x\n"),
             "permission-rules": mock.patch.object(permissions, "ASK", (*permissions.ASK, "Bash(project x *)")),
-            "ci-review-workflow": mock.patch.object(cli.ci, "body", return_value=cli.ci.body("v0", ("claude",)) + "# x\n"),
+            "ci-review-workflow": mock.patch.object(cli.ci, "body", return_value=cli.ci.body("v0", {"claude": ""}) + "# x\n"),
         }
         self.assertEqual(set(edits), set(before))
         for name, edit in edits.items():

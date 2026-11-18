@@ -237,7 +237,7 @@ def init_digests() -> dict[str, dict[str, str]]:
         "instructions": ("the Projector section in AGENTS.md and CLAUDE.md", instructions.render("docs/projects", ios=True)),
         "site-workflow": (f"the site workflow, {WORKFLOW_PATH}", summary.workflow_text("v0")),
         "clean-workflow": (f"the clean label workflow, {review.CLEAN_WORKFLOW_PATH}", review.clean_workflow_text()),
-        "ci-review-workflow": (f"the CI review workflow, {ci.WORKFLOW_PATH}", ci.workflow_text("v0", ("claude",))),
+        "ci-review-workflow": (f"the CI review workflow, {ci.WORKFLOW_PATH}", ci.workflow_text("v0", {"claude": ""})),
         "permission-rules": (
             "the permission rules in your Claude Code settings and Codex rules",
             json.dumps([permissions.ALLOW, permissions.ASK, permissions.SUPERSEDED, permissions.RETIRED_ASK,
@@ -618,7 +618,8 @@ def parser() -> argparse.ArgumentParser:
         help="record that this repository's pull requests get no review in GitHub Actions, so init stops asking",
     )
     init.add_argument("--ci-agents", help="the agents that review in GitHub Actions, separated by commas, from "
-                                          f"{', '.join(ci.AGENTS)} (default: review.ci_agents, then claude)")
+                                          f"{', '.join(ci.AGENTS)}, each as agent=model to name its model, which "
+                                          "codex needs (default: review.ci_agents, then claude)")
     init.add_argument("--ci-credential", choices=ci.KINDS,
                       help="the credential secret init asks for when an agent has none (default: subscription for "
                            "claude, api-key for codex)")
@@ -841,8 +842,8 @@ def parser() -> argparse.ArgumentParser:
     review_ci_workflow = review_commands.add_parser(
         "ci-workflow", help=f"print the {ci.WORKFLOW_PATH} that project init --ci-review writes, to compare with yours"
     )
-    review_ci_workflow.add_argument("--agents", help="the agents, separated by commas (default: review.ci_agents, "
-                                                     "then claude)")
+    review_ci_workflow.add_argument("--agents", help="the agents, separated by commas, each as agent=model to "
+                                                     "name its model (default: review.ci_agents, then claude)")
     review_ci_workflow.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow "
                                                                        "runs (default: v0)")
     review_status = review_commands.add_parser(
@@ -3632,8 +3633,8 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
     files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents)))
     if recorded is not True:
         record_setting(root, "review.ci", True)
-    if config.get("review.ci_agents") != ", ".join(agents):
-        record_setting(root, "review.ci_agents", ", ".join(agents))
+    if config.get("review.ci_agents") != ci.format_agents(agents):
+        record_setting(root, "review.ci_agents", ci.format_agents(agents))
     reviewers = review.extra_reviewers(config.get("review.reviewers"))
     if CI_REVIEWER not in {login.lower() for login in reviewers}:
         record_setting(root, "review.reviewers", ", ".join((*reviewers, CI_REVIEWER)))
@@ -3678,7 +3679,7 @@ def run_interactive(argv: list[str], source: Optional[Path] = None) -> int:
         return subprocess.call(argv, stdin=handle)
 
 
-def set_ci_secrets(repo: str, agents: tuple[str, ...], kind: Optional[str]) -> None:
+def set_ci_secrets(repo: str, agents: dict[str, str], kind: Optional[str]) -> None:
     """Report each agent's credential secret, and at a terminal have `gh` set a missing one, so the workflow can
     start the agent."""
     wanted = {agent: ci.CREDENTIALS[agent][kind or ci.DEFAULT_KIND[agent]] for agent in agents}
