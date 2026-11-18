@@ -115,7 +115,8 @@ what it did to each:
     "Bash(project inbox discuss *)",
     "Bash(project console)",
     "Bash(project console *)",
-    "Bash(project ios *allow-untrusted*)"
+    "Bash(project ios *allow-untrusted*)",
+    "Bash(project review run *)"
   ]
   ```
 
@@ -134,6 +135,9 @@ what it did to each:
   is not trusted, which runs that head's build scripts as you, so
   `Bash(project ios *allow-untrusted*)` asks before it, and every
   `project ios` command refuses an abbreviated option.
+  `project review run` starts another agent with its own credentials, or the
+  command `review.runner` names, so `Bash(project review run *)` asks before
+  it.
   `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`,
   `start`, and `unclear` record your answer to an item an agent posted, your
   outcome for a request, your consent to a request's start action, your word
@@ -1035,6 +1039,7 @@ reads, which are these:
 | `review.labels` | boolean | `true` | `project review setup`, `publish`, and `finish`, to add and remove the `reviewing` label, which shows a review in progress, and the `clean` label, which shows a signed-off head; `false` leaves both labels alone, as a repository whose own `clean` or `reviewing` label means something else needs |
 | `review.require_check` | boolean | none | `init`, as your answer to whether the repository relies on Projector alone to sign off pull requests: none asks at a terminal, `true` keeps the ruleset and the label workflow in place, and `false` asks no more; `init` writes it when you answer, as [Require a clean review before merge](#require-a-clean-review-before-merge) describes |
 | `review.reviewers` | string | none | `project review status`, `suggestions`, `setup`, and `publish`, and the watch daemon from the configuration of a checkout a live session works in, as the logins whose Projector verdicts count beside the reviewer's and those of the repository's owner, members, and collaborators, separated by commas, as `github-actions[bot]`. On a public repository a review from any other account does not count, so name an account here, such as the one a CI review posts as, only when you trust every review it posts |
+| `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
 | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
@@ -1955,6 +1960,7 @@ project review hold 66
 project review ready 66
 project review rules
 project review workflow
+project review run 66 --model claude-opus-5-5
 ```
 
 `setup` checks that pull request 66 is open, fetches its head into the
@@ -2696,6 +2702,59 @@ jobs:
     steps:
       - run: make integration
 ```
+
+### Review a head with no session
+
+`project review run` reviews one pull request's head with an agent and no
+session behind it, as a GitHub Actions job does. It starts the agent with
+the `review-pr` skill, waits for it, and checks that a verdict on the head
+was published:
+
+```console
+$ project review run 66 --model claude-opus-5-5
+reviewing owner/example#66 at 3f2a91c as github-actions[bot] with claude-opus-5-5 through claude
+published https://github.com/owner/example/pull/66#pullrequestreview-2211
+```
+
+Before it starts anything, the command reads the pull request. It refuses
+a pull request whose head is in a fork, and a draft, however the run was
+started. When the reviewer already has a verdict by this model on the head,
+it prints that review's address and exits 0, so a rerun of a finished job
+posts nothing. Pass `--rereview` to review the head again. A live start
+comment by this reviewer and model on the head can only be a cancelled
+run's, so the agent's `setup` replaces it.
+
+`--agent` picks how the agent starts, and `review.runner` sets the default:
+
+| Agent | Command |
+| --- | --- |
+| `claude` | `claude -p` with `/projector:review-pr`, `--permission-mode auto` and `--permission-prompts none`, so a classifier decides each action no rule covers and anything that would still prompt is refused. `--plugin-dir` loads Projector's plugin from a checkout. |
+| `codex` | `codex exec` in its `workspace-write` sandbox with network on, so `gh` reaches GitHub, and `--approve-for-me`, which sends approvals to Codex's automatic review. The review state and a scratch folder are writable beside the checkout. |
+| `command` | The command `review.runner` names, which reads the prompt on standard input. Name any other runner here, such as one with MCP servers. |
+
+`--permission-mode allowlist` refuses whatever no rule allows, in place of
+the automatic decision: Claude Code's `dontAsk`, and Codex with
+`approval_policy = "never"`. Both presets allow the commands the skill
+runs: `project`, `gh pr view`, `gh pr diff`, `gh api`, `gh repo view`,
+`gh auth status`, and the `git` commands that only read. Both refuse
+`git push`, `git commit`, `gh pr merge`, `gh pr ready`, `gh pr close`, every
+`gh repo` command that changes a repository, `gh secret`, `curl`, and
+`wget`, whatever the mode decides. No preset passes a flag that skips the
+permission checks or the sandbox.
+
+The agent sees these variables, which the skill's "Review without a
+session" section reads: `PROJECTOR_HEADLESS`, `PROJECTOR_LOOP` from
+`--loop`, `run` by default, `PROJECTOR_MODEL`, `PROJECTOR_REPLACE` for a
+cancelled run's start comment, `PROJECTOR_REREVIEW`, `PROJECTOR_SCRATCH`, a
+folder for the files it writes, and `PROJECTOR_RUN_REPORT`, a file for the
+question it would have asked.
+
+When the agent exits with no new verdict on the head, or runs out of its
+`--timeout` minutes, 45 by default, the command runs
+`project review finish --force`, which deletes the start comment and takes
+`reviewing` off. It then posts one comment on the pull request that names
+the head, the report file's text or why there is none, and the Actions run
+when there is one, and exits 1.
 
 ## Use the inbox
 

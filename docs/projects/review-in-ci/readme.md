@@ -137,7 +137,8 @@ to review pull request <number>". It also sets these environment variables:
 | `PROJECTOR_REPLACE` | The start comment from step 6.2, when there is one |
 | `PROJECTOR_RUN_REPORT` | A file in the run's scratch folder |
 | `PROJECTOR_SUMMARY_HANDOFF` | A folder in the run's scratch space, where `project summary publish` leaves the summary for the summary job (§ 2.6) |
-| `CLAUDE_EFFORT` | The effort the preset runs at, so the verdict marker records it, as `live_effort` reads it |
+| `PROJECTOR_REREVIEW` | `1` with `--rereview`, so `setup` reviews a head this model already reviewed |
+| `PROJECTOR_SCRATCH` | The run's scratch folder, the only place the agent writes files of its own |
 
 A new section of `skills/review-pr/SKILL.md`, "Review without a session",
 says what changes when `PROJECTOR_HEADLESS` is set:
@@ -292,7 +293,7 @@ not have. So in CI the publish happens in two halves:
 2. **The summary job publishes it.** The job checks the repository out,
    downloads the run's summary artifacts, and runs
    `project summary publish --summary <folder>/summary.json --diff
-   <folder>/diff --pr <number>` for each, in the matrix's order. The new
+   <folder>/diff.patch --pr <number>` for each, in the matrix's order. The new
    `--pr` flag refuses a summary of any other pull request, because an
    agent that read untrusted text wrote the artifact. The publish then
    pushes the ref, sends the dispatch, and links the summary.
@@ -847,3 +848,30 @@ These tests fail before the change, and each catches the bug it names:
   0.169.0's `codex exec` takes `--sandbox`, `--approve-for-me`, which sends
   approvals to automatic review inside the `workspace-write` sandbox, and
   `--json` and `-o`. It has no flag that loads a plugin.
+
+## 9. What implementation settled
+
+- **The loop.** `project review run --loop` defaults to `run`, and the
+  action passes `actions`, so a laptop's run and a CI run keep separate
+  records of the reviews they published.
+- **The effort marker.** The run sets no `CLAUDE_EFFORT`. Claude Code sets
+  it for its own Bash tool, and Codex reports no effort, so a value the run
+  set could only disagree with the host.
+- **A run's own verdict.** The run notes the reviewer's verdicts by the
+  model on the head before the agent starts, and counts only a verdict with
+  a new review id afterwards. A time comparison would depend on the
+  runner's clock agreeing with GitHub's, and a re-review of the same head
+  makes an earlier verdict look like this run's.
+- **Asking before a run.** `project review run` starts another agent with
+  its own credential, or the command `review.runner` names. Claude Code
+  asks before it through `Bash(project review run *)`, and Codex's rules
+  leave it to Codex's usual approval.
+- **`gh auth status` is allowed.** The skill runs it, so allowlist mode
+  would otherwise refuse a step the skill names.
+- **The site counts `review.reviewers` too.** The site build reads the
+  setting from the checkout it builds from, and the status query returns
+  each review's author, so a CI review's verdict sets a page's status on a
+  public repository.
+- **The handoff runs only where the site is hosted.** Elsewhere
+  `project summary publish` keeps the summary in the checkout, as it does
+  in a session, and the action uploads nothing.

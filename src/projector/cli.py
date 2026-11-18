@@ -27,6 +27,7 @@ from urllib.request import Request, url2pathname, urlopen
 
 from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
                summary, watch)
+from . import run as headless
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
@@ -831,6 +832,27 @@ def parser() -> argparse.ArgumentParser:
     review_ready = review_commands.add_parser(
         "ready", help="mark your pull request ready for review once your work on it is done"
     )
+    review_run = review_commands.add_parser(
+        "run", help="review a pull request's head with an agent and no session, as a CI job does"
+    )
+    review_run.add_argument("pr", type=int, help="the pull request number")
+    review_run.add_argument("--model", required=True, help="the model the agent runs, which names its review")
+    review_run.add_argument("--agent", help="claude, codex, or command, which runs the command review.runner names "
+                                            "(default: review.runner, then claude)")
+    review_run.add_argument("--effort", default=headless.DEFAULT_EFFORT,
+                            help=f"the reasoning effort the agent runs at (default: {headless.DEFAULT_EFFORT})")
+    review_run.add_argument("--permission-mode", choices=headless.MODES, default="auto",
+                            help="auto lets the agent's own judgment decide what no rule covers; allowlist refuses it "
+                                 "(default: auto)")
+    review_run.add_argument("--timeout", type=float, default=headless.DEFAULT_TIMEOUT_MINUTES, metavar="MINUTES",
+                            help=f"the agent's time limit (default: {headless.DEFAULT_TIMEOUT_MINUTES})")
+    review_run.add_argument("--rereview", action="store_true",
+                            help="review a head this reviewer and model already reviewed")
+    review_run.add_argument("--loop", default=headless.DEFAULT_LOOP,
+                            help=f"the id that keys the record of published reviews (default: {headless.DEFAULT_LOOP})")
+    review_run.add_argument("--plugin-dir", type=Path, help="load Projector's Claude Code plugin from this checkout")
+    review_run.add_argument("--checkout", type=Path,
+                            help="the checkout of the repository (default: the repository containing this directory)")
     for command in (review_status, review_suggestions):
         command.add_argument("pr", type=int, help="the pull request number")
         command.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
@@ -2445,6 +2467,19 @@ def label_lines(labeled: Optional[dict]) -> list[str]:
     return lines + ([f"warning: {labeled['warning']}"] if labeled["warning"] else [])
 
 
+def review_run(arguments: argparse.Namespace) -> int:
+    """`review run`: one head's review by an agent, in the state the agent's own review commands use."""
+    checkout = review.checkout_root(arguments.checkout or Path.cwd())
+    config = load_config(checkout)
+    username = config.get("review.username")
+    return headless.run(review.state_dir(None), arguments.pr, checkout, model=arguments.model, agent=arguments.agent,
+                        configured_runner=config.get("review.runner"),
+                        configured_reviewer=username if isinstance(username, str) and username else None,
+                        effort=arguments.effort, mode=arguments.permission_mode, timeout_minutes=arguments.timeout,
+                        rereview=arguments.rereview, loop=arguments.loop, plugin_dir=arguments.plugin_dir,
+                        labels=labels_enabled(checkout))
+
+
 def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "rules":
         return review_rules(arguments.json_output)
@@ -2453,6 +2488,8 @@ def run_review(arguments: argparse.Namespace) -> int:
         return 0
     if arguments.review_command in ("hold", "ready"):
         return review_draft(arguments)
+    if arguments.review_command == "run":
+        return review_run(arguments)
     root = review.state_dir(arguments.state_dir)
     if arguments.review_command == "status":
         return review_status(root, arguments)
