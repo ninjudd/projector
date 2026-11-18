@@ -1,0 +1,106 @@
+{
+ "version": 1,
+ "name": "Trusted configuration layers",
+ "project": "config-trust",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 546,
+  "title": "Let an outer .projector.toml overrule a nearer one with [override.<priority>]",
+  "head": "1845e5af23d8f11b1b2f6ee8760ce947a33cefe8",
+  "headRef": "config-trust/override",
+  "base": "8b17a251beb29a545ea4283276b5d47de05fdc88",
+  "baseRef": "config-trust/default-branch",
+  "basePr": 545
+ },
+ "overview": {
+  "summary": [
+   "Projector merges configuration from your personal file and the files above a checkout. Ordinary values favor the nearest file, which prevents a team or personal policy from changing a value the repository already commits. This layer adds explicit priority overrides without changing ordinary precedence.",
+   "An <code>[override.1]</code> table contains settings under their normal dotted names. Every override wins over an ordinary value; higher numbers win among overrides, and farther files break equal-priority ties. The personal file counts as farthest. Commands can edit these tables and report which priority supplied a value.",
+   "The configured gate and exact-head CI passed, together with 140 focused configuration and relay tests. The earlier key-lifecycle finding is fixed: user-only keys are ignored in every override table, including the personal file, so key removal and replacement operate on the sole effective setting."
+  ],
+  "cards": [
+   {
+    "id": "precedence",
+    "title": "How a value wins",
+    "html": "<ol><li>Merge ordinary settings from farthest to nearest.</li><li>Apply overrides from lower to higher priority.</li><li>At the same priority, apply nearer files before farther files.</li></ol>"
+   },
+   {
+    "id": "scope",
+    "title": "This stack layer",
+    "html": "<p>The preceding layer supplies default-branch configuration reads. This layer adds overrides and their command-line editing. Destination approvals and background fetching belong to later layers.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "merge",
+   "title": "Apply explicit priorities after ordinary settings",
+   "kicker": "A shared merger decides values and their provenance",
+   "intro": [
+    "An override is a setting intentionally placed above ordinary configuration. The merger first preserves the existing nearest-file rule, then sorts override tables by priority and distance. Each winning leaf records both its source file or default-branch blob and its override priority.",
+    "Only the ordinary personal file may supply <code>agent.key</code>, the relay private key. Overrides ignore this user-only setting, including in the personal file, so an extra copy cannot survive a key removal or outrank a replacement. Configuration commands warn about the ignored entry and can remove it explicitly."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The configured gate, exact-head CI, and all 140 focused configuration/relay tests passed."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds priority parsing, override merging, user-only filtering, priority provenance, and override-aware file edits.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The precedence tests cover higher-priority wins, farther-file ties, ordinary nearest-file behavior, invalid priorities, and ignored private keys in walked files and personal overrides."
+      },
+      {
+       "kind": "verify",
+       "text": "Synthetic inline-key checks confirm removal leaves no effective key and replacement activates the new key when an ignored override copy exists."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_config.py",
+     "note": "Checks override precedence, invalid priorities, private-key isolation, edits, and priority output.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All 140 configuration and relay tests passed. The new personal-override regression fails when user-only filtering is removed from that layer, demonstrating that it catches the earlier defect."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "commands",
+   "title": "Edit overrides and explain the winning source",
+   "kicker": "The CLI exposes priority selection and source metadata",
+   "intro": [
+    "Use <code>config set</code> or <code>config unset</code> with <code>--override</code> to change a setting inside one priority table. The existing file-scope options still select the personal, repository, or explicit file. JSON keeps the source location separate from its priority so callers do not have to parse a decorated path.",
+    "The reference documents the precedence rule and command output. The active project plan records the editor and source-format decisions settled while implementing this layer."
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Parses override priorities for writes and prints priority metadata in human and JSON output.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Traced the set/unset parsers, raw-value redaction, effective-source reports, user-only warnings, and unchanged default callers through their configuration readers."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents override tables, tie-breaking, edits, source/priority output, and why user-only keys cannot be overridden."
+    },
+    {
+     "path": "docs/projects/config-trust/readme.md",
+     "note": "Records implementation decisions for dotted-key writes, override provenance, and user-only key handling in the in-progress project."
+    }
+   ]
+  }
+ ]
+}
