@@ -98,6 +98,8 @@ SETTINGS: dict[str, type] = {
     "review.summarize": bool,
     "review.labels": bool,
     "review.require_check": bool,
+    "review.reviewers": str,
+    "review.runner": str,
     "fix.resolve_human_threads": bool,
     "watch.auto_start": bool,
     "watch.interval": int,

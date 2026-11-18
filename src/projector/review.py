@@ -148,8 +148,25 @@ def model_key(model: str) -> str:
     return key
 
 
+# What GitHub answers `gh api user` with for a token that belongs to no user, such as a workflow's GITHUB_TOKEN
+# or a GitHub App's installation token.
+INTEGRATION_REFUSAL = "Resource not accessible by integration"
+# The login the review action names for its token, since GitHub tells a token that belongs to no user nothing
+# about whom it acts as. It is read only after that refusal, so it can never rename a person's token.
+TOKEN_LOGIN = "PROJECTOR_TOKEN_LOGIN"
+
+
 def authenticated_login() -> str:
-    login = run_gh(["api", "user", "--jq", ".login"]).strip()
+    try:
+        login = run_gh(["api", "user", "--jq", ".login"]).strip()
+    except ReviewError as error:
+        if INTEGRATION_REFUSAL not in str(error):
+            raise
+        named = os.environ.get(TOKEN_LOGIN, "").strip()
+        if not named:
+            raise ReviewError(f"this token belongs to no GitHub user, so GitHub does not say whom it acts as; set "
+                              f"{TOKEN_LOGIN} to the login it posts as, such as github-actions[bot]") from error
+        return named
     if not login:
         raise ReviewError("could not read the authenticated GitHub user; run `gh auth status`")
     return login
@@ -164,11 +181,15 @@ def reviewer_login(explicit: Optional[str], configured: Optional[str], operator:
 
 
 def reviewer_token(login: str) -> str:
-    """A token for the reviewer, for one call; the session's active account is left alone."""
+    """A token for the reviewer, for one call; the session's active account is left alone. Where `gh` stores no
+    login for the reviewer, as on a CI runner whose token comes from GH_TOKEN, the reviewer can still be the
+    account the active token acts as, and then that token is the one to use."""
     try:
         token = run_gh(["auth", "token", "--user", login]).strip()
     except ReviewError as exc:
-        raise ReviewError(f"no gh login for the reviewer {login}; run `gh auth login` for that account") from exc
+        if authenticated_login().lower() != login.lower():
+            raise ReviewError(f"no gh login for the reviewer {login}; run `gh auth login` for that account") from exc
+        token = run_gh(["auth", "token"]).strip()
     if not token:
         raise ReviewError(f"no gh login for the reviewer {login}; run `gh auth login` for that account")
     return token
@@ -1095,15 +1116,16 @@ def is_earlier_clean_workflow(text: str) -> bool:
     return hashlib.sha256(text.encode("utf-8")).hexdigest() in EARLIER_CLEAN_WORKFLOWS
 
 
-def backfill_statuses(repo: str, reviewer: str) -> list[dict]:
+def backfill_statuses(repo: str, reviewer: str, also: tuple[str, ...] = ()) -> list[dict]:
     """Post the `success` status on the current head of each open pull request whose head is signed off, so a
     ruleset that starts requiring the check holds back none that a review has already signed off. Counts the
-    verdicts as `status` does for `reviewer`. Gives each pull request's `number` and the `sha` it posted on."""
+    verdicts as `status` does for `reviewer` and `also`. Gives each pull request's `number` and the `sha` it posted
+    on."""
     rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls?state=open&per_page=100",
                    "--jq", ".[] | {number, sha: .head.sha, visibility: .base.repo.visibility} | @json"]).splitlines()
     posted = []
     for pr in map(json.loads, filter(str.strip, rows)):
-        verdict = sign_off(pr["sha"], verdicts(repo, pr["number"], reviewer, pr.get("visibility")),
+        verdict = sign_off(pr["sha"], verdicts(repo, pr["number"], reviewer, pr.get("visibility"), also),
                            census(repo, pr["number"])["open"])
         if verdict["signed_off"]:
             post_status(repo, pr["sha"], verdict, None)
@@ -1185,10 +1207,12 @@ def review_paths(root: Path, repo: str, number: int, model: Optional[str]) -> Pa
 
 def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer: Optional[str],
           configured_reviewer: Optional[str], model: str, loop: Optional[str],
-          rereview: bool, replace: Optional[int] = None, labels: bool = True) -> dict:
+          rereview: bool, replace: Optional[int] = None, labels: bool = True,
+          also: tuple[str, ...] = ()) -> dict:
     """`review setup`: lock the pull request's head for the model, check it out in a scratch worktree, post
     the start comment, and record the review. With `labels`, mark the pull request `reviewing`, and take off
-    a `clean` that no clean verdict on this head supports, as a push leaves where no workflow removes it."""
+    a `clean` that no clean verdict on this head supports, as a push leaves where no workflow removes it. A
+    verdict by a login in `also`, which `review.reviewers` names, supports it as the reviewer's own does."""
     checkout = checkout_root(checkout)
     origin = origin_repo(checkout)
     if repo and repo.lower() != origin.lower():
@@ -1230,7 +1254,7 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         if CLEAN_LABEL in present:
             # The start comment is posted and the lock held, so a failed read only keeps the label as it is.
             try:
-                newest = newest_verdicts(sha, verdicts(repo, number, reviewer, repo_visibility(pr)))
+                newest = newest_verdicts(sha, verdicts(repo, number, reviewer, repo_visibility(pr), also))
             except ReviewError as exc:
                 unread = f"kept the clean label on {repo}#{number}, because its verdicts could not be read: {exc}"
             else:
@@ -1391,13 +1415,19 @@ def remove_worktree(checkout: Optional[str], path: Path, folder: Path) -> None:
 
 
 def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], force: bool, cwd: Path,
-           labels: bool = True) -> dict:
+           labels: bool = True, holder: Optional[str] = None) -> dict:
     """`review finish`: end one model's review of the pull request on this machine. As the reviewer, delete
     the review's start comment and every other start comment of the model's that `is_live` no longer
     counts; with `labels`, remove `reviewing` once no start comment means a review in progress; remove every
     scratch worktree the state lists; clear the locks; and delete the state, keeping the loop's record.
     Refuses while the review is unpublished unless `force`, and succeeds when there is nothing to clean, so
     a second run changes nothing.
+
+    With `holder`, finish ends the review only while the lock on its head names that loop. Under the
+    `review_mutex` the watch daemon clears a lock under, it checks the lock, removes the worktrees while the
+    lock still keeps every setup off the head, and only then takes that loop's locks and the state off disk,
+    all before it changes anything on GitHub. A worktree whose head another loop's lock holds stays. A review
+    handed over to another loop keeps its state, lock, worktrees, and start comment, and finish refuses.
 
     The repository is `repo`, else the origin of the checkout `cwd` is in, never one taken from review state,
     so a run in one repository cannot end another's review of a pull request with the same number. Every
@@ -1422,6 +1452,28 @@ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], f
         recorded = (state.get("start_comment") or {}).get("id")
         if recorded and not force:
             raise ReviewError(unfinished(state, recorded))
+        if holder is not None:
+            with review_mutex(paths.folder):
+                if stored_state(paths) != state:
+                    raise ReviewError(f"the review state of {repo}#{number} by model {model} changed while finish "
+                                      "read it, so finish leaves it to the review that wrote it")
+                check_lock(paths, state["sha"], holder)
+                # The worktrees go while the lock still holds the head, so no setup can take it and add a
+                # worktree at a path this removes. One whose head another loop's lock holds is that loop's.
+                held, others = [], set()
+                for lock in paths.locks():
+                    found = read_lock(lock)
+                    if found is not None and found.loop == holder:
+                        held.append(lock)
+                    else:
+                        others.add(lock.stem[:SHORT])
+                result["worktrees"] = remove_worktrees(paths, state, frozenset(others))
+                for lock in held:
+                    lock.unlink(missing_ok=True)
+                result["released"] = [str(lock) for lock in held]
+                paths.request.unlink(missing_ok=True)
+                paths.state.unlink(missing_ok=True)
+                result["state"] = True
         result["comments"] = finished_starts(state, recorded)
         if result["comments"] or labels:
             token = reviewer_token(state["reviewer"])
@@ -1429,12 +1481,14 @@ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], f
                 delete_comment(repo, comment, token)
             if labels:
                 result["labels"] = clear_reviewing(repo, number, state["reviewer"], token)
-        result["worktrees"] = remove_worktrees(paths, state)
-    result["released"] = [str(lock) for lock in release(paths)]
-    paths.request.unlink(missing_ok=True)
-    if state is not None:
-        paths.state.unlink(missing_ok=True)
-        result["state"] = True
+        if holder is None:
+            result["worktrees"] = remove_worktrees(paths, state)
+    if holder is None:
+        result["released"] = [str(lock) for lock in release(paths)]
+        paths.request.unlink(missing_ok=True)
+        if state is not None:
+            paths.state.unlink(missing_ok=True)
+            result["state"] = True
     with suppress(OSError):
         paths.folder.rmdir()
     return result
@@ -1469,14 +1523,15 @@ def finished_starts(state: dict, recorded: Optional[int]) -> list[int]:
     return [comment["id"] for comment in starts if comment["id"] == recorded or not is_live(comment, reviews, at)]
 
 
-def remove_worktrees(paths: Paths, state: dict) -> list[str]:
-    """Remove every scratch worktree the state lists, then prune the checkout's record of them, and return
-    those removed. When the checkout that made one is gone or no longer lists it, a worktree in the review's
-    own worktree folder is deleted outright; Git refuses to remove any other path."""
+def remove_worktrees(paths: Paths, state: dict, kept: frozenset[str] = frozenset()) -> list[str]:
+    """Remove every scratch worktree the state lists, except one named by a short SHA in `kept`, then prune
+    the checkout's record of them, and return those removed. When the checkout that made one is gone or no
+    longer lists it, a worktree in the review's own worktree folder is deleted outright; Git refuses to remove
+    any other path."""
     checkout = state["checkout"]
     removed = []
     for path in map(Path, dict.fromkeys(state["worktrees"])):
-        if not path.exists():
+        if not path.exists() or path.name in kept:
             continue
         remove_worktree(checkout, path, paths.worktrees)
         removed.append(str(path))
@@ -2494,23 +2549,32 @@ def repo_visibility(pr: dict) -> Optional[str]:
     return ((pr.get("base") or {}).get("repo") or {}).get("visibility")
 
 
-def verdicts(repo: str, number: int, reviewer: str, visibility: Optional[str]) -> list[dict]:
+def verdicts(repo: str, number: int, reviewer: str, visibility: Optional[str],
+             also: tuple[str, ...] = ()) -> list[dict]:
     """Every Projector review on the pull request that can be its head's newest verdict, from every page:
-    the reviewer's, and any other that `review_counts` counts in a repository of `visibility`. Each has its
-    `id`, `url`, `at`, `login`, and `body`."""
+    the reviewer's, those of each login in `also`, and any other that `review_counts` counts in a repository
+    of `visibility`. Each has its `id`, `url`, `at`, `login`, and `body`."""
     rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews",
                    "--jq", '.[] | select(.body // "" | contains("projector-review")) '
                            '| {id, url: .html_url, at: .submitted_at, login: .user.login, '
                            'association: .author_association, body} | @json']).splitlines()
-    return counted_reviews([json.loads(row) for row in rows if row.strip()], reviewer, visibility)
+    return counted_reviews([json.loads(row) for row in rows if row.strip()], reviewer, visibility, also)
 
 
-def counted_reviews(reviews: list[dict], reviewer: str, visibility: Optional[str]) -> list[dict]:
-    """The reviews among `reviews` that can give a verdict: the reviewer's, and any other that `review_counts`
-    counts by its `association` in a repository of `visibility`. Each review names its author as `login`."""
+def counted_reviews(reviews: list[dict], reviewer: str, visibility: Optional[str],
+                    also: tuple[str, ...] = ()) -> list[dict]:
+    """The reviews among `reviews` that can give a verdict: the reviewer's, those of each login in `also`, which
+    `review.reviewers` names, and any other that `review_counts` counts by its `association` in a repository of
+    `visibility`. Each review names its author as `login`."""
+    named = {login.lower() for login in (reviewer, *also) if login}
     return [r for r in reviews
-            if reviewer and (r.get("login") or "").lower() == reviewer.lower()
-            or review_counts(r.get("association"), visibility)]
+            if (r.get("login") or "").lower() in named or review_counts(r.get("association"), visibility)]
+
+
+def extra_reviewers(setting: object) -> tuple[str, ...]:
+    """The logins `review.reviewers` names, separated by commas, whose Projector verdicts count beside the
+    reviewer's and those of the repository's own accounts."""
+    return parse_checks(setting) if isinstance(setting, str) else ()
 
 
 def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
@@ -2559,14 +2623,14 @@ def thread_model(thread: dict) -> Optional[str]:
     return found.group(1) if found else None
 
 
-def status(repo: str, number: int, reviewer: str) -> dict:
+def status(repo: str, number: int, reviewer: str, also: tuple[str, ...] = ()) -> dict:
     """The newest Projector verdict on the pull request's current head, with each account's newest verdict by
     each model on it, every open Projector finding thread, whether the head is `signed_off` as `sign_off`
     decides, the Projector `labels` on the pull request, and the `projector/review` status on the head as
     `check`. Its `suggestions` count those `review suggestions` lists for the head."""
     pr = read_pull_request(repo, number)
     head = pr["head"]["sha"]
-    found = verdicts(repo, number, reviewer, repo_visibility(pr))
+    found = verdicts(repo, number, reviewer, repo_visibility(pr), also)
     threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
     verdict = sign_off(head, found, len(threads))
     newest = verdict["newest"]
@@ -2609,13 +2673,13 @@ def status_lines(result: dict) -> list[str]:
     return lines
 
 
-def suggestions(repo: str, number: int, reviewer: str) -> list[dict]:
+def suggestions(repo: str, number: int, reviewer: str, also: tuple[str, ...] = ()) -> list[dict]:
     """`review suggestions`: the suggestions `fix-pr` decides on the pull request's current head, from the
     reviews `suggesting_reviews` picks among those `status` counts, which `status` counts them from too. Each
     has its review's `url` and the head `sha` that review's marker names, and the item's `path`, `line`, and
     `text`."""
     pr = read_pull_request(repo, number)
-    reviews = suggesting_reviews(pr["head"]["sha"], verdicts(repo, number, reviewer, repo_visibility(pr)))
+    reviews = suggesting_reviews(pr["head"]["sha"], verdicts(repo, number, reviewer, repo_visibility(pr), also))
     return [{"url": r.get("url"), "sha": verdict_marker(r.get("body") or "").sha, **item}
             for r in reviews for item in parse_suggestions(r.get("body") or "") or []]
 
@@ -2744,7 +2808,8 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
 
 def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path: Path,
             threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
-            incremental: bool = False, enabled: bool = True, labels: bool = True) -> dict:
+            incremental: bool = False, enabled: bool = True, labels: bool = True,
+            also: tuple[str, ...] = ()) -> dict:
     """Submit the review, then re-read it, act on whether the head is signed off, record, delete the start
     comment, and release the lock, in that order. Every refusal leaves the lock held for this review to
     retry, except the fence's: once the lock names another loop, or a loop's lock is gone, the state and
@@ -2758,7 +2823,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
 
     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
     review, published only while `incremental_rules` passes, with `enabled` from
-    `review.incremental`."""
+    `review.incremental`. The head's newest verdict counts the logins in `also`, which `review.reviewers`
+    names, as `status` does."""
     root, number = paths.root, paths.number
     state = read_state(paths)
     loop = loop if loop is not None else state.get("loop")
@@ -2858,7 +2924,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
               "login": reviewer, "body": read["body"]}
     current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
-    counted = [r for r in verdicts(repo, number, reviewer, repo_visibility(current)) if r.get("id") != review_id]
+    counted = [r for r in verdicts(repo, number, reviewer, repo_visibility(current), also)
+               if r.get("id") != review_id]
     counted.append(posted)
     verdict_now = sign_off(sha, counted, census(repo, number)["open"])
     newest, signed_off = verdict_now["newest"], verdict_now["signed_off"]

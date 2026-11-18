@@ -57,6 +57,7 @@ DECISIONS = (
     ("project inbox discuss 3 --text 'Why decline it?' --session s1", "ask", "none"),
     ("project inbox discuss --pr acme/app#12 --text hello --session s1", "ask", "none"),
     ("project console", "ask", "none"),
+    ("project review run 12 --model claude-opus-5-5 --agent codex", "ask", "none"),
     ("project inbox reply r3 --text 'Half done' --as agent", "allow", "allow"),
     ("project inbox close r3", "allow", "allow"),
     ("project inbox answer r3.a --as agent", "ask", "none"),
@@ -132,7 +133,7 @@ CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "
                   "agent": {"key", "peer", "relay"},
                   "config": {"set", "unset", "allow"},
                   "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},
-                  "review": {"gate"},
+                  "review": {"gate", "run"},
                   "site": {"build", "serve"}, "ios": {"build", "logs"}}
 
 # Some of the variables Claude Code lets an allow rule match past. Its list is

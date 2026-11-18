@@ -143,7 +143,8 @@ def summary_time(path: Path) -> int:
     return int(path.stat().st_mtime)
 
 
-def review_statuses(reviews: list[dict], visibility: str | None = None) -> dict[str, dict]:
+def review_statuses(reviews: list[dict], visibility: str | None = None,
+                    counted: tuple[str, ...] = ()) -> dict[str, dict]:
     """Each head's newest Projector review among `reviews`: its verdict as `status`, and its page as `url`.
 
     A review is Projector's when a line of its body is the marker a Projector
@@ -151,7 +152,8 @@ def review_statuses(reviews: list[dict], visibility: str | None = None) -> dict[
     model, and `review.review_counts` counts its author in a repository of
     `visibility`: any author in a private or internal repository, and in a
     public one, or one whose visibility is None, only an author who owns the
-    repository, belongs to its organization, or collaborates on it. The newest
+    repository, belongs to its organization, or collaborates on it, or whose
+    `login` is in `counted`, the logins `review.reviewers` names. The newest
     review decides, whichever model wrote it.
     When it is a clean incremental review, the status also carries
     `incrementalFrom`: the head of the full review it builds on, and that
@@ -161,6 +163,7 @@ def review_statuses(reviews: list[dict], visibility: str | None = None) -> dict[
     """
     newest: dict[str, dict] = {}
     full: dict[tuple[str, str], dict] = {}
+    named = {login.lower() for login in counted}
 
     def keep(found_by: dict, key, found: dict) -> None:
         if key not in found_by or found["at"] >= found_by[key]["at"]:
@@ -169,7 +172,8 @@ def review_statuses(reviews: list[dict], visibility: str | None = None) -> dict[
     for review in reviews:
         # Anyone can review a public repository's pull request, and GitHub shows a marker line as nothing, so
         # there only a review by someone the repository let in can set a status, as it can sign a head off.
-        if not review_counts(review.get("association"), visibility):
+        if not review_counts(review.get("association"), visibility) \
+                and (review.get("login") or "").lower() not in named:
             continue
         marker = verdict_marker(review.get("body") or "")
         if marker is None:
@@ -298,7 +302,8 @@ def add_context(payload: dict, stored: Path, out: Path, base: str, written: dict
 
 def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict] | None = None, trunk: str = "main",
                     lookup=None, repo_root: Path | None = None, status_lookup=None,
-                    projects_dir: str | None = None, stacks_lookup=None) -> tuple[list[dict], list[str], list[dict]]:
+                    projects_dir: str | None = None, stacks_lookup=None,
+                    counted: tuple[str, ...] = ()) -> tuple[list[dict], list[str], list[dict]]:
     """Build every summary that can be built; report and skip the rest.
 
     The entries come in the order the Reviews index lists them, as
@@ -320,7 +325,8 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
     cannot ask. From them each page carries `pr.state`, `pr.currentBaseRef`,
     the base branch GitHub reports, or None once that branch is deleted, and
     `review`, the
-    newest Projector review of its head, as `review_statuses` gives it, or,
+    newest Projector review of its head, as `review_statuses` gives it with
+    `counted`, or,
     when none names the head, `pending` or `unreviewed`, as `head_status`
     decides given the pull request's heads with newer summaries. A page has
     none of them when the lookup is missing or cannot ask, and each entry
@@ -407,7 +413,8 @@ def build_summaries(root: Path, out: Path, base: str = "/", described: list[dict
         segments = segmented[tuple(members[pull])]
         header = next(s["header"] for s in segments if pull in s["members"])
         status = asked[number]
-        statuses = review_statuses(status["reviews"], status.get("visibility")) if status is not None else None
+        statuses = review_statuses(status["reviews"], status.get("visibility"), counted) \
+            if status is not None else None
         for i, (_, payload, _) in enumerate(versions):
             head = payload["pr"]["head"]
             payload.update(heads=[dict(h, current=h["head"] == head) for h in heads], stack=stack, segments=segments,
@@ -1035,7 +1042,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
                projects: list[Project] | None = None, projects_dir: Path | None = None,
                repo: str = "", branch: str = "main", base: str = "/",
                trunk: str | None = None, lookup=None, status_lookup=None,
-               stacks_lookup=None) -> tuple[list[dict], list[str], list[dict]]:
+               stacks_lookup=None, counted: tuple[str, ...] = ()) -> tuple[list[dict], list[str], list[dict]]:
     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
 
     `branch` is the checked-out branch the site's GitHub links point at, and
@@ -1045,7 +1052,7 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     no GitHub stack that did not record the one it is stacked on.
     `status_lookup` returns a pull request's state, reviews, whether it is
     a fork's, and its repository's visibility, which decides whose reviews
-    count, or None when it cannot ask, for each summary's file links and
+    count beside those of the logins in `counted`, or None when it cannot ask, for each summary's file links and
     review status and for the projects open pull requests propose.
     `projects_dir` is the configured projects directory, which a pull request
     can propose the first plan of. Each project, proposed ones included,
@@ -1065,7 +1072,8 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     projects_path = projects_dir.relative_to(repo_root).as_posix() \
         if repo_root and projects_dir and projects_dir.is_relative_to(repo_root) else None
     built = build_summaries(summaries, out, base, described, trunk=trunk, lookup=lookup, repo_root=repo_root,
-                            status_lookup=status_lookup, projects_dir=projects_path, stacks_lookup=stacks_lookup) \
+                            status_lookup=status_lookup, projects_dir=projects_path, stacks_lookup=stacks_lookup,
+                            counted=counted) \
         if summaries and summaries.is_dir() else ([], [], [])
     entries, failures, proposed = built
     described = sorted(described + proposed, key=lambda p: p["name"])

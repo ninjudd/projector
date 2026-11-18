@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -928,6 +929,39 @@ class PublishTests(unittest.TestCase):
         self.assertNotEqual(0, code)
         self.assertIn("is not a directory", err.getvalue())
 
+    def hand_off(self, groups: list[dict]) -> tuple[int, Path, str]:
+        """Run `summary publish` from this clone with PROJECTOR_SUMMARY_HANDOFF set, on a repository that hosts its
+        site, for a summary of `groups`. Returns the exit code, the handoff folder, and the error output."""
+        data = make_summary(groups)
+        data["pr"]["head"] = "a" * 40
+        self.summary_path.write_text(json.dumps(data))
+        diff = self.summary_path.with_name("pr.diff")
+        diff.write_text(DIFF)
+        folder = self.summary_path.with_name("handoff")
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {summary.HANDOFF: str(folder)}), \
+             mock.patch.object(summary, "hosting", return_value=("https://owner.github.io/repo/", "")), \
+             mock.patch.object(summary, "dispatch", side_effect=AssertionError("a handoff starts no build")), \
+             mock.patch.object(summary, "current_head", side_effect=AssertionError("a handoff links nothing")), \
+             contextlib.chdir(self.repo), redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = cli.main(["summary", "publish", "--summary", str(self.summary_path), "--diff", str(diff)])
+        return code, folder, err.getvalue()
+
+    def test_a_handoff_leaves_the_summary_and_its_diff_and_pushes_nothing(self) -> None:
+        code, folder, err = self.hand_off(GOOD_GROUPS)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(json.loads(self.summary_path.read_text()), json.loads((folder / "summary.json").read_text()))
+        self.assertEqual(DIFF, (folder / summary.DIFF_FILE).read_text())
+        self.assertEqual("", run(self.remote, "git", "for-each-ref", "refs/projector"), "the remote's ref never moves")
+
+    def test_a_handoff_refuses_a_summary_publish_would_refuse(self) -> None:
+        code, folder, err = self.hand_off([{"id": "all", "title": "All", "files": [{"path": "not/in/the/diff.py"}]}])
+
+        self.assertNotEqual(0, code)
+        self.assertIn("not/in/the/diff.py", err)
+        self.assertFalse((folder / "summary.json").exists(), "the job that publishes it gets nothing to publish")
+
     def test_no_dispatch_pushes_without_starting_the_workflow(self) -> None:
         self.publish("a" * 40, send_dispatch=False)
         self.assertEqual([], self.dispatches)
@@ -1796,11 +1830,13 @@ class CommentSummaryTests(unittest.TestCase):
              mock.patch.object(summary, "hosting", return_value=self.hosted):
             self.assertIn("Pages is not enabled", summary.comment_summary("owner/repo", 7, HEAD))
 
-    def cli_publish(self, hosted: tuple[str | None, str] | Exception, *flags: str) -> tuple[list[dict], list[tuple], str]:
+    def cli_publish(self, hosted: tuple[str | None, str] | Exception, *flags: str,
+                    current: str | None = HEAD) -> tuple[list[dict], list[tuple], str]:
         """Run `summary publish` with the repository's hosting answering, or raising, `hosted`.
 
         Returns the keyword arguments publish got, the comments made, and the output. The
-        descriptions linked stand in `self.described`.
+        descriptions linked stand in `self.described`. GitHub gives the pull request's head as
+        `current`.
         """
         path = Path(tempfile.mkdtemp()) / "summary.json"
         path.write_text(json.dumps({"version": summary.SUMMARY_VERSION, "pr": {"repo": "owner/repo", "number": 7, "head": HEAD}}))
@@ -1811,6 +1847,7 @@ class CommentSummaryTests(unittest.TestCase):
         answer = {"side_effect": hosted} if isinstance(hosted, Exception) else {"return_value": hosted}
         with mock.patch.object(summary, "publish", side_effect=lambda *a, **k: published.append(k)), \
              mock.patch.object(summary, "hosting", **answer) as lookup, \
+             mock.patch.object(summary, "current_head", return_value=current), \
              mock.patch.object(summary, "comment_summary",
                                side_effect=lambda *a, **k: commented.append((*a, k)) or "done"), \
              mock.patch.object(summary, "describe_summary",
@@ -1857,6 +1894,31 @@ class CommentSummaryTests(unittest.TestCase):
         self.assertEqual([(False, "owner/repo has no GitHub Pages site")], [(k["push"], k["reason"]) for k in published])
         self.assertEqual([], commented, "a summary kept local has no page on GitHub to link")
         self.assertEqual([], self.described)
+
+    def test_summary_publish_of_an_earlier_head_pushes_it_and_links_nothing(self) -> None:
+        published, commented, out = self.cli_publish(("https://owner.github.io/repo/", ""), current="f" * 40)
+
+        self.assertTrue(published[0]["push"], "the site keeps a page for every head")
+        self.assertEqual(([], []), (commented, self.described), "the newer head's summary keeps the links")
+        self.assertIn("left the links on owner/repo#7 alone, because its head is fffffff now", out)
+
+    def test_summary_publish_links_when_github_cannot_say_the_head(self) -> None:
+        _, commented, _ = self.cli_publish(("https://owner.github.io/repo/", ""), current=None)
+
+        self.assertEqual([("owner/repo", 7, HEAD, {"site": "https://owner.github.io/repo/"})], commented)
+
+    def test_summary_publish_refuses_a_summary_of_another_pull_request(self) -> None:
+        path = Path(tempfile.mkdtemp()) / "summary.json"
+        path.write_text(json.dumps({"version": summary.SUMMARY_VERSION, "pr": {"repo": "owner/repo", "number": 8,
+                                                                               "head": HEAD}}))
+        err = io.StringIO()
+        with mock.patch.object(summary, "publish", side_effect=AssertionError("nothing is published")), \
+             mock.patch.object(summary, "hosting", side_effect=AssertionError("nothing is asked")), \
+             redirect_stderr(err):
+            code = cli.main(["summary", "publish", "--summary", str(path), "--pr", "7"])
+
+        self.assertNotEqual(0, code)
+        self.assertIn("the summary is of #8, not of #7", err.getvalue())
 
     def test_summary_publish_local_previews_even_where_the_site_is_hosted(self) -> None:
         with mock.patch.object(summary, "push_decision", side_effect=AssertionError("--local asks GitHub nothing")):

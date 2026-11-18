@@ -125,20 +125,43 @@ def run_bounded(args: list[str], *, timeout: float, cwd: Optional[Path] = None, 
     """Run `args` with standard input closed, or fed `input`, and capture its output as bytes. Once `timeout`
     seconds pass, kill its whole process group, so a hook or helper it started dies with it, and raise
     `subprocess.TimeoutExpired`."""
-    group: dict = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
-                   else {"start_new_session": True})
     process = subprocess.Popen(args, cwd=cwd, env=env, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, **group)
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, **process_group())
     try:
         stdout, stderr = process.communicate(input, timeout=timeout)
     except subprocess.TimeoutExpired:
-        if os.name == "nt":
-            process.kill()
-        else:
-            os.killpg(process.pid, signal.SIGKILL)
+        kill_group(process)
         process.communicate()
         raise
     return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+
+
+def process_group() -> dict:
+    """The `subprocess.Popen` arguments that start a process in a group of its own, which `kill_group` ends."""
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def kill_group(process: subprocess.Popen) -> None:
+    """Kill `process`, started with `process_group`, and every process it started. Windows has no group to
+    signal, so `taskkill /T` ends the process tree there. A process that already exited is no error. The caller
+    still waits for `process`."""
+    if os.name == "nt":
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            process.kill()
+        except OSError:
+            pass
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 @contextlib.contextmanager

@@ -493,6 +493,18 @@ class SiteContentTests(SiteRepoCase):
                                  "a public repository, or one GitHub gives no visibility for, still ignores them")
         self.assertEqual(counted, self.built_statuses(reviews, "private"), "the build reads the visibility GitHub reports")
 
+    def test_a_review_by_a_login_review_reviewers_names_sets_the_status_on_a_public_repository(self) -> None:
+        bot = dict(projector_review("clean", "d" * 40, "2026-10-02T10:00:00Z", 2, association="NONE"),
+                   login="github-actions[bot]")
+        stranger = dict(projector_review("changes-requested", "d" * 40, "2026-10-03T10:00:00Z", 3,
+                                         association="NONE"), login="passer-by")
+        (self.repo / ".projector.toml").write_text('[review]\nreviewers = "github-actions[bot]"\n')
+
+        statuses = self.built_statuses([bot, stranger])
+
+        self.assertEqual({"status": "clean", "url": review_url(2)}, statuses["d"],
+                         "the listed bot's review sets the status, and a newer one by an unlisted account does not")
+
     # Decided directly
 
     def test_each_head_shows_the_verdict_of_the_projector_review_that_names_it(self) -> None:

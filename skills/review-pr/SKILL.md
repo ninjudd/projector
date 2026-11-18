@@ -24,6 +24,40 @@ gh pr view --json number,url,state,isDraft,headRefOid,baseRefName
 When that finds no pull request, or finds one that is not open, ask the user
 which pull request to review rather than guessing.
 
+## Review without a session
+
+`project review run` starts this skill with no session behind it and nobody
+to ask, as a GitHub Actions job does. It sets `PROJECTOR_HEADLESS` to `1`
+and names the pull request in the prompt. Once the agent exits, the command
+checks that a verdict on the head was published, and fails the job when
+none was. While `PROJECTOR_HEADLESS` is `1`, follow this skill with these
+differences:
+
+- **Take the loop and the model from the environment.** Pass `setup`
+  `--loop "$PROJECTOR_LOOP" --model "$PROJECTOR_MODEL"`, and pass the same
+  two flags to every later `project review` command. Add
+  `--replace "$PROJECTOR_REPLACE"` when that variable is set: it names the
+  start comment of a run that was cancelled. Add `--rereview` when
+  `PROJECTOR_REREVIEW` is `1`.
+- **Confirm no identity by hand.** The token can belong to no GitHub user,
+  so `gh api user` fails. `setup` reads the reviewer itself, from
+  `PROJECTOR_TOKEN_LOGIN` where the token belongs to no user.
+- **Do not subscribe.** Skip the subscription step. The workflow runs again
+  on the next head.
+- **Ask nobody.** Wherever this skill says to ask the user, write the
+  question and what you found to the file `$PROJECTOR_RUN_REPORT`, and stop
+  without publishing. `project review run` posts that text on the pull
+  request.
+- **Write files only under `$PROJECTOR_SCRATCH`**, such as a review body or
+  a threads file.
+- **Run nothing this skill does not name.** Push nothing, commit nothing,
+  and edit nothing outside the scratch worktree and `$PROJECTOR_SCRATCH`.
+  Never run `gh pr ready` or `gh pr merge`.
+- **Summarize as usual.** Where `PROJECTOR_SUMMARY_HANDOFF` is set,
+  `project summary publish` checks the summary and leaves it for the
+  workflow to publish, so run it exactly as
+  [Summarize the pull request](#summarize-the-pull-request) says.
+
 ## Resolve identity
 
 A review posts as one GitHub identity, the **reviewer**. By default that is
