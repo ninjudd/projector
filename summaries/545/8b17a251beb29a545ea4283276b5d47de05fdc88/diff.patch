@@ -1,0 +1,1227 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index db9a93e1..6a1e5fc7 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -767,6 +767,55 @@ mounted volume, a container's `/workspace` -- no ancestor is read, and
+ `.claude/worktrees/<name>` is, keeps the repository and its parents on the
+ walk.
+ 
++### Read committed files from the default branch
++
++A `.projector.toml` that the repository tracks is the repository's policy, so
++Projector reads it from the default branch, the commit
++`refs/remotes/origin/HEAD` names, and never from the branch you have checked
++out. A change to it on a branch takes effect once it merges, which is where
++the repository reviews its changes. So a branch you check out to review or
++test, such as a contributor's, cannot change the gate a review runs, the
++checks it waits for, or any other setting the repository commits.
++
++Projector chooses each walked file's source this way:
++
++- **A file on the default branch** is read from there, whatever your working
++  copy holds. This holds in every worktree of the repository, and even when
++  your branch deletes the file. A file that is a symbolic link there is
++  followed on the default branch, so its target's contents on that branch
++  apply, never the target on disk. A link that leads outside the repository
++  or to no file on the default branch is a configuration error.
++- **A file Git tracks on your branch only**, which the branch added, is
++  ignored until it merges.
++- **A file Git does not track** is read from disk.
++
++Every file outside the repository, including a parent directory's file and
++`~/.projector.toml`, is read from disk, because you put it there. So is a
++file another repository tracks, such as a dotfiles checkout in your home
++directory. A repository with no `origin/HEAD` reads every file from disk.
++`git clone` sets `origin/HEAD`, and `git remote set-head origin --auto` sets
++it in a clone that lacks one.
++
++The default branch is as new as your last fetch. Projector caches each blob it
++reads under `$XDG_STATE_HOME/projector/config-cache/`, by commit and path, so
++reading configuration starts no Git process until the default branch moves
++or the index changes.
++
++`config list` prints each value with its source, and notes on stderr each
++walked file whose working copy does not apply:
++
++```console
++$ project config list
++project: /Users/you/work/repo/.projector.toml: working copy ignored until merged; origin/main:.projector.toml applies
++review.gate_checks = check  # origin/main:.projector.toml
++watch.auto_start = false  # /Users/you/.projector.toml
++```
++
++A file a branch added says `not on origin/main yet, so it is ignored until it
++merges` instead. `config list --json` gives the same notes under `notes`, and
++`config paths` lists `origin/main:.projector.toml` for a file it reads from
++the default branch.
++
+ Tables merge key by key, so a nearer file overrides one setting without
+ discarding the rest:
+ 
+@@ -824,6 +873,11 @@ project config get review.summarize --json
+ }
+ ```
+ 
++A value from a file the repository commits names its source on the default
++branch, such as `origin/main:.projector.toml`, as
++[Read committed files from the default branch](#read-committed-files-from-the-default-branch)
++describes.
++
+ `get` reads any key, so a skill or a script can keep settings of its own in
+ these files. [`set`](#change-configuration) accepts only the keys Projector
+ reads, which are these:
+@@ -890,9 +944,8 @@ project config unset watch.auto_start
+ ```
+ 
+ Both change the repository's own `.projector.toml` at the root of the
+-checkout, which is the file nearest the code and the last one merged, so the
+-value you set is the value the repository's commands read. Choose another
+-file with one of these options:
++checkout, which is the file nearest the code and the last one merged. Choose
++another file with one of these options:
+ 
+ - **`--user`** changes `~/.projector.toml`, which applies in every
+   repository. Use it for a personal preference, such as `watch.auto_start`,
+@@ -950,6 +1003,18 @@ unchanged. When the check fails, it restores the file and exits 65. A
+ symlink, such as a `~/.projector.toml` that links into a dotfiles
+ repository, stays a link, and the command changes the file it points at.
+ 
++A file the repository tracks applies from the default branch, so `set` and
++`unset` change its working copy and say that the change waits for a merge.
++Commit the change and merge it as you would any other:
++
++```console
++$ project config set review.gate "make check"
++set review.gate = make check in /Users/you/work/repo/.projector.toml; takes effect once this change merges to origin/main
++```
++
++With `--json`, the output adds `takes_effect_on_merge_to`, which names the
++default branch.
++
+ A nearer file can override the value you set, as a repository's file
+ overrides `~/.projector.toml`. When the merged configuration does not give
+ the new value, the command names the file that wins on stderr:
+diff --git a/docs/projects/config-trust/readme.md b/docs/projects/config-trust/readme.md
+index 99adc66f..75b6b5bd 100644
+--- a/docs/projects/config-trust/readme.md
++++ b/docs/projects/config-trust/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: in-progress
+ priority: now
+ ---
+ 
+@@ -331,3 +331,57 @@ full pass, which transfers only commits this clone lacks.
+   with a running daemon within about 10 minutes, without disturbing your
+   remote-tracking refs. `project config allow` can list and revoke approvals
+   (§ 2.1 step 5).
++
++## 8. Settled while building
++
++### 8.1 Reading tracked files from the default branch
++
++- **A file the branch deletes still applies.** Projector looks up the default
++  branch's blob for every walked directory inside the repository, not only
++  for files on disk, so deleting `.projector.toml` on a branch drops no
++  policy. Step 2's first case covers a missing working copy too.
++- **One blob, read once.** A worktree under `.claude/worktrees/` and its main
++  checkout both walk `.projector.toml` at the top of a working tree, which is
++  one path on the default branch. Projector reads it once, at the nearer
++  position, which gives the same values as reading it twice.
++- **Each working tree's own index.** Tracked-ness comes from the index of the
++  working tree that holds the file, so `tracked.json` keys each entry by that
++  index file's path and its size, modification time, and inode, rather than
++  by the common directory.
++- **No symbolic `origin/HEAD`, no default branch.** An `origin/HEAD` that is
++  not a symbolic ref, or that names a ref the clone lacks, counts as none, and
++  every file is read from disk, as step 1 says for a missing `origin/HEAD`.
++- **A Git failure is an error, not a fallback.** When `git cat-file` or
++  `git ls-files` fails, as for a repository Git refuses as unsafe, loading
++  configuration fails with a configuration error naming Git's message. Reading
++  the working copy instead would reopen the route this project closes.
++- **Any path reads back exactly.** `git cat-file --batch` reads one name a
++  line, so a walked path with a newline in a directory name is looked up by
++  one `git ls-tree -z`, which takes the paths as arguments, and its object is
++  read in the same batch. `git rev-parse`, used for an unrecognized layout,
++  runs once for each path it reports, because it ends each with a newline.
++- **A committed symbolic link resolves on the default branch.** A tracked
++  `.projector.toml` that is a symbolic link is followed within the default
++  branch's tree, through `git cat-file --batch --follow-symlinks`, and its
++  target's blob there applies. It is never followed on disk, so neither the
++  working copy of its target nor a file outside the repository can supply
++  policy. A link that leads outside the repository, to no file, or into a loop
++  is a configuration error naming `origin/main:<path>`, and so is a link at a
++  path with a newline, which the batch cannot name.
++- **The cache's shape.** A blob is `<commit>-<digest>.toml`, and a path the
++  commit lacks is an empty `<commit>-<digest>.absent`. Each cache miss removes
++  blobs not written for 30 days, which are mostly those of commits the default
++  branch has moved past. `state_home` moved to `core.py` and now honors the
++  `HOME` of the environment it is given, so a load given a test's environment
++  never writes to the real state directory.
++- **What the commands print.** `config list` prints `key = value  # source`
++  and writes each note to stderr as `project: <path>: <note>`, and
++  `config list --json` adds `notes`. `config paths` prints a default-branch
++  source as `origin/main:<path>`. `config set` and `unset` append
++  `; takes effect once this change merges to origin/main` to their result
++  line, and `--json` adds `takes_effect_on_merge_to`. A file in the
++  repository that Git does not track applies at once, so `set` adds no note
++  for it.
++- **Measured cost.** On this repository a warm load takes about 1.1 ms,
++  against 0.4 ms before, almost all of it `pathlib`, and `project list --json`
++  shows no difference beyond run-to-run noise of about 0.4 s either way.
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 70db4aa1..3f78e4ee 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1842,12 +1842,10 @@ def config_file(arguments: argparse.Namespace) -> Path:
+         raise EnvironmentError(f"{error}; pass --user or --file to name a configuration file") from error
+ 
+ 
+-def report_override(arguments: argparse.Namespace, change: Change) -> None:
++def report_override(config: Optional[Config], change: Change) -> None:
+     """Say on stderr when the merged configuration here does not give the value just written."""
+ 
+-    try:
+-        config = load_config(config_start(arguments))
+-    except ConfigError:
++    if config is None:
+         return
+     effective = config.get(change.key)
+     if same_value(effective, change.new):
+@@ -1871,13 +1869,23 @@ def change_config(arguments: argparse.Namespace) -> int:
+         change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value))
+     else:
+         change = unset_value(path, arguments.key)
++    try:
++        config: Optional[Config] = load_config(config_start(arguments))
++    except ConfigError:
++        config = None
++    # A file the repository tracks applies from the default branch, so a change to its working copy waits there.
++    written = change.path.parent.resolve() / change.path.name
++    waits = config.committed.get(written) if config is not None and change.action != "unchanged" else None
+     if arguments.json_output:
+         print(json_text({"action": change.action, "key": change.key, "old": redact(change.key, change.old),
+-                         "new": redact(change.key, change.new), "file": str(change.path)}), flush=True)
++                         "new": redact(change.key, change.new), "file": str(change.path),
++                         **({"takes_effect_on_merge_to": waits} if waits else {})}), flush=True)
+     else:
+         shown = "" if change.new is None else f" = {format_value(redact(change.key, change.new))}"
+-        print(f"{change.action} {change.key}{shown} in {change.path}", flush=True)
+-    report_override(arguments, change)
++        pending = f"; takes effect once this change merges to {waits}" if waits else ""
++        print(f"{change.action} {change.key}{shown} in {change.path}{pending}", flush=True)
++    if not waits:
++        report_override(config, change)
+     return 0
+ 
+ 
+@@ -1919,20 +1927,25 @@ def run_config(arguments: argparse.Namespace) -> int:
+                 json_text(
+                     {
+                         "config": redact("", config.values),
+-                        "sources": {key: str(path) for key, path in config.sources.items()},
++                        "sources": {key: str(source) for key, source in config.sources.items()},
++                        "notes": [{"file": str(path), "note": note} for path, note in config.notes],
+                     }
+                 )
+             )
+         else:
++            for path, note in config.notes:
++                print(f"project: {path}: {note}", file=sys.stderr)
+             for key in sorted(flat):
+-                print(f"{key} = {format_value(redact(key, flat[key]))}")
++                print(f"{key} = {format_value(redact(key, flat[key]))}  # {config.source(key)}")
+         return 0
+ 
+     if arguments.json_output:
+-        print(json_text({"paths": [str(path) for path in config.paths]}))
++        print(json_text({"paths": [str(source) for source in config.paths]}))
+     else:
+-        for path in config.paths:
+-            print(path)
++        for path, note in config.notes:
++            print(f"project: {path}: {note}", file=sys.stderr)
++        for source in config.paths:
++            print(source)
+     return 0
+ 
+ 
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 26968bc6..cd206a65 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -25,6 +25,21 @@
+ repository and its parents on the walk. A worktree created outside the
+ repository does not, and sees only its own file and the user layer.
+ 
++A walked file that the repository you work in tracks is policy, reviewed where
++the repository merges its changes, so its values come from the default branch,
++the commit `refs/remotes/origin/HEAD` names, and never from the working copy
++of whatever branch is checked out. The repository is the one whose working
++tree holds the starting directory, and every worktree of it shares its common
++Git directory. For each walked directory in one of its working trees, the
++blob at that path on the default branch applies, even where the branch deleted
++the file. A file Git tracks on this branch only, which the branch added, is
++ignored until it merges. A file Git does not track is read from disk, as is
++every file outside the repository, the user layer, and every file when the
++repository has no `origin/HEAD`. Git's own files say where the repository and
++its refs are, and a cache under the state directory holds each blob by the
++commit and path, and whether each file is tracked by the index's signature,
++so a load that finds what it needs there starts no process.
++
+ `project config set` and `unset` change one file, one line at a time, so the
+ comments and layout a person wrote survive every change.
+ """
+@@ -33,17 +48,21 @@
+ 
+ import base64
+ import binascii
++import hashlib
+ import json
+ import os
+ import re
+ import stat
++import subprocess
++import tempfile
++import time
+ import tomllib
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any, Optional
+ 
+ from . import crypto
+-from .core import ProjectorError, UsageError, write_through
++from .core import ProjectorError, UsageError, run_bounded, state_home, write_through
+ 
+ 
+ CONFIG_NAME = ".projector.toml"
+@@ -206,58 +225,340 @@ def _within(directory: Path, ancestor: Path) -> bool:
+     return directory == ancestor or ancestor in directory.parents
+ 
+ 
+-def config_paths(start: Path, home: Path, environ: Optional[dict[str, str]] = None) -> list[Path]:
+-    """Every configuration file that applies at `start`, lowest precedence first.
++def walked_directories(start: Path, home: Path) -> list[Path]:
++    """The directories whose `.projector.toml` the walk reads, nearest first.
+ 
+-    Only paths that exist are returned, so the result doubles as the list of
+-    files a value could have come from.
++    When the starting directory is outside the home directory, its ancestors
++    are outside the user's own space too, so the walk covers only the
++    starting directory itself.
+     """
+ 
+     start = start.resolve()
+     home = home.resolve()
+-    found: list[Path] = []
+-
+-    user = user_config_path(environ)
+-    if user.is_file():
+-        # Resolved like the walked paths, so every path this returns is
+-        # comparable with every other one -- including for the deduplication
+-        # below, which depends on the two spellings matching.
+-        found.append(user.resolve())
+-
+-    # When the starting directory is outside the home directory, its ancestors
+-    # are outside the user's own space too, so the walk covers only the
+-    # starting directory itself. Checked once: it cannot change as we climb.
+     climb = _within(start, home)
+-
+-    # Collect the walk from `start` upward, then reverse: the nearest file has
+-    # the highest precedence and must be merged last.
+-    walked: list[Path] = []
+-    directory = start
+-    while True:
+-        candidate = directory / CONFIG_NAME
+-        if candidate.is_file():
+-            walked.append(candidate)
+-        if not climb or directory == home or directory == directory.parent:
+-            break
+-        directory = directory.parent
+-
+-    # The home directory is both the user layer and the top of the walk, so a
+-    # repository under it finds the same file twice. Reading it twice would be
+-    # harmless for values but would misreport provenance and list the path
+-    # twice, so keep the first occurrence, which already has the lowest
+-    # precedence.
+-    for path in reversed(walked):
+-        if path not in found:
+-            found.append(path)
+-    return found
++    directories = [start]
++    while climb and directories[-1] != home and directories[-1] != directories[-1].parent:
++        directories.append(directories[-1].parent)
++    return directories
+ 
+ 
+ def read_config_file(path: Path) -> dict[str, Any]:
++    return parse_config(path.read_bytes(), str(path))
++
++
++def parse_config(data: bytes, label: str) -> dict[str, Any]:
+     try:
+-        with path.open("rb") as handle:
+-            return tomllib.load(handle)
++        return tomllib.loads(data.decode("utf-8"))
++    except UnicodeDecodeError as error:
++        raise ConfigError(f"{label}: invalid TOML: {error}") from error
+     except tomllib.TOMLDecodeError as error:
+-        raise ConfigError(f"{path}: invalid TOML: {error}") from error
++        raise ConfigError(f"{label}: invalid TOML: {error}") from error
++
++
++# Git
++
++ORIGIN_HEAD = "refs/remotes/origin/HEAD"
++OBJECT_ID = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
++GIT_TIMEOUT = 30.0
++# The variables that point Git at another repository, index, or object store
++# than the one Projector names on the command line.
++GIT_LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
++                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX")
++
++
++@dataclass(frozen=True)
++class WorkingTree:
++    """One working tree of a repository: its top, its own Git directory, and the common directory every
++    worktree of the repository shares."""
++
++    top: Path
++    git_dir: Path
++    common: Path
++
++
++@dataclass(frozen=True)
++class DefaultBranch:
++    """The default branch as `refs/remotes/origin/HEAD` names it, such as `origin/main`, and its commit."""
++
++    name: str
++    commit: str
++
++
++def git_output(args: list[str], *, cwd: Optional[Path] = None, input: Optional[bytes] = None) -> bytes:
++    environment = {name: value for name, value in os.environ.items() if name not in GIT_LOCATION}
++    try:
++        done = run_bounded(["git", *args], cwd=cwd, input=input, env=environment, timeout=GIT_TIMEOUT)
++    except (OSError, subprocess.TimeoutExpired) as error:
++        raise ConfigError(f"cannot read the repository's configuration: git did not run: {error}") from None
++    if done.returncode:
++        problem = done.stderr.decode("utf-8", "replace").strip()
++        raise ConfigError(f"cannot read the repository's configuration: git {args[-1]} failed: {problem}")
++    return done.stdout
++
++
++def _text(path: Path) -> Optional[str]:
++    try:
++        return path.read_text(encoding="utf-8")
++    except (OSError, UnicodeDecodeError):
++        return None
++
++
++def _tree_at(top: Path) -> Optional[WorkingTree]:
++    """The working tree whose top is `top`, from its `.git` directory or `gitdir:` file, or from
++    `git rev-parse` when the layout is not one Git documents."""
++
++    dot_git = top / ".git"
++    if dot_git.is_dir():
++        git_dir = dot_git
++    elif dot_git.is_file():
++        pointer = _text(dot_git) or ""
++        git_dir = (top / pointer.removeprefix("gitdir:").strip()).resolve()
++        if not pointer.startswith("gitdir:") or not git_dir.is_dir():
++            return _rev_parse_tree(top)
++    else:
++        return None
++    common = _text(git_dir / "commondir")
++    return WorkingTree(top, git_dir, (git_dir / common.strip()).resolve() if common else git_dir)
++
++
++def _rev_parse_tree(top: Path) -> Optional[WorkingTree]:
++    # One path a run, because `git rev-parse` ends each path with a newline that a path can also hold.
++    found = []
++    for option in ("--show-toplevel", "--absolute-git-dir", "--git-common-dir"):
++        try:
++            output = git_output(["rev-parse", "--path-format=absolute", option], cwd=top)
++        except ConfigError:
++            return None
++        found.append(Path(os.fsdecode(output.removesuffix(b"\n"))).resolve())
++    return WorkingTree(*found)
++
++
++def working_tree(directory: Path) -> Optional[WorkingTree]:
++    """The working tree that holds `directory`, or None outside every repository."""
++
++    for top in (directory, *directory.parents):
++        if (top / ".git").exists():
++            return _tree_at(top)
++    return None
++
++
++def _packed_ref(common: Path, name: str) -> Optional[str]:
++    packed = _text(common / "packed-refs") or ""
++    at = packed.find(f" {name}\n")
++    if at < 0:
++        return None
++    return packed[packed.rfind("\n", 0, at) + 1:at]
++
++
++def resolve_ref(common: Path, name: str) -> Optional[str]:
++    """The object a ref names, from its loose file or `packed-refs`, or None when it has none."""
++
++    loose = _text(common / name)
++    found = loose.strip() if loose is not None else _packed_ref(common, name)
++    return found if found and OBJECT_ID.fullmatch(found) else None
++
++
++def default_branch(tree: WorkingTree) -> Optional[DefaultBranch]:
++    """The default branch of the repository `tree` belongs to, or None when it has no `origin/HEAD`."""
++
++    if (tree.common / "reftable").is_dir():
++        return _rev_parse_branch(tree)
++    head = _text(tree.common / ORIGIN_HEAD)
++    if head is None or not head.startswith("ref:"):
++        return None
++    target = head[len("ref:"):].strip()
++    commit = resolve_ref(tree.common, target)
++    return DefaultBranch(target.removeprefix("refs/remotes/"), commit) if commit else None
++
++
++def _rev_parse_branch(tree: WorkingTree) -> Optional[DefaultBranch]:
++    """The default branch read through Git, for a ref storage, such as reftable, that has no files to read."""
++
++    try:
++        target = os.fsdecode(git_output(["symbolic-ref", "-q", ORIGIN_HEAD], cwd=tree.top)).strip()
++        commit = os.fsdecode(git_output(["rev-parse", "-q", "--verify", f"{target}^{{commit}}"],
++                                        cwd=tree.top)).strip()
++    except ConfigError:
++        return None
++    return DefaultBranch(target.removeprefix("refs/remotes/"), commit) if OBJECT_ID.fullmatch(commit) else None
++
++
++def _trees(directories: list[Path]) -> list[Optional[WorkingTree]]:
++    """The working tree holding each of `directories`, an ancestor chain ordered nearest first."""
++
++    found: list[Optional[WorkingTree]] = []
++    current = working_tree(directories[-1])
++    for directory in reversed(directories):
++        if directory != directories[-1] and (directory / ".git").exists():
++            current = _tree_at(directory)
++        found.append(current)
++    return found[::-1]
++
++
++# The cache of what Git said, under the state directory
++
++CACHE_LIFETIME = 30 * 24 * 3600.0
++
++
++def cache_dir(environ: Optional[dict[str, str]] = None) -> Path:
++    return state_home(environ) / "config-cache"
++
++
++def _blob_name(commit: str, path: str) -> str:
++    return f"{commit}-{hashlib.sha256(path.encode('utf-8', 'surrogateescape')).hexdigest()[:16]}"
++
++
++def _store(path: Path, data: bytes) -> None:
++    """Write a cache file whole, or leave it out when the state directory cannot take it, since the cache only
++    saves a Git process."""
++
++    try:
++        path.parent.mkdir(parents=True, exist_ok=True)
++        descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
++        with os.fdopen(descriptor, "wb") as stream:
++            stream.write(data)
++        os.replace(temporary, path)
++    except OSError:
++        pass
++
++
++def _prune(cache: Path) -> None:
++    """Remove the blobs no load has written for `CACHE_LIFETIME`, which are mostly those of commits the default
++    branch has moved past."""
++
++    cutoff = time.time() - CACHE_LIFETIME
++    try:
++        for path in cache.iterdir():
++            if path.suffix in (".toml", ".absent") and path.stat().st_mtime < cutoff:
++                path.unlink(missing_ok=True)
++    except OSError:
++        pass
++
++
++SYMBOLIC_LINK = "120000"
++# What `git cat-file --batch --follow-symlinks` prints in place of an object, for a link it cannot follow to one.
++BROKEN_LINKS = {b"symlink": "leads outside the repository", b"dangling": "leads to no file",
++                b"loop": "leads into a loop of links", b"notdir": "leads through a file as though it were a folder"}
++
++
++def _listed_objects(common: Path, commit: str, paths: list[str], label: str) -> dict[str, str]:
++    """The object each of `paths` names on the commit `commit`, for the paths it holds as files, from one
++    `git ls-tree` that takes the paths as arguments and separates its entries with NUL, so any byte in a path
++    reads back exactly. A symbolic link among them is a configuration error, because only the batch, which
++    cannot name such a path, follows a link."""
++
++    listed = git_output(["--git-dir", str(common), "--literal-pathspecs", "ls-tree", "-z", "--full-tree", commit,
++                         "--", *paths])
++    found = {}
++    for entry in listed.split(b"\0"):
++        info, _, name = entry.partition(b"\t")
++        fields = info.decode("ascii", "replace").split(" ")
++        if len(fields) == 3 and fields[0] == SYMBOLIC_LINK:
++            raise ConfigError(f"{label}:{os.fsdecode(name)}: a symbolic link at a path with a newline cannot be "
++                              "followed; commit the file itself")
++        if len(fields) == 3 and fields[1] == "blob":
++            found[os.fsdecode(name)] = fields[2]
++    return found
++
++
++def default_blobs(common: Path, commit: str, paths: list[str], cache: Path, *, label: str
++                  ) -> dict[str, Optional[bytes]]:
++    """Each of `paths` as the commit `commit` holds it, or None where it holds no file, asking one
++    `git cat-file --batch` for the paths the cache lacks.
++
++    A symbolic link is followed within that commit's tree, never on disk, and one that leads to no file there
++    is a configuration error that names it as `<label>:<path>`."""
++
++    found: dict[str, Optional[bytes]] = {}
++    wanted = []
++    for path in paths:
++        name = _blob_name(commit, path)
++        try:
++            found[path] = (cache / f"{name}.toml").read_bytes()
++        except OSError:
++            if (cache / f"{name}.absent").exists():
++                found[path] = None
++            else:
++                wanted.append(path)
++    if not wanted:
++        return found
++    # Git's batch input is one name a line, so a path with a newline is asked for by the object `git ls-tree`
++    # finds at it, and one that names no file there is absent.
++    names = {path: f"{commit}:{path}" for path in wanted if "\n" not in path}
++    lined = [path for path in wanted if "\n" in path]
++    if lined:
++        names.update(_listed_objects(common, commit, lined, label))
++    asked = [path for path in wanted if path in names]
++    output = git_output(["--git-dir", str(common), "cat-file", "--batch", "--follow-symlinks"],
++                        input="".join(f"{names[path]}\n" for path in asked).encode("utf-8", "surrogateescape")
++                        ) if asked else b""
++    at = 0
++    contents: dict[str, Optional[bytes]] = {}
++    for path in asked:
++        end = output.index(b"\n", at)
++        header = output[at:end].split(b" ")
++        at = end + 1
++        content = None
++        # `<object> <type> <size>`, or `<problem> <size>` for a link it cannot follow, each before a body of that
++        # size; a name it cannot find ends `missing`, with no body.
++        if len(header) in (2, 3) and header[-1].isdigit():
++            size = int(header[-1])
++            body = output[at:at + size]
++            at += size + 1
++            if len(header) == 2 and header[0] in BROKEN_LINKS:
++                raise ConfigError(f"{label}:{path}: the symbolic link {BROKEN_LINKS[header[0]]} "
++                                  f"({body.decode('utf-8', 'replace')}); commit the file itself, or a link to a "
++                                  "file in the repository")
++            if header[1:2] == [b"blob"]:
++                content = body
++        contents[path] = content
++    for path in wanted:
++        content = contents.get(path)
++        found[path] = content
++        name = _blob_name(commit, path)
++        _store(cache / (f"{name}.absent" if content is None else f"{name}.toml"), content or b"")
++    _prune(cache)
++    return found
++
++
++def _signature(path: Path) -> Optional[list[int]]:
++    try:
++        found = path.stat()
++    except OSError:
++        return None
++    return [found.st_size, found.st_mtime_ns, found.st_ino]
++
++
++def tracked_paths(tree: WorkingTree, paths: list[str], cache: Path) -> set[str]:
++    """Which of `paths` the index of `tree` tracks, asking one `git ls-files` for the paths the cache lacks for
++    the index as it is now."""
++
++    index = tree.git_dir / "index"
++    signature = _signature(index)
++    if signature is None:
++        return set()
++    record_path = cache / "tracked.json"
++    try:
++        record = json.loads(record_path.read_bytes())
++    except (OSError, ValueError):
++        record = None
++    if not isinstance(record, dict) or record.get("schema_version") != 1 or not isinstance(record.get("indexes"),
++                                                                                          dict):
++        record = {"schema_version": 1, "indexes": {}}
++    indexes = record["indexes"]
++    entry = indexes.get(str(index))
++    known = entry["tracked"] if isinstance(entry, dict) and entry.get("signature") == signature else {}
++    wanted = [path for path in paths if path not in known]
++    if wanted:
++        listed = git_output(["--git-dir", str(tree.git_dir), "--work-tree", str(tree.top), "--literal-pathspecs",
++                             "ls-files", "-z", "--cached", "--", *wanted], cwd=tree.top)
++        found = {os.fsdecode(name) for name in listed.split(b"\0") if name}
++        known = {**known, **{path: path in found for path in wanted}}
++        indexes[str(index)] = {"signature": signature, "tracked": known}
++        for gone in [name for name in indexes if not Path(name).exists()]:
++            del indexes[gone]
++        _store(record_path, json.dumps(record, sort_keys=True).encode("utf-8"))
++    return {path for path in paths if known.get(path)}
+ 
+ 
+ def merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+@@ -290,15 +591,32 @@ def _flatten(mapping: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+     return flat
+ 
+ 
++@dataclass(frozen=True)
++class Source:
++    """Where values came from: a file on disk, or, when `blob` names it, as `origin/main:.projector.toml` does,
++    the copy of the walked file at `path` on the default branch."""
++
++    path: Path
++    blob: Optional[str] = None
++
++    def __str__(self) -> str:
++        return self.blob or str(self.path)
++
++
+ class Config:
+-    """A merged configuration plus where each value came from."""
++    """A merged configuration, the sources it read lowest precedence first, where each value came from, the
++    user-only keys a walked file set, a note for each walked file whose working copy does not apply, and the
++    default branch each file in the repository waits on to change."""
+ 
+-    def __init__(self, values: dict[str, Any], sources: dict[str, Path], paths: list[Path],
+-                 ignored: Optional[list[tuple[Path, str]]] = None) -> None:
++    def __init__(self, values: dict[str, Any], sources: dict[str, Source], paths: list[Source],
++                 ignored: Optional[list[tuple[Source, str]]] = None, notes: Optional[list[tuple[Path, str]]] = None,
++                 committed: Optional[dict[Path, str]] = None) -> None:
+         self.values = values
+         self.sources = sources
+         self.paths = paths
+         self.ignored = ignored or []
++        self.notes = notes or []
++        self.committed = committed or {}
+ 
+     def get(self, key: str, default: Any = None) -> Any:
+         """Look a value up by dotted key, so `review.username` reaches a table."""
+@@ -321,46 +639,117 @@ def setting(self, key: str) -> Any:
+             raise ConfigError(f"{key} must be {expected}, not {type(value).__name__}")
+         return value
+ 
+-    def source(self, key: str) -> Optional[Path]:
++    def source(self, key: str) -> Optional[Source]:
+         return self.sources.get(key)
+ 
+     def flat(self) -> dict[str, Any]:
+         return _flatten(self.values)
+ 
+ 
++@dataclass
++class _Walked:
++    """What one load learned about the walk: each source read with its values, lowest precedence first, and the
++    notes and default branches `Config` reports."""
++
++    layers: list[tuple[Source, dict[str, Any]]] = field(default_factory=list)
++    notes: list[tuple[Path, str]] = field(default_factory=list)
++    committed: dict[Path, str] = field(default_factory=dict)
++
++
++def _walk(start: Path, home: Path, user: Optional[Path], environ: dict[str, str]) -> _Walked:
++    directories = walked_directories(start, home)
++    trees = _trees(directories)
++    repository = trees[0]
++    branch = default_branch(repository) if repository is not None else None
++    # Each walked file, farthest first, with its path in the repository when it lies in one of its working trees.
++    candidates: list[tuple[Path, Optional[WorkingTree], Optional[str]]] = []
++    for directory, tree in zip(reversed(directories), reversed(trees)):
++        candidate = directory / CONFIG_NAME
++        if candidate == user:
++            continue
++        if branch is not None and tree is not None and repository is not None and tree.common == repository.common:
++            candidates.append((candidate, tree, candidate.relative_to(tree.top).as_posix()))
++        elif candidate.is_file():
++            candidates.append((candidate, None, None))
++
++    walked = _Walked()
++    if user is not None:
++        walked.layers.append((Source(user), read_config_file(user)))
++    if branch is None or repository is None:
++        walked.layers.extend((Source(path), read_config_file(path)) for path, _, _ in candidates)
++        return walked
++
++    cache = cache_dir(environ)
++    blobs = default_blobs(repository.common, branch.commit,
++                          list(dict.fromkeys(path for _, _, path in candidates if path is not None)), cache,
++                          label=branch.name)
++    tracked: set[tuple[Path, str]] = set()
++    for tree in {tree for _, tree, path in candidates if tree is not None}:
++        asked = [path for candidate, other, path in candidates
++                 if other == tree and path is not None and blobs[path] is None and candidate.is_file()]
++        if asked:
++            tracked.update((tree.top, path) for path in tracked_paths(tree, asked, cache))
++
++    for candidate, tree, path in candidates:
++        if tree is None or path is None:
++            walked.layers.append((Source(candidate), read_config_file(candidate)))
++            continue
++        blob = blobs[path]
++        if blob is not None:
++            source = Source(candidate, f"{branch.name}:{path}")
++            walked.committed[candidate] = branch.name
++            try:
++                working = candidate.read_bytes()
++            except OSError:
++                working = None
++            if working != blob:
++                walked.notes.append((candidate, f"working copy ignored until merged; {source} applies"))
++            # Two worktrees of one repository walk the same path on the default branch, and the nearer one wins.
++            walked.layers = [layer for layer in walked.layers if layer[0].blob != source.blob]
++            walked.layers.append((source, parse_config(blob, str(source))))
++        elif (tree.top, path) in tracked:
++            walked.committed[candidate] = branch.name
++            walked.notes.append((candidate, f"not on {branch.name} yet, so it is ignored until it merges"))
++        elif candidate.is_file():
++            walked.layers.append((Source(candidate), read_config_file(candidate)))
++    return walked
++
++
+ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, str]] = None) -> Config:
+     env = os.environ if environ is None else environ
+     if home is None:
+         home = Path(env.get("HOME") or Path.home())
+ 
+-    paths = config_paths(start, home, env)
+-    user = user_config_path(env)
+-    user = user.resolve() if user.is_file() else None
++    found = user_config_path(env)
++    # Resolved like the walked paths, so the home directory's file, which is
++    # both the user layer and the top of the walk, is read once.
++    user = found.resolve() if found.is_file() else None
++    walked = _walk(start, home, user, env)
+     values: dict[str, Any] = {}
+-    sources: dict[str, Path] = {}
+-    ignored: list[tuple[Path, str]] = []
+-    for path in paths:
+-        loaded = read_config_file(path)
+-        if path != user:
++    sources: dict[str, Source] = {}
++    ignored: list[tuple[Source, str]] = []
++    for source, loaded in walked.layers:
++        if source.path != user:
+             for key in sorted(USER_ONLY & set(_flatten(loaded))):
+                 *tables, name = key.split(".")
+                 table = loaded
+                 for part in tables:
+                     table = table[part]
+                 del table[name]
+-                ignored.append((path, key))
++                ignored.append((source, key))
+         values = merge(values, loaded)
+         # Recorded after merging so the last writer of each leaf wins, which is
+         # the file whose value actually survived.
+         for dotted in _flatten(loaded):
+-            sources[dotted] = path
++            sources[dotted] = source
+ 
+     # A later file can replace a scalar with a table, which leaves the scalar's
+     # own dotted key attributed to a file that no longer supplies it. Drop any
+     # key the merged result does not actually have.
+     final = _flatten(values)
+-    sources = {key: path for key, path in sources.items() if key in final}
+-    return Config(values, sources, paths, ignored)
++    sources = {key: source for key, source in sources.items() if key in final}
++    return Config(values, sources, [source for source, _ in walked.layers], ignored, walked.notes,
++                  walked.committed)
+ 
+ 
+ @dataclass(frozen=True)
+diff --git a/src/projector/core.py b/src/projector/core.py
+index 01dc5d9e..0ea7f802 100644
+--- a/src/projector/core.py
++++ b/src/projector/core.py
+@@ -175,6 +175,14 @@ def write_through(path: Path, content: str) -> None:
+             os.unlink(temporary)
+ 
+ 
++def state_home(environ: Optional[dict] = None) -> Path:
++    """Projector's own folder under `$XDG_STATE_HOME`, or under `~/.local/state` without it."""
++    environ = os.environ if environ is None else environ
++    base = environ.get("XDG_STATE_HOME")
++    home = Path(environ["HOME"]) if environ.get("HOME") else Path.home()
++    return (Path(base) if base else home / ".local" / "state") / "projector"
++
++
+ DISTRIBUTION = "projector-cli"
+ 
+ 
+diff --git a/src/projector/ios.py b/src/projector/ios.py
+index b7af9238..e63584c8 100644
+--- a/src/projector/ios.py
++++ b/src/projector/ios.py
+@@ -21,7 +21,7 @@
+ from urllib.parse import quote
+ 
+ from . import review
+-from .core import EnvironmentError, ProjectorError, UsageError, visible_files
++from .core import EnvironmentError, ProjectorError, UsageError, state_home, visible_files
+ 
+ TOOLS_MESSAGE = "project ios needs Xcode's command-line tools on macOS"
+ DEVICE_DESTINATION = "generic/platform=iOS"
+@@ -118,7 +118,7 @@ def mac(self) -> Path:
+ 
+ 
+ def state_for(repo: str) -> State:
+-    return State(review.state_home() / "ios" / repo)
++    return State(state_home() / "ios" / repo)
+ 
+ 
+ @contextmanager
+diff --git a/src/projector/review.py b/src/projector/review.py
+index a6078b79..676072c5 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -54,7 +54,7 @@
+ from typing import Callable, Optional
+ from urllib.parse import quote
+ 
+-from .core import ProjectorError, distribution_version
++from .core import ProjectorError, distribution_version, state_home
+ from .inbox import SESSION, locked, write_json
+ from .summary import repo_slug
+ 
+@@ -217,13 +217,6 @@ def trusted(login: str) -> bool:
+ 
+ # State
+ 
+-def state_home(environ: Optional[dict] = None) -> Path:
+-    """Projector's own folder under `$XDG_STATE_HOME`, or under `~/.local/state` without it."""
+-    environ = os.environ if environ is None else environ
+-    base = environ.get("XDG_STATE_HOME")
+-    return (Path(base) if base else Path.home() / ".local" / "state") / "projector"
+-
+-
+ def state_dir(explicit: Optional[Path] = None, environ: Optional[dict] = None) -> Path:
+     if explicit is not None:
+         return explicit
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 9839c96b..34251e91 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -3,6 +3,7 @@
+ import json
+ import os
+ import re
++import shutil
+ import subprocess
+ import tempfile
+ import unittest
+@@ -13,8 +14,9 @@
+ 
+ from projector import config as config_module
+ from projector.cli import main
+-from projector.config import SETTINGS, ConfigError, config_paths, load, merge
++from projector.config import SETTINGS, ConfigError, Source, load, merge
+ from projector.core import json_scalar
++from tests.scratch import copy_of
+ 
+ 
+ def write(path: Path, text: str) -> Path:
+@@ -58,8 +60,8 @@ def test_sources_name_the_file_whose_value_survived(self) -> None:
+ 
+         config = self.merged()
+ 
+-        self.assertEqual(parent, config.source("review.effort"))
+-        self.assertEqual(self.home / ".projector.toml", config.source("review.model"))
++        self.assertEqual(parent, config.source("review.effort").path)
++        self.assertEqual(self.home / ".projector.toml", config.source("review.model").path)
+ 
+     def test_walk_stops_at_home(self) -> None:
+         write(self.base / ".projector.toml", 'reviewer = "above-home"\n')
+@@ -77,8 +79,8 @@ def test_the_home_file_is_read_once_though_two_rules_reach_it(self) -> None:
+ 
+         config = self.merged()
+ 
+-        self.assertEqual([user], config.paths)
+-        self.assertEqual(user, config.source("reviewer"))
++        self.assertEqual([Source(user)], config.paths)
++        self.assertEqual(Source(user), config.source("reviewer"))
+ 
+     def test_repo_outside_home_reads_no_ancestor_but_keeps_the_user_layer(self) -> None:
+         # The case the separate user layer exists for: a checkout with no home
+@@ -100,7 +102,7 @@ def test_paths_are_ordered_lowest_precedence_first(self) -> None:
+         parent = write(self.home / "work" / ".projector.toml", "b = 2\n")
+         repo = write(self.repo / ".projector.toml", "c = 3\n")
+ 
+-        self.assertEqual([user, parent, repo], config_paths(self.repo, self.home, self.environ))
++        self.assertEqual([Source(user), Source(parent), Source(repo)], self.merged().paths)
+ 
+     def test_missing_files_are_simply_absent(self) -> None:
+         config = self.merged()
+@@ -125,7 +127,7 @@ def test_a_table_may_replace_a_scalar_without_stale_provenance(self) -> None:
+         config = self.merged()
+ 
+         self.assertEqual({"effort": "xhigh"}, config.get("review"))
+-        self.assertEqual(repo, config.source("review.effort"))
++        self.assertEqual(Source(repo), config.source("review.effort"))
+         self.assertIsNone(config.source("review"))
+ 
+     def test_invalid_toml_names_the_file(self) -> None:
+@@ -149,8 +151,8 @@ def test_a_worktree_under_the_repository_still_sees_the_repository(self) -> None
+ 
+         self.assertEqual("ninjudd", config.get("org"))
+         self.assertTrue(config.get("repo"))
+-        self.assertIn(org, config.paths)
+-        self.assertIn(repo, config.paths)
++        self.assertIn(Source(org), config.paths)
++        self.assertIn(Source(repo), config.paths)
+ 
+     def test_merge_does_not_mutate_its_inputs(self) -> None:
+         base = {"review": {"effort": "medium"}}
+@@ -650,3 +652,236 @@ def test_the_documented_keys_are_the_known_keys(self) -> None:
+         names = {bool: "boolean", str: "string", int: "whole number"}
+ 
+         self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))
++
++
++GIT_IDENTITY = {"GIT_AUTHOR_NAME": "Tester", "GIT_AUTHOR_EMAIL": "tester@example.invalid",
++                "GIT_COMMITTER_NAME": "Tester", "GIT_COMMITTER_EMAIL": "tester@example.invalid"}
++POLICY = '[review]\ngate_checks = "ci"\n'
++
++
++def git(cwd: Path, *arguments: str) -> str:
++    done = subprocess.run(["git", *arguments], cwd=cwd, check=True, capture_output=True, text=True,
++                          env={**os.environ, **GIT_IDENTITY})
++    return done.stdout.strip()
++
++
++def cloned_repository(directory: Path) -> None:
++    """A bare `origin` whose default branch `main` commits `POLICY`, and a clone of it at `home/work/repo`."""
++
++    git(directory, "init", "-q", "--bare", "-b", "main", "origin.git")
++    seed = directory / "seed"
++    git(directory, "init", "-q", "-b", "main", str(seed))
++    write(seed / ".projector.toml", POLICY)
++    write(seed / "README.md", "# Repo\n")
++    git(seed, "add", ".")
++    git(seed, "commit", "-q", "-m", "Add policy")
++    git(directory / "origin.git", "fetch", "-q", str(seed), "+main:main")
++    (directory / "home" / "work").mkdir(parents=True)
++    git(directory, "clone", "-q", str(directory / "origin.git"), str(directory / "home" / "work" / "repo"))
++
++
++class DefaultBranchTests(unittest.TestCase):
++    """A `.projector.toml` the repository tracks applies from `origin/HEAD`, never from the working copy."""
++
++    def setUp(self) -> None:
++        base, _ = copy_of(cloned_repository)
++        self.base = base.resolve()
++        self.home = self.base / "home"
++        self.repo = self.home / "work" / "repo"
++        self.environ = {"HOME": str(self.home)}
++        environment = mock.patch.dict(os.environ, {"HOME": str(self.home),
++                                                   "XDG_STATE_HOME": str(self.base / "state")})
++        environment.start()
++        self.addCleanup(environment.stop)
++
++    def merged(self, start: Path | None = None):
++        return load(start or self.repo, self.home, self.environ)
++
++    def invoke(self, *arguments: str, root: Path | None = None) -> tuple[int, str, str]:
++        stdout, stderr = StringIO(), StringIO()
++        with redirect_stdout(stdout), redirect_stderr(stderr):
++            code = main([*arguments, "--root", str(root or self.repo)])
++        return code, stdout.getvalue(), stderr.getvalue()
++
++    def push_to_origin(self, text: str) -> None:
++        """Merge a new policy on `origin` from the seed, then fetch it, as a merged pull request arrives."""
++
++        seed = self.base / "seed"
++        write(seed / ".projector.toml", text)
++        git(seed, "commit", "-q", "-am", "Change policy")
++        git(self.base / "origin.git", "fetch", "-q", str(seed), "+main:main")
++        git(self.repo, "fetch", "-q", "origin")
++
++    def test_a_branch_cannot_rewrite_the_policy_the_default_branch_commits(self) -> None:
++        git(self.repo, "switch", "-q", "-c", "feature")
++        write(self.repo / ".projector.toml", '[review]\ngate_checks = ""\n')
++        git(self.repo, "commit", "-q", "-am", "Weaken the gate")
++        write(self.repo / ".projector.toml", '[review]\ngate_checks = "none"\n')
++
++        code, stdout, stderr = self.invoke("config", "get", "review.gate_checks", "--json")
++        listed, listing, notes = self.invoke("config", "list")
++
++        self.assertEqual((0, "ci", "origin/main:.projector.toml"),
++                         (code, json.loads(stdout)["value"], json.loads(stdout)["source"]), stderr)
++        self.assertEqual(0, listed)
++        self.assertIn("review.gate_checks = ci  # origin/main:.projector.toml", listing)
++        self.assertIn(f"{self.repo / '.projector.toml'}: working copy ignored until merged", notes)
++
++    def test_a_branch_that_deletes_the_file_still_gets_the_default_branch_policy(self) -> None:
++        git(self.repo, "switch", "-q", "-c", "feature")
++        git(self.repo, "rm", "-q", ".projector.toml")
++        git(self.repo, "commit", "-q", "-m", "Drop the policy")
++
++        self.assertEqual("ci", self.merged().get("review.gate_checks"))
++
++    def test_a_file_a_branch_adds_waits_until_it_merges(self) -> None:
++        git(self.repo, "switch", "-q", "-c", "feature")
++        added = write(self.repo / "sub" / ".projector.toml", "[review]\nallow_approve = true\n")
++        git(self.repo, "add", "sub/.projector.toml")
++        git(self.repo, "commit", "-q", "-m", "Allow approvals")
++
++        config = self.merged(self.repo / "sub")
++        _, _, notes = self.invoke("config", "list", root=self.repo / "sub")
++
++        self.assertIsNone(config.get("review.allow_approve"))
++        self.assertEqual([(added, "not on origin/main yet, so it is ignored until it merges")], config.notes)
++        self.assertIn(f"{added}: not on origin/main yet", notes)
++
++    def merge_to_main(self, files: dict[str, str], links: dict[str, str]) -> None:
++        """Commit `files` and the symbolic links in `links` on `main`, push them to `origin`, and branch off."""
++
++        for path, text in files.items():
++            write(self.repo / path, text)
++        for path, target in links.items():
++            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
++            (self.repo / path).symlink_to(target)
++        git(self.repo, "add", "-A")
++        git(self.repo, "commit", "-q", "-m", "Add policy")
++        git(self.repo, "push", "-q", "origin", "main")
++        git(self.repo, "switch", "-q", "-c", "feature")
++
++    def test_a_committed_file_in_a_directory_with_a_newline_applies_from_the_default_branch(self) -> None:
++        folder = self.repo / "sub\nfolder"
++        self.merge_to_main({"sub\nfolder/.projector.toml": '[review]\ngate_checks = "nested"\n'}, {})
++        write(folder / ".projector.toml", '[review]\ngate_checks = "none"\n')
++
++        config = self.merged(folder)
++
++        self.assertEqual(("nested", "origin/main:sub\nfolder/.projector.toml"),
++                         (config.get("review.gate_checks"), str(config.source("review.gate_checks"))))
++        self.assertEqual([(folder / ".projector.toml", "working copy ignored until merged; "
++                                                       "origin/main:sub\nfolder/.projector.toml applies")],
++                         config.notes)
++
++    def test_git_finds_a_working_tree_whose_path_holds_a_newline(self) -> None:
++        top = self.base / "new\nline"
++        git(self.base, "init", "-q", str(top))
++
++        self.assertEqual(config_module._tree_at(top), config_module._rev_parse_tree(top))
++
++    def test_a_committed_symbolic_link_reads_its_target_on_the_default_branch(self) -> None:
++        self.merge_to_main({"policy.toml": '[review]\ngate_checks = "linked"\n'},
++                           {"sub/.projector.toml": "../policy.toml"})
++        write(self.repo / "policy.toml", '[review]\ngate_checks = "none"\n')
++
++        config = self.merged(self.repo / "sub")
++
++        self.assertEqual(("linked", "origin/main:sub/.projector.toml"),
++                         (config.get("review.gate_checks"), str(config.source("review.gate_checks"))))
++
++    def test_a_committed_symbolic_link_that_reaches_no_file_on_the_default_branch_is_refused(self) -> None:
++        cases = {"outside": ("out/.projector.toml", "../../outside.toml", "leads outside the repository"),
++                 "dangling": ("gone/.projector.toml", "../absent.toml", "leads to no file"),
++                 "loop": ("loop/.projector.toml", "../loop/.projector.toml", "leads into a loop of links"),
++                 "newline": ("odd\nname/.projector.toml", "../policy.toml", "cannot be followed")}
++        self.merge_to_main({"policy.toml": POLICY}, {path: target for path, target, _ in cases.values()})
++        write(self.home / "work" / "outside.toml", POLICY)
++        write(self.repo / "absent.toml", POLICY)
++        for name, (path, _, problem) in cases.items():
++            with self.subTest(name):
++                with self.assertRaises(ConfigError) as caught:
++                    self.merged((self.repo / path).parent)
++
++                self.assertIn(f"origin/main:{path}", str(caught.exception))
++                self.assertIn(problem, str(caught.exception))
++
++    def test_untracked_files_apply_from_disk_at_once(self) -> None:
++        parent = self.home / "work" / ".projector.toml"
++        user = self.home / ".projector.toml"
++        inside = self.repo / "sub" / ".projector.toml"
++        for value in ("first", "second"):
++            write(parent, f'[review]\nusername = "{value}"\n')
++            write(user, f'[panel]\nbackground = "{value}"\n')
++            write(inside, f'[ios]\napp = "{value}"\n')
++
++            config = self.merged(self.repo / "sub")
++
++            self.assertEqual((value, value, value),
++                             (config.get("review.username"), config.get("panel.background"), config.get("ios.app")))
++        self.assertEqual([Source(user), Source(parent),
++                          Source(self.repo / ".projector.toml", "origin/main:.projector.toml"), Source(inside)],
++                         config.paths)
++
++    def test_a_worktree_reads_the_default_branch_as_its_main_checkout_does(self) -> None:
++        git(self.repo, "switch", "-q", "-c", "other")
++        write(self.repo / ".projector.toml", '[review]\ngate_checks = "main-checkout"\n[ios]\napp = "main"\n')
++        worktree = self.repo / ".claude" / "worktrees" / "agent"
++        git(self.repo, "worktree", "add", "-q", "-b", "agent", str(worktree), "origin/main")
++        write(worktree / ".projector.toml", '[review]\ngate_checks = "worktree"\n')
++
++        from_worktree, from_main = self.merged(worktree), self.merged()
++
++        self.assertEqual({"review": {"gate_checks": "ci"}}, from_worktree.values)
++        self.assertEqual((from_main.values, ["origin/main:.projector.toml"]),
++                         (from_worktree.values, [str(source) for source in from_worktree.paths]))
++
++    def test_a_repository_without_origin_head_reads_every_file_from_disk(self) -> None:
++        git(self.repo, "remote", "set-head", "origin", "-d")
++        write(self.repo / ".projector.toml", '[review]\ngate_checks = "working"\n')
++
++        config = self.merged()
++
++        self.assertEqual(("working", []), (config.get("review.gate_checks"), config.notes))
++
++    def test_a_merged_change_applies_once_fetched(self) -> None:
++        self.assertEqual("ci", self.merged().get("review.gate_checks"))
++
++        self.push_to_origin('[review]\ngate_checks = "check"\n')
++
++        self.assertEqual("check", self.merged().get("review.gate_checks"))
++
++    def test_set_on_a_tracked_file_says_it_waits_for_the_merge(self) -> None:
++        code, stdout, stderr = self.invoke("config", "set", "review.gate", "x")
++
++        self.assertEqual(0, code, stderr)
++        self.assertEqual(f"set review.gate = x in {self.repo / '.projector.toml'}; takes effect once this change "
++                         "merges to origin/main\n", stdout)
++        self.assertEqual(POLICY + 'gate = "x"\n', (self.repo / ".projector.toml").read_text())
++        self.assertIsNone(self.merged().get("review.gate"))
++
++    def test_a_warm_cache_starts_no_git_and_notices_a_new_commit_or_index(self) -> None:
++        # The untracked file is absent from the default branch, so a load asks the index about it too.
++        write(self.repo / "sub" / ".projector.toml", '[ios]\napp = "local"\n')
++        log = self.base / "git.log"
++        fake = write(self.base / "bin" / "git", f'#!/bin/sh\necho "$1" >> "{log}"\nexec "{shutil.which("git")}" "$@"\n')
++        fake.chmod(0o755)
++
++        def runs() -> int:
++            return len(log.read_text().splitlines()) if log.exists() else 0
++
++        with mock.patch.dict(os.environ, {"PATH": f"{fake.parent}{os.pathsep}{os.environ['PATH']}"}):
++            self.merged(self.repo / "sub")
++            cold = runs()
++            for _ in range(100):
++                self.merged(self.repo / "sub")
++            warm = runs() - cold
++            self.push_to_origin('[review]\ngate_checks = "check"\n')
++            fetched = runs()
++            self.assertEqual("check", self.merged(self.repo / "sub").get("review.gate_checks"))
++            after_commit = runs() - fetched
++            os.utime(self.repo / ".git" / "index", ns=(1, 1))
++            before_index = runs()
++            self.merged(self.repo / "sub")
++            after_index = runs() - before_index
++
++        self.assertEqual((0, 1, 1), (warm, after_commit, after_index))

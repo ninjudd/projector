@@ -1,0 +1,124 @@
+{
+ "version": 1,
+ "name": "Configuration trust",
+ "project": "config-trust",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 545,
+  "title": "Read a tracked .projector.toml from the default branch, never the checked-out branch",
+  "head": "8b17a251beb29a545ea4283276b5d47de05fdc88",
+  "headRef": "config-trust/default-branch",
+  "base": "4608110e6b7824a9e44b0a852efd93e5c52b5da8",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector reads repository policy such as review gates from <code>.projector.toml</code>. This layer changes tracked files to use the cached default-branch commit, so checking out a feature branch cannot rewrite the policy used by later commands.",
+   "Files on the default branch apply even when the working copy edits or deletes them. Branch-only tracked files wait for merge; untracked files and personal or outer configuration still apply from disk. Later layers add priority overrides, destination approval, and background default-branch fetching."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Review result",
+    "html": "<p>Both earlier configuration-reader findings are verified fixed: newline-bearing paths load their committed policy, and symlinks resolve inside the selected default-branch tree.</p><p>The new-head gate, exact-head CI, 268 hook tests, 61 configuration tests, and project checks passed. Both original reproductions now load their expected value, and all four added regressions reject the previous reader.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "reader",
+   "title": "Read trusted configuration from Git",
+   "kicker": "Select the default-branch policy and cache Git lookups",
+   "intro": [
+    "A tracked file is repository policy. The loader resolves the current repository and its shared Git directory, follows the cached <code>origin/HEAD</code> commit, and reads each walked configuration path from that commit. Branch-only additions are ignored until merged.",
+    "Blob caches use commit and path; tracked-path caches use each worktree index signature. Warm loads avoid Git subprocesses. The state-directory helper now lives in the core module and honors the environment passed by tests.",
+    "Newline-bearing paths are looked up through a NUL-separated Git tree listing before their objects are read. Symbolic links are followed within the selected commit; links that leave the repository or resolve to no file are configuration errors."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "All 61 configuration tests pass. Four added regressions fail with the previous reader, including the two original failures, newline-bearing worktree discovery, and refusal of unsafe committed links."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Chooses Git-backed or disk-backed layers, caches their contents, and records value provenance.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 491,
+       "text": "Both original temporary-repository reproductions now load the committed value. Symlinks are followed within the selected tree; outside, dangling, cyclic, and newline-path links are refused instead of reading working-tree targets."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/core.py",
+     "note": "Provides the shared state directory helper, respecting an explicitly supplied HOME.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "callers",
+   "title": "Show where policy values come from",
+   "kicker": "Report provenance and retain the shared state layout",
+   "intro": [
+    "Configuration results now identify their source as either a disk file or a default-branch blob such as <code>origin/main:.projector.toml</code>. List and path commands explain ignored working copies; set and unset report when an edit waits for merge.",
+    "The review and iOS callers use the shared state-directory helper so their existing state remains in the same location."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Changed source consumers and state-directory callers were traced; the new-head gate, CI, and 268 hook tests pass."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Renders source labels, ignored-copy notes, and the takes-effect-on-merge result field.",
+     "checks": []
+    },
+    {
+     "path": "src/projector/review.py",
+     "note": "Imports the shared state helper while preserving review state paths.",
+     "checks": []
+    },
+    {
+     "path": "src/projector/ios.py",
+     "note": "Uses the shared helper for the existing iOS state directory.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "contract",
+   "title": "Document and test the trust boundary",
+   "kicker": "Exercise real Git repositories and describe effective policy",
+   "intro": [
+    "The new tests build local Git repositories and linked worktrees to exercise the policy boundary through configuration loads and CLI output. The documentation explains which files come from the default branch and when edits take effect.",
+    "The project plan moves to <code>in-progress</code> and records implementation decisions for this first layer. The remaining stack layers are still outstanding."
+   ],
+   "files": [
+    {
+     "path": "tests/test_config.py",
+     "collapsed": true,
+     "note": "Exercises committed policy, worktrees, disk layers, warm caching, newline paths, and safe committed-symlink resolution.",
+     "checks": []
+    },
+    {
+     "path": "docs/cli.md",
+     "collapsed": true,
+     "note": "Documents default-branch sources, safe symlink resolution, ignored working copies, and merge-delayed edits.",
+     "checks": []
+    },
+    {
+     "path": "docs/projects/config-trust/readme.md",
+     "collapsed": true,
+     "note": "Records the first layer’s decisions, including newline-path lookup and safe symlink behavior.",
+     "checks": []
+    }
+   ]
+  }
+ ]
+}
