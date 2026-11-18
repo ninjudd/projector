@@ -1,0 +1,169 @@
+{
+ "version": 1,
+ "name": "Repository inbox between peers",
+ "project": "agent-messages/peers",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 551,
+  "title": "Carry a repository inbox between peers through the relay",
+  "head": "671e90d157a6d56239293f2384d099da4c5520f6",
+  "headRef": "repo-inbox/relay",
+  "base": "30f52b1533872f96fd7b0cb4dba9f766337a69c6",
+  "baseRef": "repo-inbox/peers",
+  "basePr": 550
+ },
+ "overview": {
+  "summary": [
+   "Projector’s inbox normally lets an agent ask its own user for a decision or report an outcome. This change extends it to people who exchange public keys: an agent posts an item to a peer, the peer or their agents respond, and the asking agent receives each reply through the encrypted relay.",
+   "This middle stack layer adds the repository-wide inbox, transport, command handlers, and reply delivery. The preceding layer manages trusted peers; the following layer adds the panel, console, and skill integration. Incoming items, your sent copies, and replies remain separate entries so a peer’s response does not decide whether your agent needs more replies."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "What travels and what stays local",
+    "html": "<ul class=\"tight\"><li><b>Peer:</b> another person whose public key you explicitly configured.</li><li><b>Relay:</b> encrypted records carried by hidden Git refs in a shared repository.</li><li><b>Mirror:</b> the local repository inbox, with stable references such as <code>r1</code>.</li><li><b>State record:</b> closes, snoozes, and replied sessions encrypted to your own key and merged across your machines.</li></ul>"
+   },
+   {
+    "id": "result",
+    "title": "Review result",
+    "html": "<p>This head rebases the clean full review at <code>f0dd9f5</code> onto the updated configuration-trust base. The two conflict resolutions preserve independent peer and default-branch status fields. The repository inbox, reservation, and state-merge behavior is unchanged.</p><p>The exact-head CI check, configured gate, and 349 focused peer, relay, configuration, watch, and permission tests passed. Earlier finding fixes remain covered by the clean full review.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "records",
+   "title": "Store repository inbox entries and state",
+   "kicker": "The item contract and its local representation",
+   "intro": [
+    "Each inbox item identifies its repository and sender. A sent copy records the intended peer, and a reply names the item it answers. The new store gives each local entry a stable <code>r</code> reference and merges state separately, so state arriving before an item can still apply when the item opens.",
+    "Agent replies should stay open and be limited to one reply per session. Closing and reopening belong to the asking side’s state; a peer can withdraw their own incoming item without silently closing the asker’s sent copy.",
+    "A response now takes a local reservation in <code>claims.json</code>. Other state producers cannot replicate that reservation. The reply and its state record queue together, and only a successful queue changes the mirror; abandoned reservations lapse after five minutes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/repo_inbox.py",
+     "note": "Defines the record validators, local mirror, state merge, posting and response operations, and reply wake lines.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The clean full review at f0dd9f5 verified the earlier malformed-record, once-per-session, size-refusal, and local-reservation fixes. This rebase leaves their implementation unchanged."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Parses repository references alongside session item references and resolves the repository used by inbox commands."
+    }
+   ]
+  },
+  {
+   "id": "transport",
+   "title": "Carry encrypted records between peers",
+   "kicker": "Validation, limits, and synchronization through the relay",
+   "intro": [
+    "The relay fetches the recipient’s encrypted inbox refs, opens records only from the local key or configured peers, and checks repository identity and reply ownership before mirroring them. Per-peer limits keep a reply stream from consuming the allowance for new items.",
+    "Your machines exchange their own state records and merge concurrent updates. A reply wakes the original asking session only on its originating machine, while the item remains open; the event names its peer origin and authority limit."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/relay.py",
+     "note": "Adds user and state namespaces, sender-aware opening, reply pairing, rejection handling, and mirror pruning. State records merge both when queued concurrently and after a failed remote lease.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The clean full review at f0dd9f5 replayed successful and failed overlapping replies through the real relay. Their queue, claim, and state-merge implementation is unchanged. Checked the inherited Git-location environment filtering against this layer’s explicit working directories."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/agents.py",
+     "note": "Sets the default per-peer hourly limit."
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds the positive user-level agent.peer_limit setting."
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Includes configured peer relays in collection status even without a current key.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Read the rebase conflict resolution: relay’s empty fallback keeps peer status, and the report also returns the base’s default-branch fetch status."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/codex_watch.py",
+     "note": "Allows queued peer reply events only while their mirrored reply still exists."
+    },
+    {
+     "path": "tests/test_peers.py",
+     "note": "Exercises peer exchange, validation, local reservations, expiry, and state merging across machines and overlapping commands. New cases cover two successful replies, reply/snooze ordering in both directions, and stale snooze after close.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Ran peer, relay, configuration, watch, and permission tests on the integrated head: all 349 tests passed."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_relay.py",
+     "note": "Extends the relay fixture to three machines and adapts assertions to sender-aware opening and last-opened peer status."
+    }
+   ]
+  },
+  {
+   "id": "commands",
+   "title": "Post to peers and respond from the CLI",
+   "kicker": "Repository items join the existing inbox commands",
+   "intro": [
+    "The CLI routes <code>--to</code> posts to configured peers and repository references such as <code>r1</code> to the new store. Agent responses identify the registered session, while user actions remain explicit through <code>--as</code>. Showing peer content prints its authority notice before the body.",
+    "The permission rules allow agent replies and closes under standing instructions. Answers and other actions that decide an outcome retain their existing confirmation boundary."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Wires peer posting, reply and close commands, repository item routing, listing, and readable peer provenance.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Read the rebase conflict resolution: watch status keeps unknown peer sender output alongside the base’s new default-branch status lines."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Allows inbox reply and close while preserving confirmation for decisions."
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Checks that reply and close are allowed and answer still asks."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Document the inbox workflow and stack boundary",
+   "kicker": "Commands and decisions for people using the feature",
+   "intro": [
+    "The CLI guide describes sending, answering, replying, snoozing, closing, and reopening peer items. The project plan records the implementation decisions that connect the three stack layers, including the need to land the panel and console integration before the whole flow ships."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents peer status, repository inbox commands, sender identity, and reply behavior."
+    },
+    {
+     "path": "docs/projects/agent-messages/peers/readme.md",
+     "note": "Section 7 records validation, local reservations, combined reply/state queuing, retries, and merging concurrent state updates in the outbox."
+    }
+   ]
+  }
+ ]
+}
