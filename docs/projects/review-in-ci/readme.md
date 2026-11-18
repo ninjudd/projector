@@ -54,8 +54,9 @@ runner for that command and keeps the review state between runs in the
 Actions cache, so a small push still gets an incremental review. The
 agent's summary of the pull request goes to a second job that runs no
 agent, and that job publishes it to the site, so the agent's token never
-needs to push. `project review workflow` writes the workflow that calls the
-action. The
+needs to push. `project init --ci-review` sets a repository up in one
+command. It writes the workflow that calls the action, records the settings,
+and sets the secret that holds the model's credential. The
 review posts as `github-actions[bot]` with the workflow's token, or as a
 GitHub App the repository's owner creates. A new setting,
 `review.reviewers`, lets every other reader of verdicts, such as the
@@ -345,10 +346,12 @@ runs the CLI from its own checkout with `PYTHONPATH` set to the action's
 | `timeout-minutes` | `45` | The agent's time limit. The job's own limit is 15 minutes longer. |
 | `step` | `review` | `review` runs the agent. `summary` publishes the run's summary artifacts and runs no agent (§ 2.6). |
 
-Secrets reach the action as `env`. `project review workflow --write`
+Secrets reach the action as `env`. `project init --ci-review` (§ 2.10)
 writes `.github/workflows/projector-review.yml`, which calls the action at
 `@v0`, and Projector's own copy calls it at `@main`, as the site workflow
-does:
+does. `project review ci-workflow` prints the workflow `init` would write,
+so you can compare it with yours, as `project review workflow` does for the
+`clean` label workflow:
 
 ```yaml
 name: Projector review
@@ -440,23 +443,99 @@ leaves it out with a warning unless one of these holds:
 
 A failed visibility check counts as not public.
 
-### 2.10 The files
+### 2.10 `project init --ci-review` sets a repository up
+
+`project init --ci-review` adds CI review to the repository it runs in, and
+`--no-ci-review` records that the repository has none. The step follows the
+pattern `init` already uses for the site and the required review check. A
+flag answers the question. At a terminal, with no flag and nothing
+recorded, `init` asks:
+
+```text
+Review this repository's pull requests in GitHub Actions? [y/N]
+```
+
+`init` records the answer as `review.ci` in the committed `.projector.toml`,
+so it never asks again. Without a terminal, a flag, or a recorded answer, it
+asks nothing and changes nothing, so an agent or a CI job that runs `init`
+never adds a workflow by surprise. Once `review.ci` is `true`, every later
+`init`, such as the one you run after an upgrade, refreshes the workflow.
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--ci-review`, `--no-ci-review` | The recorded `review.ci`, then the prompt | Set CI review up, or record that the repository has none |
+| `--ci-agents <list>` | The recorded `review.ci_agents`, then `claude` | The agents in the workflow's matrix, such as `claude,codex` |
+| `--ci-credential <kind>` | `subscription` for `claude`, `api-key` for `codex` | Which secret `init` asks for, as the credentials table in § 2.4 lists them |
+| `--ci-app <slug>` | None | Post as this GitHub App. `init` reads the app's ID with `gh api apps/<slug>`, which needs no credential. |
+| `--action-ref <ref>` | `v0` | The existing flag, which now sets the ref of the review action too |
+
+A yes runs these steps in order, and reports each one as `init` reports a
+file:
+
+1. **Write the workflow.** `init` renders
+   `.github/workflows/projector-review.yml` with the agents' matrix, each
+   agent's credential in the job's `env`, the app's ID when there is one,
+   and the action ref. It replaces a workflow that an earlier release wrote
+   and that nobody edited. It keeps an edited one, with a note that says
+   how to compare it with `project review ci-workflow`, as
+   `write_clean_workflow` does for the `clean` label workflow. The
+   template's digest joins `init_digests` as `ci-review-workflow`, so a
+   release that changes it tells you to run `init` again.
+2. **Record the settings.** `init` writes `review.ci = true` and
+   `review.ci_agents` to the committed `.projector.toml`. It adds
+   `github-actions[bot]`, or `<slug>[bot]` with an app, to
+   `review.reviewers`, and keeps every login the list already holds.
+3. **Set the secrets.** For each agent, `init` lists the repository's
+   secrets with `gh secret list`.
+   - **A credential is present.** `init` reports it unchanged.
+   - **Both kinds are present for one agent.** `init` warns that the action
+     refuses to start, and names the secret to delete.
+   - **The credential is missing, at a terminal.** `init` says how to get
+     the value, such as running `claude setup-token`. Then it runs
+     `gh secret set <name> --repo <owner>/<repo>` with the terminal as its
+     input. `gh` prompts for the value without showing it, so the value
+     never passes through Projector or a command line. For
+     `CODEX_AUTH_JSON`, `init` warns that the login goes stale on a hosted
+     runner (§ 2.4), asks you to confirm, and then passes `gh` the file
+     `$CODEX_HOME/auth.json`.
+   - **The credential is missing, without a terminal.** `init` prints the
+     `gh secret set` command to run, and still exits 0, because the files
+     are written.
+
+   With `--ci-app`, `init` does the same for `PROJECTOR_APP_PRIVATE_KEY`.
+   Setting a secret takes admin access to the repository. When GitHub
+   refuses, `init` prints the commands for an admin to run, and keeps the
+   files it wrote.
+4. **Check what the review depends on.** `init` reports two things it
+   cannot fix, after its other steps:
+   - **No site.** When the site step was skipped or failed, CI reviews
+     publish no summaries until the site is set up.
+   - **A gate.** When `review.gate` is set, CI runs it. A step that a hosted
+     runner cannot run needs an override in the workflow's `config` input,
+     and the note shows one.
+5. **Say what comes next.** Commit the workflow and `.projector.toml`
+   through a pull request. A `pull_request` workflow runs from the pull
+   request's own files, so that pull request is the first one the workflow
+   reviews. Readers count the bot's verdict once `review.reviewers` reaches
+   the default branch.
+
+### 2.11 The files
 
 | File | Change |
 | --- | --- |
 | `src/projector/run.py` | New. The presets, the command each builds, the run, the checks before it, and the verdict check after it |
-| `src/projector/cli.py` | `review run` and `review workflow`. `review_status` passes `review.reviewers`. `summary publish` takes `--pr` and links only the pull request's current head (§ 2.6). |
+| `src/projector/cli.py` | `review run` and `review ci-workflow`. `init`'s CI review step and its flags (§ 2.10), beside `init_required_check`, and the new template in `init_digests`. `review_status` passes `review.reviewers`. `summary publish` takes `--pr` and links only the pull request's current head (§ 2.6). |
 | `src/projector/summary.py` | `publish` writes the summary and its diff to `PROJECTOR_SUMMARY_HANDOFF` instead of pushing when the variable is set (§ 2.6) |
 | `src/projector/review.py` | `authenticated_login` and `reviewer_token` work with a runner's token (§ 2.4). `counted_reviews` and `verdicts` take the extra reviewers (§ 2.7). |
 | `src/projector/watch.py` | The three `counted_reviews` calls pass `review.reviewers` |
-| `src/projector/config.py` | `review.reviewers`, `review.runner`, and `review.context_repos`, all strings |
-| `src/projector/templates/review-workflow.yml` | New. The workflow `project review workflow` writes |
+| `src/projector/config.py` | `review.reviewers`, `review.runner`, `review.ci_agents`, and `review.context_repos`, all strings, and `review.ci`, a boolean |
+| `src/projector/templates/review-workflow.yml` | New. The workflow `init --ci-review` writes and `review ci-workflow` prints |
 | `actions/review/action.yml` | New. The composite action (§ 2.8) |
 | `.github/workflows/projector-review.yml` | New. Projector's own review workflow, at `@main` |
 | `.projector.toml` | `reviewers = "github-actions[bot]"`, and an override for the gate in the workflow's `config` input, since `hooks/typecheck.sh` cannot run in CI |
 | `skills/review-pr/SKILL.md` | "Review without a session" (§ 2.2) |
-| `docs/review-in-ci.md` | New. How to set a repository up, the inputs, the secrets, and what the review can and cannot do |
-| `docs/cli.md` | `review run` and `review workflow` |
+| `docs/review-in-ci.md` | New. How to set a repository up with `project init --ci-review`, the inputs, the secrets, and what the review can and cannot do |
+| `docs/cli.md` | `review run`, `review ci-workflow`, and the CI review step under "Adopt a repository" |
 | `tests/test_run.py`, `tests/test_review.py`, `tests/test_watch.py` | The tests in § 4 |
 
 ## 3. Why this design
@@ -518,6 +597,16 @@ A failed visibility check counts as not public.
   there. The handoff sits inside `project summary publish`, so the skill and
   `summarize-pr` stay as they are. If the agent skips the handoff and
   pushes, its token refuses the push.
+- **Setup is a step of `init`, not a command of its own.** `init` is the
+  command that adopts a repository, and you already run it again after each
+  upgrade. It already writes two workflows, asks one question at a
+  terminal, records the answer, and keeps a generated file that you edited.
+  A separate setup command would repeat each of those, and the CI workflow
+  would then go stale after an upgrade, because nothing would rerun that
+  command.
+- **`init` never sees a secret's value.** `gh secret set` reads the value
+  from the terminal itself, so the value never enters Projector's process,
+  its output, or a command line that another process can list.
 - **Same-repository pull requests only.** A fork's `pull_request` run gets no
   secrets. `pull_request_target` would give it secrets, but the agent would
   then read an outsider's diff with a model key and a writing token in its
@@ -538,6 +627,9 @@ A failed visibility check counts as not public.
 | Inside the agent, run `git push` and `gh pr merge` | Both are refused, in auto mode and in allowlist mode |
 | Review a pull request in Projector's repository, which hosts its site | The `summary` job pushes the summary, the site workflow deploys it, and the pull request gets the link comment and the description line |
 | Push a new head while an older run's `summary` job waits | The older summary is pushed to the site, but the comment and the description link only the newer head's summary |
+| Run `project init --ci-review` at a terminal in a repository with no CI review, as an admin | The workflow and `.projector.toml` are written, `gh` prompts for the missing secret without showing it, and the report ends by telling you to open a pull request |
+| Run `project init` again after a release changes the workflow template | An unedited workflow is updated, and an edited one is kept with a note that names `project review ci-workflow` |
+| Run `project init` with no terminal, no flag, and no recorded `review.ci` | No workflow is written, and no secret is read or set |
 | Review a pull request in a repository with no Projector site | No summary artifact is uploaded, and the `summary` job publishes nothing and passes |
 
 These tests fail before the change, and each catches the bug it names:
@@ -584,6 +676,23 @@ These tests fail before the change, and each catches the bug it names:
   head has moved past the summary's head, `publish` pushes the summary but
   posts no comment and leaves the description alone. Catches a late job
   that points readers at an older head's summary.
+- **`test_init_ci_review_keeps_reviewers`.** In a temporary repository whose
+  `.projector.toml` already sets `review.reviewers = "someone"`,
+  `init --ci-review` leaves both `someone` and `github-actions[bot]` in the
+  list. Catches a setup that drops a reviewer the repository already counts.
+- **`test_init_ci_review_keeps_an_edited_workflow`.** An edited
+  `projector-review.yml` survives `init`, and an unedited one from an earlier
+  template is replaced. Catches both an `init` that destroys your changes
+  and one that never refreshes the workflow.
+- **`test_init_ci_review_sets_a_secret_without_reading_it`.** With a fake `gh`
+  that records its arguments, the secret step calls `gh secret set <name>`
+  with no value among the arguments, and gives `gh` the terminal as its
+  input. Catches a value passed with `--body`, where any process on the
+  machine can list it.
+- **`test_init_without_a_terminal_adds_no_ci_review`.** With standard input
+  not a terminal and `review.ci` unset, `init` writes no review workflow and
+  calls no `gh secret` command. Catches an agent's or a CI job's `init` that
+  adds a workflow nobody asked for.
 - **`test_context_repo_visibility`.** A private, internal, or unreadable
   context repository is left out of a public repository's review. Catches a
   private repository's code reaching a public review.
@@ -610,14 +719,15 @@ These tests fail before the change, and each catches the bug it names:
 
 ## 6. Rollout
 
-1. **Land the command, the action, the setting, and the workflow** in one
-   stack, with Projector's own workflow at `@main` in the last layer.
+1. **Land the command, the action, the setting, the `init` step, and the
+   workflow** in one stack, with Projector's own workflow at `@main` in the
+   last layer, written by `project init --ci-review --action-ref main`.
 2. **Check the runner facts** in § 7 on Projector's own pull requests, and
    record what they show in this plan. If auto mode is unavailable for the
    credentials Projector's repository uses, set the workflow's
    `permission-mode` to `allowlist`.
-3. **Tag a release**, so `project review workflow` can write `@v0` for other
-   repositories.
+3. **Tag a release**, so `project init --ci-review` can write `@v0` for
+   other repositories.
 4. **Add the app inputs and context repositories** in a later pull request.
    Neither works with the workflow's token, so neither blocks the first
    three steps.
