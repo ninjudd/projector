@@ -7,8 +7,8 @@ priority: now
 
 A repository can have Projector review each ready pull request in a GitHub
 Actions job, with no agent session running anywhere, and get the same
-labeled verdict, incremental reviews, and sign-off that a session's review
-gives.
+labeled verdict, incremental reviews, summary, and sign-off that a
+session's review gives.
 
 ## 1. Problem
 
@@ -51,8 +51,11 @@ permission mode that never waits for a prompt, and a prompt that runs
 command checks that a verdict on the head was published, and cleans up and
 fails the job when none was. A composite action, `actions/review`, sets up a
 runner for that command and keeps the review state between runs in the
-Actions cache, so a small push still gets an incremental review.
-`project review workflow` writes the workflow that calls the action. The
+Actions cache, so a small push still gets an incremental review. The
+agent's summary of the pull request goes to a second job that runs no
+agent, and that job publishes it to the site, so the agent's token never
+needs to push. `project review workflow` writes the workflow that calls the
+action. The
 review posts as `github-actions[bot]` with the workflow's token, or as a
 GitHub App the repository's owner creates. A new setting,
 `review.reviewers`, lets every other reader of verdicts, such as the
@@ -80,8 +83,7 @@ author's sessions and the site, count that account's reviews.
    It writes the `config` input, if any, to `$HOME/.projector.toml`, the
    untracked user layer, where `[override.<priority>]` tables can replace a
    committed setting for CI, such as a `review.gate` that needs a local
-   tool. It always adds an override that sets `review.summarize = false`
-   (§ 7).
+   tool.
 6. **The run.** The action runs `project review run <number> --agent <agent>
    --model <model>`, which does these steps:
    1. **Skip a reviewed head.** When the reviewer already has a verdict by
@@ -102,8 +104,15 @@ author's sessions and the site, count that account's reviews.
       comment that names the head, the reason the agent gave in its report
       file or "the agent published no verdict", and the run's URL, and it
       exits 1.
-7. **Saving the state.** The action saves the state folder under a new cache
-   key, whether the run passed or failed.
+7. **Saving the state and the summary.** The action saves the state folder
+   under a new cache key, whether the run passed or failed. When the run
+   passed and the agent handed a summary off (§ 2.6), the action uploads it
+   as the artifact
+   `projector-summary-<number>-<agent>`, kept for one day.
+8. **Publishing the summary.** A second job, `summary`, starts once every
+   agent's review job has ended, unless the run was cancelled. It runs no
+   agent and holds no model credential. It downloads each summary artifact
+   of the run and publishes each one, as § 2.6 describes.
 
 ### 2.2 The prompt and the headless rules
 
@@ -118,6 +127,7 @@ to review pull request <number>". It also sets these environment variables:
 | `PROJECTOR_MODEL` | The `--model` value, which the CLI also runs |
 | `PROJECTOR_REPLACE` | The start comment from step 6.2, when there is one |
 | `PROJECTOR_RUN_REPORT` | A file in the run's scratch folder |
+| `PROJECTOR_SUMMARY_HANDOFF` | A folder in the run's scratch space, where `project summary publish` leaves the summary for the summary job (§ 2.6) |
 | `CLAUDE_EFFORT` | The effort the preset runs at, so the verdict marker records it, as `live_effort` reads it |
 
 A new section of `skills/review-pr/SKILL.md`, "Review without a session",
@@ -166,6 +176,11 @@ The workflow grants its token only what the review commands call:
 | `issues: write` | The start comment and the labels |
 | `statuses: write` | The `projector/review` status |
 | `checks: read`, `actions: read` | `project review gate`'s wait for `review.gate_checks` |
+| `pages: read` | `project site status`, which the skill runs to decide whether the repository hosts summaries |
+
+The review job has no `contents: write`, so nothing the agent does can push
+a branch or a ref. The summary job has its own token with the permissions
+§ 2.6 lists, and no agent runs in that job.
 
 The model's credential comes from a repository secret that the action
 passes to the CLI. A subscription credential bills the run to the plan's
@@ -233,7 +248,61 @@ no other pull request can. GitHub evicts an entry after 7 days unused. A
 run that finds no entry still reviews correctly: `interdiff` finds no last
 full review in an empty record and asks for a full review.
 
-### 2.6 Readers count the bot's verdict through `review.reviewers`
+### 2.6 Summaries publish from a job that runs no agent
+
+A summary is the page on the repository's Projector site that explains a
+pull request to its human reviewers. `review-pr` writes one after it
+publishes the verdict, whenever `review.summarize` is not `false` and
+`project site status` says the repository hosts its site. Its
+`project summary publish` step does three things:
+
+- **It pushes the summary.** It commits the summary to
+  `refs/projector/summaries` and pushes that ref.
+- **It starts a site build.** It sends a `repository_dispatch` event, which
+  the site workflow listens for.
+- **It links the summary.** It posts one comment on the pull request and
+  adds one line at the end of the description.
+
+The push and the dispatch need `contents: write`, which the review job does
+not have. So in CI the publish happens in two halves:
+
+1. **The agent hands the summary off.** The action sets
+   `PROJECTOR_SUMMARY_HANDOFF` to a folder in the run's scratch space. When
+   it is set, `project summary publish` reads and checks the summary
+   against the diff as it does today, and then writes `summary.json` and the
+   diff it checked against into that folder instead of pushing. It prints
+   that the workflow publishes the summary, and exits 0. The skill runs
+   `project summary publish` as it always does, so `summarize-pr` needs no
+   change. When the variable is unset, the command behaves as today.
+2. **The summary job publishes it.** The job checks the repository out,
+   downloads the run's summary artifacts, and runs
+   `project summary publish --summary <folder>/summary.json --diff
+   <folder>/diff --pr <number>` for each, in the matrix's order. The new
+   `--pr` flag refuses a summary of any other pull request, because an
+   agent that read untrusted text wrote the artifact. The publish then
+   pushes the ref, sends the dispatch, and links the summary.
+3. **An old head links nothing.** A summary job can finish after the job
+   for a newer head. So `publish` links a summary only while its head is
+   still the pull request's head. It still pushes the summary, because the
+   site keeps a page for every head. The guard applies to every publish, in
+   CI and in a session.
+
+The summary job has its own token:
+
+| Permission | Used by |
+| --- | --- |
+| `contents: write` | The push of `refs/projector/summaries`, and the `repository_dispatch` that starts the site workflow |
+| `pull-requests: write` | The link at the end of the description |
+| `issues: write` | The link comment |
+| `pages: read` | The publish's check that the repository hosts its site |
+
+GitHub starts no workflow for most events that the workflow's own token
+causes, but `repository_dispatch` is an exception. So the dispatch starts the
+site workflow, and the site deploys the summary. The job's concurrency group
+is `projector-summary-<number>` without `cancel-in-progress`, so two runs'
+summaries publish one after the other, never at once.
+
+### 2.7 Readers count the bot's verdict through `review.reviewers`
 
 On a public repository, `counted_reviews` counts a Projector verdict only
 from the reviewer and from an account GitHub calls the repository's
@@ -256,7 +325,7 @@ reviewers = "github-actions[bot]"
 A tracked `.projector.toml` takes effect from the default branch, so a pull
 request cannot add an account to the list that judges it.
 
-### 2.7 The action and the workflow
+### 2.8 The action and the workflow
 
 `actions/review/action.yml` is a composite action, like `actions/site`. It
 runs the CLI from its own checkout with `PYTHONPATH` set to the action's
@@ -274,6 +343,7 @@ runs the CLI from its own checkout with `PYTHONPATH` set to the action's
 | `config` | Empty | TOML written to `$HOME/.projector.toml` |
 | `app-id` | Empty | Post as this GitHub App instead of `github-actions[bot]` |
 | `timeout-minutes` | `45` | The agent's time limit. The job's own limit is 15 minutes longer. |
+| `step` | `review` | `review` runs the agent. `summary` publishes the run's summary artifacts and runs no agent (§ 2.6). |
 
 Secrets reach the action as `env`. `project review workflow --write`
 writes `.github/workflows/projector-review.yml`, which calls the action at
@@ -289,15 +359,17 @@ on:
     inputs:
       pr: {required: true}
       rereview: {type: boolean, default: false}
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-  statuses: write
-  checks: read
-  actions: read
+permissions: {}
 jobs:
   review:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      statuses: write
+      checks: read
+      actions: read
+      pages: read
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (!github.event.pull_request.draft &&
@@ -320,13 +392,34 @@ jobs:
           # A subscription token from `claude setup-token`; pass
           # ANTHROPIC_API_KEY instead to bill API credits.
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+  summary:
+    needs: review
+    if: ${{ !cancelled() && needs.review.result != 'skipped' }}
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      pages: read
+    concurrency:
+      group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: ninjudd/projector/actions/review@v0
+        with:
+          step: summary
+          pr: ${{ github.event.pull_request.number || inputs.pr }}
 ```
+
+The `summary` job starts once every agent's review job has ended. It
+publishes the artifacts that exist, and does nothing when there are none,
+such as when the repository hosts no site or every review failed.
 
 Adding `codex` to the matrix gives each pull request a second model's
 review. The rules for several models on one pull request keep the two
 verdicts apart, and the newest verdict on the head signs it off.
 
-### 2.8 Context repositories give the review more to read
+### 2.9 Context repositories give the review more to read
 
 `review.context_repos` is a comma-separated list of `owner/name`
 repositories. The action clones each at its default branch, depth 1, into
@@ -347,17 +440,18 @@ leaves it out with a warning unless one of these holds:
 
 A failed visibility check counts as not public.
 
-### 2.9 The files
+### 2.10 The files
 
 | File | Change |
 | --- | --- |
 | `src/projector/run.py` | New. The presets, the command each builds, the run, the checks before it, and the verdict check after it |
-| `src/projector/cli.py` | `review run` and `review workflow`. `review_status` passes `review.reviewers`. |
-| `src/projector/review.py` | `authenticated_login` and `reviewer_token` work with a runner's token (§ 2.4). `counted_reviews` and `verdicts` take the extra reviewers (§ 2.6). |
+| `src/projector/cli.py` | `review run` and `review workflow`. `review_status` passes `review.reviewers`. `summary publish` takes `--pr` and links only the pull request's current head (§ 2.6). |
+| `src/projector/summary.py` | `publish` writes the summary and its diff to `PROJECTOR_SUMMARY_HANDOFF` instead of pushing when the variable is set (§ 2.6) |
+| `src/projector/review.py` | `authenticated_login` and `reviewer_token` work with a runner's token (§ 2.4). `counted_reviews` and `verdicts` take the extra reviewers (§ 2.7). |
 | `src/projector/watch.py` | The three `counted_reviews` calls pass `review.reviewers` |
 | `src/projector/config.py` | `review.reviewers`, `review.runner`, and `review.context_repos`, all strings |
 | `src/projector/templates/review-workflow.yml` | New. The workflow `project review workflow` writes |
-| `actions/review/action.yml` | New. The composite action (§ 2.7) |
+| `actions/review/action.yml` | New. The composite action (§ 2.8) |
 | `.github/workflows/projector-review.yml` | New. Projector's own review workflow, at `@main` |
 | `.projector.toml` | `reviewers = "github-actions[bot]"`, and an override for the gate in the workflow's `config` input, since `hooks/typecheck.sh` cannot run in CI |
 | `skills/review-pr/SKILL.md` | "Review without a session" (§ 2.2) |
@@ -414,6 +508,16 @@ A failed visibility check counts as not public.
   Counting every bot's review would let any workflow that can comment forge
   a verdict. Naming the accounts in the default branch's configuration keeps
   the decision with the people who can merge.
+- **A second job publishes the summary.** Giving the review job
+  `contents: write` was rejected: a misled agent could then push to any
+  branch that no rule protects, including the head of the pull request it
+  is reviewing. A second token in the same job was rejected too. GitHub
+  gives a job one token with one set of permissions, and `actions/checkout`
+  stores that token in the checkout's Git configuration, where the agent
+  can read it. A separate job gets a separate token, and no agent runs
+  there. The handoff sits inside `project summary publish`, so the skill and
+  `summarize-pr` stay as they are. If the agent skips the handoff and
+  pushes, its token refuses the push.
 - **Same-repository pull requests only.** A fork's `pull_request` run gets no
   secrets. `pull_request_target` would give it secrets, but the agent would
   then read an outsider's diff with a model key and a writing token in its
@@ -432,6 +536,9 @@ A failed visibility check counts as not public.
 | Run `project review status` on the reviewed pull request from a session with `review.reviewers` set, and without it | The bot's verdict signs the head off with the setting, and is ignored without it |
 | List a private repository in `review.context_repos` of a public repository | The run warns and leaves it out, and the agent's working folders do not include it |
 | Inside the agent, run `git push` and `gh pr merge` | Both are refused, in auto mode and in allowlist mode |
+| Review a pull request in Projector's repository, which hosts its site | The `summary` job pushes the summary, the site workflow deploys it, and the pull request gets the link comment and the description line |
+| Push a new head while an older run's `summary` job waits | The older summary is pushed to the site, but the comment and the description link only the newer head's summary |
+| Review a pull request in a repository with no Projector site | No summary artifact is uploaded, and the `summary` job publishes nothing and passes |
 
 These tests fail before the change, and each catches the bug it names:
 
@@ -461,6 +568,22 @@ These tests fail before the change, and each catches the bug it names:
   verdict from a listed bot counts, and one from an unlisted account with
   association `NONE` does not. Catches both an invisible bot verdict and a
   forged one that counts.
+- **`test_summary_handoff_pushes_nothing`.** With
+  `PROJECTOR_SUMMARY_HANDOFF` set, in a temporary repository with a bare
+  remote, `publish` writes the summary and the diff to the folder, and the
+  remote's `refs/projector/summaries` does not move. Catches a handoff that
+  still pushes, which fails the review job on its token.
+- **`test_summary_handoff_checks_the_summary`.** A summary that does not
+  match its diff fails the handoff, as it fails a push. Catches an
+  unchecked summary that only fails later in the summary job, after the
+  review has passed.
+- **`test_publish_refuses_another_pull_request`.** `--pr 7` refuses a
+  summary of pull request 8. Catches an artifact that publishes onto a pull
+  request it was not written for.
+- **`test_publish_links_only_the_current_head`.** When the pull request's
+  head has moved past the summary's head, `publish` pushes the summary but
+  posts no comment and leaves the description alone. Catches a late job
+  that points readers at an older head's summary.
 - **`test_context_repo_visibility`.** A private, internal, or unreadable
   context repository is left out of a public repository's review. Catches a
   private repository's code reaching a public review.
@@ -472,6 +595,9 @@ These tests fail before the change, and each catches the bug it names:
   the runner while `project review gate` waits for `review.gate_checks`, which
   is about a minute in Projector, and while the agent reads. Cancelling a
   superseded head stops paying for it at once.
+- **The summary job.** It starts one more runner for each run, which
+  checks out the repository and pushes one commit in under a minute. It
+  makes no model calls.
 - **Model tokens.** These are the same as a session's review of the same
   head, because the prompt and the method are the same. Each model in the
   matrix pays for its own review.
@@ -513,11 +639,8 @@ These tests fail before the change, and each catches the bug it names:
   label with the `projector/review` status stays the sign-off, as § 2.4
   says. With the workflow's token, an `APPROVE` also needs the repository's
   setting that allows GitHub Actions to approve pull requests.
-- **Summaries in CI.** Deferred. `project summary publish` pushes
-  `refs/projector/summaries`, which needs `contents: write`. That would let a
-  misled agent push to branches. A later change can have the command, not
-  the agent, push a summary the agent wrote, with a token the agent never
-  sees.
+- **Summaries in CI.** Decided: they ship in the first version, published by
+  a second job that runs no agent, as § 2.6 says.
 - **A self-hosted reviewer.** Deferred to a nested project. A watch daemon
   deliverer named `run` would start `project review run` for each review
   event instead of prompting a conversation, under a repository
