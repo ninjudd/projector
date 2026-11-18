@@ -428,13 +428,20 @@ When `gh stack rebase` or `gh stack push` refuses because another worktree
 has a layer's branch checked out, the stack is still a stack, so update it
 by rebasing without moving that branch:
 
-1. Copy each layer to a branch of your own with
-   `git switch --no-track -c <copy> origin/<layer>`, and note each layer's
-   head with `git rev-parse origin/<layer>`.
-2. Carry the fix up from the bottom with
-   `git rebase --onto <copy of the layer below> <old head of the layer below> <copy>`.
-3. Run each rewritten layer's gate, then push the copies from the bottom up
-   with `git push --force-with-lease=<layer>:<old head> origin <copy>:<layer>`,
+1. After `git fetch origin`, note each layer's head on GitHub with
+   `git rev-parse origin/<layer>`; each push's lease expects it.
+2. Copy the layer that holds your fix from the commit where you made it,
+   which GitHub does not have yet, with `git branch --no-track <copy> HEAD`,
+   and every layer above it from GitHub with
+   `git branch --no-track <copy> origin/<layer>`. Check that the fixed copy
+   contains the layer's head on GitHub with
+   `git merge-base --is-ancestor origin/<layer> <copy>`; when it does not,
+   someone pushed to that layer since you started, so rebase your fix onto
+   it first.
+3. Carry the fix up from the bottom with
+   `git rebase --onto <copy of the layer below> <GitHub head of the layer below> <copy>`.
+4. Run each rewritten layer's gate, then push the copies from the bottom up
+   with `git push --force-with-lease=<layer>:<GitHub head> origin <copy>:<layer>`,
    and check that each layer is in sync with the comparison above.
 
 Tell the user at most once why the chain is not a stack: that
