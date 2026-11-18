@@ -66,7 +66,12 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
 
 1. **Find the repository.** `config.load(start)` finds the Git repository that
    holds `start`: its working tree's top, its common Git directory, and the
-   commit `refs/remotes/origin/HEAD` names. It reads these from the `.git`
+   default branch's commit. That commit is the newer of two: the one
+   `refs/remotes/origin/HEAD` names, which your own fetches move, and the one
+   in `refs/projector/default/origin/<branch>`, which the watch daemon's fetch
+   moves (step 9). The newer is the one that descends from the other. When
+   neither descends from the other, as after a force-push to the default
+   branch, Projector takes yours. It reads these from the `.git`
    file or directory, `commondir`, the ref files, and `packed-refs`, as Git
    documents them, and falls back to `git rev-parse` when the layout is one it
    does not recognize. Every worktree of one repository shares the common
@@ -129,8 +134,13 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
    names the file and the command, and callers treat the setting as unset
    with that reason. A destination from an untracked file or
    `~/.projector.toml` needs no allowing, because you wrote it. Approvals live
-   in `$XDG_STATE_HOME/projector/allowed.json`, one per key and value, so a
-   new value asks again.
+   in `$XDG_STATE_HOME/projector/allowed.json` on each machine, one per key
+   and value. So a repository that changes the value asks again, while every
+   other edit to its file, the same value set by another repository, and a
+   return to a value you allowed before ask nothing.
+   `project config allow --list` prints your approvals with the file each was
+   granted for, and `project config allow --remove <key> <value>` revokes
+   one, after which the next read waits for a new approval.
 6. **Keep paths inside the repository.** A `projects.dir` from any file must
    resolve inside the working tree's top, or `project` refuses with the
    value and the file. An `ios.output` from any file but `~/.projector.toml`
@@ -149,6 +159,27 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
    commit and the file's path, and caches tracked-ness keyed by the index
    file's size and modification time. A load that hits the cache reads only
    files and starts no process.
+9. **Keep the default branch fresh.** On each full pass, every
+   `watch.full_every` seconds, 600 by default, the watch daemon fetches the
+   default branch of each repository a live session works in, into a ref of
+   Projector's own:
+
+   ```console
+   $ git fetch --quiet --no-write-fetch-head origin +refs/heads/main:refs/projector/default/origin/main
+   ```
+
+   It leaves `refs/remotes/origin/*`, your branches, and `git status` as they
+   were, so a fetch you run yourself never fails with `cannot lock ref`, and
+   nothing starts saying `behind by 3` on its own. Git's background
+   maintenance fetches into `refs/prefetch/` for the same reason. The fetch
+   runs on the relay's worker pool through `relay.git`, with a closed standard
+   input, `GIT_TERMINAL_PROMPT=0`, and the fetch timeout, so it never prompts
+   and never stalls the daemon. A fetch that fails leaves the last commit in
+   place, with the error in `watch status`. A merged change to a tracked
+   `.projector.toml` therefore takes effect within one full pass, and loading
+   configuration still never touches the network. `watch.fetch_default =
+   false` turns the fetch off. Without a running daemon, nothing fetches, and
+   the default branch is as of your last fetch.
 
 ### 2.2 Data shapes
 
@@ -164,8 +195,9 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
 
 | File | Change |
 | --- | --- |
-| `src/projector/config.py` | Find the repository (§ 2.1 step 1) and choose each file's source (step 2), with the cache (step 8). Merge ordinary values, then overrides (steps 3 and 4). Add `DESTINATIONS`, `NotAllowed`, and the check in `Config.setting` (step 5). Record each value's source and override flag. Reserve `override`. Update the module docstring, which describes the layers. |
-| `src/projector/cli.py` | Add `project config allow <key> <value>`, terminal only. Add `--override` to `config set` and `unset`, the "takes effect once this change merges" note, and the sources and ignored-copy notes in `config list` and `config get`. |
+| `src/projector/watch.py` | On each full pass, fetch each live repository's default branch into `refs/projector/default/origin/<branch>` on the relay's worker pool, unless `watch.fetch_default` is false, and report a failed fetch in `watch status` (§ 2.1 step 9). |
+| `src/projector/config.py` | Add `watch.fetch_default` to `SETTINGS`. Find the repository (§ 2.1 step 1) and choose each file's source (step 2), with the cache (step 8). Merge ordinary values, then overrides (steps 3 and 4). Add `DESTINATIONS`, `NotAllowed`, and the check in `Config.setting` (step 5). Record each value's source and override flag. Reserve `override`. Update the module docstring, which describes the layers. |
+| `src/projector/cli.py` | Add `project config allow <key> <value>`, terminal only, with `--list` and `--remove <key> <value>`. Add `--override` to `config set` and `unset`, the "takes effect once this change merges" note, and the sources and ignored-copy notes in `config list` and `config get`. |
 | `src/projector/core.py` | Refuse a `projects.dir` that resolves outside the working tree (step 6). |
 | `src/projector/ios.py` | Refuse an `ios.output` outside the working tree or the state directory unless `~/.projector.toml` sets it (step 6). |
 | `docs/cli.md` | Rewrite "Read configuration" and "Change configuration" for the default-branch rule, `[override]`, `config allow`, and the path rules. |
@@ -234,6 +266,8 @@ temporary home.
 | Set `projects.dir = "../elsewhere"`, then `/tmp/x`, in the repository, and `ios.output = "/tmp/out"` in the repository and then in `~/.projector.toml`. | The `projects.dir` values are refused, the repository's `ios.output` is refused, and the user's is accepted. Catches writes outside the repository. |
 | Run `config set review.gate x` on the repository's tracked file. | It writes the working tree and prints that the change takes effect once it merges to `origin/main`. Catches a write that silently does nothing. |
 | Load configuration 100 times with a warm cache, with a fake `git` on `PATH` that records each run. | No load starts a process. Advancing `origin/HEAD` or touching the index makes the next load read Git once. Catches a cache that never hits, or one that never notices a new commit. |
+| Merge a change to `.projector.toml` on `origin` without fetching, and run a full pass with a fake clock. Then fetch into `origin/main` yourself while the daemon's fetch runs, and force-push the default branch so the two refs diverge. Then set `watch.fetch_default = false`. | After the pass, the change applies, `refs/projector/default/origin/main` holds the merged commit, and `refs/remotes/origin/main` and `git status` are unchanged. Your own fetch succeeds. After the divergence, configuration reads your `origin/HEAD`. With the setting off, no fetch runs. Catches a fetch that disturbs your refs, a newer commit ignored, and an opt-out ignored. |
+| Run `config allow --list`, then `config allow --remove` on an approved value, and read the setting again. | The list names each approval and its file. After the removal, the read raises `NotAllowed` again. Catches an approval that cannot be seen or taken back. |
 | A repository with no `origin/HEAD`, and a start outside any repository. | Both read every file from disk, as today. Catches a load that fails where nothing can be trusted more than disk. |
 
 Each test must fail when the fault it names is introduced, as
@@ -246,7 +280,9 @@ tick. With a warm cache a load adds a few `stat` and `read` calls. A cache
 miss, after a fetch moves `origin/HEAD` or after the index changes, costs one
 `git cat-file --batch` and one `git ls-files`, about 38 ms, once. Measure a
 warm load in the tests' timing check, and compare `project list --json` on
-this repository before and after the change.
+this repository before and after the change. The daemon's fetch adds one
+`git fetch` of the default branch per repository with a live session on each
+full pass, which transfers only commits this clone lacks.
 
 ## 6. Open questions
 
@@ -267,3 +303,10 @@ this repository before and after the change.
   `~/.projector.toml` farthest of all (§ 2.1 step 4). A team can then beat a
   company by choosing a higher number, and a company's override holds when
   both choose the same one.
+- **The watch daemon keeps the default branch fresh.** Decided by the user on
+  2026-11-17. Each full pass fetches the default branch into Projector's own
+  ref, and configuration reads the newer of that ref and your `origin/HEAD`
+  (§ 2.1 steps 1 and 9). A merged policy change then reaches every machine
+  with a running daemon within about 10 minutes, without disturbing your
+  remote-tracking refs. `project config allow` can list and revoke approvals
+  (§ 2.1 step 5).
