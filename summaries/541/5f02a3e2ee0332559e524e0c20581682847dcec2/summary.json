@@ -1,0 +1,75 @@
+{
+ "version": 1,
+ "name": "S3 relay transport plan",
+ "project": "agent-messages/s3-relay",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 541,
+  "title": "Plan a relay through an S3 bucket",
+  "head": "5f02a3e2ee0332559e524e0c20581682847dcec2",
+  "headRef": "plan-s3-relay",
+  "base": "167bd2dbfa7db7b7472491a207d6eb52c56948cf",
+  "baseRef": "plan-shared-relay",
+  "basePr": 540
+ },
+ "overview": {
+  "summary": [
+   "Projector relays encrypted records between machines. This plan adds an S3 object-store transport so a recipient can poll its own key prefix more often without accumulating Git objects.",
+   "The transport uses ETags, identifiers for object contents, as expected versions on writes. Existing sealing and delivery remain above the transport. The ready/next plan explicitly defers hosted service and instance/container credentials.",
+   "The revised design separates destinations by endpoint, bucket, and prefix. Capability probes use fresh names, clean up old probes, and test the create, update, and delete conditions needed by relay leases."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation and review",
+    "html": "<ul class=\"tight\"><li><b>Design:</b> all three earlier findings are verified fixed in the revised flow and acceptance cases.</li><li><b>Gate:</b> the new-head configured gate, exact-head CI, 268 hook tests, and metadata checks passed.</li><li><b>Limit:</b> this change is a plan. No cloud operations or live credential reads were performed.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "s3-transport",
+   "title": "Carry sealed records through an object store",
+   "kicker": "Location settings, conditional leases, credentials, and bounded polling",
+   "intro": [
+    "The relay stores one encrypted record per object. A poll lists recipient-key prefixes, reads changed objects under size and count limits, and applies queued writes only when their expected ETags still match.",
+    "A canonical location identity includes endpoint, bucket, and prefix. The same identity groups jobs and names registration state, sealed record destinations, caches, and outboxes, keeping equal bucket names on different endpoints separate.",
+    "A capability probe creates a fresh random object, verifies conditional creation and mismatched-ETag update/delete refusal, then deletes the object. A full pass removes probes left by interrupted jobs after an hour. Credentials refresh before expiry, and local notices explain authentication failures."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Read the revised plan and acceptance cases against all three earlier findings. Endpoint identity covers jobs and persisted state; random probe names avoid restart conflicts; update/delete checks cover the required lease conditions."
+    },
+    {
+     "kind": "context",
+     "text": "The fake S3 server and post-merge two-machine exchange remain implementation acceptance work; they were not run for this plan review."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/s3-relay/readme.md",
+     "note": "Defines S3 location identity, transport operations, restart-safe capability probes, credential refresh, and implementation acceptance cases.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 208,
+       "text": "Endpoint, bucket, and prefix now define one identity used by job grouping, registrations, sealed records, caches, and outboxes. This resolves the cross-endpoint collision finding."
+      },
+      {
+       "kind": "verify",
+       "line": 118,
+       "text": "Fresh probe names let a restarted job continue, and the plan specifies an hour-old orphan sweep plus an interrupted-probe acceptance case."
+      },
+      {
+       "kind": "verify",
+       "line": 107,
+       "text": "The probe explicitly requires wrong-ETag PutObject and DeleteObject requests to fail before the store is enabled, resolving the incomplete lease check."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
