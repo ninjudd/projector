@@ -651,7 +651,11 @@ reopened thread as the recurrence it is instead of as new work.
   tool. An isolated subagent's directory is pinned at launch, so entering
   its pull request's worktree moves only that subagent. A subagent started
   without one shares the session's directory, and its `EnterWorktree`
-  moves every subagent with it.
+  moves every subagent with it. When a subagent finishes, it leaves its
+  worktree on a detached `HEAD` with `git switch --detach`. Git refuses to
+  move a branch that another worktree has checked out, so a finished
+  worktree that still holds a layer's branch stops `gh stack rebase` and
+  `gh stack push` for every fixer after it.
 - Where the host cannot give a subagent a directory of its own, tell the
   subagent never to change the session's directory: run every Git command
   as `git -C <worktree>` and give every file tool an absolute path. Where

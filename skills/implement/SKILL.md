@@ -303,6 +303,18 @@ differ, these rules win:
   change's tests and documentation ride the layer whose code they verify,
   never a layer of their own. Order the layers by dependency, as the skill
   describes.
+- **Put work that overlaps in one stack.** When this work changes files that
+  another open stack changes, or depends on one, build it as layers on top
+  of that stack, never as a stack of its own beside it. When two stacks
+  change the same files, the second to merge conflicts with the first, and
+  every layer that conflict rebases needs its review again. Give work a
+  stack of its own only when it shares no files and no dependents with
+  another. Work that depends on two open stacks makes them one: rebase one
+  onto the top of the other, or build first the layers that need only one.
+  Keep each layer safe to merge by itself, for example by reading a setting
+  only from `~/.projector.toml` until the layer that adds the other stack's
+  guard lands on top. A pull request below that you may not merge is no
+  reason to wait: the stack is how the work goes on without its merge.
 - **Open every layer as a draft.** `gh stack submit --auto` opens new pull
   requests as drafts. Never pass `--open` to `submit` or `link`: it marks
   every layer ready for review at once, the existing ones included, whatever
@@ -411,6 +423,26 @@ pull requests' base branches:
   their commits. The chain stays in sync as a stack does, with every child
   on its parent's current head, and the comparison under "Check that it is
   in sync" checks it.
+
+When `gh stack rebase` or `gh stack push` refuses because another worktree
+has a layer's branch checked out, the stack is still a stack, so update it
+by rebasing without moving that branch:
+
+1. After `git fetch origin`, note each layer's head on GitHub with
+   `git rev-parse origin/<layer>`; each push's lease expects it.
+2. Copy the layer that holds your fix from the commit where you made it,
+   which GitHub does not have yet, with `git branch --no-track <copy> HEAD`,
+   and every layer above it from GitHub with
+   `git branch --no-track <copy> origin/<layer>`. Check that the fixed copy
+   contains the layer's head on GitHub with
+   `git merge-base --is-ancestor origin/<layer> <copy>`; when it does not,
+   someone pushed to that layer since you started, so rebase your fix onto
+   it first.
+3. Carry the fix up from the bottom with
+   `git rebase --onto <copy of the layer below> <GitHub head of the layer below> <copy>`.
+4. Run each rewritten layer's gate, then push the copies from the bottom up
+   with `git push --force-with-lease=<layer>:<GitHub head> origin <copy>:<layer>`,
+   and check that each layer is in sync with the comparison above.
 
 Tell the user at most once why the chain is not a stack: that
 `gh extension install github/gh-stack` would make it one when the extension

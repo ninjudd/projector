@@ -42,10 +42,18 @@ these:
 - **A review finding a person left that you would decline**, because
   declining it overrules them.
 
-When such a decision blocks only part of the work, choose the answer you
-would recommend where it is safe to build on and easy to change later,
-build on it, and post the decision for review. When no answer is safe to
-build on, post it and build everything else first.
+Even then, make a call and keep going, and confirm it with the user through
+the inbox. Choose the answer you would recommend, build on it, and post the
+decision with `ask`, saying what you built on it. Build it so that another
+answer is easy to swap in, such as in a commit or a layer of its own, so a
+different answer costs a small change rather than a stop now. A question
+almost never blocks the work.
+
+The exception is an action that is hard to undo or reaches outside the
+repository, which you never take on a guess. Build everything else first.
+When that action is all that is left, stop with a request for it, as
+[Keep going until the work is done](#keep-going-until-the-work-is-done)
+describes.
 
 ## Post what the user must see
 
@@ -137,16 +145,49 @@ declining it is their decision.
 
 ## Keep going until the work is done
 
-Do not end a turn with a question or a plan for the user to approve. When
-one piece is blocked, go on with the next. Stop only when every piece of the
-work is done or waits on the user, and then report, as a list:
+Don't get blocked. Keep going. When one piece is blocked, go on with the
+next, and never end a turn with a question or a plan for the user to
+approve.
 
+A piece that depends on a pull request nobody has merged yet is not
+blocked, and neither is one whose merge the user keeps for themselves.
+Build it as layers stacked on that pull request, as `../implement/SKILL.md`
+describes under "Stack dependent work", which also says what to do when it
+depends on two open stacks. Before you start pieces side by side, check
+which files each changes and which depend on which, so that pieces that
+overlap go in one stack from the start.
+
+Questions do not stop the work. Post each call you want the user to
+confirm with `ask` as you make it, with what you built on it, and keep
+going, as [Decide what you can](#decide-what-you-can) describes. In the
+best case a session leaves a few such questions behind and still reaches
+the end.
+
+Only two things end the work: reaching its end, or something only the user
+can do, such as signing in, testing on their device, or approving an
+action you may not take on a guess. A question alone never ends it. Never stop without posting to the inbox, because a user who is away
+sees only what is above their prompt. Post the item that says why you
+stopped, as [Post what the user must see](#post-what-the-user-must-see)
+describes:
+
+- **You reached the end of the work.** Post a notice with `tell` that says
+  so, naming in its detail each pull request that is ready for the user to
+  merge. Post it even though the panel lists their state, because only the
+  notice says the session has nothing left to do.
+- **You stopped before the end, for any reason.** Post a request with
+  `request` asking the user to do whatever blocked you, with numbered steps:
+  approve the action that holds the rest up, sign in to a service, test on
+  their device, or fix a failure you cannot. A block never ends the work
+  with nothing in the inbox.
+
+Then report, as a list, with what waits on the user first:
+
+- **Each item waiting in the inbox**, named by what it asks, tells, or
+  requests, and what it holds up.
 - **Each pull request** you opened or fixed, with its URL and whether it is
   ready for review or still a draft, and why.
 - **Each decision you made** that a reviewer would want to know about, with
   where you recorded it.
-- **Each item waiting in the inbox**, named by what it asks, tells, or
-  requests.
 - **Each piece of work left**, with what it waits on.
 
 The session stays subscribed to its pull requests after the report, so it
