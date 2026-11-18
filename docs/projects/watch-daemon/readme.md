@@ -1129,6 +1129,11 @@ otherwise:
   subscriptions, from the daemon's files. The 30-second poll still reads an
   open drawer's threads and `panel.background`.
 
-The open questions in § 7 stay deferred as written. For Codex,
-`watch-daemon/codex-delivery` registers the parent session through Codex's
-hooks, so only another host still passes `--session`.
+The open questions in § 7 stay deferred as written. A `project watch`
+command finds its session in `--session`, then `PROJECTOR_SESSION`, then
+the `CLAUDE_CODE_SESSION_ID` Claude Code sets, so only Claude Code needs no
+argument. Codex sets no id those commands read: since
+`watch-daemon/codex-delivery`, its hooks give the agent the parent
+session's id, and the agent passes that id with `--session` rather than
+choosing one. An agent on any other host still chooses an id and passes it
+with `--session`, as § 7 says.
