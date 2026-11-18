@@ -15,6 +15,7 @@ import {
   needsDelivery,
   proposalOf,
   quoteOf,
+  quotesIn,
   readPrompt,
   relayNote,
   replyNote,
@@ -176,6 +177,28 @@ test('a quote’s reference picks its item among those that share its subject, t
   // A reference to an item already resolved settles nothing, rather than falling through to the other.
   const resolved = question({ ...newer, answer: { letter: 'a', text: 'On track', answeredAt: NOW } })
   expect(readPrompt('[5] "What is your progress?"\n\nBlocked\n', [older, resolved])).toEqual(none)
+})
+
+test('a quote under a repository inbox reference speaks to no item of the session’s, even one with its subject', () => {
+  const parser = { subject: 'Keep the old parser?', choices: ['Yes', 'No'] }
+  const local = question(parser)
+  const other = request({ ref: '3', number: 3, subject: 'Keep the old parser?' })
+  const none = { answers: [], outcomes: [], replies: [], unclears: [] }
+  // What a peer entry's Discuss fills, with an option, a reply, or I don't understand typed under it.
+  expect(readPrompt('[r1] "Keep the old parser?"\n\nYes', [local])).toEqual(none)
+  expect(readPrompt('[r1] "Keep the old parser?"\n\nTell them to wait', [local])).toEqual(none)
+  expect(readPrompt('[r1] "Keep the old parser?"\n\nI don\'t understand', [local])).toEqual(none)
+  expect(readPrompt('[r12] "Keep the old parser?"\n\nDone', [other])).toEqual(none)
+  // A drawer that put the subject there for the session's item does not claim the entry's quote either.
+  const drawn: Proposal = { ref: '1', quote: '"Keep the old parser?"', answer: '' }
+  expect(readPrompt('[r1] "Keep the old parser?"\n\nYes', [local], [drawn])).toEqual(none)
+  // Beside the session's own quote, the entry's quote ends what the item's says, in either order.
+  const answered = { ...none, answers: [{ question: local, letter: 'b' }] }
+  expect(readPrompt('[1] "Keep the old parser?"\n\nNo\n\n[r1] "Keep the old parser?"\n\nYes', [local])).toEqual(answered)
+  expect(readPrompt('[r1] "Keep the old parser?"\n\nYes\n\n[1] "Keep the old parser?"\n\nNo', [local])).toEqual(answered)
+  expect(quotesIn('[r1] "Keep the old parser?"', [local])).toEqual([
+    { at: 0, end: 27, quote: '"Keep the old parser?"', ref: 'r1' },
+  ])
 })
 
 test('a quote whose reference was edited out, or names no item with its subject, speaks by its subject', () => {

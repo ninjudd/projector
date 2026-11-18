@@ -3717,6 +3717,25 @@ test('an entry whose snooze ends while the panel is hidden brings the panel back
   await woken.unmount()
 })
 
+test('what you type under a peer entry’s Discuss leaves the session’s item with the same subject alone', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const local = held({ subject: INCOMING.subject, choices: ['Yes', 'No'] })
+  const session = questionWorld(on, clock, [local], { entries: [INCOMING] })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'entry:r1' })
+  await ui.press({ key: 'discuss:r1' })
+  expect(session.filled).toEqual(['insert:[r1] "Keep the old parser?"\n\n'])
+  await $.prompt.submit({ text: '[r1] "Keep the old parser?"\n\nYes', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+
+  expect(session.project().filter(command => /^inbox (answer|done|decline|unclear)/.test(command))).toEqual([])
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a notice’s drawer quotes it, and dismiss clears it without sending anything', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

@@ -648,6 +648,12 @@ settled these details:
   the inbox again for the entry's state now, and the tick that sees the
   snooze end brings a hidden panel back, as it does for an item. The console
   needs neither, because it lists the entries every second.
+- **A peer entry's quote speaks to no item of the session's.** The panel's
+  Discuss quotes an entry as `[r1] "<subject>"`, as it quotes an item under
+  its number. The prompt reader takes an `r` reference as an entry's
+  whatever it names, so the quote under it answers, replies to, or marks
+  unclear none of the session's items, even one with the same subject, and
+  it still ends the text under the quote before it.
 
 ## 9. Outcome
 

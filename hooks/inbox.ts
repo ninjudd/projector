@@ -77,8 +77,14 @@ export const subjectQuoteOf = (item: Item) => `"${item.subject}"`
 /** What the panel puts in the prompt to discuss an item: its reference in brackets, then its subject in quotes. */
 export const quoteOf = (item: Item) => `[${item.ref}] ${subjectQuoteOf(item)}`
 
-/** The pattern of an item's reference as `project inbox` numbers items. */
-const REF = '[1-9][0-9]*'
+/**
+ * The pattern of a reference as `project inbox` numbers items: a session's
+ * item by its number, and a repository inbox entry by `r` and its number.
+ */
+const REF = 'r?[1-9][0-9]*'
+
+/** Whether a reference names a repository inbox entry, such as `r3`, rather than one of the session's items. */
+const isEntryRef = (ref: string) => ref.startsWith('r')
 
 /** A reference in brackets that ends the text before a quoted subject, as `quoteOf` writes it. */
 const REF_BEFORE = new RegExp(`\\[(${REF})\\][ \\t]*$`)
@@ -88,7 +94,9 @@ const REF_BEFORE = new RegExp(`\\[(${REF})\\][ \\t]*$`)
  * written before it, where its subject ends, the quoted subject, and the
  * reference when it names an item that has that subject or that a drawer put
  * in the prompt under it. A reference that names neither, or none, leaves
- * the quote to speak by its subject alone.
+ * the quote to speak by its subject alone. A repository inbox entry's
+ * reference, such as `r1`, is kept whatever it names, so the quote speaks to
+ * no item of the session's and still ends the text of the quote before it.
  */
 export type Quoted = { at: number; end: number; quote: string; ref: string | undefined }
 
@@ -107,7 +115,7 @@ export function quotesIn(text: string, items: readonly Item[], proposed: readonl
           at: at - (written?.[0].length ?? 0),
           end: at + quote.length,
           quote,
-          ref: ref !== undefined && names(ref, quote) ? ref : undefined,
+          ref: ref !== undefined && (isEntryRef(ref) || names(ref, quote)) ? ref : undefined,
         })
       }
       return found
@@ -204,6 +212,9 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
  * whose drawer put the subject there, limits every rule here to that item,
  * so two items that share a subject are told apart. A quote whose reference
  * was edited out, or names no such item, follows the rules by its subject.
+ * A quote under a repository inbox entry's reference, as a peer entry's
+ * Discuss writes it, speaks to none of these items, even one that shares its
+ * subject: the entry owes the session no line.
  *
  * A quote whose text below starts with `I don't understand` says you don't
  * understand an open item of any kind not already marked unclear: the item
