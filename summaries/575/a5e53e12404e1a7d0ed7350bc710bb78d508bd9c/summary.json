@@ -1,0 +1,193 @@
+{
+ "version": 1,
+ "name": "Review in GitHub Actions",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 575,
+  "title": "Set a repository up to review its pull requests in GitHub Actions with project init --ci-review",
+  "head": "a5e53e12404e1a7d0ed7350bc710bb78d508bd9c",
+  "headRef": "review-ci-setup",
+  "base": "f5f50f242e7516a4de5583a0beab14ae9ad84ecb",
+  "baseRef": "review-ci-run",
+  "basePr": 574
+ },
+ "overview": {
+  "summary": [
+   "Projector can review a pull request through an agent session. The preceding layer adds <code>project review run</code> to start that review without a live session. This layer makes a GitHub Actions runner able to call it, and gives repository administrators one setup command.",
+   "<code>project init --ci-review</code> writes a workflow, records its agents and the bot account whose verdicts count, and asks GitHub’s command-line tool to set missing credential secrets. The workflow separates the agent review from summary publication: the agent can post reviews but cannot push code; a second job can push the summary and runs no agent.",
+   "Both earlier integration findings remain fixed after rebasing the unchanged setup layer onto the updated base. Setup requires a selected Codex model and passes it into the generated job. Summary linking accepts the workflow token through the same identity lookup that reviews use. The current incremental review found no new defect.",
+   "This head carries the same setup patch as the preceding full clean review, with no conflicts or changed lines in its own layer. Local validation and exact-head CI now both pass. The review checked integration with the base’s shared SIGINT wait; the prior full review remains the foundation for the setup and summary behavior described below."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used below",
+    "html": "<ul class=\"tight\"><li><b>Workflow:</b> the repository’s YAML file that chooses when GitHub starts jobs.</li><li><b>Composite action:</b> shared steps that each job runs from Projector.</li><li><b>Secret:</b> an encrypted credential that GitHub gives a job at runtime.</li><li><b>Summary handoff:</b> files that the review job uploads for the publication job.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "What was checked",
+    "html": "<ul class=\"tight\"><li>The current exact-head gate passed, including plugin validation, 256 hook tests, type-checking, and the diff check.</li><li>Interdiff found an unchanged clean rebase: zero own-layer insertions or deletions and no conflicts.</li><li>Both earlier findings remain fixed with no open thread.</li><li>The preceding full review ran the local fallback suite and Node-dependent cases after CI supplied no evidence at that earlier head.</li><li>No live agent run, secret change, or review-workflow dispatch ran.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "workflow",
+   "title": "Generate the review workflow",
+   "kicker": "Choose agents and separate the two jobs",
+   "intro": [
+    "The workflow is the file GitHub reads to decide when to review. It starts on ready pull requests whose heads belong to the repository, or on a manual request. One matrix job runs for each selected agent; a later job publishes the summaries after the reviews end.",
+    "The renderer fills in the action version, agent list, models, and credential-secret names. Each <code>agent=model</code> setting records the selected model, while Claude can use its action default. Codex without a model is refused before setup writes a workflow. A digest in the generated header lets a later <code>init</code> replace an untouched workflow while preserving a workflow someone edited."
+   ],
+   "files": [
+    {
+     "path": "src/projector/ci.py",
+     "note": "Parses and records agent/model choices, renders the workflow, and recognizes an untouched generated file.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused tests verify agent/model round trips, refusal of Codex without a model before setup writes its workflow or settings, and digest-based preservation of edited workflows."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Accepts the recorded CI-review choice and comma-separated agent list as configuration settings."
+    },
+    {
+     "path": "src/projector/templates/review-workflow.yml",
+     "note": "Defines ready-pull-request and manual triggers, one agent job per matrix entry, and a separate summary job.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 53,
+       "text": "The generated matrix now passes each selected model to the action. The regression executes the action shell step with both generated jobs, and fails when this model input is removed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "setup",
+   "title": "Record setup and request missing credentials",
+   "kicker": "An explicit choice writes files and asks gh for secrets",
+   "intro": [
+    "<code>project init --ci-review</code> enables CI review for a GitHub repository. With no recorded choice, an interactive terminal asks once; a noninteractive run without a flag leaves CI review alone. A yes writes the workflow, records each selected agent and model, and keeps existing trusted reviewers while adding the Actions bot.",
+    "GitHub’s command-line tool lists secret names and prompts for any missing value. Projector never places a credential value on a command line. A Codex subscription login is read from its file only after confirmation, because hosted runners discard token refreshes. The new <code>ci-workflow</code> command prints the generated workflow for comparison."
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds init options, workflow replacement, secret setup, and the read-only ci-workflow command.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused tests cover preserving existing reviewers and edited workflows, skipping unanswered noninteractive setup, retaining the selected models, and asking gh to set secrets without passing their values as arguments."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds ci-workflow to Codex’s allowed read-only review commands."
+    }
+   ]
+  },
+  {
+   "id": "action",
+   "title": "Run a review and publish its summary",
+   "kicker": "Keep model credentials away from the write-capable job",
+   "intro": [
+    "The composite action has a review mode and a summary mode. Review mode requires exactly one credential for its agent, restores prior review state, installs the pinned agent CLI, and calls <code>project review run</code>. Restoring the record of earlier reviews allows a small later push to qualify for an incremental review.",
+    "The review token has read-only contents permission. Its summary publish command hands files to an artifact instead of pushing. Summary mode runs no agent: it downloads those files and calls the ordinary summary publish command with the token that can push the summaries ref. That command also deploys and links the page.",
+    "The workflow token belongs to an app installation rather than a person, so GitHub refuses the ordinary authenticated-user lookup. Both token-bearing steps now name the Actions bot. A shared identity helper uses that hint only after the specific installation-token refusal, preserving the actual login when a person runs the command."
+   ],
+   "files": [
+    {
+     "path": "actions/review/action.yml",
+     "note": "Installs Projector and the selected agent, restores and saves state, and transfers summaries between the two jobs.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 56,
+       "text": "The action’s credential script was exercised by the focused tests: one subscription credential or one API key succeeds, while both and neither are refused."
+      },
+      {
+       "kind": "verify",
+       "line": 181,
+       "text": "The summary-publication step now supplies the bot identity. Its regression fails when this hint is removed, and a local command using the synthetic installation-token refusal writes both the comment and description link."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/summary.py",
+     "note": "Shares the token-aware account lookup and uses it to identify the account whose summary links are replaced.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1482,
+       "text": "The new regression replaces only the bot’s previous summary comment after GitHub refuses its user lookup. It fails with the earlier raw lookup; a separate local CLI check also reaches the description update."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/review.py",
+     "note": "Uses the shared account lookup while preserving review-specific errors and its existing token identity contract.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused review tests still show that the hint handles an installation token, never renames a person’s token, and fails clearly when an installation token has no hint."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Exercise setup decisions and action boundaries",
+   "kicker": "Use temporary repositories and synthetic credentials",
+   "intro": [
+    "The new tests run setup in temporary Git repositories and replace GitHub at its command boundary. They cover repeated setup, preserving edits, credential choices, and noninteractive behavior. The credential-check shell step runs with synthetic values rather than real secrets.",
+    "The regression crosses the workflow/action boundary by running the action’s shell step with the inputs each generated matrix job supplies. Another regression exercises summary-link replacement with the workflow-token user lookup refused. Both fixes and their tests are unchanged in this rebase. The preceding full review ran the local fallback suite; the original fix review also verified that removing each fix makes its regression fail."
+   ],
+   "files": [
+    {
+     "path": "tests/test_ci.py",
+     "note": "Covers setup, model selection and propagation, workflow digests, credential exclusivity, and both token-bearing steps."
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "Keeps existing required-check tests independent of the new prompt and includes the review workflow in upgrade refresh detection."
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "Checks that summary linking handles the workflow token and replaces the bot’s earlier link."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Explain the setup and runner limits",
+   "kicker": "Document the command, credentials, and split publication",
+   "intro": [
+    "The new guide takes an administrator from enabling CI review to choosing credentials and overriding a gate that needs a machine-local tool. It describes triggers, cancellation, cached review records, token permissions, and the action inputs.",
+    "The CLI reference lists the new options and settings, including model selection. The project plan records implementation decisions such as the workflow digest, isolated Projector shim, shared token identity lookup, and Codex skills link, while leaving GitHub App setup and context repositories for a later layer."
+   ],
+   "files": [
+    {
+     "path": "docs/review-in-ci.md",
+     "note": "Introduces setup, credential tradeoffs, job behavior, token permissions, overrides, and action inputs."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Adds init’s CI-review choice, its configuration keys, and the ci-workflow reference."
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "note": "Records this layer’s workflow and runner decisions, with GitHub App setup deferred."
+    }
+   ]
+  }
+ ]
+}
