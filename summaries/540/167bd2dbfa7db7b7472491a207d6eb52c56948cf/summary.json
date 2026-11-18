@@ -1,0 +1,75 @@
+{
+ "version": 1,
+ "name": "Shared relay planning",
+ "project": "agent-messages/shared-relay",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 540,
+  "title": "Plan a relay through a repository you choose",
+  "head": "167bd2dbfa7db7b7472491a207d6eb52c56948cf",
+  "headRef": "plan-shared-relay",
+  "base": "a3922c3d7ef8cc4bb2a116f4459747627ecbbaf7",
+  "baseRef": "plan-agent-peers",
+  "basePr": 538
+ },
+ "overview": {
+  "summary": [
+   "The relay carries encrypted messages and presence between machines. This plan separates the GitHub repository used for transport from each session's work repository, so one team relay can connect work across repositories.",
+   "The setting follows the configuration walk and depends on config-trust consent for a repository-selected destination. The transport uses a bare clone when no live checkout belongs to the relay repository. Source repository and visibility fields guide private-context notices; peer records bind the relay location independently from that source."
+  ],
+  "cards": [
+   {
+    "id": "source-cases",
+    "title": "Three source-record cases",
+    "html": "<ul><li>A normal sender writes its work repository and visibility.</li><li>A sender without a GitHub origin omits the repository and writes <code>unknown</code> visibility, with a private-context notice.</li><li>A legacy record with neither field remains accepted without a crossing notice.</li></ul>"
+   },
+   {
+    "id": "readiness",
+    "title": "Readiness and verification",
+    "html": "<p>The plan is <code>ready</code>/<code>now</code>. Both earlier source-record findings are verified fixed, and no findings remain open. The new-head gate and exact-head CI passed, including 268 hook tests. Shared-relay implementation and the post-merge two-machine check remain future work.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "relay-location",
+   "title": "Share one relay across work repositories",
+   "kicker": "Configuration scope, transport storage, and source-context controls",
+   "intro": [
+    "A relay location is the GitHub repository through which encrypted records travel. The plan separates it from the work repository and groups daemon jobs, outboxes, caches, agent discovery, and peer inboxes by location.",
+    "The default remains the work repository. A configured location must be private or internal and writable, and repository-controlled destinations require consent through config-trust. The record contract distinguishes normal sources, originless sources, and legacy messages; scoped peer items remain visible through the relay list or console when no matching session exists."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "This layer builds on the peers plan and requires config-trust first. It changes no runtime code."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/shared-relay/readme.md",
+     "collapsed": false,
+     "note": "Defines the ready shared-relay design, its acceptance cases, and explicit follow-ups.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The receiver explicitly accepts legacy records without either source field, and the acceptance criteria deliver an old queued message after upgrade."
+      },
+      {
+       "kind": "verify",
+       "text": "A no-GitHub-origin sender has a defined absent-repository/unknown-visibility shape, crossing notices in both directions, and a registration/send acceptance case."
+      },
+      {
+       "kind": "verify",
+       "text": "Peer location binding follows the relay destination rather than the work source, consistent with the base peers plan."
+      },
+      {
+       "kind": "verify",
+       "text": "The new-head gate and exact-head CI passed, including 268 hook tests; project metadata is valid."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
