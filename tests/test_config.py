@@ -779,6 +779,32 @@ class DefaultBranchTests(unittest.TestCase):
 
         self.assertEqual(config_module._tree_at(top), config_module._rev_parse_tree(top))
 
+    def test_a_committed_symbolic_link_reads_its_target_on_the_default_branch(self) -> None:
+        self.merge_to_main({"policy.toml": '[review]\ngate_checks = "linked"\n'},
+                           {"sub/.projector.toml": "../policy.toml"})
+        write(self.repo / "policy.toml", '[review]\ngate_checks = "none"\n')
+
+        config = self.merged(self.repo / "sub")
+
+        self.assertEqual(("linked", "origin/main:sub/.projector.toml"),
+                         (config.get("review.gate_checks"), str(config.source("review.gate_checks"))))
+
+    def test_a_committed_symbolic_link_that_reaches_no_file_on_the_default_branch_is_refused(self) -> None:
+        cases = {"outside": ("out/.projector.toml", "../../outside.toml", "leads outside the repository"),
+                 "dangling": ("gone/.projector.toml", "../absent.toml", "leads to no file"),
+                 "loop": ("loop/.projector.toml", "../loop/.projector.toml", "leads into a loop of links"),
+                 "newline": ("odd\nname/.projector.toml", "../policy.toml", "cannot be followed")}
+        self.merge_to_main({"policy.toml": POLICY}, {path: target for path, target, _ in cases.values()})
+        write(self.home / "work" / "outside.toml", POLICY)
+        write(self.repo / "absent.toml", POLICY)
+        for name, (path, _, problem) in cases.items():
+            with self.subTest(name):
+                with self.assertRaises(ConfigError) as caught:
+                    self.merged((self.repo / path).parent)
+
+                self.assertIn(f"origin/main:{path}", str(caught.exception))
+                self.assertIn(problem, str(caught.exception))
+
     def test_untracked_files_apply_from_disk_at_once(self) -> None:
         parent = self.home / "work" / ".projector.toml"
         user = self.home / ".projector.toml"

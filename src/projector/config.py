@@ -435,10 +435,17 @@ def _prune(cache: Path) -> None:
         pass
 
 
-def _listed_objects(common: Path, commit: str, paths: list[str]) -> dict[str, str]:
+SYMBOLIC_LINK = "120000"
+# What `git cat-file --batch --follow-symlinks` prints in place of an object, for a link it cannot follow to one.
+BROKEN_LINKS = {b"symlink": "leads outside the repository", b"dangling": "leads to no file",
+                b"loop": "leads into a loop of links", b"notdir": "leads through a file as though it were a folder"}
+
+
+def _listed_objects(common: Path, commit: str, paths: list[str], label: str) -> dict[str, str]:
     """The object each of `paths` names on the commit `commit`, for the paths it holds as files, from one
     `git ls-tree` that takes the paths as arguments and separates its entries with NUL, so any byte in a path
-    reads back exactly."""
+    reads back exactly. A symbolic link among them is a configuration error, because only the batch, which
+    cannot name such a path, follows a link."""
 
     listed = git_output(["--git-dir", str(common), "--literal-pathspecs", "ls-tree", "-z", "--full-tree", commit,
                          "--", *paths])
@@ -446,14 +453,21 @@ def _listed_objects(common: Path, commit: str, paths: list[str]) -> dict[str, st
     for entry in listed.split(b"\0"):
         info, _, name = entry.partition(b"\t")
         fields = info.decode("ascii", "replace").split(" ")
+        if len(fields) == 3 and fields[0] == SYMBOLIC_LINK:
+            raise ConfigError(f"{label}:{os.fsdecode(name)}: a symbolic link at a path with a newline cannot be "
+                              "followed; commit the file itself")
         if len(fields) == 3 and fields[1] == "blob":
             found[os.fsdecode(name)] = fields[2]
     return found
 
 
-def default_blobs(common: Path, commit: str, paths: list[str], cache: Path) -> dict[str, Optional[bytes]]:
+def default_blobs(common: Path, commit: str, paths: list[str], cache: Path, *, label: str
+                  ) -> dict[str, Optional[bytes]]:
     """Each of `paths` as the commit `commit` holds it, or None where it holds no file, asking one
-    `git cat-file --batch` for the paths the cache lacks."""
+    `git cat-file --batch` for the paths the cache lacks.
+
+    A symbolic link is followed within that commit's tree, never on disk, and one that leads to no file there
+    is a configuration error that names it as `<label>:<path>`."""
 
     found: dict[str, Optional[bytes]] = {}
     wanted = []
@@ -473,9 +487,9 @@ def default_blobs(common: Path, commit: str, paths: list[str], cache: Path) -> d
     names = {path: f"{commit}:{path}" for path in wanted if "\n" not in path}
     lined = [path for path in wanted if "\n" in path]
     if lined:
-        names.update(_listed_objects(common, commit, lined))
+        names.update(_listed_objects(common, commit, lined, label))
     asked = [path for path in wanted if path in names]
-    output = git_output(["--git-dir", str(common), "cat-file", "--batch"],
+    output = git_output(["--git-dir", str(common), "cat-file", "--batch", "--follow-symlinks"],
                         input="".join(f"{names[path]}\n" for path in asked).encode("utf-8", "surrogateescape")
                         ) if asked else b""
     at = 0
@@ -485,11 +499,18 @@ def default_blobs(common: Path, commit: str, paths: list[str], cache: Path) -> d
         header = output[at:end].split(b" ")
         at = end + 1
         content = None
-        if len(header) == 3 and header[2].isdigit():
-            size = int(header[2])
-            if header[1] == b"blob":
-                content = output[at:at + size]
+        # `<object> <type> <size>`, or `<problem> <size>` for a link it cannot follow, each before a body of that
+        # size; a name it cannot find ends `missing`, with no body.
+        if len(header) in (2, 3) and header[-1].isdigit():
+            size = int(header[-1])
+            body = output[at:at + size]
             at += size + 1
+            if len(header) == 2 and header[0] in BROKEN_LINKS:
+                raise ConfigError(f"{label}:{path}: the symbolic link {BROKEN_LINKS[header[0]]} "
+                                  f"({body.decode('utf-8', 'replace')}); commit the file itself, or a link to a "
+                                  "file in the repository")
+            if header[1:2] == [b"blob"]:
+                content = body
         contents[path] = content
     for path in wanted:
         content = contents.get(path)
@@ -660,7 +681,8 @@ def _walk(start: Path, home: Path, user: Optional[Path], environ: dict[str, str]
 
     cache = cache_dir(environ)
     blobs = default_blobs(repository.common, branch.commit,
-                          list(dict.fromkeys(path for _, _, path in candidates if path is not None)), cache)
+                          list(dict.fromkeys(path for _, _, path in candidates if path is not None)), cache,
+                          label=branch.name)
     tracked: set[tuple[Path, str]] = set()
     for tree in {tree for _, tree, path in candidates if tree is not None}:
         asked = [path for candidate, other, path in candidates

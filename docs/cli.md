@@ -781,7 +781,10 @@ Projector chooses each walked file's source this way:
 
 - **A file on the default branch** is read from there, whatever your working
   copy holds. This holds in every worktree of the repository, and even when
-  your branch deletes the file.
+  your branch deletes the file. A file that is a symbolic link there is
+  followed on the default branch, so its target's contents on that branch
+  apply, never the target on disk. A link that leads outside the repository
+  or to no file on the default branch is a configuration error.
 - **A file Git tracks on your branch only**, which the branch added, is
   ignored until it merges.
 - **A file Git does not track** is read from disk.

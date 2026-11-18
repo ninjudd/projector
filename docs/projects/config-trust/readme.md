@@ -360,6 +360,14 @@ full pass, which transfers only commits this clone lacks.
   one `git ls-tree -z`, which takes the paths as arguments, and its object is
   read in the same batch. `git rev-parse`, used for an unrecognized layout,
   runs once for each path it reports, because it ends each with a newline.
+- **A committed symbolic link resolves on the default branch.** A tracked
+  `.projector.toml` that is a symbolic link is followed within the default
+  branch's tree, through `git cat-file --batch --follow-symlinks`, and its
+  target's blob there applies. It is never followed on disk, so neither the
+  working copy of its target nor a file outside the repository can supply
+  policy. A link that leads outside the repository, to no file, or into a loop
+  is a configuration error naming `origin/main:<path>`, and so is a link at a
+  path with a newline, which the batch cannot name.
 - **The cache's shape.** A blob is `<commit>-<digest>.toml`, and a path the
   commit lacks is an empty `<commit>-<digest>.absent`. Each cache miss removes
   blobs not written for 30 days, which are mostly those of commits the default
