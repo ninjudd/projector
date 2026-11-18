@@ -303,6 +303,18 @@ differ, these rules win:
   change's tests and documentation ride the layer whose code they verify,
   never a layer of their own. Order the layers by dependency, as the skill
   describes.
+- **Put work that overlaps in one stack.** When this work changes files that
+  another open stack changes, or depends on one, build it as layers on top
+  of that stack, never as a stack of its own beside it. When two stacks
+  change the same files, the second to merge conflicts with the first, and
+  every layer that conflict rebases needs its review again. Give work a
+  stack of its own only when it shares no files and no dependents with
+  another. Work that depends on two open stacks makes them one: rebase one
+  onto the top of the other, or build first the layers that need only one.
+  Keep each layer safe to merge by itself, for example by reading a setting
+  only from `~/.projector.toml` until the layer that adds the other stack's
+  guard lands on top. A pull request below that you may not merge is no
+  reason to wait: the stack is how the work goes on without its merge.
 - **Open every layer as a draft.** `gh stack submit --auto` opens new pull
   requests as drafts. Never pass `--open` to `submit` or `link`: it marks
   every layer ready for review at once, the existing ones included, whatever

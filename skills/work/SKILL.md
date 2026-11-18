@@ -138,15 +138,29 @@ declining it is their decision.
 ## Keep going until the work is done
 
 Do not end a turn with a question or a plan for the user to approve. When
-one piece is blocked, go on with the next. Stop only when every piece of the
-work is done or waits on the user, and then report, as a list:
+one piece is blocked, go on with the next.
 
+A piece that depends on a pull request nobody has merged yet is not
+blocked, and neither is one whose merge the user keeps for themselves.
+Build it as layers stacked on that pull request, as `../implement/SKILL.md`
+describes under "Stack dependent work", which also says what to do when it
+depends on two open stacks. Before you start pieces side by side, check
+which files each changes and which depend on which, so that pieces that
+overlap go in one stack from the start.
+
+Stop only when every piece of the work is done or waits on something only
+the user can give, such as an answer, a test, or a sign-in. Post each such
+block to the inbox before you stop, as
+[Post what the user must see](#post-what-the-user-must-see) describes, so a
+user who is away finds it above their prompt. Then report, as a list, with
+what waits on the user first:
+
+- **Each item waiting in the inbox**, named by what it asks, tells, or
+  requests, and what it holds up.
 - **Each pull request** you opened or fixed, with its URL and whether it is
   ready for review or still a draft, and why.
 - **Each decision you made** that a reviewer would want to know about, with
   where you recorded it.
-- **Each item waiting in the inbox**, named by what it asks, tells, or
-  requests.
 - **Each piece of work left**, with what it waits on.
 
 The session stays subscribed to its pull requests after the report, so it
