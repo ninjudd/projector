@@ -927,3 +927,11 @@ These tests fail before the change, and each catches the bug it names:
   without one rather than write a job that stops before every review.
   Projector names no default Codex model, because a model ID it chose would
   go stale as models change, and a wrong one fails every run.
+- **The summary job names its token too.** `project summary publish` reads
+  the account it posts as before it links the summary, to find and replace
+  that account's earlier link, and GitHub refuses `gh api user` to the
+  summary job's token just as it does to the review job's. So the lookup
+  `authenticated_login` makes, with its `PROJECTOR_TOKEN_LOGIN` fallback,
+  lives in `src/projector/summary.py`, which `review.py` already imports,
+  and both commands use it. The action sets the variable on every step that
+  runs `project` with the workflow's token.

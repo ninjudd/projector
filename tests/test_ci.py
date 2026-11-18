@@ -239,6 +239,15 @@ class ActionTests(unittest.TestCase):
             ran[inputs["agent"]] = args[args.index("--model") + 1]
         self.assertEqual({"claude": "claude-opus-5-5", "codex": "gpt-5.5"}, ran)
 
+    def test_every_step_that_runs_project_with_the_workflow_token_names_the_login_it_posts_as(self) -> None:
+        # GitHub refuses `gh api user` to that token, so without the name a step fails after it pushes or posts.
+        steps = ACTION.read_text().split("\n    - ")[1:]
+        with_token = [step for step in steps if "GH_TOKEN: ${{ github.token }}" in step]
+        self.assertIn("name: Publish the summaries", [step.splitlines()[0] for step in with_token])
+        for step in with_token:
+            with self.subTest(step=step.splitlines()[0]):
+                self.assertIn(f"        {review.TOKEN_LOGIN}: {cli.CI_REVIEWER}\n", step)
+
     def test_only_the_review_step_hands_its_summary_off(self) -> None:
         # The summary job's publish must push; a handoff there would publish nothing.
         text = ACTION.read_text()

@@ -178,6 +178,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        PROJECTOR_TOKEN_LOGIN: github-actions[bot]
         PR: ${{ inputs.pr }}
       run: |
         for folder in "$RUNNER_TEMP"/projector-summaries/*/; do

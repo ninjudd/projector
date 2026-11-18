@@ -24,7 +24,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 from urllib.parse import urlparse
 
 from .core import FileAction, ProjectorError, write_through
@@ -519,6 +519,37 @@ def gh_lookup(*args: str) -> str | None:
         if "HTTP 404" in exc.stderr:
             return None
         raise SummaryError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+
+
+# What GitHub answers `gh api user` with for a token that belongs to no user, such as a workflow's GITHUB_TOKEN
+# or a GitHub App's installation token.
+INTEGRATION_REFUSAL = "Resource not accessible by integration"
+# The login the review action names for its token, since GitHub tells a token that belongs to no user nothing
+# about whom it acts as. It is read only after that refusal, so it can never rename a person's token.
+TOKEN_LOGIN = "PROJECTOR_TOKEN_LOGIN"
+
+
+def token_login(lookup: Callable[[], str], failure: type[ProjectorError]) -> str:
+    """The login `lookup`, a run of `gh api user --jq .login`, reads, or the one `TOKEN_LOGIN` names when GitHub
+    refuses the lookup to a token that belongs to no user. Every failure raises `failure`."""
+    try:
+        login = lookup().strip()
+    except failure as error:
+        if INTEGRATION_REFUSAL not in str(error):
+            raise
+        named = os.environ.get(TOKEN_LOGIN, "").strip()
+        if not named:
+            raise failure(f"this token belongs to no GitHub user, so GitHub does not say whom it acts as; set "
+                          f"{TOKEN_LOGIN} to the login it posts as, such as github-actions[bot]") from error
+        return named
+    if not login:
+        raise failure("could not read the authenticated GitHub user; run `gh auth status`")
+    return login
+
+
+def authenticated_login() -> str:
+    """The login this token posts as, which a workflow's token names through `TOKEN_LOGIN`."""
+    return token_login(lambda: gh("api", "user", "--jq", ".login"), SummaryError)
 
 
 def exposure(repo: str, pages: dict) -> str:
@@ -1448,7 +1479,7 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None) 
         return f"not linking the summary from a comment: GitHub's Pages answer for {repo} has no URL"
     page = review_page(site, number)
     body = summary_link(head, page)
-    login = gh("api", "user", "--jq", ".login").strip()
+    login = authenticated_login()
     # Every timeline item, oldest first, as its event, its id, a review's state,
     # and its body only when it is this account's summary comment, whose id is
     # the issue comment's: the last visible item decides whether one is at the end.

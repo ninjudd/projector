@@ -1633,14 +1633,20 @@ class CommentSummaryTests(unittest.TestCase):
         self.calls: list[str] = []
         self.hosted: tuple[str | None, str] = ("https://owner.github.io/repo/", "")
         self.next_id = 101
+        # The account the token posts as, and whether GitHub refuses to say, as it does to a workflow's token.
+        self.account = "operator"
+        self.token_of_no_user = False
 
     def gh(self, *args: str) -> str:
         if args == ("api", "user", "--jq", ".login"):
-            return "operator\n"
+            if self.token_of_no_user:
+                raise summary.SummaryError("gh api user --jq .login failed: gh: Resource not accessible by "
+                                           "integration (HTTP 403)")
+            return f"{self.account}\n"
         if args[:3] == ("api", "--paginate", "repos/owner/repo/issues/7/timeline"):
             return "".join(json.dumps([item.get("event"), item.get("id"), (item.get("state") or "").lower(),
                                        item["body"] if item.get("event") == "commented"
-                                       and item["user"]["login"].lower() == "operator"
+                                       and item["user"]["login"].lower() == self.account.lower()
                                        and "<!-- projector-summary v=1 " in item["body"] else None]) + "\n"
                            for item in self.timeline)
         if args[:3] == ("api", "-X", "DELETE"):
@@ -1649,10 +1655,11 @@ class CommentSummaryTests(unittest.TestCase):
             self.timeline.remove(next(item for item in self.timeline
                                       if item.get("event") == "commented" and item["id"] == comment_id))
             # GitHub records the deletion on the timeline, where only the actor's own feed shows it.
-            self.timeline.append({"event": "comment_deleted", "id": 900 + comment_id, "actor": {"login": "operator"}})
+            self.timeline.append({"event": "comment_deleted", "id": 900 + comment_id,
+                                  "actor": {"login": self.account}})
             return ""
         if args[:2] == ("api", "repos/owner/repo/issues/7/comments") and args[2] == "-f":
-            new = {"event": "commented", "id": self.next_id, "user": {"login": "operator"},
+            new = {"event": "commented", "id": self.next_id, "user": {"login": self.account},
                    "body": args[3].removeprefix("body=")}
             self.next_id += 1
             self.timeline.append(new)
@@ -1805,6 +1812,18 @@ class CommentSummaryTests(unittest.TestCase):
 
         self.assertEqual(["post"], [call.split()[0] for call in self.calls], "a comment of your own is posted")
         self.assertEqual(f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.", self.timeline[1]["body"])
+
+    def test_a_workflow_token_links_the_summary_as_the_login_the_action_names(self) -> None:
+        # GitHub refuses `gh api user` to the summary job's token, which leaves the bot only its variable.
+        self.account, self.token_of_no_user = "github-actions[bot]", True
+        self.add_comment(2, f"<!-- projector-summary v=1 sha={'b' * 40} -->\nAn earlier head's.",
+                         login="github-actions[bot]")
+
+        with mock.patch.dict(os.environ, {summary.TOKEN_LOGIN: "github-actions[bot]"}):
+            result = self.comment()
+
+        self.assertEqual(["post 101", "delete 2"], self.calls, "the bot's own earlier link is the one it replaces")
+        self.assertIn("deleting comment 2", result)
 
     def test_a_site_the_caller_already_found_is_not_looked_up_again(self) -> None:
         with mock.patch.object(summary, "gh", side_effect=self.gh), \
