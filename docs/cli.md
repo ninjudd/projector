@@ -4251,7 +4251,10 @@ the responder's machines at their next poll, whether or not the asker is
 online. `reply` takes `-` for standard input, refuses an entry that is not
 incoming, and refuses a second reply from a session that already replied,
 on any of your machines, so a request such as "what is your progress?"
-gathers one reply from each agent.
+gathers one reply from each agent. Each response claims the entry under the
+repository inbox's lock before it queues anything, so of two commands that
+respond at once on one machine, only one sends: the other is refused,
+because the session already replied or the first response closed the item.
 
 ### Follow up on an item you sent
 

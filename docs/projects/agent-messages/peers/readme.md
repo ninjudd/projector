@@ -567,3 +567,9 @@ building:
   and the job goes on to the next record. A Projector error, such as a Git
   command that timed out or a held lock, still ends the job, since it is not
   the record's doing.
+- **A response claims its entry under the mirror's lock.** `respond`
+  rereads the entry and its state under the lock the state record takes,
+  refuses a reply from a session already in `replied` or an entry another
+  command closed meanwhile, and records the session or removes the entry
+  before it queues anything. So two commands that respond at once send one
+  response between them, where checking an earlier read let both send.

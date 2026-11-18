@@ -515,41 +515,71 @@ def respond(root: Path, repo: str, cwd: Path, key: relay.Key, peers: dict[str, b
         sender = sender_of(registration)
         record.update({f"by_{field}": sender[field] for field in ("name", "host", "model", "branch")
                        if sender.get(field)})
-        if outcome == "reply" and any(found["session"] == session for found in entry.get("replied") or []):
-            raise RepoInboxError(f"this session already replied to {ref}; a session replies to an item once")
     closes = outcome != "reply" if close is None else close
     record.update(by=by, closes=closes, sent_at=now_ms(now))
+    once = outcome == "reply" and by == "agent"
+    mark = {"session": session, "machine": agents.this_machine(root), "at": now_ms(now)} if once else None
+    # Claimed before anything is queued, so of two commands that respond at once, only one sends.
+    state = claim(root, repo, entry, now, closes=closes, mark=mark)
     changes = []
     sends = not (outcome == "dismissed" and kind == "notice")
     if sends:
         changes.append(change_of(key, relay.user_ref(entry["key_id"], record["id"]), public, record, "reply", now))
     if closes:
         changes += [deletion(relay.user_ref(key.id, entry["id"])), deletion(relay.state_ref(key.id, entry["id"]))]
-        relay.queue(root, repo, str(cwd), changes, now)
-        forget(root, repo, [entry["id"]])
-    else:
-        if outcome == "reply" and by == "agent":
-            mark = {"session": session, "machine": agents.this_machine(root), "at": now_ms(now)}
-            changes.append(state_change(key, update_state(root, repo, entry, now, add_replied=mark), now))
-        relay.queue(root, repo, str(cwd), changes, now)
+    elif state is not None:
+        changes.append(state_change(key, state, now))
+    relay.queue(root, repo, str(cwd), changes, now)
     return {**entry, "reply": record if sends else None, "closes": closes, "peer": name}
 
 
-def update_state(root: Path, repo: str, entry: dict, now: float, *, add_replied: Optional[dict] = None,
-                 **fields: Optional[int]) -> dict:
+def claim(root: Path, repo: str, entry: dict, now: float, *, closes: bool, mark: Optional[dict]) -> Optional[dict]:
+    """Claim the response to an incoming entry under the mirror's lock, which every change to the entry and its
+    state takes, so of two commands that respond to it at once only one sends. Refuses an entry that another
+    command closed since `entry` was read, and, with `mark`, a reply from a session that already replied. A
+    closing response removes the entry and its state; a reply that keeps it open records `mark` in its state.
+    Answers that state to queue, or None when the state did not change."""
+    store = folder(root, repo)
+    with locked(store):
+        found = entry_in(entry_file(store, entry["ref"]))
+        if found is None or found["id"] != entry["id"]:
+            raise RepoInboxError(f"{entry['ref']} is no longer in the repository inbox; another command responded "
+                                 "to it and closed it")
+        states = read_states(store)
+        if mark is not None and any(replied["session"] == mark["session"]
+                                    for replied in (states.get(entry["id"]) or {}).get("replied") or []):
+            raise RepoInboxError(f"this session already replied to {entry['ref']}; a session replies to an item "
+                                 "once")
+        if closes:
+            entry_file(store, entry["ref"]).unlink(missing_ok=True)
+            if states.pop(entry["id"], None) is not None:
+                write_states(store, states)
+            return None
+        if mark is None:
+            return None
+        return changed_state(store, states, entry, repo, now, add_replied=mark)
+
+
+def changed_state(store: Path, states: dict[str, dict], entry: dict, repo: str, now: float, *,
+                  add_replied: Optional[dict] = None, **fields: Optional[int]) -> dict:
+    """Change an entry's state in `states`, read under the store's lock, and write them all. Answers the whole
+    record to queue."""
+    state = dict(states.get(entry["id"]) or fresh_state(entry["id"], repo))
+    if add_replied is not None:
+        state["replied"] = [*state.get("replied", []), add_replied]
+    state.update({key: value for key, value in fields.items() if value is not None})
+    state["updated_at"] = max(now_ms(now), (state.get("updated_at") or 0) + 1)
+    state = merge(state, state)
+    states[entry["id"]] = state
+    write_states(store, states)
+    return state
+
+
+def update_state(root: Path, repo: str, entry: dict, now: float, **fields: Optional[int]) -> dict:
     """Change an entry's state in the mirror, and answer the whole record to queue."""
     store = folder(root, repo)
     with locked(store):
-        states = read_states(store)
-        state = dict(states.get(entry["id"]) or fresh_state(entry["id"], repo))
-        if add_replied is not None:
-            state["replied"] = [*state.get("replied", []), add_replied]
-        state.update({key: value for key, value in fields.items() if value is not None})
-        state["updated_at"] = max(now_ms(now), (state.get("updated_at") or 0) + 1)
-        state = merge(state, state)
-        states[entry["id"]] = state
-        write_states(store, states)
-    return state
+        return changed_state(store, read_states(store), entry, repo, now, **fields)
 
 
 def snooze(root: Path, repo: str, cwd: Path, key: relay.Key, ref: str, minutes: int, now: float) -> dict:

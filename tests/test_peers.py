@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from typing import Optional
 from unittest import mock
 
@@ -438,6 +439,59 @@ class StateTests(PeersCase):
         self.assertEqual(2, self.entries(self.one, A)[0]["reply_count"])
         self.assertNotEqual(0, again[0])
         self.assertIn("already replied", again[2])
+
+    def race(self, outcome: str, by: str, texts: tuple[Optional[str], Optional[str]]) -> tuple[list[object], int]:
+        """Two responses to r1 from session A that both read the entry before either claims it, as two commands
+        at once can. Answers what each returned or raised, and how many responses were queued to Jason."""
+        key, peers = relay.Key(self.private, "inline"), {"jason": crypto.public_key(JASON)}
+        registration = agents.record(self.one.root, A)
+        both_read = threading.Barrier(2, timeout=10)
+        peer_of = repo_inbox.peer_of
+
+        def after_both_read(found, configured):
+            both_read.wait()
+            return peer_of(found, configured)
+
+        outcomes: list[object] = []
+
+        def respond(text: Optional[str]) -> None:
+            try:
+                outcomes.append(repo_inbox.respond(self.one.root, REPO, self.one.work, key, peers, "r1", outcome,
+                                                   by=by, text=text, session=A, registration=registration,
+                                                   now=self.now))
+            except repo_inbox.RepoInboxError as error:
+                outcomes.append(error)
+
+        with mock.patch.object(repo_inbox, "peer_of", after_both_read):
+            threads = [threading.Thread(target=respond, args=(text,)) for text in texts]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        sent = [item for item in self.one.outbox() if item["ref"].startswith(f"{relay.USER}{self.jason.id}/")]
+        return outcomes, len(sent)
+
+    def test_two_replies_racing_from_one_session_send_one(self) -> None:
+        self.incoming()
+
+        outcomes, sent = self.race("reply", "agent", ("Parser half done", "Lexer done"))
+
+        self.assertEqual(1, sum(isinstance(found, dict) for found in outcomes), outcomes)
+        self.assertEqual(["this session already replied to r1; a session replies to an item once"],
+                         [str(found) for found in outcomes if isinstance(found, Exception)])
+        self.assertEqual(1, sent)
+        self.assertEqual(1, self.entries(self.one, A)[0]["reply_count"])
+
+    def test_two_closing_responses_racing_send_one(self) -> None:
+        self.incoming()
+
+        outcomes, sent = self.race("done", "user", (None, None))
+
+        self.assertEqual(1, sum(isinstance(found, dict) for found in outcomes), outcomes)
+        self.assertEqual(["r1 is no longer in the repository inbox; another command responded to it and closed it"],
+                         [str(found) for found in outcomes if isinstance(found, Exception)])
+        self.assertEqual(1, sent)
+        self.assertEqual([], self.entries(self.one, A))
 
     def test_state_changed_on_two_machines_before_either_pushes_is_merged_rather_than_lost(self) -> None:
         self.incoming()
