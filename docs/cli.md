@@ -2389,7 +2389,10 @@ converted example/app#66 to a draft at 4f2a9c1
 ```
 
 GitHub can take a few seconds to show a head you just pushed, so a command
-you run right after a push can still name the head before it.
+you run right after a push can still name the head before it. A command
+that changes the draft state also asks a running watch daemon to read the
+pull request again right away, as [Refresh after a push](#refresh-after-a-push)
+describes.
 
 When the pull request is already in that state, the line reads
 `example/app#66 is already ready for review at 4f2a9c1` or
@@ -3465,6 +3468,34 @@ with a `MISSING` line.
 
 A lookup that fails is named on stderr, and the command still exits 0. When
 `watch.auto_start` is `false`, it adds nothing and says so.
+
+### Refresh after a push
+
+The daemon reads a pull request on its regular pass, every `watch.interval`
+seconds. A command that changes a pull request asks the daemon to read it
+again right away, so the panel and the event lines stop showing its old
+state, such as a conflict a push just resolved, within a few seconds:
+
+- `add` of a pull request, which `fix-pr` runs after each push.
+- `add --from-output`, for each pull request it subscribes the session to or
+  finds the session already subscribes to, which the mod and the Codex hook
+  run after each push.
+- `project review hold` and `project review ready`, when they change the
+  draft state while a daemon runs.
+
+Each request is a file under `refresh/` in the state directory, naming one
+or more pull requests. The daemon reads and deletes those files once a
+second, and deletes unread a file older than 60 seconds. On its next tick,
+it runs a pass that queries each named pull request that a live session
+subscribes to, whatever its ETags say.
+
+Right after a push, GitHub reports a pull request's mergeability as
+`UNKNOWN` while it recomputes it. While a named pull request is open and its
+mergeability is `UNKNOWN`, the daemon runs a pass every 5 seconds instead of
+waiting for `watch.interval`, for up to 60 seconds after the request. A
+conflict is announced for one head, so a push that changes the head drops
+the old head's conflict at the first pass that reads the new head, and
+`UNKNOWN` never carries it over.
 
 ### End or exclude a subscription
 
