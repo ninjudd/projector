@@ -20,7 +20,8 @@ So the rules allow every `project` command, and a new command needs no new
 rule, except the few that reach outside Projector's own state, which still
 ask: `project upgrade` runs an installer it downloads, `project init` writes
 these rules, `project config set` and `unset` can change a setting that
-widens an agent's authority, such as `review.allow_approve`, and
+widens an agent's authority, such as `review.allow_approve`, `project config
+allow` records your consent to a destination a repository chose, and
 `project site build` and `serve` run the shell command `--prepare` names, or
 the checkout's own `site.prepare` once `--allow-prepare` allows it, and
 `project ios build --allow-untrusted` runs the build scripts of a pull request
@@ -116,7 +117,8 @@ from .core import FileAction, write_through
 
 ALLOW = ("Bash(project *)",)
 ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config set *)",
-       "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
+       "Bash(project config unset *)", "Bash(project config allow *)", "Bash(project site *prepare*)",
+       "Bash(project inbox answer *)",
        "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
        "Bash(project inbox decline *)", "Bash(project inbox start *)",
        "Bash(project inbox unclear *)", "Bash(project inbox discuss *)", "Bash(project console)",
@@ -129,7 +131,7 @@ SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "
 # command, which `init` removes from `permissions.ask`.
 RETIRED_ASK = ("Bash(project -*)",)
 
-ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
+ASKED = ("`project init`, `project upgrade`, `project config set`, `unset`, and `allow`, `project site` with "
          "`--prepare` or `--allow-prepare`, `project ios build --allow-untrusted`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
          "`decline`, `start`, `unclear`, and `discuss`, and `project console`")
 COMMANDS = "every `project` command but the few that reach outside Projector's own state"
@@ -184,8 +186,8 @@ HOST_EXECUTABLE_SINCE = (0, 107)
 CODEX_RULES = (
     "# Written by `project init`, which replaces this file. Put your own rules in another file.\n"
     "# Codex's usual approval decides every command these rules leave out: `project init`, `project upgrade`,\n"
-    "# `project config set` and `unset`, `project create` and `project edit`, which can open an editor,\n"
-    "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
+    "# `project config set`, `unset`, and `allow`, `project create` and `project edit`, which can open an\n"
+    "# editor, `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
     "# the command line names, `project ios build` and `logs`, which run the repository's build scripts or\n"
     "# `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
     "# `unclear`, and `discuss`, which record the person's choice or words, `project console`, which\n"

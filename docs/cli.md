@@ -103,6 +103,7 @@ what it did to each:
     "Bash(project upgrade *)",
     "Bash(project config set *)",
     "Bash(project config unset *)",
+    "Bash(project config allow *)",
     "Bash(project site *prepare*)",
     "Bash(project inbox answer *)",
     "Bash(project inbox dismiss *)",
@@ -121,6 +122,9 @@ what it did to each:
   `project upgrade` runs an installer it downloads, `project init` writes
   these rules, and `project config set` and `unset` can change a setting that
   widens an agent's authority, such as `review.allow_approve`.
+  `project config allow` records your consent to send your data where a
+  repository's committed file chooses, and it refuses to run without a
+  terminal.
   `project site build` and `serve` run the shell command `--prepare` names, or
   the checkout's own `site.prepare` once `--allow-prepare` allows it, so
   `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
@@ -858,6 +862,61 @@ review.gate_checks = ci, e2e  # /Users/you/work/acme/web-team/.projector.toml (o
 `get --json` gives the priority as `override`, which is `null` for an
 ordinary value, and `list --json` gives it under `overrides`, by key.
 
+### Allow a destination a repository chooses
+
+A few settings, the destinations, say where your data goes, such as the relay
+that carries your agents' messages. The owner of a repository you cloned
+chooses what its default branch commits, and may not be you. So when a
+destination's value comes from a file the repository commits, Projector uses
+it only once you allow that value, in a terminal:
+
+```console
+$ project config allow agent.relay github:acme/agents
+origin/main:.projector.toml sets agent.relay = github:acme/agents.
+Send your data to github:acme/agents wherever a committed file sets agent.relay to it? [y/N] y
+allowed agent.relay = github:acme/agents
+```
+
+Until you do, the command that reads the setting treats it as unset and
+names the file and the command to run. The command refuses to run without a
+terminal on standard input and output, with exit code 69, because it records
+your consent and no agent should give it. Answering anything but `y`
+allows nothing and exits 1.
+
+An approval covers one key and one value on this machine, wherever a
+committed file sets it. A repository that changes the value asks again, and
+returning to a value you allowed asks nothing. A destination from a file the
+repository does not track, or from `~/.projector.toml`, needs no approval,
+because you wrote it. Approvals live in
+`$XDG_STATE_HOME/projector/allowed.json`. List them, with the file each was
+granted for, or remove one, after which the next read waits for a new
+approval:
+
+```sh
+project config allow --list
+project config allow --remove agent.relay github:acme/agents
+```
+
+`--list --json` prints the approvals as `allowed`. `--remove` exits 1 when
+there was no such approval. Projector names no destination yet; the relay
+settings will be the first. `allow` refuses a key that is not one with exit
+code 2.
+
+### Keep paths inside the repository
+
+`projects.dir` must lead inside the repository's working tree, whichever file
+sets it, `~/.projector.toml` included, because a project's plans live in its
+repository. A value outside it, such as `../elsewhere` or `/tmp/plans`, makes
+every command that reads it exit 78 and name the value and the file.
+`--projects-dir` on the command line is yours and is not checked.
+
+`ios.output` from a repository's file, or any file but `~/.projector.toml`,
+must lead inside the checkout or Projector's state directory, and
+`project ios crashes` and `logs` refuse another value the same way. In
+`~/.projector.toml` it may name any directory, such as your desktop. A
+relative `ios.output` is relative to the checkout's root, whichever
+directory you run the command from.
+
 Tables merge key by key, so a nearer file overrides one setting without
 discarding the rest:
 
@@ -927,7 +986,7 @@ reads, which are these:
 
 | Key | Type | Default | Read by |
 | --- | --- | --- | --- |
-| `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given |
+| `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given, as a directory inside the repository |
 | `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and `CLAUDE.md` |
 | `instructions.ios` | boolean | whether the repository has an Xcode project that builds for iOS, or sets `ios.project` | `init` and `check`, to put the rules for `project ios` in the Projector section |
 | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
@@ -953,7 +1012,7 @@ reads, which are these:
 | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or, with `--inline`, the key itself, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key join`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
 | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
 | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
-| `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to |
+| `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, relative to the checkout's root, inside the checkout or the state directory unless `~/.projector.toml` sets it |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own

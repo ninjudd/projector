@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -803,17 +804,16 @@ def cloned_repository(directory: Path) -> None:
     git(directory, "clone", "-q", str(directory / "origin.git"), str(directory / "home" / "work" / "repo"))
 
 
-class DefaultBranchTests(unittest.TestCase):
-    """A `.projector.toml` the repository tracks applies from `origin/HEAD`, never from the working copy."""
+class ClonedCase(unittest.TestCase):
+    """A copy of `cloned_repository`, with `HOME` and the state directory inside it."""
 
     def setUp(self) -> None:
         base, _ = copy_of(cloned_repository)
         self.base = base.resolve()
         self.home = self.base / "home"
         self.repo = self.home / "work" / "repo"
-        self.environ = {"HOME": str(self.home)}
-        environment = mock.patch.dict(os.environ, {"HOME": str(self.home),
-                                                   "XDG_STATE_HOME": str(self.base / "state")})
+        self.environ = {"HOME": str(self.home), "XDG_STATE_HOME": str(self.base / "state")}
+        environment = mock.patch.dict(os.environ, self.environ)
         environment.start()
         self.addCleanup(environment.stop)
 
@@ -834,6 +834,10 @@ class DefaultBranchTests(unittest.TestCase):
         git(seed, "commit", "-q", "-am", "Change policy")
         git(self.base / "origin.git", "fetch", "-q", str(seed), "+main:main")
         git(self.repo, "fetch", "-q", "origin")
+
+
+class DefaultBranchTests(ClonedCase):
+    """A `.projector.toml` the repository tracks applies from `origin/HEAD`, never from the working copy."""
 
     def test_a_branch_cannot_rewrite_the_policy_the_default_branch_commits(self) -> None:
         git(self.repo, "switch", "-q", "-c", "feature")
@@ -1008,3 +1012,147 @@ class DefaultBranchTests(unittest.TestCase):
             after_index = runs() - before_index
 
         self.assertEqual((0, 1, 1), (warm, after_commit, after_index))
+
+
+class Terminal(StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+class DestinationTests(ClonedCase):
+    """A destination a committed file sets applies only once you allow its value, in a terminal."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        destinations = mock.patch.object(config_module, "DESTINATIONS", frozenset({"review.username"}))
+        destinations.start()
+        self.addCleanup(destinations.stop)
+        self.push_to_origin('[review]\nusername = "stranger"\n')
+
+    def allow(self, *arguments: str, terminal: bool = True, answer: str = "y\n") -> tuple[int, str, str]:
+        stdout, stderr = (Terminal() if terminal else StringIO()), StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr), \
+                mock.patch.object(sys, "stdin", Terminal(answer) if terminal else StringIO(answer)):
+            code = main(["config", "allow", *arguments, "--root", str(self.repo)])
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def username(self) -> object:
+        return self.merged().setting("review.username")
+
+    def test_a_committed_destination_waits_for_your_approval_of_its_value(self) -> None:
+        with self.assertRaises(config_module.NotAllowed) as refused:
+            self.username()
+        self.assertIn("origin/main:.projector.toml sets review.username = 'stranger'", str(refused.exception))
+        self.assertIn("run `project config allow review.username stranger` in a terminal", str(refused.exception))
+
+        self.assertEqual(69, self.allow("review.username", "stranger", terminal=False)[0])
+        self.assertRaises(config_module.NotAllowed, self.username)
+        self.assertEqual(1, self.allow("review.username", "stranger", answer="n\n")[0])
+        self.assertRaises(config_module.NotAllowed, self.username)
+
+        code, stdout, stderr = self.allow("review.username", "stranger")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("origin/main:.projector.toml sets review.username = stranger.", stdout)
+        self.assertEqual("stranger", self.username())
+
+        self.push_to_origin('[review]\nusername = "another"\n')
+        self.assertRaises(config_module.NotAllowed, self.username)
+
+    def test_a_destination_you_wrote_needs_no_approval(self) -> None:
+        write(self.home / "work" / ".projector.toml", '[override.1]\nreview.username = "stranger"\n')
+
+        self.assertEqual("stranger", self.username())
+
+    def test_an_approval_is_listed_with_its_file_and_can_be_removed(self) -> None:
+        self.assertEqual(0, self.allow("review.username", "stranger")[0])
+
+        code, listing, _ = self.allow("--list", terminal=False)
+
+        self.assertEqual(0, code)
+        self.assertIn(f"review.username = stranger  # for {self.repo / '.projector.toml'}, allowed ", listing)
+        self.assertEqual((0, "removed review.username = stranger\n"),
+                         self.allow("--remove", "review.username", "stranger", terminal=False)[:2])
+        self.assertRaises(config_module.NotAllowed, self.username)
+        self.assertEqual(1, self.allow("--remove", "review.username", "stranger", terminal=False)[0])
+
+    def test_only_a_destination_can_be_allowed(self) -> None:
+        code, _, stderr = self.allow("review.gate_checks", "ci")
+
+        self.assertEqual(2, code)
+        self.assertIn("review.gate_checks is not a destination", stderr)
+
+
+class PathRuleTests(unittest.TestCase):
+    """`projects.dir` stays in the repository, and only you may send `ios.output` elsewhere."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.home = Path(self.temporary.name).resolve() / "home"
+        self.repo = self.home / "work" / "repo"
+        self.repo.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        environment = mock.patch.dict(os.environ, {"HOME": str(self.home),
+                                                   "XDG_STATE_HOME": str(self.home / "state")})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def listing(self) -> tuple[int, str]:
+        stderr = StringIO()
+        with redirect_stdout(StringIO()), redirect_stderr(stderr):
+            code = main(["list", "--root", str(self.repo)])
+        return code, stderr.getvalue()
+
+    def test_projects_dir_outside_the_repository_is_refused_from_every_file(self) -> None:
+        outside = self.home / "elsewhere"
+        outside.mkdir()
+        for path, value in ((self.repo, "../../elsewhere"), (self.repo, str(outside)), (self.home, str(outside))):
+            written = write(path / ".projector.toml", f'[projects]\ndir = "{value}"\n')
+
+            code, stderr = self.listing()
+
+            self.assertEqual(78, code, written)
+            self.assertIn(f"{written} sets projects.dir = '{value}', which resolves to {outside}, outside {self.repo}",
+                          stderr)
+            written.unlink()
+
+    def test_ios_output_outside_the_checkout_comes_only_from_your_own_file(self) -> None:
+        from projector.cli import ios_output
+
+        outside = self.home / "Desktop" / "crashes"
+        repo_file = write(self.repo / ".projector.toml", f'[ios]\noutput = "{outside}"\n')
+        with self.assertRaises(ConfigError) as refused:
+            ios_output(load(self.repo), self.repo)
+        self.assertIn(f"{repo_file} sets ios.output = '{outside}'", str(refused.exception))
+
+        repo_file.write_text('[ios]\noutput = "build/crashes"\n')
+        self.assertEqual(self.repo / "build" / "crashes", ios_output(load(self.repo), self.repo))
+
+        repo_file.unlink()
+        write(self.home / ".projector.toml", f'[ios]\noutput = "{outside}"\n')
+        self.assertEqual(outside, ios_output(load(self.repo), self.repo))
+
+
+class IosOutputBaseTests(ClonedCase):
+    """A relative `ios.output` leads where it was checked: under the checkout, from any working directory."""
+
+    def test_a_relative_output_is_written_under_the_checkout_from_a_subdirectory(self) -> None:
+        from projector import ios
+
+        self.push_to_origin('[ios]\noutput = "reports"\n')
+        outside = self.base / "outside"
+        outside.mkdir()
+        sub = self.repo / "sub"
+        sub.mkdir()
+        (sub / "reports").symlink_to(outside)
+        previous = Path.cwd()
+        os.chdir(sub)
+        self.addCleanup(os.chdir, previous)
+
+        with mock.patch.object(ios, "crash_reports") as crash_reports, redirect_stderr(StringIO()) as stderr:
+            code = main(["ios", "crashes", "--mac"])
+
+        self.assertEqual(0, code, stderr.getvalue())
+        used = crash_reports.call_args.kwargs["output"]
+        self.assertEqual(self.repo / "reports", used.resolve())
