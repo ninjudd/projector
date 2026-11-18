@@ -5698,7 +5698,15 @@ test('passes the output of a push, a new pull request, or a stack command to pro
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
 
-  for (const command of ['git status', 'echo git push', 'cd /w && git push -u origin fix-branch', 'gh pr create --fill', 'gh stack push']) {
+  const commands = [
+    'git status',
+    'echo git push',
+    'gh stack checkout --help',
+    'cd /w && git push -u origin fix-branch',
+    'gh pr create --fill',
+    'gh stack push',
+  ]
+  for (const command of commands) {
     await $.tool.call({ tool: 'Bash', command })
   }
   await session.clock.settle()

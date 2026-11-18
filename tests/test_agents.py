@@ -508,6 +508,7 @@ class SubscriberTests(AgentCase):
                          tuple(found.get(key) for key in ("summary", "summary_auto", "login", "host", "repo", "name")))
 
     def test_an_add_from_a_push_command_registers_the_session(self) -> None:
+        self.github.pull_request(13)
         self.claude(A)
 
         self.watch("add", "--from-output", "-", stdin="https://github.com/acme/app/pull/13\n")
@@ -515,6 +516,7 @@ class SubscriberTests(AgentCase):
         self.assertEqual("Fixing acme/app#13", self.summary())
 
     def test_a_pull_request_codex_opens_registers_the_codex_session(self) -> None:
+        self.github.pull_request(17)
         self.codex(B)
         event = {"hook_event_name": "PostToolUse", "session_id": B, "cwd": str(self.work), "tool_name": "Bash",
                  "tool_input": {"command": "gh pr create --draft"},
@@ -584,6 +586,7 @@ class SubscriberTests(AgentCase):
         self.assertFalse((self.folder(A) / "agent.json").exists())
 
     def test_an_add_that_finds_its_line_registers_a_session_unreachable_when_it_first_subscribed(self) -> None:
+        self.github.pull_request(13)
         self.watch("add", "acme/app#12")
         self.watch("add", "--from-output", "-", stdin="https://github.com/acme/app/pull/13\n")
         self.claude(A)

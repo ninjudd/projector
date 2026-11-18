@@ -395,14 +395,20 @@ else:
     def test_push_output_from_child_hooks_uses_parent_and_respects_disabled_auto_start(self):
         event = {"hook_event_name": "PostToolUse", "session_id": "session-A", "cwd": str(self.root),
                  "tool_input": {"command": "gh pr create --draft"},
-                 "tool_name": "Bash", "tool_response": {"exit_code": 0, "output": "https://github.com/acme/app/pull/17"}}
+                 "tool_name": "Bash", "tool_response": {"exit_code": 0, "output": (
+                     "Creating draft pull request for feature into main in acme/app\n\n"
+                     "https://github.com/acme/app/pull/17")}}
         config = mock.Mock()
         config.setting.return_value = False
         with mock.patch("projector.config.load", return_value=config):
             codex.hook(self.root, event, self.now, mock.Mock())
         self.assertEqual([14], [line.number for line in watch.subscriptions(self.folder)])
         config.setting.return_value = True
-        with mock.patch("projector.config.load", return_value=config):
+        opened = watch.GhResult(0, json.dumps({"number": 17, "state": "open"}))
+        signed_out = watch.GhResult(1, "", "gh is not signed in")
+        gh = mock.patch.object(watch, "run_gh", side_effect=lambda args: opened
+                               if args == ["api", "repos/acme/app/pulls/17"] else signed_out)
+        with gh, mock.patch("projector.config.load", return_value=config):
             codex.hook(self.root, event, self.now, mock.Mock())
         self.assertEqual([14, 17], [line.number for line in watch.subscriptions(self.folder)])
         self.assertEqual(["session-A"], watch.session_names(self.root))
@@ -424,6 +430,9 @@ else:
         self.assertTrue(codex.push_command("git -C 'some dir' push origin feature"))
         self.assertTrue(codex.push_command("git status\ngit push"))
         self.assertFalse(codex.push_command("echo 'git push'"))
+        self.assertTrue(codex.push_command("gh stack submit --auto"))
+        for command in ("gh stack view", "gh stack checkout --help", "gh stack submit -h", "git push --help"):
+            self.assertFalse(codex.push_command(command), command)
 
     def test_hung_session_does_not_block_another_and_pool_has_no_unbounded_backlog(self):
         entered, release, other_done = threading.Event(), threading.Event(), threading.Event()

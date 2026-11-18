@@ -2353,9 +2353,10 @@ class OutputTests(unittest.TestCase):
                   " * [new branch]      fresh -> fresh\n"
                   "To https://gitlab.com/acme/app.git\n"
                   "   1a2b3c4..5d6e7f8  mirrored -> mirrored\n"
-                  "https://github.com/acme/web/pull/13\n")
+                  "https://github.com/acme/web/pull/13\n"
+                  "Creating draft pull request for fresh into main in Acme/Web\n")
 
-        self.assertEqual(([("acme/web", 13)], [("acme/app", "feature"), ("acme/app", "other")]),
+        self.assertEqual(([("acme/web", 13)], [("acme/app", "feature"), ("acme/app", "other")], {"acme/app", "acme/web"}),
                          watch.pushed(output))
 
     def test_reads_the_status_line_and_etag_that_gh_api_i_prints(self) -> None:
@@ -2416,6 +2417,10 @@ class CommandTests(unittest.TestCase):
 
     def lines(self, session: str = "top-level") -> list[str]:
         return watch.read_lines(self.root / "sessions" / session)
+
+    def origin(self, url: str) -> None:
+        for args in (["init", "-q"], ["remote", "add", "origin", url]):
+            subprocess.run(["git", *args], cwd=self.cwd, check=True, capture_output=True)
 
     def test_add_starts_the_daemon_and_says_how_events_arrive(self) -> None:
         code, out, err = self.project("add", "acme/app#12")
@@ -2534,6 +2539,7 @@ for line in sys.stdin:
         self.assertIn(["api", "repos/acme/app/pulls?head=acme:lonely&state=open"], self.github.calls)
 
     def test_add_from_output_keeps_an_existing_fix_line_and_skips_a_dropped_pull_request(self) -> None:
+        self.origin("git@github.com:acme/app.git")
         watch.edit_subscriptions(self.root / "sessions" / "top-level", lambda lines: ["acme/app#12 fix",
                                                                                        "!acme/app#14 fix"])
         output = "https://github.com/acme/app/pull/12\nhttps://github.com/acme/app/pull/14\n"
@@ -2545,6 +2551,45 @@ for line in sys.stdin:
         self.assertEqual(0, code, err)
         self.assertTrue(out.startswith("the output shows no new pull request to fix\n"), out)
         self.assertEqual(["acme/app#12 fix", "!acme/app#14 fix"], self.lines())
+        self.assertEqual([], self.github.calls, "a pull request the session holds or drops needs no lookup")
+
+    def test_add_from_output_takes_a_link_only_in_the_origin_or_a_repository_the_output_pushed_to(self) -> None:
+        self.origin("https://github.com/acme/app.git")
+        for repo, number in (("acme/app", 12), ("acme/web", 13), ("other/lib", 14)):
+            self.github.pull_request(number, repo=repo)
+        output = ("To github.com:acme/web.git\n"
+                  "https://github.com/acme/app/pull/12\n"
+                  "https://github.com/acme/web/pull/13\n"
+                  "See https://github.com/other/lib/pull/14 for the upstream fix\n")
+
+        code, out, err = self.project("add", "--from-output", "-", "--json", stdin=output)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(["acme/app#12 fix auto", "acme/web#13 fix auto"], self.lines())
+        self.assertNotIn(["api", "repos/other/lib/pulls/14"], self.github.calls)
+
+    def test_add_from_output_takes_no_link_outside_a_checkout_without_a_push(self) -> None:
+        self.github.pull_request(12)
+
+        code, out, err = self.project("add", "--from-output", "-", stdin="https://github.com/acme/app/pull/12\n")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([], self.lines())
+        self.assertEqual([], self.github.calls)
+
+    def test_add_from_output_skips_a_link_that_is_no_open_pull_request(self) -> None:
+        self.origin("git@github.com:acme/app.git")
+        self.github.pull_request(41, state="MERGED")
+        self.github.pull_request(42)
+        output = ("Examples:\n"
+                  "  $ gh stack checkout https://github.com/acme/app/pull/123\n"
+                  "  $ gh stack link https://github.com/acme/app/pull/41 https://github.com/acme/app/pull/42\n")
+
+        code, out, err = self.project("add", "--from-output", "-", stdin=output)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(["acme/app#42 fix auto"], self.lines())
+        self.assertIn("project: could not look up acme/app#123: gh: Not Found (HTTP 404)", err)
 
     def test_add_from_output_adds_nothing_when_auto_start_is_off(self) -> None:
         (self.home / ".projector.toml").write_text("[watch]\nauto_start = false\n")
