@@ -1,0 +1,73 @@
+{
+ "version": 1,
+ "name": "Dependent work stacking",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 555,
+  "title": "Keep working by stacking on unmerged pull requests, and build overlapping work as one stack",
+  "head": "e8cac7ca2347695d9948c8047384261ebd309f45",
+  "headRef": "work-stack-dependents",
+  "base": "f78962341ca90ab1d29e4bef0e4a8df0db6ece22",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s skills are instructions for agents carrying out implementation work. A session could stop at an unmerged prerequisite or build overlapping changes on separate branches. This change tells it to extend one stack of dependent pull requests and keep working on everything it can complete.",
+   "The workflow also directs agents to build recommendations so that a different answer is easy to swap in, then ask the user to confirm. Hard-to-undo or external actions are an explicit exception: those wait for authorization. The stopping point becomes visible in the inbox, with a completion notice or an actionable request. The user still owns each merge."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation",
+    "html": "<ul class=\"tight\"><li>Local gate passed both plugin validations, 268 hook tests, hook type checking, and whitespace checks.</li><li>All 14 focused packaging tests passed on the first reviewed head; subsequent changes affect only work instructions.</li><li>The exact-head <a href=\"https://github.com/ninjudd/projector/actions/runs/44327529853/job/134882743058\">CI check failed</a> in an unchanged relay interruption test because its child process did not exit within the deadline. It remains a failed merge check.</li><li>Instruction behavior checked by reading the work, implementation, and stack workflows; no autonomous agent run performed.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "stack-placement",
+   "title": "Keep overlapping work in one stack",
+   "kicker": "Choose a dependency chain before starting parallel work",
+   "intro": [
+    "A stack is a chain of pull requests, with each layer based on the one below. The implementation workflow now puts changes that share files or depend on an open stack above that stack.",
+    "When work depends on two stacks, the agent combines them where authorized or starts with layers that need only one. Every layer must remain safe to merge independently."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Compared these additions with the existing stack split, rebase propagation, draft, and handover rules. They preserve independent layer safety and the user’s merge checkpoint."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "collapsed": false,
+     "note": "Read the new placement rule together with the surrounding stack workflow. It also explains the two-stack case and why a held merge does not block building dependent layers."
+    }
+   ]
+  },
+  {
+   "id": "work-continuation",
+   "title": "Continue until only the user can unblock work",
+   "kicker": "Separate an unmerged dependency from a genuine prerequisite",
+   "intro": [
+    "The work workflow points agents to the implementation stack rules instead of treating an unmerged dependency as a stopping point. It directs them to build a recommendation in a form that is easy to replace, ask for confirmation, and continue. Hard-to-undo or external actions are excluded from guesses.",
+    "When nothing remains to build, the agent posts a completion notice or a request with steps for the user. Its final report lists inbox items first, followed by pull requests, recorded decisions, and remaining work."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Read the complete work workflow and followed its links to the decision, inbox, and stack sections. The recommendation rule requires easy reversal and explicitly excludes hard-to-undo or external actions; the preamble retains repository and skill authorization limits."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/work/SKILL.md",
+     "collapsed": false,
+     "note": "The additions connect dependency handling, reversible recommendations, and final handover. A request for an action requiring authorization is distinct from leaving a bare question as the final response."
+    }
+   ]
+  }
+ ]
+}
