@@ -930,9 +930,11 @@ project config allow --remove agent.relay github:acme/agents
 ```
 
 `--list --json` prints the approvals as `allowed`. `--remove` exits 1 when
-there was no such approval. The one destination is `agent.relay`, as
+there was no such approval. The destinations are `agent.relay`, as
 [Relay through a repository you choose](#relay-through-a-repository-you-choose)
-describes. `allow` refuses a key that is not one with exit code 2.
+describes, and `agent.s3_endpoint` and `agent.s3_profile`, as
+[Relay through an S3 bucket](#relay-through-an-s3-bucket) describes.
+`allow` refuses a key that is not one with exit code 2.
 
 ### Keep paths inside the repository
 
@@ -1045,7 +1047,11 @@ reads, which are these:
 | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or, with `--inline`, the key itself, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key join`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
 | `agent.peers` | table | none | `project agent peer`, from `~/.projector.toml` only, as each peer's name with the base64 of their public key. Set it with `project agent peer add`, never `config set`; see [Reach other people's inboxes](#reach-other-peoples-inboxes) |
 | `agent.peer_limit` | whole number | `12` | the watch daemon, from `~/.projector.toml` only, as the most items it opens from one peer in a rolling hour, and the most replies it opens to any one item you sent; at least `1` |
-| `agent.relay` | string | `origin` | `project agent register`, from the checkout the session works in, as the repository its relay records travel through: `origin`, the checkout's own repository, or `github:<owner>/<repo>`. A destination, so a committed file's value applies only once you allow it; see [Relay through a repository you choose](#relay-through-a-repository-you-choose) |
+| `agent.relay` | string | `origin` | `project agent register`, from the checkout the session works in, as where its relay records travel through: `origin`, the checkout's own repository, `github:<owner>/<repo>`, or `s3://<bucket>/<prefix>`. A destination, so a committed file's value applies only once you allow it; see [Relay through a repository you choose](#relay-through-a-repository-you-choose) and [Relay through an S3 bucket](#relay-through-an-s3-bucket) |
+| `agent.s3_region` | string | `AWS_REGION`, `AWS_DEFAULT_REGION`, the profile's `region`, then `us-east-1` | `project agent register`, from the checkout the session works in, as the region of the bucket an S3 `agent.relay` names |
+| `agent.s3_endpoint` | string | AWS | `project agent register`, from the checkout the session works in, as the `https://` URL, with no path, query, or user info, of a store that speaks S3, such as Cloudflare R2 or MinIO, which requests reach path-style. A destination, so a committed file's value applies only once you allow it |
+| `agent.s3_profile` | string | `AWS_PROFILE`, then `default` | `project agent register`, from the checkout the session works in, as the AWS profile whose credentials sign an S3 location's requests. A destination, so a committed file's value applies only once you allow it |
+| `agent.s3_poll` | whole number | `10` | the watch daemon, from each registration's checkout, as the seconds between polls of its S3 location; at least `2` |
 | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
 | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
 | `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, relative to the checkout's root, inside the checkout or the state directory unless `~/.projector.toml` sets it |
@@ -3920,6 +3926,7 @@ files, and the daemon's cleanup of a session lapsed for 7 days removes them:
 | `outbox/<owner>/<repo>.json` | The relay's ref changes waiting for the daemon's next push, and the checkouts that queued them |
 | `relay/<owner>/<repo>.json` | What the relay last found in the relay location: its visibility, your permission there, the rejected count and the last 20 rejections, the key's refs, and your other machines' agents |
 | `relays/<owner>/<repo>.git` | The bare clone of a location that `agent.relay` names, which holds only relay refs |
+| `outbox/s3/<digest>.json`, `relay/s3/<digest>.json` | An S3 location's outbox and cache, named by the first 16 hex digits of the SHA-256 of its identity, which each file records. The cache also holds the probe's last result |
 | `visibility.json` | Each work repository's visibility, which its messages carry, as `gh` last reported it |
 
 ## Message agents on other machines
@@ -4227,9 +4234,10 @@ state: ok, polled 2026-11-18T09:12:03Z, PRIVATE, permission ADMIN
 ```
 
 With `--json`, it prints the `location`, the work `repo`, the `source`
-file, whether it is `waiting`, the `allow` command, and the location's
-last `state`, `polled_at`, `visibility`, `permission`, `refused` reason,
-and `error`.
+file, whether it is `waiting`, the `allow` commands it waits for, and the
+location's last `state`, `polled_at`, `visibility`, `permission`, `refused`
+reason, and `error`. An S3 location adds its `s3` settings, its `region`,
+where its `credentials` come from, and its `probe` result.
 
 ### Allow a location a repository chose
 
@@ -4300,6 +4308,132 @@ neither field, came through its reader's repository, and crosses nothing.
 
 Nothing else limits which repositories may message each other within one
 location: the file you put `agent.relay` in is the boundary.
+
+## Relay through an S3 bucket
+
+Set `agent.relay` to an S3 bucket and prefix to carry the relay's sealed
+records as objects in the bucket instead of refs in a repository. An S3
+location answers in seconds: the daemon polls it every `agent.s3_poll`
+seconds, 10 by default, rather than once a pass, and a deleted record is
+gone rather than left in a repository's object store.
+
+```toml
+[agent]
+relay = "s3://acme-agents/relay"
+s3_region = "us-east-2"
+s3_profile = "acme-relay"
+```
+
+The bucket name and the prefix take lowercase letters, digits, dots, and
+hyphens, and the prefix also underscores, in segments separated by `/`,
+with no trailing `/`. The prefix may be empty. Any store that speaks S3
+and honors conditional writes works: set `agent.s3_endpoint` to its
+`https://` URL, such as `https://<account>.r2.cloudflarestorage.com`, and
+requests go to it path-style. Without an endpoint, requests go to
+`https://<bucket>.s3.<region>.amazonaws.com`.
+
+A location's identity is its endpoint, bucket, and prefix together, written
+as the path-style URL of the prefix, such as
+`https://s3.amazonaws.com/acme-agents/relay` on AWS. Every rule that names a
+location uses it: `project agent list`, the agents and inbox a location
+shares, and `project agent relay show`, which adds the region, where the
+credentials come from, such as `profile acme-relay`, and the probe's
+result:
+
+```console
+$ project agent relay show
+location: https://s3.amazonaws.com/acme-agents/relay, for work in acme/api
+set by: /Users/you/work/acme/.projector.toml
+region: us-east-2; credentials: profile acme-relay (credential_process); probe: passed, 2026-11-18T09:12:03Z
+state: ok, polled 2026-11-18T09:12:13Z
+```
+
+`agent.s3_endpoint` and `agent.s3_profile` are destinations, as
+`agent.relay` is: an endpoint can name a server that accepts every write,
+and a profile picks which of your AWS identities signs. When a file the
+repository commits sets any of the three, the session waits until you run
+`project config allow` for each value it set, and `project agent list`
+names each command.
+
+### Give the daemon credentials
+
+The daemon signs each request with AWS Signature Version 4, from the first
+of these that holds credentials. It never prints, logs, or passes a secret
+as a process argument:
+
+1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`
+   in the daemon's environment.
+2. The profile `agent.s3_profile` names, else `AWS_PROFILE`, else
+   `default`, in `~/.aws/credentials` and `~/.aws/config`, or the files
+   `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE` name.
+3. That profile's `credential_process`, run with a 30-second timeout. For
+   IAM Identity Center, use the AWS CLI's own export:
+
+   ```ini
+   [profile acme-relay]
+   credential_process = aws configure export-credentials --profile acme-sso --format process
+   ```
+
+Credentials with an expiry are refreshed 5 minutes before it, so no request
+goes out with credentials about to lapse. Session credentials in the
+environment cannot be refreshed, so `relay show` says so and recommends a
+profile with a `credential_process`. With no credentials, or when they
+expire or S3 refuses them, the location is `off`, with the reason in
+`project agent list` and `project watch status`. Outgoing records wait in
+the outbox and incoming ones in the bucket meanwhile.
+
+Each person needs this IAM policy, with your bucket and prefix:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::acme-agents",
+     "Condition": {"StringLike": {"s3:prefix": ["relay/*"]}}},
+    {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+     "Resource": "arn:aws:s3:::acme-agents/relay/*"}
+  ]
+}
+```
+
+Add a lifecycle rule that expires objects under the prefix after 8 days,
+as a backstop for the relay's own 7-day sweep. A bucket with versioning
+keeps every deleted record as a noncurrent version, so leave versioning off
+for the relay's bucket, or expire noncurrent versions too.
+
+### What the relay checks in a bucket
+
+On first use and on each full pass, the daemon probes the store. An
+unsigned listing of the prefix must fail, or the location is `off` with
+`the bucket lets anyone list s3://acme-agents/relay`. Then, on a fresh
+object under `<prefix>/<key-id>/probe/`, it sends each conditional request
+the relay's leases rely on, with a condition that must fail: a second
+`PutObject` with `If-None-Match: *`, and a `PutObject` and a
+`DeleteObject` with `If-Match` on a wrong ETag. A store that honors any of
+them otherwise would let two machines overwrite each other's records, so
+the location is `off` with a reason that names the request, such as `this
+store does not honor If-Match on DeleteObject`. The probe always deletes
+its object, and each full pass deletes any probe object over an hour old
+that an interrupted probe left.
+
+### How the relay lays out a bucket
+
+Each object holds one sealed record, as a ref's tree does in a repository,
+named by its recipient's key ID first, so one listing per poll finds
+everything addressed to you:
+
+| Ref | Object |
+| --- | --- |
+| `refs/projector/agents/<key-id>/<relay-id>` | `<prefix>/<key-id>/agents/<relay-id>` |
+| `refs/projector/inbox/<key-id>/<relay-id>/<id>` | `<prefix>/<key-id>/inbox/<relay-id>/<id>` |
+| `refs/projector/user/<key-id>/<id>` | `<prefix>/<key-id>/user/<id>` |
+| `refs/projector/user-state/<key-id>/<id>` | `<prefix>/<key-id>/user-state/<id>` |
+
+An object's ETag is its version: a new record is written with
+`If-None-Match: *`, and a renewal or a deletion with `If-Match` on the ETag
+the last listing found, so a `412` is a stale lease that the next poll
+settles. The relay rejects an object over 32 KiB from the listing, without
+reading it, and reads the rest with `If-Match` on the listed ETag.
 
 ## Reach other people's inboxes
 

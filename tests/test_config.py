@@ -326,21 +326,44 @@ class ConfigSetTests(unittest.TestCase):
         self.assertEqual(0, code, stderr)
         return stdout
 
-    def test_agent_relay_takes_origin_or_a_github_repository_and_nothing_else(self) -> None:
+    def test_agent_relay_takes_origin_a_github_repository_or_an_s3_prefix_and_nothing_else(self) -> None:
         self.assert_set("agent.relay", "github:acme/agents", "--user")
         self.assert_set("agent.relay", "origin")
         refused = {value: self.invoke("config", "set", "agent.relay", value) for value in
-                   ("acme/agents", "github:acme", "github:acme/agents/extra", "s3://bucket/agents", "github:")}
+                   ("acme/agents", "github:acme", "github:acme/agents/extra", "github:")}
+        malformed = {value: self.invoke("config", "set", "agent.relay", value) for value in
+                     ("s3://Acme/agents", "s3://acme/agents/", "s3://acme//agents", "s3://acme/../agents",
+                      "s3://acme/Agents", "s3://a")}
 
         self.assertEqual("acme/agents", config_module.relay_location("github:acme/agents"))
         self.assertIsNone(config_module.relay_location("origin"))
+        self.assertEqual(config_module.S3Relay("acme-agents", "relay/team"),
+                         config_module.relay_location("s3://acme-agents/relay/team"))
+        self.assertEqual(config_module.S3Relay("acme-agents", ""), config_module.relay_location("s3://acme-agents"))
         self.assertEqual(('relay = "origin"', 'relay = "github:acme/agents"'),
                          (self.repo_file.read_text().splitlines()[-1], self.user_file.read_text().splitlines()[-1]))
         for value, (code, _, stderr) in refused.items():
             self.assertNotEqual(0, code, value)
-            self.assertIn("it takes origin or github:<owner>/<repo>", stderr, value)
-        self.assertIn("s3:// is not supported yet", refused["s3://bucket/agents"][2])
-        self.assertIn("agent.relay", config_module.DESTINATIONS)
+            self.assertIn("it takes origin, github:<owner>/<repo>", stderr, value)
+        for value, (code, _, stderr) in malformed.items():
+            self.assertNotEqual(0, code, value)
+            self.assertIn("an S3 location is s3://<bucket>/<prefix>", stderr, value)
+        self.assertTrue({"agent.relay", "agent.s3_endpoint", "agent.s3_profile"} <= config_module.DESTINATIONS)
+
+    def test_an_s3_endpoint_is_an_https_url_with_no_path_query_or_user_info(self) -> None:
+        refused = {value: self.invoke("config", "set", "agent.s3_endpoint", value) for value in
+                   ("http://s3.example.com", "https://user@s3.example.com", "https://s3.example.com/bucket",
+                    "https://s3.example.com?x=1", "https://", "s3.example.com")}
+
+        self.assert_set("agent.s3_endpoint", "https://S3.Example.com:9000/")
+        identities = [config_module.s3_identity(endpoint, "team", prefix) for endpoint, prefix in
+                      ((None, "relay"), ("HTTPS://S3.Example.com:443/", ""), ("https://[::1]:9000", "a/b"))]
+
+        for value, (code, _, stderr) in refused.items():
+            self.assertNotEqual(0, code, value)
+            self.assertIn("it takes an https:// URL with no path, query, or user info", stderr, value)
+        self.assertEqual(["https://s3.amazonaws.com/team/relay", "https://s3.example.com/team",
+                          "https://[::1]:9000/team/a/b"], identities)
 
     def test_each_type_lands_in_its_table_in_a_new_file(self) -> None:
         self.assert_set("watch.auto_start", "false")
@@ -666,7 +689,7 @@ class ConfigSetTests(unittest.TestCase):
 
     def test_the_documented_keys_are_the_known_keys(self) -> None:
         documentation = (Path(__file__).resolve().parents[1] / "docs" / "cli.md").read_text()
-        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string|whole number|table) \|", documentation, re.MULTILINE)
+        rows = re.findall(r"^\| `([a-z0-9_.]+)` \| (boolean|string|whole number|table) \|", documentation, re.MULTILINE)
         names = {bool: "boolean", str: "string", int: "whole number", dict: "table"}
 
         self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))

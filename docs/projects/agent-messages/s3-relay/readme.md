@@ -397,3 +397,41 @@ observed delivery time in this plan.
   or that expire within the 5-minute refresh margin, are an `expired`
   error rather than signing anything: the source has no fresher keys, so
   each request would only run it again.
+- **Bucket names and prefixes are lowercase.** The prefix takes lowercase
+  letters, digits, `.`, `_`, and `-` in `/`-separated segments, so every
+  rule that compares locations without case, as the daemon's jobs and the
+  outbox files do, compares S3 identities exactly.
+- **A registration records what an S3 location needs.** `agent.json` holds
+  the location's settings as `s3`, with `bucket`, `prefix`, `endpoint`,
+  `region`, `profile`, and `poll`, and the `store` its files are named by,
+  `s3/<digest>`, which the panel reads to find the location's inbox
+  mirror, since it cannot compute a SHA-256. A waiting registration
+  records each setting and value it waits for as `allow`, and the daemon
+  admits it once every one is allowed. A registration from before records
+  none, and waits for `agent.relay` alone, as it did.
+- **The daemon keeps one client per S3 location,** made from the settings
+  of the location's newest live registration, so its credentials are read
+  once and refreshed in place. An unregistered session's mark keeps its
+  `s3` settings, so its deletions still reach the bucket.
+- **An S3 location that is off sends nothing but its probe.** While the
+  probe refuses the store or the credentials lapse, the job lists nothing
+  and applies nothing, and the outbox keeps every change, deletions
+  included. It turns `off` with the reason, which `list`, `watch status`,
+  and `relay show` print. A lapse is tried again on every job, and a
+  refused store on the next full pass.
+- **A store that answers a probe request with another `4xx` is refused,**
+  with the status in the reason, such as `this store answers 400 to
+  If-Match on PutObject rather than 412`, and one that refuses the last
+  deletion under the object's own ETag is refused too. A `403` there is a
+  lapse of the credentials, not a property of the store.
+- **A record that changed between the listing and its read waits.** A
+  `GetObject` that answers `412` or `404` leaves the record unexamined, and
+  the next poll lists its new version, rather than rejecting a record a
+  peer replaced.
+- **`send` reminds no agent about a public relay on an S3 location,** since
+  the probe refuses a bucket that anyone can list.
+- **`relay show --json` gives `allow` as a list of commands,** one for each
+  value the location waits for.
+- **The lease test changes the object between the listing and the
+  renewal,** as a second job's renewal would, since the daemon never runs
+  two jobs for one location at once.

@@ -38,17 +38,20 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import hashlib
 import json
 import os
 import re
+import secrets
 import subprocess
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, NamedTuple, Optional, Protocol
 
-from . import agents, config, crypto, keychain, repo_inbox, review, summary, watch
+from . import agents, config, crypto, keychain, repo_inbox, review, s3, summary, watch
 from .config import INLINE_KEY, KEYCHAIN, ConfigError, inline_key, unset_value, user_config_path, write_value
 from .core import ProjectorError, run_bounded
 from .inbox import SESSION, locked, read_json, write_json
@@ -77,6 +80,14 @@ EXAMINE_LIMIT = 4 * OPEN_LIMIT
 FETCH_TIMEOUT = 120.0
 PUSH_TIMEOUT = 900.0
 WORKERS = 2
+# Seconds between polls of an S3 location when `agent.s3_poll` is unset.
+S3_POLL = 10
+# Requests an S3 location's job sends at once when it applies its outbox.
+S3_REQUESTS = 8
+# An ETag no object has, which the probe's conditional requests must fail on.
+PROBE_ETAG = '"00000000000000000000000000000000"'
+# How old a probe object is before a full pass deletes it as one an interrupted probe left.
+PROBE_AGE = 3600.0
 COMMIT_MESSAGE = "projector relay"
 IDENTITY = {"GIT_AUTHOR_NAME": "projector", "GIT_AUTHOR_EMAIL": "projector@invalid", "GIT_AUTHOR_DATE": "@0 +0000",
             "GIT_COMMITTER_NAME": "projector", "GIT_COMMITTER_EMAIL": "projector@invalid",
@@ -509,8 +520,7 @@ def tracking(ref: str) -> str:
 
 
 def repo_file(root: Path, folder: str, repo: str) -> Path:
-    owner, name = repo.lower().split("/")
-    return root / folder / owner / f"{name}.json"
+    return root / folder / f"{config.location_key(repo)}.json"
 
 
 def read_cache(root: Path, repo: str) -> dict:
@@ -519,7 +529,8 @@ def read_cache(root: Path, repo: str) -> dict:
             "visibility": found.get("visibility") or "unknown", "permission": found.get("permission"),
             "checked_at": found.get("checked_at"), "rejected": found.get("rejected") or 0,
             "rejections": found.get("rejections") or [], "senders": found.get("senders") or {},
-            "agents": found.get("agents") or {}, "remote": found.get("remote") or {}, "seen": found.get("seen") or {}}
+            "agents": found.get("agents") or {}, "remote": found.get("remote") or {}, "seen": found.get("seen") or {},
+            "probe": found.get("probe"), "refused": found.get("refused") or ""}
 
 
 def visibility(root: Path, repo: str) -> str:
@@ -545,6 +556,8 @@ def location_refusal(root: Path, location: str, repo: Optional[str]) -> str:
     if repo and location.lower() == repo.lower():
         return ""
     cache = read_cache(root, location)
+    if config.is_s3(location):
+        return cache["refused"]
     return refusal(location, cache["visibility"], cache["permission"]) if cache["checked_at"] else ""
 
 
@@ -592,7 +605,7 @@ def remote_reviews(root: Path, repo: str, login: str, now: float) -> Optional[li
 def read_outbox(path: Path) -> dict:
     found = read_json(path) or {}
     return {"schema_version": 1, "checkouts": found.get("checkouts") or [], "items": found.get("items") or [],
-            "pushing": found.get("pushing") or []}
+            "pushing": found.get("pushing") or [], **({"location": found["location"]} if "location" in found else {})}
 
 
 def outbox_items(root: Path, repo: str) -> list[dict]:
@@ -646,6 +659,9 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
         if cwd:
             box["checkouts"] = [{"cwd": cwd, "queued_at": watch.stamp(now)},
                                 *[found for found in box["checkouts"] if found.get("cwd") != cwd]]
+        if config.is_s3(repo):
+            # An S3 location's outbox is named by a digest, so it records the identity the daemon starts its job for.
+            box["location"] = repo
         box["items"] = list(items.values())
         if box != before:
             write_json(path, box)
@@ -681,7 +697,7 @@ def presence(root: Path, session: str, found: dict, now: float) -> dict:
     """The session's presence: its registration, what it reviews in the registration's repository as its
     subscriptions and this machine's adoptions say when the presence is sealed, and its lease."""
     record = {key: value for key, value in found.items()
-              if key not in ("relay", "ended_at", "summary_auto", "location_source")}
+              if key not in ("relay", "ended_at", "summary_auto", "location_source", "allow", "s3", "store")}
     repo = found.get("repo")
     reviews = agents.review_targets(watch.subscriptions(watch.session_folder(root, session)), repo,
                                     watch.read_adopted(root, repo)[0] if repo else ())
@@ -962,6 +978,196 @@ class GitTransport:
         return outcomes, failed
 
 
+class Changed(Exception):
+    """A record that changed or went between the listing that found it and the read, which a later job examines
+    again."""
+
+
+class Lapsed(RelayError):
+    """Credentials for an S3 location that could not be found, read, refreshed, or used: why, as `cause`, with the
+    fix when one is known and where the credentials come from."""
+
+    def __init__(self, message: str, cause: str, source: str, fix: str = "") -> None:
+        super().__init__(message)
+        self.cause = cause
+        self.source = source
+        self.fix = fix
+
+
+@dataclass
+class S3Store:
+    """An S3 location's client, the prefix its objects live under, and how often it is polled."""
+
+    client: s3.Client
+    prefix: str
+    poll: float
+
+
+def store_error(error: s3.S3Error, source: str) -> RelayError:
+    """An S3 error as the relay reports it: a lapse when credentials failed or S3 refused them with a `403`,
+    otherwise an error for the job."""
+    if isinstance(error, s3.CredentialsError):
+        return Lapsed(str(error), error.cause, error.source, error.fix)
+    if error.status == 403:
+        return Lapsed(f"S3 refused the credentials from {source}: {error}", "forbidden", source)
+    return RelayError(str(error))
+
+
+class S3Transport:
+    """Records as objects in an S3 bucket, each one `sealed.json` named by its recipient's key ID first, as
+    `<prefix>/<key-id>/<namespace>/<rest>` for the ref `refs/projector/<namespace>/<key-id>/<rest>`. A version is
+    an ETag, and each lease is a conditional request."""
+
+    def __init__(self, store: S3Store) -> None:
+        self.client = store.client
+        self.base = f"{store.prefix}/" if store.prefix else ""
+        self.listed: dict[str, s3.Listed] = {}
+        # The probe objects each listing found, by key ID, which no ref names.
+        self.probes: dict[str, list[s3.Listed]] = {}
+        # The lapse a request in `apply` met, which turns the location off.
+        self.lapsed: Optional[Lapsed] = None
+
+    def name_of(self, ref: str) -> str:
+        namespace, key_id, rest = ref[len("refs/projector/"):].split("/", 2)
+        return f"{self.base}{key_id}/{namespace}/{rest}"
+
+    def ref_of(self, name: str) -> Optional[str]:
+        key_id, _, rest = name[len(self.base):].partition("/")
+        namespace, _, remainder = rest.partition("/")
+        return f"refs/projector/{namespace}/{key_id}/{remainder}" if namespace and remainder else None
+
+    def call(self, operation: Callable[[], object]) -> object:
+        try:
+            return operation()
+        except s3.S3Error as error:
+            raise store_error(error, self.client.source()) from None
+
+    def snapshot(self, prefixes: tuple[str, ...]) -> dict[str, str]:
+        """One listing for each key the prefixes name, keeping each object under a prefix by its ref."""
+        key_ids = sorted({prefix.rstrip("/").rsplit("/", 1)[1] for prefix in prefixes})
+        self.listed, self.probes = {}, {}
+        for key_id in key_ids:
+            listing = self.call(lambda: self.client.list_objects(f"{self.base}{key_id}/"))
+            assert isinstance(listing, list)
+            for found in listing:
+                if found.name.startswith(f"{self.base}{key_id}/probe/"):
+                    self.probes.setdefault(key_id, []).append(found)
+                elif (ref := self.ref_of(found.name)) is not None and ref.startswith(prefixes):
+                    self.listed[ref] = found
+        return {ref: found.etag for ref, found in self.listed.items()}
+
+    def check(self, ref: str, version: str) -> str:
+        """The ref itself, for an object the listing found at this version and sized at most 32 KiB."""
+        found = self.listed.get(ref)
+        if found is None or found.etag != version:
+            raise Changed(ref)
+        if found.size > MAX_SEALED:
+            raise Rejected("too-large")
+        return ref
+
+    def read(self, handle: str) -> bytes:
+        """The object at the version the listing found."""
+        try:
+            return self.client.get_object(self.name_of(handle), self.listed[handle].etag)
+        except (s3.PreconditionFailed, s3.NotFound):
+            raise Changed(handle) from None
+        except s3.S3Error as error:
+            raise store_error(error, self.client.source()) from None
+
+    def apply(self, items: list[dict]) -> tuple[dict[str, Outcome], str]:
+        """One request for each item, up to `S3_REQUESTS` at a time, once credentials are in hand: a creation
+        that expects no object, and an update or deletion that expects the object's ETag. A `412` is a stale
+        lease, and a `404` for a deletion counts as deleted."""
+        try:
+            self.client.credentials.get()
+        except s3.S3Error as error:
+            self.lapsed = store_error(error, self.client.source()) if isinstance(error, s3.CredentialsError) else None
+            return {item["ref"]: Outcome(False, str(error), False, None) for item in items}, str(error)
+        with ThreadPoolExecutor(max_workers=S3_REQUESTS, thread_name_prefix="relay-s3") as pool:
+            outcomes = dict(zip([item["ref"] for item in items], pool.map(self.apply_one, items)))
+        failed = next((outcome.said for outcome in outcomes.values() if not outcome.ok), "")
+        return outcomes, failed
+
+    def apply_one(self, item: dict) -> Outcome:
+        name = self.name_of(item["ref"])
+        forced = (item.get("meta") or {}).get("force")
+        try:
+            if item["sealed"] is None:
+                try:
+                    self.client.delete_object(name, item["old"])
+                except s3.NotFound:
+                    pass
+                return Outcome(True, "deleted", False, None)
+            body = sealed_text(item["sealed"]).encode()
+            if forced:
+                etag = self.client.put_object(name, body)
+            elif item["old"]:
+                etag = self.client.put_object(name, body, if_match=item["old"])
+            else:
+                etag = self.client.put_object(name, body, if_none_match=True)
+            return Outcome(True, "written", False, etag)
+        except (s3.PreconditionFailed, s3.NotFound) as error:
+            return Outcome(False, f"stale lease: {error}", True, None)
+        except s3.S3Error as error:
+            reported = store_error(error, self.client.source())
+            if isinstance(reported, Lapsed):
+                self.lapsed = reported
+            return Outcome(False, str(reported), False, None)
+
+    def probe(self, key_id: str) -> str:
+        """Why the store cannot hold the relay, or "" when it can: it must refuse an unsigned listing, and refuse
+        each conditional request a lease relies on, on a fresh object that the probe deletes whatever it finds."""
+        location = f"s3://{self.client.bucket}/{self.base}".rstrip("/")
+        try:
+            self.client.list_objects(self.base, signed=False, limit=1)
+            return f"the bucket lets anyone list {location}"
+        except s3.S3Error as error:
+            if error.status is None or error.status >= 500:
+                raise RelayError(f"the check that {location} is not public could not finish: {error}") from None
+        name = f"{self.base}{key_id}/probe/{secrets.token_hex(16)}"
+        body = b"{}"
+        etag = str(self.call(lambda: self.client.put_object(name, body, if_none_match=True)))
+        current = etag
+        checks: list[tuple[str, Callable[[], object]]] = [
+            ("If-None-Match on PutObject", lambda: self.client.put_object(name, body, if_none_match=True)),
+            ("If-Match on PutObject", lambda: self.client.put_object(name, body, if_match=PROBE_ETAG)),
+            ("If-Match on DeleteObject", lambda: self.client.delete_object(name, PROBE_ETAG)),
+        ]
+        try:
+            for request, send in checks:
+                try:
+                    answered = send()
+                except s3.PreconditionFailed:
+                    continue
+                except s3.S3Error as error:
+                    raised = store_error(error, self.client.source())
+                    if isinstance(raised, Lapsed) or error.status is None or error.status >= 500:
+                        raise raised from None
+                    return f"this store answers {error.status} to {request} rather than 412"
+                current = answered if isinstance(answered, str) else ""
+                return f"this store does not honor {request}"
+            try:
+                self.client.delete_object(name, etag)
+            except s3.PreconditionFailed:
+                return "this store refuses DeleteObject with If-Match on the object's own ETag"
+            except s3.S3Error as error:
+                raise store_error(error, self.client.source()) from None
+            current = ""
+            return ""
+        finally:
+            if current:
+                with contextlib.suppress(s3.S3Error):
+                    self.client.delete_object(name, current)
+
+    def sweep_probes(self, key_id: str, now: float) -> None:
+        """Delete each probe object the last listing found under the key that is more than an hour old, as an
+        interrupted probe leaves, each under `If-Match` on its listed ETag."""
+        for found in self.probes.get(key_id, []):
+            if now - found.modified > PROBE_AGE:
+                with contextlib.suppress(s3.S3Error):
+                    self.client.delete_object(found.name, found.etag)
+
+
 # One repository's job
 
 class Job:
@@ -970,9 +1176,14 @@ class Job:
 
     def __init__(self, root: Path, location: str, key: Optional[Key], live: set[str], now: float, *, poll: bool,
                  full: bool, gh: Callable[[list[str]], watch.GhResult], held: Optional[str] = None,
-                 peers: Optional[dict[str, bytes]] = None, peer_limit: Optional[int] = None) -> None:
+                 peers: Optional[dict[str, bytes]] = None, peer_limit: Optional[int] = None,
+                 store: Optional[S3Store] = None) -> None:
         self.root = root
         self.location = location
+        # The S3 store of an S3 location, which a Git location has none of.
+        self.store = store
+        # The lapse of an S3 location's credentials that turned it off in this job.
+        self.lapse: Optional[Lapsed] = None
         self.key = key
         # Each peer's key, by its ID, with your name for them.
         self.peers = {crypto.key_id(public): (name, public) for name, public in (peers or {}).items()}
@@ -1011,11 +1222,15 @@ class Job:
     def run(self) -> dict:
         self.attempted = pending(read_outbox(repo_file(self.root, "outbox", self.location)))
         try:
-            self.check_location()
+            if self.store is not None:
+                self.transport = self.check_store()
+            else:
+                self.check_location()
             if self.full:
                 self.refresh_visibility()
-            cwd = self.checkout()
-            self.transport = GitTransport(cwd, self.options) if cwd is not None else None
+            if self.store is None:
+                cwd = self.checkout()
+                self.transport = GitTransport(cwd, self.options) if cwd is not None else None
             if self.poll and self.transport is not None and self.key_ids():
                 self.fetch(self.key_ids())
                 self.rebase()
@@ -1028,12 +1243,20 @@ class Job:
             self.attempted |= {change(ref, sealed) for ref, sealed, _ in self.changes}
             if self.transport is not None:
                 self.push()
+            if isinstance(self.transport, S3Transport) and self.transport.lapsed is not None:
+                raise self.transport.lapsed
+        except Lapsed as lapse:
+            self.lapse, self.refused = lapse, str(lapse)
         except RelayError as error:
             self.error = str(error)
         finally:
+            if self.store is not None:
+                self.cache["repo"], self.cache["refused"] = self.location, self.refused
             path = repo_file(self.root, "relay", self.location)
             path.parent.mkdir(parents=True, exist_ok=True)
             write_json(path, self.cache)
+        if self.store is not None and self.refused:
+            return self.result("off", self.refused)
         if self.transport is None and not self.error:
             return self.result("waiting", NO_CHECKOUT)
         if self.refused and all(self.chose(found) for found in self.sessions.values()):
@@ -1042,12 +1265,35 @@ class Job:
 
     def result(self, state: str, error: str) -> dict:
         items = outbox_items(self.root, self.location)
-        return {"state": state, "error": error, "queued": len(items), "rejected": self.cache["rejected"],
-                "rejections": self.cache["rejections"], "visibility": self.cache["visibility"],
-                "permission": self.cache["permission"], "refused": self.refused,
-                "clone": bool(self.options), "polled_at": self.cache["polled_at"],
-                "senders": sorted(self.cache["senders"]),
-                "errors": sorted({item["last_error"] for item in items if item.get("last_error")})}
+        found = {"state": state, "error": error, "queued": len(items), "rejected": self.cache["rejected"],
+                 "rejections": self.cache["rejections"], "visibility": self.cache["visibility"],
+                 "permission": self.cache["permission"], "refused": self.refused,
+                 "clone": bool(self.options), "polled_at": self.cache["polled_at"],
+                 "senders": sorted(self.cache["senders"]),
+                 "errors": sorted({item["last_error"] for item in items if item.get("last_error")})}
+        if self.store is not None:
+            cached = self.store.client.credentials.cached
+            found.update(location=self.location, region=self.store.client.region,
+                         source=self.store.client.source(), probe=self.cache["probe"],
+                         refreshable=cached.refreshable if cached else True)
+        return found
+
+    def check_store(self) -> Optional[S3Transport]:
+        """The S3 location's transport, once its store has passed the probe: on a full pass, and whenever no probe
+        has finished since the last one, it must refuse an unsigned listing and honor each condition a lease
+        relies on. Answers None while the location is off, with why in `refused`."""
+        assert self.store is not None
+        transport = S3Transport(self.store)
+        if self.held is None:
+            self.refused = NO_KEY
+            return None
+        if self.full or not self.cache["probe"]:
+            self.cache["probe"] = None
+            reason = transport.probe(self.held)
+            self.cache["probe"] = {"result": reason or "ok", "at": watch.stamp(self.now)}
+        result = self.cache["probe"]["result"]
+        self.refused = "" if result == "ok" else result
+        return None if self.refused else transport
 
     def chose(self, found: dict) -> bool:
         """Whether `agent.relay` sent a registration here: its location is not its own repository."""
@@ -1204,7 +1450,7 @@ class Job:
         assert self.key is not None and self.transport is not None
         try:
             _, found = self.unseal(self.transport.read(self.transport.check(ref, version)))
-        except Rejected:
+        except (Rejected, Changed):
             found = None
         sealed, merged = merged_seal(self.key, queued, found)
         if merged is not None:
@@ -1248,6 +1494,8 @@ class Job:
                     self.take_message(ref, sha, name, record)
                 else:
                     self.take_state(ref, sha, name, record)
+            except Changed:
+                continue
             except Rejected as rejected:
                 self.reject(ref, sha, rejected)
             except ProjectorError:
@@ -1440,6 +1688,8 @@ class Job:
                 if ref.startswith(f"{USER}{self.held}/"):
                     stale.append(ref.rsplit("/", 1)[1])
         self.forget_entries(stale)
+        if isinstance(self.transport, S3Transport) and self.held:
+            self.transport.sweep_probes(self.held, self.now)
         # A state record outlives its entry only when the entry's deletion landed without it.
         queued = {item["ref"] for item in outbox_items(self.root, self.location) if item["sealed"] is not None}
         for ref in self.cache["remote"]:
@@ -1590,8 +1840,13 @@ class Relay:
         self.peer_limit = agents.PEER_LIMIT
         self.peers_error = ""
         self.peers_signature: object = ()
-        # Each location a live registration waits to relay through until you allow it, with the file that set it.
-        self.waiting: list[tuple[str, str]] = []
+        # Each location a live registration waits to relay through until you allow it, with the file that set it and
+        # the commands that allow it.
+        self.waiting: list[tuple[str, str, tuple[str, ...]]] = []
+        # When each location's last poll started, by lowercased location, which paces an S3 location's polls.
+        self.polled_at: dict[str, float] = {}
+        # Each S3 location's client, by lowercased location, with the settings it was made from.
+        self.stores: dict[str, tuple[tuple, s3.Client]] = {}
 
     def start(self) -> None:
         """Forget the push each outbox records as running: only this daemon pushes, and it has not started."""
@@ -1618,7 +1873,8 @@ class Relay:
         if polled:
             agents.admit(self.root, config.allowed_path(self.environ), self.value is not None, self.wall())
         records, gone = agents.relayed(self.root)
-        self.waiting = sorted({(found["location"], found.get("location_source") or "")
+        self.waiting = sorted({(found["location"], found.get("location_source") or "",
+                                tuple(agents.allow_commands(found["location"], found.get("allow") or ())))
                                for name, found in records.items()
                                if name in live and found.get("relay") == "waiting" and found.get("location")})
         live = live - gone
@@ -1627,19 +1883,25 @@ class Relay:
         if self.fresh:
             self.owed.update(self.locations(records, True, lapsed))
             self.fresh = False
-        for name, location in sorted({**self.locations(records, polled, lapsed), **self.owed}.items()):
+        due = self.due(records, live, now)
+        for name, location in sorted({**self.locations(records, polled, lapsed), **due, **self.owed}.items()):
             if name in self.jobs:
                 continue
             owed = self.owed.pop(name, None) is not None
             here = {session: found for session, found in records.items()
                     if (agents.location_of(found) or "").lower() == name}
+            store = self.store_for(location, here, live) if config.is_s3(location) else None
+            if config.is_s3(location) and store is None:
+                continue
             remote = read_cache(self.root, location)["remote"]
             lingering = {found.get("relay_id") for session, found in here.items() if session not in live}
-            poll = (polled or owed) and (any(session in live for session in here)
-                                         or any((parsed := parse_ref(ref)) and parsed[2] in lingering
-                                                for ref in remote))
+            poll = (polled or owed or name in due) and (any(session in live for session in here)
+                                                        or any((parsed := parse_ref(ref)) and parsed[2] in lingering
+                                                               for ref in remote))
+            if poll:
+                self.polled_at[name] = now
             job = Job(self.root, location, self.key, set(live), now, poll=poll, full=full, gh=self.gh,
-                      held=self.held(), peers=self.peers, peer_limit=self.peer_limit)
+                      held=self.held(), peers=self.peers, peer_limit=self.peer_limit, store=store)
             self.jobs[name] = (job, self.pool.submit(job.run))
         return self.status() != before
 
@@ -1649,16 +1911,48 @@ class Relay:
         push, or with a session that just lapsed."""
         found = {}
         for path in (self.root / "outbox").glob("*/*.json"):
-            name = f"{path.parent.name}/{path.stem}"
             box = read_outbox(path)
-            if box["items"] and (polled or name not in self.settled or pending(box) - self.settled[name]):
-                found[name] = name
+            name = box.get("location") or f"{path.parent.name}/{path.stem}"
+            if box["items"] and (polled or name.lower() not in self.settled
+                                 or pending(box) - self.settled[name.lower()]):
+                found[name.lower()] = name
         for name, record in records.items():
             location = agents.location_of(record)
             if location and (polled or name in lapsed) and (
                     self.key is not None or repo_file(self.root, "relay", location).exists()):
                 found[location.lower()] = location
         return found
+
+    def due(self, records: dict[str, dict], live: set[str], now: float) -> dict[str, str]:
+        """Each S3 location a live session here uses whose last poll is `agent.s3_poll` seconds old, as its newest
+        registration sets it, or `S3_POLL` by default."""
+        found = {}
+        for session, record in records.items():
+            location = agents.location_of(record)
+            if session in live and location and config.is_s3(location) and self.key is not None:
+                every = max(config.MINIMUMS["agent.s3_poll"], (record.get("s3") or {}).get("poll") or S3_POLL)
+                if now - self.polled_at.get(location.lower(), float("-inf")) >= every:
+                    found[location.lower()] = location
+        return found
+
+    def store_for(self, location: str, here: dict[str, dict], live: set[str]) -> Optional[S3Store]:
+        """The S3 location's store, from the settings of its newest live registration, else of any that names
+        them, kept between jobs so its credentials are read once and refreshed before they expire. None when no
+        registration names its settings."""
+        named = [(session in live, found.get("updated_at") or "", found["s3"]) for session, found in here.items()
+                 if isinstance(found.get("s3"), dict)]
+        if not named:
+            return None
+        settings = max(named, key=lambda entry: entry[:2])[2]
+        wanted = tuple(settings.get(key) for key in ("bucket", "endpoint", "region", "profile"))
+        kept = self.stores.get(location.lower())
+        if kept is None or kept[0] != wanted:
+            client = s3.Client(settings["bucket"], endpoint=settings.get("endpoint"), region=settings.get("region"),
+                               profile=settings.get("profile"), environ=self.environ, clock=self.wall)
+            kept = (wanted, client)
+            self.stores[location.lower()] = kept
+        poll = max(config.MINIMUMS["agent.s3_poll"], settings.get("poll") or S3_POLL)
+        return S3Store(kept[1], settings.get("prefix") or "", poll)
 
     def collect(self) -> None:
         for repo, (job, future) in list(self.jobs.items()):
@@ -1728,7 +2022,8 @@ class Relay:
         return {"key": {"state": state, "id": self.held(), "store": self.key.store if self.key else None,
                         "error": self.key_error if not self.key and not self.reading else ""},
                 "peers": {"count": len(self.peers), "error": self.peers_error},
-                "waiting": [{"location": location, "source": source} for location, source in self.waiting],
+                "waiting": [{"location": location, "source": source, "allow": list(allow)}
+                            for location, source, allow in self.waiting],
                 "repositories": dict(sorted(self.results.items()))}
 
     def wait(self, timeout: Optional[float] = None) -> None:

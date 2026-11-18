@@ -28,13 +28,15 @@ import json
 import os
 import re
 import secrets
+import shlex
 import socket
 import uuid
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, NamedTuple, Optional
 
 from . import codex_watch, relay, review, watch
-from .config import MINIMUMS, Config, ConfigError, NotAllowed, is_allowed, load as load_config, relay_location
+from .config import (MAX_LOCATION, MINIMUMS, Config, ConfigError, NotAllowed, S3Relay, is_allowed, is_s3,
+                     load as load_config, location_key, relay_location, s3_endpoint, s3_identity)
 from .core import ProjectorError, UsageError
 from .inbox import SESSION, is_one_line, locked, read_json, write_json
 
@@ -172,37 +174,71 @@ def checkout(cwd: Path) -> dict:
 
 
 def location_of(found: dict) -> Optional[str]:
-    """The relay location a registration's records travel through, `owner/repo`, or None while it waits for
-    `project config allow` or has none. A registration from before shared relays names no location, and its records
-    travel through its work repository."""
+    """The relay location a registration's records travel through, `owner/repo` or an S3 location's identity, or
+    None while it waits for `project config allow` or has none. A registration from before shared relays names no
+    location, and its records travel through its work repository."""
     if found.get("relay") == "waiting":
         return None
     return found.get("location") or found.get("repo")
 
 
-def waiting_text(location: str, source: str) -> str:
-    return (f"github:{location}, set by {source}, waits for "
-            f"`project config allow agent.relay github:{location}`")
+def allow_commands(location: str, allow: Iterable[Iterable[str]] = ()) -> list[str]:
+    """The `project config allow` commands that let a waiting location relay: one for each value in `allow`, or,
+    for a registration from before S3 locations, which records none, the one for `agent.relay`."""
+    pairs = [tuple(pair) for pair in allow] or [("agent.relay", f"github:{location}")]
+    return [f"project config allow {key} {shlex.quote(value)}" for key, value in pairs]
 
 
-def relay_place(cwd: Path, repo: Optional[str], environ: Optional[dict] = None) -> tuple[Optional[str], str, str]:
+def waiting_text(location: str, source: str, allow: Iterable[Iterable[str]] = ()) -> str:
+    shown = location if is_s3(location) else f"github:{location}"
+    return f"{shown}, set by {source}, waits for " + " and ".join(f"`{command}`"
+                                                                 for command in allow_commands(location, allow))
+
+
+class Place(NamedTuple):
+    """Where a session's records relay: the location, the file that chose it, or `origin`, and why it waits for
+    `project config allow`, with each setting and value that waits. An S3 location has its settings in `s3`."""
+
+    location: Optional[str]
+    source: str
+    waits: str
+    s3: Optional[dict] = None
+    allow: tuple[tuple[str, str], ...] = ()
+
+
+def relay_place(cwd: Path, repo: Optional[str], environ: Optional[dict] = None) -> Place:
     """The relay location of a session at `cwd` whose work repository is `repo`, from `agent.relay` in the
-    configuration there, the file that chose it, or `origin`, and why it waits when a file the repository commits
-    chose it and you have not allowed it. A location equal to the work repository needs no allowing, since the
-    relay pushes there already. Raises `ConfigError` for a value that is no location."""
+    configuration there, and for an S3 location from `agent.s3_endpoint`, `agent.s3_profile`, `agent.s3_region`,
+    and `agent.s3_poll`. It waits while a file the repository commits sets `agent.relay`, `agent.s3_endpoint`, or
+    `agent.s3_profile` to a value you have not allowed. A location equal to the work repository needs no
+    allowing, since the relay pushes there already. Raises `ConfigError` for a value that is no location."""
     loaded = load_config(cwd, environ=environ)
-    waits = False
-    try:
-        value = loaded.setting("agent.relay")
-    except NotAllowed as refused:
-        value, waits = refused.value, True
+    allow: list[tuple[str, str]] = []
+
+    def read(key: str) -> Optional[str]:
+        try:
+            return loaded.setting(key)
+        except NotAllowed as refused:
+            allow.append((key, refused.value))
+            return refused.value
+
+    value = read("agent.relay")
     configured = relay_location(value) if value is not None else None
     if configured is None:
-        return repo, "origin", ""
+        return Place(repo, "origin", "")
     source = str(loaded.source("agent.relay"))
+    if isinstance(configured, S3Relay):
+        endpoint, profile = read("agent.s3_endpoint"), read("agent.s3_profile")
+        location = s3_identity(endpoint, configured.bucket, configured.prefix)
+        if len(location) > MAX_LOCATION:
+            raise ConfigError(f"the S3 location {location} is longer than {MAX_LOCATION} characters")
+        s3 = {"bucket": configured.bucket, "prefix": configured.prefix,
+              "endpoint": s3_endpoint(endpoint) if endpoint else None, "region": loaded.setting("agent.s3_region"),
+              "profile": profile, "poll": loaded.setting("agent.s3_poll")}
+        return Place(location, source, waiting_text(location, source, allow) if allow else "", s3, tuple(allow))
     if repo and configured.lower() == repo.lower():
-        return repo, source, ""
-    return configured, source, waiting_text(configured, source) if waits else ""
+        return Place(repo, source, "")
+    return Place(configured, source, waiting_text(configured, source, allow) if allow else "", None, tuple(allow))
 
 
 def host_of(root: Path, session: str, now: float, environ: dict) -> str:
@@ -254,7 +290,8 @@ def write_registration(root: Path, session: str, login: str, place: dict, cwd: P
     relay does not run. With no fields given, write only a first registration, with no name and a summary made
     from the session's subscriptions, and answer no record when the session is registered already or
     subscribes to nothing."""
-    location, source, waits = relay_place(cwd, place.get("repo"), environ)
+    relaying = relay_place(cwd, place.get("repo"), environ)
+    location, source, waits = relaying.location, relaying.source, relaying.waits
     if waits:
         key, off = None, waits
     else:
@@ -291,6 +328,8 @@ def write_registration(root: Path, session: str, login: str, place: dict, cwd: P
                 "registered_at": old.get("registered_at") or watch.stamp(now), "updated_at": watch.stamp(now),
                 "relay": "waiting" if waits else "pending" if key else ("off" if location else "none"),
                 **({"location": location, "location_source": source} if location else {}),
+                **({"allow": [list(pair) for pair in relaying.allow]} if waits else {}),
+                **({"s3": relaying.s3, "store": location_key(location)} if relaying.s3 and location else {}),
             }
             write_json(folder / "agent.json", new)
             (folder / UNREGISTERED).unlink(missing_ok=True)
@@ -331,7 +370,8 @@ def admit(root: Path, approvals: Path, keyed: bool, now: float) -> list[str]:
         if not found or found.get("relay") != "waiting" or not found.get("location"):
             continue
         try:
-            allowed = is_allowed(approvals, "agent.relay", f"github:{found['location']}")
+            pairs = [tuple(pair) for pair in found.get("allow") or [("agent.relay", f"github:{found['location']}")]]
+            allowed = all(is_allowed(approvals, key, value) for key, value in pairs)
         except ConfigError:
             return admitted
         if not allowed:
@@ -340,7 +380,8 @@ def admit(root: Path, approvals: Path, keyed: bool, now: float) -> list[str]:
         with locked(folder):
             current = record(root, session)
             if current and current.get("relay") == "waiting" and current.get("location") == found["location"]:
-                write_json(folder / "agent.json", {**current, "relay": "pending" if keyed else "off",
+                kept = {key: value for key, value in current.items() if key != "allow"}
+                write_json(folder / "agent.json", {**kept, "relay": "pending" if keyed else "off",
                                                    "updated_at": watch.stamp(now)})
                 admitted.append(session)
     return admitted
@@ -375,7 +416,8 @@ def unregister(root: Path, session: str, now: float) -> tuple[Optional[dict], in
     with locked(folder):
         found = record(root, session)
         if found is not None or departure(root, session) is None:
-            kept = {key: found[key] for key in ("relay_id", "repo", "location", "cwd") if key in found} if found else {}
+            kept = {key: found[key] for key in ("relay_id", "repo", "location", "cwd", "s3")
+                    if key in found} if found else {}
             write_json(folder / UNREGISTERED, {"schema_version": 1, **kept, "unregistered_at": watch.stamp(now)})
         (folder / "agent.json").unlink(missing_ok=True)
     return found, relay.forget(root, found, now) if found else 0
