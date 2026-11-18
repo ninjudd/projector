@@ -1,5 +1,5 @@
 # Written by `project init --ci-review`, which replaces this file while nobody has edited it.
-# projector-workflow sha256=e656c4f6839dddbd277ef9976c14d05e66b2729e06b4c27e2366ffd4087e1026
+# projector-workflow sha256=83ae431387c1ecc9bcdac5c46931270c37d76040bb533fa1143d3612c47d51cc
 name: Projector review
 
 # Reviews each ready pull request whose head is in this repository with
@@ -40,8 +40,10 @@ jobs:
       pages: read
     strategy:
       fail-fast: false
+      # An agent with no model runs the action's default for it.
       matrix:
-        agent: [claude]
+        include:
+          - agent: claude
     concurrency:
       group: projector-review-${{ github.event.pull_request.number || inputs.pr }}-${{ matrix.agent }}
       cancel-in-progress: true
@@ -51,6 +53,7 @@ jobs:
       - uses: ninjudd/projector/actions/review@main
         with:
           agent: ${{ matrix.agent }}
+          model: ${{ matrix.model }}
           pr: ${{ github.event.pull_request.number || inputs.pr }}
           rereview: ${{ inputs.rereview || false }}
           # The gate's hooks/typecheck.sh compiles against declarations only an interactive Claude Code session
