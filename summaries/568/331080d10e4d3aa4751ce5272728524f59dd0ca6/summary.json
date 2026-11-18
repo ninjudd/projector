@@ -1,0 +1,112 @@
+{
+ "version": 1,
+ "name": "S3 relay client",
+ "project": "agent-messages/s3-relay",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 568,
+  "title": "Add an S3 client from the standard library for the relay",
+  "head": "331080d10e4d3aa4751ce5272728524f59dd0ca6",
+  "headRef": "s3-relay/client",
+  "base": "bfa35d893216c5f3c824c9492264dc26ae8f2613",
+  "baseRef": "s3-relay/transport",
+  "basePr": 567
+ },
+ "overview": {
+  "summary": [
+   "The relay moves encrypted agent messages between machines. This stack adds an S3 bucket as another place to store those messages, alongside the Git transport. This layer supplies the HTTP client; the next layer connects it to the relay.",
+   "The client uses Python’s standard library, signs requests with AWS Signature Version 4, and attaches the conditions that prevent one machine from overwriting another machine’s newer record. Credentials come from the environment, an AWS profile, or that profile’s external credential process.",
+   "The exact-head review requests changes for three boundary defects: a UTF-16 response can expand XML entities, DNS resolution can exceed the whole-request deadline, and a slow credential refresh can return keys already expired."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used here",
+    "html": "<ul><li><b>Signature Version 4:</b> AWS’s scheme for authenticating a request with a timestamp and a keyed hash.</li><li><b>ETag:</b> the object version token used by conditional reads, writes, and deletions.</li><li><b>Credential process:</b> a local command that returns access keys and an optional expiration time as JSON.</li></ul>"
+   },
+   {
+    "id": "verification",
+    "title": "Verification at this head",
+    "html": "<ul><li>The configured gate and exact-head CI check passed.</li><li>The S3 and packaging suite passed all 28 tests against local fixtures.</li><li>Additional local reproductions confirmed each flagged boundary failure.</li><li>No live cloud operation was exercised.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "client",
+   "title": "Sign and bound S3 requests",
+   "kicker": "A small HTTP client supplies the relay’s object-store operations",
+   "intro": [
+    "An S3 object holds one sealed relay record. The client lists object names and their ETags, reads an exact version with <code>If-Match</code>, creates an absent object with <code>If-None-Match: *</code>, and conditionally replaces or deletes an existing version. HTTP 412 becomes <code>PreconditionFailed</code>, so the next layer can recognize a stale lease.",
+    "Every signed request includes the host, payload hash, timestamp, and optional session token. The client refuses redirects and caps response bodies and listing pages. Credentials are cached in memory and refreshed before their expiration, but the review found gaps in the XML, DNS, and refresh boundaries."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/s3.py",
+     "note": "Introduces request signing, credential lookup and refresh, the four S3 operations, and HTTP/XML limits.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 345,
+       "text": "The byte scan misses UTF-16 document types. A local 11,728-byte listing expanded into a 2 MiB key, bypassing the entity-expansion protection."
+      },
+      {
+       "kind": "flag",
+       "line": 414,
+       "text": "The timeout callback cannot interrupt DNS while the connection has no socket. A delayed resolver held a 0.1-second request for 0.72 seconds."
+      },
+      {
+       "kind": "flag",
+       "line": 252,
+       "text": "The expiry check uses the clock from before the credential process. A two-second helper returned keys expiring after one second, and the fake server received their expired use."
+      },
+      {
+       "kind": "verify",
+       "line": 407,
+       "text": "Ran the published signing vectors and fake-server operation tests; the ordinary request signatures and conditional headers passed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Check signatures and object operations locally",
+   "kicker": "A fake store verifies the bytes the client sends",
+   "intro": [
+    "The fake S3 server runs on a local port and independently verifies the signature from the request bytes. It tracks object ETags and credentials, can reject stale conditions, and can simulate public listings, hangs, and malformed bodies.",
+    "The tests check AWS signing vectors, pagination, conditional writes and deletes, credential precedence and refresh, body limits, and response timeouts. The existing 28-test S3 and packaging run passed; the separate review reproductions exercise the three cases flagged above."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/fake_s3.py",
+     "note": "Adds the reusable local S3 server, independent signature verification, and failure controls.",
+     "collapsed": true
+    },
+    {
+     "path": "tests/test_s3.py",
+     "note": "Exercises signing, object operations, credential sources, refresh, and request bounds against the fake store.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "plan",
+   "title": "Record the client decisions",
+   "kicker": "The in-progress plan records choices settled by this layer",
+   "intro": [
+    "The plan records why HTTP requests do not follow redirects, why dotted AWS bucket names use path-style addressing, and why listings stop at 50 pages. It also records AWS credential-file overrides, expired-sign-in notices, and the published vectors used to check signing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/s3-relay/readme.md",
+     "note": "Appends client decisions in section 8 while the S3 relay project remains in progress.",
+     "collapsed": true
+    }
+   ]
+  }
+ ]
+}

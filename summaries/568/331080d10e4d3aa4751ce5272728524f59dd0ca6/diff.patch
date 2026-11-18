@@ -1,0 +1,1176 @@
+diff --git a/docs/projects/agent-messages/s3-relay/readme.md b/docs/projects/agent-messages/s3-relay/readme.md
+index 9b0e3da5..843d02cb 100644
+--- a/docs/projects/agent-messages/s3-relay/readme.md
++++ b/docs/projects/agent-messages/s3-relay/readme.md
+@@ -360,3 +360,22 @@ observed delivery time in this plan.
+   `update-ref` that follows a push inside `apply`, so the job's bookkeeping
+   after a push names no Git command. `Job.open` still reads a Git blob, for
+   the tests that open a record on the bare repository.
++- **The client sends with `http.client`, not `urllib.request`.** It follows
++  no redirect, so a signed request never goes to a host it did not name,
++  and a timer bounds each whole request at 30 seconds, since a socket's
++  timeout bounds only each read and a store could send a byte at a time.
++- **A bucket whose name holds a dot goes path-style on AWS,** to
++  `s3.<region>.amazonaws.com/<bucket>`, because no certificate for a
++  virtual host matches a dotted name.
++- **A listing stops at 50 pages,** 50,000 objects under one key's prefix,
++  and more is an error for that job rather than a backlog to page through.
++- **The client honors `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE`,**
++  as the AWS tools do, and rereads a profile's long-lived keys when either
++  file changes.
++- **An expired sign-in is a `credential_process` that fails saying so.**
++  Its last line of standard error names an expiry, a failed refresh, or an
++  SSO session, and the fix is `aws sso login` for the profile its command
++  names with `--profile`, else for the profile itself.
++- **The signer is checked against AWS's own cases,** `get-vanilla` and two
++  query cases from the Signature Version 4 test suite, and the four S3
++  examples in AWS's documentation, each with the signature AWS publishes.
+diff --git a/src/projector/s3.py b/src/projector/s3.py
+new file mode 100644
+index 00000000..03084c7e
+--- /dev/null
++++ b/src/projector/s3.py
+@@ -0,0 +1,488 @@
++"""A small S3 client from the standard library, for the relay's S3 locations (`relay.py`).
++
++It signs each request with AWS Signature Version 4 and sends it over HTTPS with the default `ssl` context. It offers
++the four operations the relay needs, `ListObjectsV2`, `GetObject`, `PutObject`, and `DeleteObject`, with the
++conditional headers its leases use, and reads at most 1 MiB of any response.
++
++Credentials come from the first of these that holds them:
++
++1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` in the environment.
++2. The profile `agent.s3_profile` names, else `AWS_PROFILE`, else `default`, in `~/.aws/credentials` and
++   `~/.aws/config`, or the files `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE` name.
++3. That profile's `credential_process`, run with a 30-second timeout, whose JSON gives the keys and when they
++   expire.
++
++Credentials that expire are refreshed 5 minutes before they do, so no request is signed with credentials about to
++lapse. No error, log line, or `repr` holds a secret key or a session token, and no secret is passed as a process
++argument.
++"""
++
++from __future__ import annotations
++
++import configparser
++import hashlib
++import hmac
++import http.client
++import json
++import os
++import re
++import shlex
++import socket
++import ssl
++import subprocess
++import threading
++import time
++import xml.etree.ElementTree as ElementTree
++from dataclasses import dataclass, field
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Callable, NamedTuple, Optional
++from urllib.parse import quote, urlsplit
++
++from .core import ProjectorError, run_bounded
++
++TIMEOUT = 30.0
++PROCESS_TIMEOUT = 30.0
++REFRESH = 300.0
++MAX_RESPONSE = 1024 * 1024
++# A listing of more pages than this is an error rather than a backlog: each page holds up to 1,000 objects.
++MAX_PAGES = 50
++ALGORITHM = "AWS4-HMAC-SHA256"
++SERVICE = "s3"
++DEFAULT_REGION = "us-east-1"
++UNRESERVED = "-_.~"
++NAMESPACE = "{http://s3.amazonaws.com/doc/2006-03-01/}"
++DOCTYPE = re.compile(rb"<!doctype", re.IGNORECASE)
++EXPIRED = re.compile(r"expired|refresh failed|sso session", re.IGNORECASE)
++LAST_LINE = 200
++
++
++class S3Error(ProjectorError):
++    """A request S3 refused or that did not finish, with its HTTP status when one came back."""
++
++    def __init__(self, message: str, status: Optional[int] = None, code: str = "") -> None:
++        super().__init__(message)
++        self.status = status
++        self.code = code
++
++
++class PreconditionFailed(S3Error):
++    """A `412`: the condition a request carried does not hold."""
++
++
++class NotFound(S3Error):
++    """A `404`: no object has the name."""
++
++
++class CredentialsError(S3Error):
++    """Credentials that could not be found, read, or refreshed. `cause` is `missing`, `expired`, `timeout`, or
++    `failed`, and `fix` is the command that fixes it, when one is known."""
++
++    def __init__(self, message: str, cause: str, source: str, fix: str = "") -> None:
++        super().__init__(message)
++        self.cause = cause
++        self.source = source
++        self.fix = fix
++
++
++@dataclass(frozen=True)
++class Credentials:
++    """Keys that sign requests, where they came from, and when they expire, if they do. Its repr names only the
++    access key ID and the source."""
++
++    access_key: str
++    secret_key: str = field(repr=False)
++    token: str = field(default="", repr=False)
++    expires: Optional[float] = None
++    source: str = ""
++    # Whether the source can give fresh keys when these expire.
++    refreshable: bool = True
++
++
++class Listed(NamedTuple):
++    name: str
++    etag: str
++    size: int
++    modified: float
++
++
++class Response(NamedTuple):
++    status: int
++    headers: dict[str, str]
++    body: bytes
++
++
++# Signature Version 4
++
++def encode(text: str) -> str:
++    """`text` percent-encoded as Signature Version 4 encodes a name or a query value: every byte but the
++    unreserved characters."""
++    return quote(text, safe=UNRESERVED)
++
++
++def canonical_path(path: str) -> str:
++    """The path with each segment encoded once, as S3 signs it."""
++    return "/".join(encode(segment) for segment in path.split("/"))
++
++
++def canonical_query(query: list[tuple[str, str]]) -> str:
++    return "&".join(f"{name}={value}" for name, value in sorted((encode(name), encode(value))
++                                                                for name, value in query))
++
++
++def canonical_request(method: str, path: str, query: list[tuple[str, str]], headers: dict[str, str],
++                      payload_hash: str) -> tuple[str, str]:
++    """The canonical request and its signed headers, which are every header given, by lowercased name."""
++    named = sorted((name.lower(), " ".join(str(value).split())) for name, value in headers.items())
++    signed = ";".join(name for name, _ in named)
++    lines = "".join(f"{name}:{value}\n" for name, value in named)
++    return "\n".join([method, canonical_path(path), canonical_query(query), lines, signed, payload_hash]), signed
++
++
++def signing_key(secret: str, date: str, region: str, service: str) -> bytes:
++    key = f"AWS4{secret}".encode()
++    for part in (date, region, service, "aws4_request"):
++        key = hmac.new(key, part.encode(), hashlib.sha256).digest()
++    return key
++
++
++def authorization(method: str, path: str, query: list[tuple[str, str]], headers: dict[str, str], payload_hash: str,
++                  credentials: Credentials, region: str, service: str = SERVICE) -> str:
++    """The `Authorization` header for a request whose headers include `x-amz-date`, signing every header."""
++    stamp = next(value for name, value in headers.items() if name.lower() == "x-amz-date")
++    date = stamp[:8]
++    scope = f"{date}/{region}/{service}/aws4_request"
++    request, signed = canonical_request(method, path, query, headers, payload_hash)
++    to_sign = "\n".join([ALGORITHM, stamp, scope, hashlib.sha256(request.encode()).hexdigest()])
++    signature = hmac.new(signing_key(credentials.secret_key, date, region, service), to_sign.encode(),
++                         hashlib.sha256).hexdigest()
++    return f"{ALGORITHM} Credential={credentials.access_key}/{scope}, SignedHeaders={signed}, Signature={signature}"
++
++
++def amz_date(now: float) -> str:
++    return datetime.fromtimestamp(now, timezone.utc).strftime("%Y%m%dT%H%M%SZ")
++
++
++# Credentials
++
++def aws_files(environ: dict[str, str]) -> tuple[Path, Path]:
++    home = Path(environ.get("HOME", "~")).expanduser()
++    return (Path(environ.get("AWS_SHARED_CREDENTIALS_FILE") or home / ".aws" / "credentials").expanduser(),
++            Path(environ.get("AWS_CONFIG_FILE") or home / ".aws" / "config").expanduser())
++
++
++def read_ini(path: Path) -> configparser.ConfigParser:
++    parser = configparser.ConfigParser(interpolation=None)
++    try:
++        parser.read_string(path.read_text(encoding="utf-8"), source=str(path))
++    except FileNotFoundError:
++        pass
++    except (OSError, UnicodeError, configparser.Error) as error:
++        raise CredentialsError(f"{path} could not be read: {type(error).__name__}", "failed", str(path)) from None
++    return parser
++
++
++def file_signature(path: Path) -> object:
++    try:
++        found = path.stat()
++    except OSError:
++        return None
++    return found.st_mtime_ns, found.st_size, found.st_ino
++
++
++def expiry(text: object) -> Optional[float]:
++    """The time an ISO 8601 `Expiration` names, in seconds since the epoch, or None for one that names none."""
++    if not isinstance(text, str):
++        return None
++    try:
++        found = datetime.fromisoformat(text)
++    except ValueError:
++        return None
++    return (found if found.tzinfo else found.replace(tzinfo=timezone.utc)).timestamp()
++
++
++class Provider:
++    """Finds credentials for a profile, keeps them in memory, and refreshes those that expire 5 minutes before
++    they do. Long-lived keys in the files are read again only when a file changes."""
++
++    def __init__(self, profile: Optional[str], environ: dict[str, str], clock: Callable[[], float] = time.time) -> None:
++        self.explicit = profile
++        self.environ = environ
++        self.clock = clock
++        self.cached: Optional[Credentials] = None
++        self.signature: object = None
++        self.lock = threading.Lock()
++
++    def __repr__(self) -> str:
++        return f"Provider({self.profile})"
++
++    @property
++    def profile(self) -> str:
++        return self.explicit or self.environ.get("AWS_PROFILE") or "default"
++
++    def sections(self) -> tuple[dict[str, str], dict[str, str]]:
++        """The profile's sections in the credentials file and the config file, each empty when absent."""
++        credentials, config = aws_files(self.environ)
++        keys, settings = read_ini(credentials), read_ini(config)
++        name = self.profile
++        found = dict(keys[name]) if keys.has_section(name) else {}
++        section = "default" if name == "default" else f"profile {name}"
++        configured = dict(settings[section]) if settings.has_section(section) else {}
++        return found, configured
++
++    def region(self) -> Optional[str]:
++        try:
++            return self.sections()[1].get("region") or None
++        except CredentialsError:
++            return None
++
++    def get(self) -> Credentials:
++        """Credentials good for at least 5 more minutes, or the freshest the source has, never ones that have
++        expired."""
++        with self.lock:
++            now = self.clock()
++            signature = tuple(file_signature(path) for path in aws_files(self.environ))
++            cached = self.cached
++            if cached is not None and cached.source == "environment":
++                cached = None
++            if cached is not None and cached.expires is None and signature != self.signature:
++                cached = None
++            if cached is None or (cached.expires is not None and cached.expires - now < REFRESH):
++                cached = self.find(now)
++            if cached.expires is not None and cached.expires <= now:
++                raise CredentialsError(f"the credentials from {cached.source} expired at {stamp_of(cached.expires)}",
++                                       "expired", cached.source, self.sign_in_fix())
++            self.cached, self.signature = cached, signature
++            return cached
++
++    def find(self, now: float) -> Credentials:
++        environ = self.environ
++        if environ.get("AWS_ACCESS_KEY_ID") and environ.get("AWS_SECRET_ACCESS_KEY"):
++            token = environ.get("AWS_SESSION_TOKEN") or ""
++            return Credentials(environ["AWS_ACCESS_KEY_ID"], environ["AWS_SECRET_ACCESS_KEY"], token,
++                               source="environment", refreshable=not token)
++        keys, configured = self.sections()
++        source = f"profile {self.profile}"
++        for section in (keys, configured):
++            if section.get("aws_access_key_id") and section.get("aws_secret_access_key"):
++                return Credentials(section["aws_access_key_id"], section["aws_secret_access_key"],
++                                   section.get("aws_session_token") or "", source=source)
++        command = keys.get("credential_process") or configured.get("credential_process")
++        if command:
++            return self.run_process(command)
++        raise CredentialsError(f"no AWS credentials: the environment has no AWS_ACCESS_KEY_ID, and profile "
++                               f"{self.profile} has no keys and no credential_process", "missing", source)
++
++    def sign_in_fix(self) -> str:
++        """The command that signs in again for the profile's `credential_process`: `aws sso login` for the profile
++        its command names, else for this profile."""
++        try:
++            keys, configured = self.sections()
++        except CredentialsError:
++            return ""
++        command = keys.get("credential_process") or configured.get("credential_process") or ""
++        try:
++            words = shlex.split(command, posix=os.name != "nt")
++        except ValueError:
++            words = []
++        named = next((words[index + 1] for index, word in enumerate(words[:-1]) if word == "--profile"), None)
++        return f"aws sso login --profile {named or self.profile}" if command else ""
++
++    def run_process(self, command: str) -> Credentials:
++        source = f"profile {self.profile} (credential_process)"
++        try:
++            words = shlex.split(command, posix=os.name != "nt")
++        except ValueError:
++            raise CredentialsError(f"the credential_process of profile {self.profile} does not parse as a command",
++                                   "failed", source) from None
++        try:
++            done = run_bounded(words, timeout=PROCESS_TIMEOUT, env=dict(self.environ))
++        except subprocess.TimeoutExpired:
++            raise CredentialsError(f"the credential_process of profile {self.profile} did not finish within "
++                                   f"{PROCESS_TIMEOUT:g} seconds, so it was stopped", "timeout", source) from None
++        except OSError as error:
++            raise CredentialsError(f"the credential_process of profile {self.profile} could not start: "
++                                   f"{error.strerror or type(error).__name__}", "failed", source) from None
++        if done.returncode != 0:
++            lines = done.stderr.decode("utf-8", "replace").strip().splitlines()
++            said = (lines[-1] if lines else f"exited with status {done.returncode}")[:LAST_LINE]
++            if EXPIRED.search(said):
++                raise CredentialsError(f"the AWS sign-in for profile {self.profile} expired", "expired", source,
++                                       self.sign_in_fix())
++            raise CredentialsError(f"the credential_process of profile {self.profile} failed: {said}", "failed",
++                                   source)
++        try:
++            found = json.loads(done.stdout)
++        except ValueError:
++            found = None
++        if (not isinstance(found, dict) or found.get("Version") != 1
++                or not isinstance(found.get("AccessKeyId"), str) or not isinstance(found.get("SecretAccessKey"), str)
++                or not isinstance(found.get("SessionToken", ""), str)):
++            raise CredentialsError(f"the credential_process of profile {self.profile} printed no credentials of "
++                                   "Version 1", "failed", source)
++        expires = expiry(found.get("Expiration"))
++        if found.get("Expiration") is not None and expires is None:
++            raise CredentialsError(f"the credential_process of profile {self.profile} printed an Expiration that is "
++                                   "not an ISO 8601 time", "failed", source)
++        return Credentials(found["AccessKeyId"], found["SecretAccessKey"], found.get("SessionToken") or "",
++                           expires=expires, source=source)
++
++
++def stamp_of(seconds: float) -> str:
++    return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
++
++
++# Requests
++
++def connect(host: str, port: int, timeout: float) -> http.client.HTTPConnection:
++    """A connection to `host` over TLS, checked against the system's certificate authorities."""
++    return http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl.create_default_context())
++
++
++def parse_xml(body: bytes) -> ElementTree.Element:
++    """The XML document in a response body, refusing one that declares a document type, so no entity it could
++    declare is expanded."""
++    if DOCTYPE.search(body):
++        raise S3Error("the response declares a document type, which S3 never sends, so it was not parsed")
++    try:
++        return ElementTree.fromstring(body)
++    except ElementTree.ParseError:
++        raise S3Error("the response is not XML") from None
++
++
++def child(element: ElementTree.Element, name: str) -> str:
++    found = element.find(NAMESPACE + name)
++    if found is None:
++        found = element.find(name)
++    return (found.text or "") if found is not None else ""
++
++
++def children(element: ElementTree.Element, name: str) -> list[ElementTree.Element]:
++    return element.findall(NAMESPACE + name) or element.findall(name)
++
++
++class Client:
++    """One bucket on AWS or on the store `endpoint` names, an `https://` URL with no path. Requests go to
++    `https://<bucket>.s3.<region>.amazonaws.com` on AWS, or path-style to the endpoint, and to AWS for a bucket
++    whose name holds a dot, which no certificate for a virtual host matches."""
++
++    def __init__(self, bucket: str, *, endpoint: Optional[str] = None, region: Optional[str] = None,
++                 profile: Optional[str] = None, environ: Optional[dict[str, str]] = None,
++                 clock: Callable[[], float] = time.time) -> None:
++        self.bucket = bucket
++        self.environ = dict(os.environ) if environ is None else environ
++        self.clock = clock
++        self.credentials = Provider(profile, self.environ, clock)
++        self.region = (region or self.environ.get("AWS_REGION") or self.environ.get("AWS_DEFAULT_REGION")
++                       or self.credentials.region() or DEFAULT_REGION)
++        if endpoint:
++            parts = urlsplit(endpoint)
++            self.host, self.base = parts.netloc, f"/{bucket}"
++            self.address = (parts.hostname or "", parts.port or 443)
++        else:
++            self.host, self.base = ((f"s3.{self.region}.amazonaws.com", f"/{bucket}") if "." in bucket
++                                    else (f"{bucket}.s3.{self.region}.amazonaws.com", ""))
++            self.address = (self.host, 443)
++
++    def __repr__(self) -> str:
++        return f"Client({self.host}{self.base}, {self.credentials!r})"
++
++    def source(self) -> str:
++        """Where the credentials come from, such as `profile acme`, without reading them."""
++        return self.credentials.cached.source if self.credentials.cached else f"profile {self.credentials.profile}"
++
++    def request(self, method: str, name: Optional[str], *, query: Optional[list[tuple[str, str]]] = None,
++                body: bytes = b"", headers: Optional[dict[str, str]] = None, signed: bool = True) -> Response:
++        """Send one request for the object `name`, or for the bucket when it is None, and answer its response,
++        raising `S3Error` for one that did not finish within `TIMEOUT` seconds or holds more than 1 MiB."""
++        query = query or []
++        path = f"{self.base}/{name}" if name is not None else (self.base or "/")
++        payload = hashlib.sha256(body).hexdigest()
++        sent = {"host": self.host, **(headers or {})}
++        if signed:
++            credentials = self.credentials.get()
++            sent.update({"x-amz-date": amz_date(self.clock()), "x-amz-content-sha256": payload})
++            if credentials.token:
++                sent["x-amz-security-token"] = credentials.token
++            sent["authorization"] = authorization(method, path, query, sent, payload, credentials, self.region)
++        target = canonical_path(path) + (f"?{canonical_query(query)}" if query else "")
++        connection = connect(*self.address, TIMEOUT)
++        stopped = threading.Event()
++
++        def stop() -> None:
++            stopped.set()
++            if connection.sock is not None:
++                try:
++                    connection.sock.shutdown(socket.SHUT_RDWR)
++                except OSError:
++                    pass
++
++        # The socket's timeout bounds each read, so a server that sends a byte at a time could hold a request for
++        # hours; the timer bounds the whole request.
++        timer = threading.Timer(TIMEOUT, stop)
++        timer.daemon = True
++        timer.start()
++        try:
++            connection.request(method, target, body=body or None, headers=sent)
++            response = connection.getresponse()
++            data = response.read(MAX_RESPONSE + 1)
++            found = Response(response.status, {key.lower(): value for key, value in response.getheaders()}, data)
++        except (OSError, http.client.HTTPException) as error:
++            if stopped.is_set() or isinstance(error, socket.timeout):
++                raise S3Error(f"{method} {self.host}{path} did not finish within {TIMEOUT:g} seconds") from None
++            raise S3Error(f"{method} {self.host}{path} failed: {type(error).__name__}") from None
++        finally:
++            timer.cancel()
++            connection.close()
++        if stopped.is_set():
++            raise S3Error(f"{method} {self.host}{path} did not finish within {TIMEOUT:g} seconds")
++        if len(found.body) > MAX_RESPONSE:
++            raise S3Error(f"{method} {self.host}{path} answered with more than {MAX_RESPONSE // 1024} KiB")
++        if found.status >= 300:
++            raise self.error(method, path, found)
++        return found
++
++    def error(self, method: str, path: str, response: Response) -> S3Error:
++        code = ""
++        if response.body:
++            try:
++                code = child(parse_xml(response.body), "Code")[:64]
++            except S3Error:
++                code = ""
++        said = f"{method} {self.host}{path} answered {response.status}" + (f" {code}" if code else "")
++        kind = {412: PreconditionFailed, 404: NotFound}.get(response.status, S3Error)
++        return kind(said, response.status, code)
++
++    def list_objects(self, prefix: str, *, signed: bool = True, limit: Optional[int] = None) -> list[Listed]:
++        """Every object whose name starts with `prefix`, following continuation tokens, or the first `limit`."""
++        found: list[Listed] = []
++        token = ""
++        for _ in range(MAX_PAGES):
++            query = [("list-type", "2"), ("prefix", prefix), *([("max-keys", str(limit))] if limit else []),
++                     *([("continuation-token", token)] if token else [])]
++            page = parse_xml(self.request("GET", None, query=query, signed=signed).body)
++            for entry in children(page, "Contents"):
++                modified = expiry(child(entry, "LastModified"))
++                size = child(entry, "Size")
++                if not child(entry, "Key") or modified is None or not size.isdigit():
++                    raise S3Error("the listing holds an object with no name, size, or time")
++                found.append(Listed(child(entry, "Key"), child(entry, "ETag"), int(size), modified))
++            token = child(page, "NextContinuationToken")
++            if limit or child(page, "IsTruncated") != "true" or not token:
++                return found
++        raise S3Error(f"the listing of {prefix} holds more than {MAX_PAGES} pages")
++
++    def get_object(self, name: str, if_match: str) -> bytes:
++        return self.request("GET", name, headers={"if-match": if_match}).body
++
++    def put_object(self, name: str, body: bytes, if_match: Optional[str] = None, if_none_match: bool = False) -> str:
++        """Write the object and answer its new ETag."""
++        headers = {"content-type": "application/json",
++                   **({"if-match": if_match} if if_match else {}), **({"if-none-match": "*"} if if_none_match else {})}
++        etag = self.request("PUT", name, body=body, headers=headers).headers.get("etag")
++        if not etag:
++            raise S3Error(f"PUT {self.host}{self.base}/{name} answered with no ETag")
++        return etag
++
++    def delete_object(self, name: str, if_match: str) -> None:
++        self.request("DELETE", name, headers={"if-match": if_match})
+diff --git a/tests/fake_s3.py b/tests/fake_s3.py
+new file mode 100644
+index 00000000..50dc2dda
+--- /dev/null
++++ b/tests/fake_s3.py
+@@ -0,0 +1,270 @@
++"""A fake S3 server on a local port, for the S3 client's and the S3 relay's tests.
++
++It serves path-style requests for any bucket: `ListObjectsV2` with continuation tokens and last-modified times,
++and `GetObject`, `PutObject`, and `DeleteObject` with `If-Match` and `If-None-Match`. It checks every request's
++Signature Version 4 from the bytes on the wire, with signing code of its own, against the keys a test gives it,
++and refuses a request signed with keys past their expiry. A test can make it ignore a condition, answer an unsigned
++listing, hang on an operation, or replace a listing's body. Tests reach it over plain HTTP by patching
++`s3.connect` with `plain`.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import hmac
++import http.client
++import threading
++import time
++from dataclasses import dataclass
++from datetime import datetime, timezone
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from typing import Callable, Optional
++from urllib.parse import parse_qsl, quote, unquote
++from xml.sax.saxutils import escape
++
++XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
++# What `ignoring` names: the condition the server then treats as holding.
++CONDITIONS = ("put-if-none-match", "put-if-match", "delete-if-match")
++
++
++def plain(host: str, port: int, timeout: float) -> http.client.HTTPConnection:
++    """A connection without TLS, which `s3.connect` is patched with to reach the fake server."""
++    return http.client.HTTPConnection(host, port, timeout=timeout)
++
++
++@dataclass
++class Stored:
++    body: bytes
++    etag: str
++    modified: float
++
++
++@dataclass
++class Keys:
++    secret: str
++    token: str = ""
++    expires: Optional[float] = None
++
++
++@dataclass
++class Seen:
++    """One request the server answered: what it was, the access key that signed it, if any, and its status."""
++
++    method: str
++    bucket: str
++    name: str
++    query: dict[str, str]
++    headers: dict[str, str]
++    signed_by: str
++    status: int = 0
++
++
++def key_of(secret: str, date: str, region: str) -> bytes:
++    key = f"AWS4{secret}".encode()
++    for part in (date, region, "s3", "aws4_request"):
++        key = hmac.new(key, part.encode(), hashlib.sha256).digest()
++    return key
++
++
++class FakeS3:
++    def __init__(self, region: str = "us-east-1") -> None:
++        self.region = region
++        self.objects: dict[tuple[str, str], Stored] = {}
++        self.keys: dict[str, Keys] = {}
++        self.clock: Callable[[], float] = time.time
++        self.ignoring: set[str] = set()
++        self.public = False
++        self.page = 1000
++        self.hanging: set[str] = set()
++        self.release = threading.Event()
++        self.listing_body: Optional[bytes] = None
++        self.requests: list[Seen] = []
++        # Each request signed with keys whose expiry had passed, by access key.
++        self.expired_uses: list[str] = []
++        self.lock = threading.Lock()
++        self.sequence = 0
++        server = self
++
++        class Handler(BaseHTTPRequestHandler):
++            protocol_version = "HTTP/1.1"
++
++            def log_message(self, *args: object) -> None:
++                pass
++
++            def handle_one(self) -> None:
++                server.answer(self)
++
++            do_GET = do_PUT = do_DELETE = do_POST = handle_one
++
++        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
++        self.server.daemon_threads = True
++        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
++        self.thread.start()
++
++    @property
++    def endpoint(self) -> str:
++        return f"https://127.0.0.1:{self.server.server_address[1]}"
++
++    def close(self) -> None:
++        self.release.set()
++        self.server.shutdown()
++        self.server.server_close()
++
++    def grant(self, access_key: str, secret: str, token: str = "", expires: Optional[float] = None) -> None:
++        self.keys[access_key] = Keys(secret, token, expires)
++
++    def put(self, bucket: str, name: str, body: bytes, modified: Optional[float] = None) -> str:
++        """Store an object directly, as another writer with access to the bucket could, and answer its ETag."""
++        with self.lock:
++            self.sequence += 1
++            etag = f'"{hashlib.md5(body + str(self.sequence).encode()).hexdigest()}"'
++            self.objects[(bucket, name)] = Stored(body, etag, self.clock() if modified is None else modified)
++            return etag
++
++    def names(self, bucket: str, prefix: str = "") -> list[str]:
++        return sorted(name for found, name in self.objects if found == bucket and name.startswith(prefix))
++
++    def seen(self, method: str, bucket: Optional[str] = None) -> list[Seen]:
++        return [found for found in self.requests if found.method == method and bucket in (None, found.bucket)]
++
++    # Answering
++
++    def answer(self, request: BaseHTTPRequestHandler) -> None:
++        raw_path, _, raw_query = request.path.partition("?")
++        length = int(request.headers.get("content-length") or 0)
++        body = request.rfile.read(length) if length else b""
++        headers = {name.lower(): value for name, value in request.headers.items()}
++        bucket, _, name = unquote(raw_path).lstrip("/").partition("/")
++        query = dict(parse_qsl(raw_query, keep_blank_values=True))
++        seen = Seen(request.command, bucket, name, query, headers, "")
++        self.requests.append(seen)
++        operation = {"GET": "list" if not name else "get", "PUT": "put", "DELETE": "delete"}.get(request.command, "")
++        if operation in self.hanging:
++            self.release.wait(60)
++        status, sent, extra = self.respond(request.command, raw_path, raw_query, headers, body, bucket, name, query,
++                                           operation, seen)
++        seen.status = status
++        request.send_response(status)
++        for header, value in extra.items():
++            request.send_header(header, value)
++        request.send_header("content-length", str(len(sent)))
++        request.end_headers()
++        request.wfile.write(sent)
++
++    def respond(self, method: str, raw_path: str, raw_query: str, headers: dict[str, str], body: bytes,
++                bucket: str, name: str, query: dict[str, str], operation: str,
++                seen: Seen) -> tuple[int, bytes, dict[str, str]]:
++        if "authorization" not in headers:
++            if operation == "list" and self.public:
++                return self.listing(bucket, query)
++            return self.fail(403, "AccessDenied")
++        signer = self.verify(method, raw_path, raw_query, headers, body)
++        if isinstance(signer, tuple):
++            return signer
++        seen.signed_by = signer
++        if operation == "list":
++            return self.listing(bucket, query)
++        with self.lock:
++            stored = self.objects.get((bucket, name))
++            if operation == "get":
++                if stored is None:
++                    return self.fail(404, "NoSuchKey")
++                if headers.get("if-match") not in (None, stored.etag):
++                    return self.fail(412, "PreconditionFailed")
++                return 200, stored.body, {"etag": stored.etag}
++            if operation == "put":
++                if headers.get("if-none-match") == "*" and stored is not None \
++                        and "put-if-none-match" not in self.ignoring:
++                    return self.fail(412, "PreconditionFailed")
++                if "if-match" in headers and "put-if-match" not in self.ignoring \
++                        and (stored is None or stored.etag != headers["if-match"]):
++                    return self.fail(412 if stored is not None else 404,
++                                     "PreconditionFailed" if stored is not None else "NoSuchKey")
++                self.sequence += 1
++                etag = f'"{hashlib.md5(body + str(self.sequence).encode()).hexdigest()}"'
++                self.objects[(bucket, name)] = Stored(body, etag, self.clock())
++                return 200, b"", {"etag": etag}
++            if operation == "delete":
++                if stored is None:
++                    return self.fail(404, "NoSuchKey") if "if-match" in headers else (204, b"", {})
++                if "if-match" in headers and stored.etag != headers["if-match"] \
++                        and "delete-if-match" not in self.ignoring:
++                    return self.fail(412, "PreconditionFailed")
++                del self.objects[(bucket, name)]
++                return 204, b"", {}
++        return self.fail(405, "MethodNotAllowed")
++
++    def verify(self, method: str, raw_path: str, raw_query: str, headers: dict[str, str],
++               body: bytes) -> str | tuple[int, bytes, dict[str, str]]:
++        """The access key that signed the request, or the error S3 answers a request whose signature, payload
++        hash, date, or token does not hold."""
++        try:
++            scheme, rest = headers["authorization"].split(" ", 1)
++            fields = dict(part.strip().split("=", 1) for part in rest.split(","))
++            access_key, date, region, service, terminal = fields["Credential"].split("/")
++            signed = fields["SignedHeaders"].split(";")
++            signature = fields["Signature"]
++        except (KeyError, ValueError):
++            return self.fail(400, "AuthorizationHeaderMalformed")
++        keys = self.keys.get(access_key)
++        if scheme != "AWS4-HMAC-SHA256" or keys is None or service != "s3" or terminal != "aws4_request":
++            return self.fail(403, "InvalidAccessKeyId")
++        if region != self.region:
++            return self.fail(400, "AuthorizationHeaderMalformed")
++        if "host" not in signed or "x-amz-date" not in signed or "x-amz-content-sha256" not in signed:
++            return self.fail(403, "AccessDenied")
++        if headers.get("x-amz-content-sha256") != hashlib.sha256(body).hexdigest():
++            return self.fail(400, "XAmzContentSHA256Mismatch")
++        stamp = headers.get("x-amz-date", "")
++        try:
++            when = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc).timestamp()
++        except ValueError:
++            return self.fail(403, "AccessDenied")
++        if abs(when - self.clock()) > 900 or stamp[:8] != date:
++            return self.fail(403, "RequestTimeTooSkewed")
++        if keys.expires is not None and self.clock() >= keys.expires:
++            self.expired_uses.append(access_key)
++            return self.fail(400, "ExpiredToken")
++        if keys.token and (headers.get("x-amz-security-token") != keys.token
++                           or "x-amz-security-token" not in signed):
++            return self.fail(403, "InvalidToken")
++        # S3 decodes what it receives and encodes it again by the signing rules, so a client that signs a name or
++        # query encoded any other way fails here as it would there.
++        pairs = sorted((quote(unquote(key), safe="-_.~"), quote(unquote(value), safe="-_.~"))
++                       for key, _, value in (part.partition("=") for part in raw_query.split("&") if part))
++        path = "/".join(quote(unquote(segment), safe="-_.~") for segment in raw_path.split("/"))
++        canonical = "\n".join([method, path, "&".join(f"{key}={value}" for key, value in pairs),
++                               "".join(f"{header}:{' '.join(headers.get(header, '').split())}\n"
++                                       for header in signed),
++                               ";".join(signed), headers["x-amz-content-sha256"]])
++        scope = f"{date}/{region}/s3/aws4_request"
++        to_sign = f"AWS4-HMAC-SHA256\n{stamp}\n{scope}\n{hashlib.sha256(canonical.encode()).hexdigest()}"
++        expected = hmac.new(key_of(keys.secret, date, region), to_sign.encode(), hashlib.sha256).hexdigest()
++        if not hmac.compare_digest(expected, signature):
++            return self.fail(403, "SignatureDoesNotMatch")
++        return access_key
++
++    def listing(self, bucket: str, query: dict[str, str]) -> tuple[int, bytes, dict[str, str]]:
++        if self.listing_body is not None:
++            return 200, self.listing_body, {"content-type": "application/xml"}
++        prefix = query.get("prefix", "")
++        limit = min(self.page, int(query.get("max-keys") or self.page))
++        with self.lock:
++            names = [name for name in self.names(bucket, prefix) if name > query.get("continuation-token", "")]
++            page, more = names[:limit], len(names) > limit
++            entries = "".join(self.entry(name, self.objects[(bucket, name)]) for name in page)
++        token = f"<NextContinuationToken>{escape(page[-1])}</NextContinuationToken>" if more else ""
++        body = (f'<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="{XMLNS}"><Name>{bucket}</Name>'
++                f"<Prefix>{escape(prefix)}</Prefix><KeyCount>{len(page)}</KeyCount><MaxKeys>{limit}</MaxKeys>"
++                f"<IsTruncated>{'true' if more else 'false'}</IsTruncated>{token}{entries}</ListBucketResult>")
++        return 200, body.encode(), {"content-type": "application/xml"}
++
++    def entry(self, name: str, stored: Stored) -> str:
++        modified = datetime.fromtimestamp(stored.modified, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
++        return (f"<Contents><Key>{escape(name)}</Key><LastModified>{modified}</LastModified>"
++                f"<ETag>{escape(stored.etag, {chr(34): '&quot;'})}</ETag><Size>{len(stored.body)}</Size>"
++                "<StorageClass>STANDARD</StorageClass></Contents>")
++
++    def fail(self, status: int, code: str) -> tuple[int, bytes, dict[str, str]]:
++        body = f'<?xml version="1.0" encoding="UTF-8"?><Error><Code>{code}</Code><Message>{code}</Message></Error>'
++        return status, body.encode(), {"content-type": "application/xml"}
+diff --git a/tests/test_s3.py b/tests/test_s3.py
+new file mode 100644
+index 00000000..820a5412
+--- /dev/null
++++ b/tests/test_s3.py
+@@ -0,0 +1,373 @@
++"""The S3 client: Signature Version 4, the four operations and their conditions, credentials, and the bounds on
++what a store can make it wait for or read. Requests go to the fake server in `tests/fake_s3.py`."""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import os
++import shutil
++import socket
++import sys
++import tempfile
++import threading
++import time
++import unittest
++from pathlib import Path
++from unittest import mock
++
++from projector import s3
++from tests.fake_s3 import FakeS3, plain
++
++SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
++TOKEN = "IQoJb3JpZ2luX2VjEXAMPLETOKEN"
++
++# Records one run of the credential process, then prints what `credentials.json` beside it holds, or fails the way
++# `mode` says: as an expired AWS sign-in does, with another error, or by hanging.
++PROCESS = '''import json, pathlib, sys, time
++here = pathlib.Path(__file__).parent
++with (here / "runs.jsonl").open("a") as log:
++    log.write(json.dumps(sys.argv[1:]) + "\\n")
++mode = (here / "mode").read_text().strip() if (here / "mode").exists() else ""
++if mode == "hang":
++    time.sleep(60)
++    (here / "finished").write_text("yes")
++if mode == "expired":
++    print("Error when retrieving token from sso: Token has expired and refresh failed", file=sys.stderr)
++    sys.exit(255)
++if mode == "fail":
++    print("Unable to locate credentials", file=sys.stderr)
++    sys.exit(253)
++print((here / "credentials.json").read_text())
++'''
++
++
++class SignatureTests(unittest.TestCase):
++    def test_each_signature_matches_the_aws_signature_version_4_test_suite(self) -> None:
++        """Cases from AWS's Signature Version 4 test suite, `get-vanilla` and its query cases, and the S3 examples
++        in AWS's documentation, each with the signature AWS publishes."""
++        empty = hashlib.sha256(b"").hexdigest()
++        suite = s3.Credentials("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY")
++        vanilla = {"Host": "example.amazonaws.com", "X-Amz-Date": "20150830T123600Z"}
++        doc = s3.Credentials("AKIAIOSFODNN7EXAMPLE", SECRET)
++        bucket = {"Host": "examplebucket.s3.amazonaws.com", "x-amz-content-sha256": empty,
++                  "x-amz-date": "20130524T000000Z"}
++        welcome = hashlib.sha256(b"Welcome to Amazon S3.").hexdigest()
++        cases = [
++            ("GET", "/", [], vanilla, empty, suite, "service",
++             "5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"),
++            ("GET", "/", [("Param2", "value2"), ("Param1", "value1")], vanilla, empty, suite, "service",
++             "b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500"),
++            ("POST", "/", [], vanilla, empty, suite, "service",
++             "5da7c1a2acd57cee7505fc6676e4e544621c30862966e37dddb68e92efbe5d6b"),
++            ("GET", "/test.txt", [], {**bucket, "Range": "bytes=0-9"}, empty, doc, "s3",
++             "f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"),
++            ("PUT", "/test$file.text", [], {**bucket, "Date": "Fri, 24 May 2013 00:00:00 GMT",
++                                            "x-amz-storage-class": "REDUCED_REDUNDANCY",
++                                            "x-amz-content-sha256": welcome}, welcome, doc, "s3",
++             "98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd"),
++            ("GET", "/", [("lifecycle", "")], bucket, empty, doc, "s3",
++             "fea454ca298b7da1c68078a5d1bdbfbbe0d65c699e0f91ac7a200a0136783543"),
++            ("GET", "/", [("max-keys", "2"), ("prefix", "J")], bucket, empty, doc, "s3",
++             "34b48302e7b5fa45bde8084f4b7868a86f0a534bc59db6670ed5711ef69dc6f7"),
++        ]
++        for method, path, query, headers, payload, credentials, service, expected in cases:
++            with self.subTest(method=method, path=path, query=query):
++                signed = s3.authorization(method, path, query, headers, payload, credentials, "us-east-1", service)
++                self.assertEqual(expected, signed.rsplit("Signature=", 1)[1])
++
++
++class ServerCase(unittest.TestCase):
++    def setUp(self) -> None:
++        self.server = FakeS3()
++        self.addCleanup(self.server.close)
++        self.now = float(int(time.time()))
++        self.server.clock = lambda: self.now
++        self.home = Path(tempfile.mkdtemp())
++        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
++        patcher = mock.patch.object(s3, "connect", plain)
++        patcher.start()
++        self.addCleanup(patcher.stop)
++        self.environ = {"HOME": str(self.home), "PATH": os.environ.get("PATH", "")}
++
++    def client(self, **options) -> s3.Client:
++        return s3.Client("team", endpoint=self.server.endpoint, environ=self.environ, clock=lambda: self.now,
++                         **options)
++
++    def env_keys(self, access_key: str = "AKIAENV", token: str = "") -> None:
++        self.server.grant(access_key, SECRET, token)
++        self.environ.update({"AWS_ACCESS_KEY_ID": access_key, "AWS_SECRET_ACCESS_KEY": SECRET,
++                             **({"AWS_SESSION_TOKEN": token} if token else {})})
++
++    def aws_file(self, name: str, text: str) -> Path:
++        path = self.home / ".aws" / name
++        path.parent.mkdir(exist_ok=True)
++        path.write_text(text)
++        return path
++
++    def process(self, credentials: dict, mode: str = "") -> Path:
++        """A credential_process for profile `acme-relay`, which names profile `acme-sso` as `aws configure
++        export-credentials` does, printing `credentials`."""
++        folder = self.home / "process"
++        folder.mkdir(exist_ok=True)
++        (folder / "credentials.json").write_text(json.dumps(credentials))
++        (folder / "mode").write_text(mode)
++        script = folder / "process.py"
++        script.write_text(PROCESS)
++        self.aws_file("config", f"[profile acme-relay]\ncredential_process = {sys.executable} {script} "
++                                "configure export-credentials --profile acme-sso --format process\n")
++        return folder
++
++    def runs(self, folder: Path) -> list[list[str]]:
++        path = folder / "runs.jsonl"
++        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
++
++
++class OperationTests(ServerCase):
++    def test_each_condition_reaches_the_store_and_a_failed_one_raises_its_own_error(self) -> None:
++        self.env_keys()
++        client = self.client()
++
++        first = client.put_object("relay/k/agents/a", b"{}", if_none_match=True)
++        with self.assertRaises(s3.PreconditionFailed):
++            client.put_object("relay/k/agents/a", b"{}", if_none_match=True)
++        with self.assertRaises(s3.PreconditionFailed):
++            client.put_object("relay/k/agents/a", b"{}", if_match='"wrong"')
++        second = client.put_object("relay/k/agents/a", b'{"b": 1}', if_match=first)
++        with self.assertRaises(s3.PreconditionFailed):
++            client.get_object("relay/k/agents/a", first)
++        read = client.get_object("relay/k/agents/a", second)
++        with self.assertRaises(s3.PreconditionFailed):
++            client.delete_object("relay/k/agents/a", first)
++        client.delete_object("relay/k/agents/a", second)
++        with self.assertRaises(s3.NotFound):
++            client.delete_object("relay/k/agents/a", second)
++
++        self.assertNotEqual(first, second)
++        self.assertEqual(b'{"b": 1}', read)
++        self.assertEqual([], self.server.names("team"))
++        put = self.server.seen("PUT")[0]
++        self.assertEqual("application/json", put.headers["content-type"])
++        self.assertEqual("AKIAENV", put.signed_by)
++
++    def test_a_listing_follows_continuation_tokens_and_gives_each_objects_etag_size_and_time(self) -> None:
++        self.env_keys()
++        self.server.page = 2
++        names = [f"relay/k/inbox/r/m-{index}" for index in range(5)]
++        etags = {name: self.server.put("team", name, b"x" * (index + 1), modified=self.now - index)
++                 for index, name in enumerate(names)}
++        self.server.put("team", "relay/other/agents/a", b"x")
++
++        listed = self.client().list_objects("relay/k/")
++
++        self.assertEqual([(name, etags[name], index + 1, self.now - index) for index, name in enumerate(names)],
++                         [tuple(found) for found in listed])
++        self.assertEqual(3, len(self.server.seen("GET")))
++
++    def test_a_name_with_characters_signature_version_4_encodes_is_signed_as_sent(self) -> None:
++        self.env_keys()
++
++        self.client().put_object("relay/key id/user/u-1 +=", b"{}", if_none_match=True)
++        listed = self.client().list_objects("relay/key id/")
++
++        self.assertEqual(["relay/key id/user/u-1 +="], [found.name for found in listed])
++
++    def test_an_unsigned_listing_is_refused_unless_the_bucket_is_public(self) -> None:
++        self.env_keys()
++
++        with self.assertRaises(s3.S3Error) as refused:
++            self.client().list_objects("relay/", signed=False, limit=1)
++        self.server.public = True
++        listed = self.client().list_objects("relay/", signed=False, limit=1)
++
++        self.assertEqual(403, refused.exception.status)
++        self.assertEqual([], listed)
++        self.assertEqual(["", ""], [found.signed_by for found in self.server.seen("GET")])
++
++    def test_a_listing_that_declares_a_document_type_or_holds_more_than_1_mib_is_not_parsed(self) -> None:
++        self.env_keys()
++        entity = (b'<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol">]>'
++                  b"<ListBucketResult><Contents><Key>&lol;</Key></Contents></ListBucketResult>")
++        large = b"<ListBucketResult>" + b" " * s3.MAX_RESPONSE + b"</ListBucketResult>"
++
++        for body, said in ((entity, "document type"), (large, "more than 1024 KiB")):
++            with self.subTest(said=said):
++                self.server.listing_body = body
++                with mock.patch("xml.etree.ElementTree.fromstring",
++                                side_effect=AssertionError("parsed")), self.assertRaises(s3.S3Error) as refused:
++                    self.client().list_objects("relay/")
++                self.assertIn(said, str(refused.exception))
++
++    def test_a_request_that_hangs_or_trickles_is_stopped_at_its_timeout(self) -> None:
++        self.env_keys()
++        self.server.hanging = {"list"}
++        trickle = socket.create_server(("127.0.0.1", 0))
++        self.addCleanup(trickle.close)
++
++        def drip() -> None:
++            connection, _ = trickle.accept()
++            with connection:
++                connection.recv(65536)
++                connection.sendall(b"HTTP/1.1 200 OK\r\ncontent-length: 1000\r\n\r\n")
++                for _ in range(40):
++                    time.sleep(0.1)
++                    try:
++                        connection.sendall(b"x")
++                    except OSError:
++                        return
++
++        threading.Thread(target=drip, daemon=True).start()
++        slow = s3.Client("team", endpoint=f"https://127.0.0.1:{trickle.getsockname()[1]}", environ=self.environ,
++                         clock=lambda: self.now)
++
++        for client in (self.client(), slow):
++            with self.subTest(client=client), mock.patch.object(s3, "TIMEOUT", 1.0):
++                started = time.monotonic()
++                with self.assertRaises(s3.S3Error) as stopped:
++                    client.list_objects("relay/")
++                self.assertLess(time.monotonic() - started, 2.5)
++                self.assertIn("did not finish within 1 seconds", str(stopped.exception))
++
++    def test_requests_sign_for_the_region_the_setting_the_environment_or_the_profile_gives(self) -> None:
++        self.env_keys()
++        self.aws_file("config", "[default]\nregion = eu-west-1\n")
++        self.server.region = "eu-west-1"
++
++        self.client().list_objects("relay/")
++        with self.assertRaises(s3.S3Error):
++            self.client(region="us-west-2").list_objects("relay/")
++        self.environ["AWS_REGION"] = "ap-south-1"
++        self.server.region = "ap-south-1"
++        self.client().list_objects("relay/")
++
++        self.assertEqual([200, 400, 200], [found.status for found in self.server.seen("GET")])
++
++
++class CredentialTests(ServerCase):
++    def test_keys_come_from_the_environment_then_the_profile_then_its_credential_process(self) -> None:
++        self.server.grant("AKIAFILE", SECRET)
++        self.server.grant("AKIAPROCESS", SECRET, TOKEN, self.now + 3600)
++        folder = self.process({"Version": 1, "AccessKeyId": "AKIAPROCESS", "SecretAccessKey": SECRET,
++                               "SessionToken": TOKEN, "Expiration": s3.stamp_of(self.now + 3600)})
++
++        self.env_keys("AKIAENV", TOKEN)
++        self.client(profile="acme-relay").list_objects("relay/")
++        for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
++            del self.environ[name]
++        self.aws_file("credentials", f"[acme-relay]\naws_access_key_id = AKIAFILE\naws_secret_access_key = {SECRET}\n")
++        files = self.client(profile="acme-relay")
++        files.list_objects("relay/")
++        (self.home / ".aws" / "credentials").write_text("")
++        process = self.client(profile="acme-relay")
++        process.list_objects("relay/")
++
++        self.assertEqual(["AKIAENV", "AKIAFILE", "AKIAPROCESS"], [found.signed_by for found in self.server.requests])
++        self.assertEqual(("profile acme-relay", "profile acme-relay (credential_process)"),
++                         (files.source(), process.source()))
++        self.assertEqual(1, len(self.runs(folder)))
++
++    def test_a_credential_process_runs_again_five_minutes_before_its_keys_expire_and_none_sign_after(self) -> None:
++        expires = self.now + 600
++        self.server.grant("AKIAONE", SECRET, TOKEN, expires)
++        folder = self.process({"Version": 1, "AccessKeyId": "AKIAONE", "SecretAccessKey": SECRET,
++                               "SessionToken": TOKEN, "Expiration": s3.stamp_of(expires)})
++        client = self.client(profile="acme-relay")
++
++        client.list_objects("relay/")
++        self.now += 299
++        client.list_objects("relay/")
++        before = len(self.runs(folder))
++        self.server.grant("AKIATWO", SECRET, TOKEN, self.now + 3600)
++        (folder / "credentials.json").write_text(json.dumps(
++            {"Version": 1, "AccessKeyId": "AKIATWO", "SecretAccessKey": SECRET, "SessionToken": TOKEN,
++             "Expiration": s3.stamp_of(self.now + 3600)}))
++        self.now += 2
++        client.list_objects("relay/")
++        self.now = expires + 1
++        client.list_objects("relay/")
++
++        self.assertEqual(1, before)
++        self.assertEqual(2, len(self.runs(folder)))
++        self.assertEqual(["AKIAONE", "AKIAONE", "AKIATWO", "AKIATWO"],
++                         [found.signed_by for found in self.server.requests])
++        self.assertEqual([], self.server.expired_uses)
++
++    def test_keys_that_expired_with_no_fresher_ones_sign_nothing(self) -> None:
++        expires = self.now + 600
++        self.server.grant("AKIAONE", SECRET, TOKEN, expires)
++        self.process({"Version": 1, "AccessKeyId": "AKIAONE", "SecretAccessKey": SECRET, "SessionToken": TOKEN,
++                      "Expiration": s3.stamp_of(expires)})
++        client = self.client(profile="acme-relay")
++        client.list_objects("relay/")
++
++        self.now = expires + 1
++        with self.assertRaises(s3.CredentialsError) as lapsed:
++            client.list_objects("relay/")
++
++        self.assertEqual("expired", lapsed.exception.cause)
++        self.assertEqual(1, len(self.server.requests))
++
++    def test_no_error_repr_or_process_argument_holds_the_secret_key_or_the_token(self) -> None:
++        self.server.grant("AKIAONE", SECRET, TOKEN, self.now + 3600)
++        folder = self.process({"Version": 1, "AccessKeyId": "AKIAONE", "SecretAccessKey": SECRET,
++                               "SessionToken": TOKEN, "Expiration": s3.stamp_of(self.now + 3600)})
++        client = self.client(profile="acme-relay")
++        client.list_objects("relay/")
++        said = []
++        for failing in ("fail", "expired"):
++            (folder / "mode").write_text(failing)
++            self.now += 3600
++            try:
++                client.list_objects("relay/")
++            except s3.CredentialsError as error:
++                said.append(str(error))
++        self.server.keys.clear()
++        self.environ.update({"AWS_ACCESS_KEY_ID": "AKIAONE", "AWS_SECRET_ACCESS_KEY": SECRET,
++                             "AWS_SESSION_TOKEN": TOKEN})
++        try:
++            client.list_objects("relay/")
++        except s3.S3Error as error:
++            said.append(str(error))
++
++        shown = " ".join([*said, repr(client), repr(client.credentials.get()), json.dumps(self.runs(folder))])
++        self.assertEqual(3, len(said))
++        self.assertNotIn(SECRET, shown)
++        self.assertNotIn(TOKEN, shown)
++
++    def test_an_expired_sign_in_names_the_aws_sso_login_that_fixes_it_and_another_failure_its_reason(self) -> None:
++        folder = self.process({}, mode="expired")
++        client = self.client(profile="acme-relay")
++
++        with self.assertRaises(s3.CredentialsError) as expired:
++            client.list_objects("relay/")
++        (folder / "mode").write_text("fail")
++        with self.assertRaises(s3.CredentialsError) as failed:
++            client.list_objects("relay/")
++        (self.home / ".aws" / "config").write_text("")
++        with self.assertRaises(s3.CredentialsError) as missing:
++            client.list_objects("relay/")
++
++        self.assertEqual(("expired", "aws sso login --profile acme-sso"), (expired.exception.cause,
++                                                                            expired.exception.fix))
++        self.assertEqual("the AWS sign-in for profile acme-relay expired", str(expired.exception))
++        self.assertEqual("failed", failed.exception.cause)
++        self.assertIn("Unable to locate credentials", str(failed.exception))
++        self.assertEqual("missing", missing.exception.cause)
++        self.assertEqual([], self.server.requests)
++
++    def test_a_credential_process_that_hangs_is_killed_at_its_timeout(self) -> None:
++        folder = self.process({}, mode="hang")
++
++        started = time.monotonic()
++        with mock.patch.object(s3, "PROCESS_TIMEOUT", 1.0), self.assertRaises(s3.CredentialsError) as stopped:
++            self.client(profile="acme-relay").list_objects("relay/")
++        took = time.monotonic() - started
++
++        self.assertEqual("timeout", stopped.exception.cause)
++        self.assertLess(took, 5)
++        self.assertEqual(1, len(self.runs(folder)))
++        self.assertFalse((folder / "finished").exists())
++
++
++if __name__ == "__main__":
++    unittest.main()
