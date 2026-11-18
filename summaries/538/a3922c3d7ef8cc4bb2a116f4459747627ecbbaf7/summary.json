@@ -1,0 +1,69 @@
+{
+ "version": 1,
+ "name": "Repository inbox peers",
+ "project": "agent-messages/peers",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 538,
+  "title": "Plan a repository inbox that other people's agents can reach",
+  "head": "a3922c3d7ef8cc4bb2a116f4459747627ecbbaf7",
+  "headRef": "plan-agent-peers",
+  "base": "34a10e1736511ea2bf3769e86e57d7093fe8ff13",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s inbox currently connects each agent to its own user. This plan lets another person’s agents post to a shared repository inbox after both people configure each other’s public keys.",
+   "Questions, requests, notices, and replies travel as encrypted records in Git references. Every recipient session in that repository shows the same entries, while only replies wake the original asking session. The plan also synchronizes snoozes, closure, and which sessions replied across a person’s machines."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review result",
+    "html": "<p>The <code>ready</code>/<code>now</code> plan now defines all three safeguards raised in the earlier review: merged shared-state retries, reply-sender association, and authenticated repository identity. All three findings are verified fixed. The new-head validation gate and exact-head CI passed.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "peers",
+   "title": "A person-to-person repository inbox",
+   "kicker": "Trust keys, exchange encrypted items, and synchronize their state",
+   "intro": [
+    "A peer is another person whose public relay key you add in your user configuration. Both people must add each other. The proposed <code>--to</code> option posts an item to that person’s repository inbox and keeps an encrypted sent copy for you.",
+    "The recipient can answer, send a reply without closing the item, or hand it to an agent through Discuss. Replies identify whether a person or agent wrote them. Only the asking session wakes, and the plan treats the peer’s text as input rather than as the user’s authority.",
+    "The same inbox appears across your machines through encrypted entry and state records. Concurrent state changes merge before retry, replies must come from the peer that received the question, and each record names its authenticated repository location. Direct messages to another person’s agents, automatic routing, threads, and key rotation are explicitly deferred."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/peers/readme.md",
+     "collapsed": false,
+     "note": "The complete ready plan defines peer trust, entry and reply formats, shared state, commands, UI behavior, limits, and acceptance cases.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 2,
+       "text": "This plan is ready for implementation. Its new peer commands and repository-inbox protocol remain proposed, while named later features are explicitly deferred."
+      },
+      {
+       "kind": "verify",
+       "line": 131,
+       "text": "The revised reply flow checks the authenticated sealing key against the sent copy’s destination before pairing, charging the reply cap, or waking the asker. It also defines deferred examination when the sent copy has not been mirrored yet."
+      },
+      {
+       "kind": "verify",
+       "line": 240,
+       "text": "The revised stale-write flow opens both state records, unions replied sessions, merges close/reopen/snooze fields, and reseals under the fetched lease. The acceptance criteria include two concurrent machines."
+      },
+      {
+       "kind": "verify",
+       "line": 286,
+       "text": "Every user entry and state record now authenticates its repository location and is rejected if that location differs from the receiving job. The plan includes an unchanged-ciphertext cross-repository replay case."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
