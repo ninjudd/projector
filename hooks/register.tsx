@@ -65,7 +65,7 @@ import {
   relayNote,
   replyNote,
   reportArguments,
-  repoOf,
+  locationOf,
   REQUEST_DESCRIPTION,
   REQUEST_SCHEMA,
   requestArguments,
@@ -774,11 +774,11 @@ async function readStore($: Engine, session: string): Promise<void> {
   if (store === undefined) return
   const found = await $.fs.list(store).catch(() => [] as FsEntry[])
   const files = signatureOf(found, new Set(Object.keys(await read($, sending))))
-  // The repository inbox of the repository the session is registered in,
-  // whose mirror the relay changes without touching the session's store.
+  // The repository inbox of the relay location the session is registered
+  // with, whose mirror the relay changes without touching the session's store.
   const root = watchRootOf(env)
-  const repo = root === undefined ? undefined : repoOf(await textOf($, `${folderOf(root, session)}/agent.json`))
-  const mirror = repo === undefined ? undefined : entriesStoreOf(env, repo)
+  const location = root === undefined ? undefined : locationOf(await textOf($, `${folderOf(root, session)}/agent.json`))
+  const mirror = location === undefined ? undefined : entriesStoreOf(env, location)
   const mirrored =
     mirror === undefined ? '' : signatureOf(await $.fs.list(mirror).catch(() => [] as FsEntry[]), new Set())
   const signature = `${session}\n${files}\n${mirrored}`

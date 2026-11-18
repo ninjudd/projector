@@ -1068,6 +1068,9 @@ def add_inbox_parser(subcommands) -> None:
                               "inbox's entries")
     listing.add_argument("--all", action="store_true", help="include delivered items")
     listing.add_argument("--repo", action="store_true", help="list only the repository inbox's entries")
+    listing.add_argument("--relay", action="store_true",
+                         help="list every entry of the relay location's inbox, those a peer scoped to another "
+                              "repository too")
 
     show = command("show", "print one item with its detail and lettered answers, or a repository inbox entry")
     show.add_argument("reference", help="the item's number, such as 3, or an entry's, such as r3")
@@ -1173,7 +1176,9 @@ def add_inbox_parser(subcommands) -> None:
 
 def add_to(command: argparse.ArgumentParser) -> None:
     command.add_argument("--to", action="append", default=[], metavar="PEER",
-                         help="post it to this peer's inbox in the repository instead; repeat for each peer")
+                         help="post it to this peer's inbox in the relay location instead; repeat for each peer")
+    command.add_argument("--repo", dest="scope_repo", metavar="OWNER/REPO",
+                         help="with --to, show it only in the peer's sessions that work in this repository")
 
 
 def add_responder(command: argparse.ArgumentParser) -> None:
@@ -2637,12 +2642,12 @@ def run_console() -> int:
                         ensure=lambda: watch.ensure_daemon(watch.state_root(), distribution_version(), newer_release))
 
 
-def listed_entries(session: Optional[str]) -> tuple[Optional[str], list[dict]]:
-    """The repository whose inbox `list` reads, and its entries."""
+def listed_entries(session: Optional[str], everything: bool = False) -> tuple[Optional[str], list[dict]]:
+    """The relay location whose inbox `list` reads, and its entries, all of them with `everything`."""
     root = watch.state_root()
     session = watch.session_id(session, required=False)
-    repo, _ = repo_inbox.repository(root, session)
-    return repo, repo_inbox.repo_items(root, session, repo)
+    location, repo, _ = repo_inbox.place(root, session)
+    return location, repo_inbox.repo_items(root, session, location, repo, everything=everything)
 
 
 def post_to_peers(arguments: argparse.Namespace, root: Path, now: float) -> int:
@@ -2654,14 +2659,13 @@ def post_to_peers(arguments: argparse.Namespace, root: Path, now: float) -> int:
     if registration is None:
         raise repo_inbox.RepoInboxError("this session is not registered, so a peer's reply could not reach it; run "
                                         "`project agent register` first")
-    repo = agents.checkout(Path.cwd()).get("repo")
-    if not repo:
-        raise repo_inbox.RepoInboxError(relay.NO_ORIGIN)
-    location = agents.location_of(registration) or repo
-    if location.lower() != repo.lower():
-        raise repo_inbox.RepoInboxError(f"this session relays through {location}, which agent.relay names, and the "
-                                        f"repository inbox reaches a peer only through the repository you work in, "
-                                        f"{repo}, until it learns to share a relay location")
+    location = agents.location_of(registration)
+    if not location:
+        waits = registration.get("relay") == "waiting"
+        raise repo_inbox.RepoInboxError(agents.waiting_text(registration["location"], registration.get(
+            "location_source") or "") if waits and registration.get("location") else relay.NO_ORIGIN)
+    if refused := relay.location_refusal(root, location, registration.get("repo")):
+        raise repo_inbox.RepoInboxError(f"the relay is off for this session, so nothing can reach a peer: {refused}")
     key = repo_inbox.sealing_key()
     detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
     if command == "ask":
@@ -2676,18 +2680,22 @@ def post_to_peers(arguments: argparse.Namespace, root: Path, now: float) -> int:
         inbox.check_request_options(arguments.option)
         subject, choices = arguments.request, [option.strip() for option in arguments.option] or None
     kind = {"ask": "question", "tell": "notice", "request": "request"}[command]
-    posted = repo_inbox.post(root, repo, Path.cwd(), key, configured_peers(), arguments.to, session, registration,
-                             kind, subject, detail=detail, choices=choices, pr=arguments.pr, now=now)
+    posted = repo_inbox.post(root, location, Path.cwd(), key, configured_peers(), arguments.to, session,
+                             registration, kind, subject, detail=detail, choices=choices, pr=arguments.pr, now=now,
+                             scope=arguments.scope_repo)
     watch.ensure_daemon(root, distribution_version(), newer_release)
-    public = relay.visibility(root, repo) != "PRIVATE"
+    public = relay.visibility(root, location) != "PRIVATE"
+    leaves = agents.leaving(posted[0], [entry["peer"] for entry in posted]) if posted else ""
     if arguments.json_output:
         print(json_text({"items": posted, "delivery": "relay (queued)",
-                         **({"reminder": relay.PUBLIC_REMINDER} if public else {})}))
+                         **({"reminder": relay.PUBLIC_REMINDER} if public else {}),
+                         **({"leaves": leaves} if leaves else {})}))
         return 0
     for entry in posted:
         print(f"{entry['ref']} to {entry['peer']}, {entry['id']}; delivery: relay (queued)")
-    if public:
-        print(relay.PUBLIC_REMINDER)
+    for said in (relay.PUBLIC_REMINDER if public else "", leaves):
+        if said:
+            print(said)
     return 0
 
 
@@ -2701,16 +2709,18 @@ def run_repo_inbox(arguments: argparse.Namespace, ref: Optional[str], letter: Op
     if command in ("ask", "tell", "request"):
         return post_to_peers(arguments, root, now)
     session = watch.session_id(arguments.session, required=False)
-    repo, cwd = repo_inbox.repository(root, session)
+    repo, reader, cwd = repo_inbox.place(root, session)
     if not repo:
-        raise repo_inbox.RepoInboxError(f"{ref} names a repository inbox entry, and this checkout has no GitHub "
-                                        "origin; run it in the repository's checkout, or pass a registered --session")
+        raise repo_inbox.RepoInboxError(f"{ref} names a repository inbox entry, and this checkout has no relay "
+                                        "location; run it in a checkout that has one, or pass a registered --session")
     entry = repo_inbox.by_ref(root, repo, ref)
     if command == "show":
         if arguments.json_output:
-            print(json_text({"item": {**entry, "line": repo_inbox.describe(entry)}, "notice": repo_inbox.NOTICE}))
+            print(json_text({"item": {**entry, "line": repo_inbox.labeled(entry, reader)},
+                             "notice": repo_inbox.NOTICE,
+                             "private_notice": agents.private_notice(entry, reader) or None}))
         else:
-            print(repo_inbox.show_text(entry, repo_inbox.entries(root, repo)))
+            print(repo_inbox.show_text(entry, repo_inbox.entries(root, repo), reader))
         return 0
     if command not in (*RESPONSES, "snooze", "close", "reopen"):
         raise inbox.InboxError(f"`{command}` takes a session's item, not a repository inbox entry such as {ref}")
@@ -2727,13 +2737,16 @@ def run_repo_inbox(arguments: argparse.Namespace, ref: Optional[str], letter: Op
         found = repo_inbox.respond(root, repo, cwd, key, configured_peers(), ref, RESPONSES[command],
                                    by=arguments.responder, letter=letter, text=text, close=arguments.close,
                                    session=session, registration=agents.record(root, session) if session else None,
-                                   now=now)
+                                   now=now, origin=agents.origin_fields(root, reader, now))
         watch.ensure_daemon(root, distribution_version(), newer_release)
+        leaves = agents.leaving(found["reply"], [found["peer"]]) if command == "reply" and found["reply"] else ""
         if arguments.json_output:
-            print(json_text({"item": found}))
+            print(json_text({"item": found, **({"leaves": leaves} if leaves else {})}))
         else:
             sent = f"sent {found['peer']} your {RESPONSES[command]}" if found["reply"] else "nothing sent"
             print(f"{ref}: {sent}; {'closed' if found['closes'] else 'kept open'}")
+            if leaves:
+                print(leaves)
         return 0
     if command == "dismiss":
         cleared = repo_inbox.dismiss(root, repo, cwd, key, ref, now)
@@ -2762,6 +2775,8 @@ def run_inbox(arguments: argparse.Namespace) -> int:
     ref, letter = inbox.parse_reference(written) if written is not None else (None, None)
     if letter is not None and command != "answer":
         raise inbox.InboxError(f"`{command}` takes the item's reference, {ref}, without an answer letter")
+    if getattr(arguments, "scope_repo", None) and not arguments.to:
+        raise UsageError("--repo scopes an item you post to a peer, so it goes with --to")
     if (ref is not None and inbox.in_repository(ref)) or getattr(arguments, "to", None):
         return run_repo_inbox(arguments, ref, letter)
     if command in ("reply", "close"):
@@ -2782,20 +2797,20 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         print(json_text({"item": item}) if json_output else item["ref"])
     elif command == "list":
         session = inbox_session(arguments, False)
-        names = [] if arguments.repo else [session] if session else inbox.sessions()
+        names = [] if arguments.repo or arguments.relay else [session] if session else inbox.sessions()
         rows = [{**item, "session": name} for name in names
                 for item in inbox.load_items(inbox.session_dir(name))
                 if arguments.all or not item.get("deliveredAt")]
-        repo, entries = listed_entries(session)
+        location, entries = listed_entries(session, arguments.relay)
         if json_output:
-            print(json_text({"items": [*rows, *entries], "repo": repo}))
+            print(json_text({"items": [*rows, *entries], "repo": location, "location": location}))
         for row in [] if json_output else rows:
             columns = [row["ref"], row["kind"], item_state(row), row["subject"]]
             print("\t".join(columns if session else [row["session"], *columns]))
         for row in [] if json_output else entries:
             columns = [row["ref"], f"{row['role']} {row['kind']}" if row["role"] != "reply" else "reply",
                        row["state"], row["line"]]
-            print("\t".join(columns if session else [row["repo"], *columns]))
+            print("\t".join(columns if session else [row["location"], *columns]))
     elif command == "show":
         item = inbox.find(inbox_session(arguments, False), ref)
         if json_output:

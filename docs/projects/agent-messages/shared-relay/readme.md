@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -387,3 +387,52 @@ repository, so a peers item never goes where no job polls for its replies.
   even locally.
 - **`project config set agent.relay` checks the value's form,** and
   refuses anything but `origin` and `github:<owner>/<repo>`.
+
+## 9. What the second layer settled
+
+- **The inbox follows the registration's location.** A command, the
+  console, and the panel read the mirror of the location the session's
+  registration names, and a command without a session reads the location
+  the working directory resolves to. The panel watches that mirror, from
+  `location` in `agent.json`, or `repo` for a registration from before
+  shared relays, and none while the registration waits.
+- **Labels ride the entry's line.** A crossing entry's line ends with
+  `(from acme/api)`, and an entry `--relay` or the console shows for
+  another repository ends with `(for acme/web)`, so the panel and the
+  console show both with no change of their own. A sent copy and a reply
+  cross by the same rule as an incoming item.
+- **Replies carry their responder's repository too,** with its visibility,
+  so a `PEER REPLY` line and `inbox show` name a reply's source and add the
+  notice of a private one, as a message's do.
+- **`pr` names a pull request in the sender's work repository.** A record
+  from before shared relays may name one in its location, and a record from
+  a checkout with no GitHub `origin` names none.
+- **`--relay` lists only the location's entries,** all of them, and `list`
+  without it leaves out the items a peer scoped to another repository. A
+  post refuses `--repo` without `--to`, and refuses while the location's
+  check refuses it.
+- **The reminder names every peer of one post,** as `include only what
+  jason and amy may read`, and the sender's work repository's visibility
+  decides it, `unknown` included.
+
+## 10. Outcome
+
+Shipped in two layers. The criteria in § 4 have these tests, each of which
+failed with its fault introduced:
+
+| Criterion | Evidence |
+| --- | --- |
+| Team relay over `api` and `web` | `SharedRelayTests.test_a_team_relay_carries_agents_and_messages_between_repositories` |
+| A nearer `origin` opts out | `SharedRelayTests.test_a_nearer_file_opts_its_repository_back_out_with_origin` |
+| A committed location waits, a branch never chooses one, an untracked or user file needs no allowing | `SharedRelayTests.test_a_location_a_repository_commits_waits_until_you_allow_it_and_a_branch_never_chooses_one`, `test_a_location_an_untracked_parent_or_your_own_file_sets_needs_no_allowing` |
+| Public, internal, and read-only locations | `SharedRelayTests.test_a_relay_location_must_be_private_or_internal_and_writable` |
+| The bare clone, its hooks, credentials, and refspecs | `SharedRelayTests.test_a_pass_with_only_the_bare_clone_runs_global_hooks_and_gh_credentials_and_fetches_only_relay_refs` |
+| Crossing notices and the peers-only reminder | `CrossingTests.test_a_message_from_a_private_repository_names_it_and_guards_it_wherever_it_is_read`, `SharedInboxTests.test_the_inbox_is_the_locations_and_a_scoped_item_shows_only_in_its_repository` |
+| A checkout with no GitHub `origin` | `SharedRelayTests.test_a_checkout_with_no_github_origin_relays_through_a_location_and_its_messages_cross`, `test_two_checkouts_with_no_github_origin_are_not_one_repository`, `SharedInboxTests.test_a_checkout_with_no_github_origin_posts_to_a_peer_and_is_named_as_one` |
+| The record's visibility over a cache | `CrossingTests.test_a_reader_takes_the_records_visibility_over_any_cache` |
+| One job for a location and its own checkout | `SharedRelayTests.test_one_job_serves_a_location_for_its_own_checkout_and_the_sessions_that_name_it` |
+| Upgrading caches, outboxes, and queued messages | `SharedRelayTests.test_a_registration_and_outbox_from_before_shared_relays_still_push_where_they_did`, `test_a_message_queued_before_shared_relays_is_delivered_with_no_source` |
+| Scoped items | `SharedInboxTests.test_the_inbox_is_the_locations_and_a_scoped_item_shows_only_in_its_repository` |
+
+The run over two real repositories on two machines waits until after the
+merge, for the user to do, and its result goes here once it runs.

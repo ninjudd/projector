@@ -4305,8 +4305,12 @@ location: the file you put `agent.relay` in is the boundary.
 
 You list another person's public key under a name you choose, and they list
 yours. After that, your agents can post a question, request, or notice to
-their inbox in a repository you both work in, and theirs to yours. Each
-entry shows in every one of the recipient's sessions in that repository.
+their inbox through a relay location you both use, and theirs to yours. The
+location is the repository you both work in, unless `agent.relay` names a
+shared one, as
+[Relay through a repository you choose](#relay-through-a-repository-you-choose)
+describes. Each entry shows in every one of the recipient's sessions that
+use that location, unless the sender scoped it to one repository.
 The recipient answers it, or their agents reply to it, and every reply comes
 back to your inbox. The relay carries every entry sealed, so only the two of
 you can read any of it. The key identifies the person, and the name is only
@@ -4357,22 +4361,50 @@ r5 to jason, u-3f2a9c1d7e4b6a0590c2d4e6f8a1b3c5; delivery: relay (queued)
 
 `--to` repeats, and each peer it names gets an item of its own. The command
 runs in the session's checkout, and refuses when the relay is off on this
-machine, the checkout has no GitHub `origin`, the session is not
-registered, a name is not a peer, the item fails the checks a session's
-item gets, or a request carries `--start`. It writes nothing to the
-session's own inbox. It seals the item to the peer's key, seals a sent copy
-to your own key, queues both, and shows the sent copy in your repository
-inbox at once, numbered `r1`, `r2`, and on. In a repository the relay does
+machine or for the session's location, the session has no relay location
+or waits for `project config allow`, the session is not registered, a name
+is not a peer, the item fails the checks a session's item gets, or a
+request carries `--start`. It writes nothing to the session's own inbox. It
+seals the item to the peer's key, seals a sent copy to your own key, queues
+both in the location's outbox, and shows the sent copy in your repository
+inbox at once, numbered `r1`, `r2`, and on. In a location the relay does
 not record as private, it also prints the public-repository reminder that
 `project agent send` prints.
+
+The item names your work repository and its visibility, or, from a
+checkout with no GitHub `origin`, no repository and `unknown`. Its `--pr`
+must name a pull request in your work repository. When that repository is
+not `PUBLIC`, the command prints a reminder after it sends, and
+`project inbox reply` to a peer prints the same:
+
+```text
+this leaves private repository acme/api: include only what jason may read
+```
+
+From a checkout with no GitHub `origin`, it reads `this leaves a checkout
+with no GitHub repository: include only what jason may read`. Messages
+between your own agents print none, since you can read your own
+repositories.
+
+`--repo <owner>/<repo>` beside `--to` scopes an item to one repository: the
+item shows only in the peer's sessions that work in it, in their panel and
+in `project inbox list`. Elsewhere it still appears in
+`project inbox list --relay` and in `project console`, marked
+`(for acme/web)`, so an item for a repository the peer is not working in
+never disappears. Replies to a scoped item are not scoped. `--repo` without
+`--to` exits 2.
 
 ### Read the repository inbox
 
 `project inbox list --session <id>` lists the session's own items, then the
-entries of the repository the session is registered in, each with
-`scope: "repo"`, its `role`, and the `peer` it is from or to. `--repo` lists
-only those entries. Without a session, the command lists the entries of the
-working directory's repository. An entry shows by its role:
+entries of the relay location the session is registered with, each with
+`scope: "repo"`, its `role`, its `location`, and the `peer` it is from or
+to. `--repo` lists only those entries, and `--relay` lists every entry of
+the location, those a peer scoped to another repository too. Without a
+session, the command lists the entries of the working directory's
+location. An entry from another work repository than the session's ends
+with `(from acme/api)`, or `(from a checkout with no GitHub repository)`.
+An entry shows by its role:
 
 | Role | Shows as |
 | --- | --- |
@@ -4380,9 +4412,15 @@ working directory's repository. An entry shows by its role:
 | `sent` | `you asked jason: <subject>`, the copy of an item your agent posted, with the references of its replies |
 | `reply` | `jason answered: <answer>`, `jason's agent parser-refactor answered for jason: <answer>`, or `jason's agent parser-refactor replied: <text>` |
 
-`project inbox show r6` prints who an entry is from, then, for anything a
-peer wrote, a notice that it is another person's view with none of your
-authority, before their words.
+`project inbox show r6` prints who an entry is from, the repository it
+comes from when that is not the session's, then, for anything a peer wrote,
+a notice that it is another person's view with none of your authority,
+before their words. An entry from a repository that is not `PUBLIC` adds
+the notice of a private source after it, as
+[Messages that cross repositories](#messages-that-cross-repositories)
+describes, and a `PEER REPLY` line from another repository names it and
+carries the same notice. With `--json`, `show` adds the `private_notice` or
+`null`.
 
 Projector's panel in Claude Code lists the entries after the session's own
 items, and `project console` lists them in each session's panel. Each opens

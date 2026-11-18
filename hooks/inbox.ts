@@ -390,18 +390,24 @@ export function storeOf(env: Env, session: string): string | undefined {
   return base === undefined ? undefined : `${base}/projector/inbox/${session}`
 }
 
-/** Where the repository inbox of `repo`, as `owner/repo`, lives: `project inbox`'s mirror, found by the CLI's own rule. */
+/** Where the repository inbox of the relay location `repo`, as `owner/repo`, lives: `project inbox`'s mirror, found by the CLI's own rule. */
 export function entriesStoreOf(env: Env, repo: string): string | undefined {
   const home = env('HOME')
   const base = env('XDG_STATE_HOME') ?? (home === undefined ? undefined : `${home}/.local/state`)
   return base === undefined ? undefined : `${base}/projector/repo-inbox/${repo.toLowerCase()}`
 }
 
-/** The repository a session's registration names, from its `agent.json`, or undefined when it names none. */
-export function repoOf(registration: string | undefined): string | undefined {
+/**
+ * The relay location whose repository inbox a session shows, from its
+ * `agent.json`: the `location` it registered with, or its `repo` for a
+ * registration from before shared relays, or undefined when it names neither
+ * or waits for `project config allow`.
+ */
+export function locationOf(registration: string | undefined): string | undefined {
   try {
-    const repo = (JSON.parse(registration ?? '') as { repo?: unknown }).repo
-    return typeof repo === 'string' && /^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : undefined
+    const found = JSON.parse(registration ?? '') as { location?: unknown; repo?: unknown; relay?: unknown }
+    const location = found.relay === 'waiting' ? undefined : (found.location ?? found.repo)
+    return typeof location === 'string' && /^[\w.-]+\/[\w.-]+$/.test(location) ? location : undefined
   } catch {
     return undefined
   }
