@@ -208,9 +208,10 @@ peer can post.
     withdraws it by queuing the deletion of the item's ref, so the peer
     stops seeing a question nobody waits on. `project inbox reopen r5
     [--text <follow-up>]` republishes the item to the peer under the same
-    ID, with `reopened_at` and the optional `follow_up` text. It clears
-    `closed_at`, so the item shows again in the peer's inbox and new replies
-    wake the asker again. A reopen counts against `agent.peer_limit` on the
+    ID, with `reopened_at` and the optional `follow_up` text. It records the
+    same `reopened_at` in the state record, which marks the sent copy open
+    again, so the item shows again in the peer's inbox and new replies wake
+    the asker again. A reopen counts against `agent.peer_limit` on the
     peer's side, as a new item does. Dismissing the sent copy closes it too.
     Wakes therefore end when the agent closes the item, when the session
     lapses, when the item's reply cap is reached, or when the 7 days in step
@@ -223,9 +224,27 @@ peer can post.
     cannot live under the entry's own ref. Each change queues the whole
     record, and every one of your machines fetches the namespace and applies
     it to its mirror at its next poll. So a snooze on your laptop hides the
-    item on your desktop too, until `snoozed_until`. The record is deleted
-    with its entry. The daemon's `woke_at`, which only the asking machine
-    needs, stays local.
+    item on your desktop too, until `snoozed_until`.
+
+    Two machines can change one record before either sees the other's
+    change, and the second push then fails its lease. `rebase` does not
+    retry that change as it stands, which would erase the first. It opens
+    the record the fetch found and the queued one, merges them, and reseals
+    the result with the found commit as its lease:
+    - `replied` is the union of both lists, one entry per session and
+      machine, keeping the earlier `at`.
+    - `closed_at`, `reopened_at`, and `snoozed_at` each take the later of the
+      two values, and `snoozed_until` comes with the later `snoozed_at`. A
+      sent copy is closed while its `closed_at` is later than its
+      `reopened_at`.
+    - `updated_at` takes the later value.
+
+    The merge gives the same record in either order, so no machine's change
+    is lost however the pushes interleave. When the fetch finds no record at
+    the ref, the entry was deleted, and the change is dropped. A job that
+    cannot read the key leaves the change queued, unmerged, until one can.
+    The record is deleted with its entry. The daemon's `woke_at`, which only
+    the asking machine needs, stays local.
 13. **Clear.** Dismissing a reply in any of your sessions deletes the reply's
     ref. Dismissing the sent copy deletes it and every reply to it. Either way
     the entries clear on all your machines. Every full
@@ -269,7 +288,7 @@ The sealed plaintext:
 | Item | `schema_version: 1`, `id`, `kind` (`question`, `request`, or `notice`), `subject` (one line, at most 120 characters), `detail` (at most 16 KiB), `choices` (a question's or a request's, as the inbox stores them), `pr` (optional, `owner/repo#number` in this repository), `from_name` (optional), `from_host`, `from_model` (optional), `branch` (optional), `sent_at`, and, on a reopened item, `reopened_at` and `follow_up` (optional, at most 16 KiB). Each sender field has the shape `agents.well_formed` requires. |
 | Sent copy | The item's fields, plus `sent: true`, `to` (the peer's key ID), `from` (the asking session's ID), and `from_machine` (the ID in `machine.json`). It is sealed to your own key, so only your machines read them. |
 | Reply | `schema_version: 1`, `id`, `answers` (the item's ID), `subject` (the item's subject, so a machine without the sent copy can show it), `outcome` (`answer`, `done`, `declined`, `dismissed`, or `reply`), `letter` and `choice` (optional), `text` (optional, at most 16 KiB), `by` (`user` or `agent`), `by_name`, `by_host`, `by_model`, and `by_branch` (when `by` is `agent`, each in the shape `agents.well_formed` requires), `closes` (whether the responder closed the item), `sent_at`. |
-| State | `schema_version: 1`, `id` (the entry's), `snoozed_until` (optional, milliseconds), `replied` (each `{session, machine, at}`), `closed_at` (optional, a sent copy's), `updated_at`. |
+| State | `schema_version: 1`, `id` (the entry's), `snoozed_until` (optional, milliseconds) and `snoozed_at` (when it was set), `replied` (each `{session, machine, at}`), `closed_at` and `reopened_at` (optional, a sent copy's), `updated_at`. A lease failure merges it field by field (§ 2.1 step 12). |
 
 The local mirror, `repo-inbox/<owner>/<repo>/r<number>.json`, holds the
 opened record with `ref` (`r<number>`), `role`, `peer` (your name for the
@@ -286,7 +305,7 @@ An `other-key` entry in the relay cache's `rejections` also carries `key_id`.
 | File | Change |
 | --- | --- |
 | `src/projector/config.py` | Add `agent.peers` (a table) and `agent.peer_limit` to `SETTINGS`, and the limit to `MINIMUMS`. Make the `USER_ONLY` walk match a key and every key under it, because `_flatten` yields `agent.peers.jason`, not `agent.peers`. Add `peers(environ)`, which reads the table from the user layer and checks each name, each key's shape, that no key repeats, and that no key is your own. Make `project config set` refuse any `agent.peers.*` key and name `project agent peer add`. |
-| `src/projector/relay.py` | Add `USER_REF`, `user_ref`, and `seal_to(key, recipient, record)`, of which `seal` becomes the case where the recipient is your own key. Pass the peers to `Job`. Fetch and examine `user/<your-key-id>/`, open its records from your key or a peer's, check their shapes, apply `agent.peer_limit`, and mirror them (§ 2.1 steps 4 and 5). Record `key_id` on `other-key` rejections, and add `peer-limit` to `REASONS`. Extend `parse_ref`, `rebase`, and `sweep` to `user/` refs, including the 7-day deletions of § 2.1 step 13. Fetch `user-state/<your-key-id>/`, open only your own key's records there, and apply them to the mirror (§ 2.1 step 12). When it mirrors a reply, append its `PEER REPLY` line to the asking session under the conditions in § 2.1 step 10. |
+| `src/projector/relay.py` | Add `USER_REF`, `user_ref`, and `seal_to(key, recipient, record)`, of which `seal` becomes the case where the recipient is your own key. Pass the peers to `Job`. Fetch and examine `user/<your-key-id>/`, open its records from your key or a peer's, check their shapes, apply `agent.peer_limit`, and mirror them (§ 2.1 steps 4 and 5). Record `key_id` on `other-key` rejections, and add `peer-limit` to `REASONS`. Extend `parse_ref`, `rebase`, and `sweep` to `user/` refs, including the 7-day deletions of § 2.1 step 13. Fetch `user-state/<your-key-id>/`, open only your own key's records there, and apply them to the mirror (§ 2.1 step 12). In `rebase`, merge a stale `user-state/` change with the record the fetch found and reseal it, rather than retrying it as it stands. When it mirrors a reply, append its `PEER REPLY` line to the asking session under the conditions in § 2.1 step 10. |
 | New `src/projector/repo_inbox.py` | The local mirror's store, its numbering and lock, sealing and queuing an item, its sent copy, and a reply, the role of each entry, closing a sent entry, and the `PEER REPLY` line and `show` notice. It reuses `inbox.check`, `inbox.check_subject`, `inbox.write_json`, and `inbox.locked`, so a repository item passes the same checks as a session's. |
 | `src/projector/inbox.py` | Let `parse_reference` accept `r<number>` and `r<number>.<letter>`. Send `answer`, `done`, `decline`, `dismiss`, and `snooze` on an `r` reference to `repo_inbox`, which writes a snooze to the entry's state record. Add `repo_items(session)`, which `list` and the console call. |
 | `src/projector/cli.py` | Add `--to <peer>`, which repeats, to `project inbox ask`, `request`, and `tell`. Add `--repo` to `inbox list`, and `--as user` or `--as agent` to the commands that answer an `r` reference, which require it. Add `project inbox reply <r-ref> --text <text>`, which takes text or `-` for standard input (§ 2.1 step 9). Add `--close` and `--keep-open` to `answer`, `done`, `decline`, `dismiss`, and `reply` on an `r` reference (§ 2.1 step 7). Add `project inbox close <r-ref>` and `project inbox reopen <r-ref> [--text <follow-up>]`, which refuse an entry that is not a sent copy (§ 2.1 step 11). Let `inbox show` take an `r` reference. Add `project agent peer add <name> <public-key> [--replace]`, terminal only, with the confirmation in § 2.1 step 2, and `peer remove <name>` and `peer list [--json]`. `peer list` prints each peer's name, key ID, and when an entry from them last opened. It then lists the unknown key IDs from recent `other-key` rejections, each with the `peer add` command to run. `key show` adds `Give this public key to anyone whose agents should reach your inbox; it is not secret.` |
@@ -344,7 +363,8 @@ An `other-key` entry in the relay cache's `rejections` also carries `key_id`.
   of sessions that replied must hold on every one of a person's machines, and
   the relay already syncs sealed records between them. One state record per
   entry, under its own namespace, reuses that sync and keeps state out of the
-  record the peer sealed.
+  record the peer sealed. Each field merges by a rule that ignores order, so
+  a lease failure costs a merge rather than another machine's change.
 - **Mark who wrote a reply.** `--as` tells the asker whether a person or an
   agent answered. The panel and the console pass `--as user`, and the skill
   passes `--as agent`. It is a label between people who trust each other's
@@ -391,6 +411,7 @@ the first person's key stands in for their second machine.
 | The asking agent runs `close` on an item still open on Jason's side, and later another agent runs `reopen --text "one more question"` on an item Jason closed. | The first deletes the item's ref, so it leaves Jason's inbox, and a later reply is impossible. The second shows the item to Jason again with its follow-up, and his next reply wakes the asker. A reopen beyond `agent.peer_limit` is rejected. Catches a close that leaves the peer a dead question, and a reopen that never wakes. |
 | Snooze an incoming item on one of your machines for an hour, and pass on the other. Then advance past the hour. | The item is hidden on both machines, and both show it again after the hour. Catches a snooze that holds on one machine only. |
 | Two of Jason's sessions on different machines run `reply` on one item, and the first runs it again. | The second machine's `list` marks the item `replied` for both sessions, and the repeated reply is refused. Catches a `replied` list that does not reach other machines. |
+| Two of Jason's machines each run `reply` on one item from a different session, and the second also snoozes it, before either passes. Both pass, so the second push fails its lease, and both pass again. Separately, close a sent copy on one of your machines and snooze it on the other before either passes. | The state record on `origin` lists both sessions and keeps the snooze. Each of Jason's machines marks the item `replied` for both sessions and refuses a second reply from either. Your sent copy is closed and snoozed on both of your machines. Catches a lease retry that pushes its own record over the one the fetch found, erasing another machine's reply or close. |
 | A peer posts a new item to you while three of your sessions are live in the repository. | No session gets a line, and every session lists the item. Catches an incoming item that wakes agents. |
 | The asking session lapses, then a reply arrives. Separately, a reply arrives on your machine that does not run the asking session. | No line is appended in either case, and the reply shows in the list. Catches a wake sent to a lapsed session or to the wrong machine. |
 | You dismiss the reply on one machine, then the other machine passes. | Both refs are deleted, and the entry is gone on both machines. Catches a dismissal that does not reach your other machines. |
