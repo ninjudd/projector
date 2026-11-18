@@ -3550,7 +3550,10 @@ stack holds it, with `gh api "repos/<owner>/<repo>/stacks?pull_request=<number>"
 once each full pass, and one answer covers every layer of the stack. GitHub
 still lists a layer that merged, so the name holds while the user merges a
 stack's lower layers first. Where GitHub records no stack, or cannot answer,
-the daemon follows base branches down to the bottom layer. `MOVED`,
+the daemon follows base branches down to the bottom layer. Once it names a
+layer's bottom, the name holds until GitHub names another bottom or the base
+branches reach below that bottom, so a lookup that fails or finds no stack
+after the bottom layer merges keeps the name. `MOVED`,
 `MERGED`, and `CLOSED` use the same name. For a layer of a stack, `MERGED`
 and `CLOSED` tell the session to send the subagent no more work for that
 layer and to finish it once no layer of its stack is open.
