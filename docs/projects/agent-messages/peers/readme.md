@@ -442,5 +442,3 @@ sessions. Record the result in this plan.
 - **A peer's key changes.** Deferred until key rotation exists
   (`../readme.md` § 6). Until then, the peer gives you a new key, and you run
   `peer add <name> <key> --replace`.
-</content>
-</invoke>
