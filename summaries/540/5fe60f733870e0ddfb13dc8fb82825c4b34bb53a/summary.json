@@ -1,0 +1,73 @@
+{
+ "version": 1,
+ "name": "Shared relay planning",
+ "project": "agent-messages/shared-relay",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 540,
+  "title": "Plan a relay through a repository you choose",
+  "head": "5fe60f733870e0ddfb13dc8fb82825c4b34bb53a",
+  "headRef": "plan-shared-relay",
+  "base": "52e5ec95c77f58bcc9b4500a2edad87daa958825",
+  "baseRef": "plan-agent-peers",
+  "basePr": 538
+ },
+ "overview": {
+  "summary": [
+   "The relay carries encrypted messages and presence between machines. Today its GitHub repository is the repository each session works in. This plan lets you choose a separate shared repository so one team relay can connect work across repositories.",
+   "The setting follows the existing configuration walk. A repository-selected destination requires the planned config-trust consent, while the transport can use a bare clone when no live checkout belongs to the relay repository. Source repository and visibility fields tell readers how to handle private context."
+  ],
+  "cards": [
+   {
+    "id": "readiness",
+    "title": "Ready plan with two record gaps",
+    "html": "<p>The plan is <code>ready</code>/<code>now</code>. Existing queued records and sessions without a GitHub origin need explicit source-record handling before the stated flow is implementable. Public-relay opt-in and peer-access checks are deliberately deferred.</p>"
+   },
+   {
+    "id": "validation",
+    "title": "What was checked",
+    "html": "<p>The configured gate and exact-head CI passed, including 263 hook tests. Metadata is valid. Current writer and checkout behavior verifies the two missing-input cases; the proposed shared-relay implementation was not run.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "relay-location",
+   "title": "Share one relay across work repositories",
+   "kicker": "Configuration scope, transport storage, and source-context controls",
+   "intro": [
+    "A relay location is the GitHub repository through which encrypted records travel. The plan separates that location from the work repository and groups daemon jobs, outboxes, caches, agent discovery, and peer inboxes by location.",
+    "The default remains the work repository. A configured location must be private or internal and writable. Repository-controlled destinations require consent through config-trust. Records crossing repositories name their source and carry a private-context notice; a peer item can also be narrowed to one work repository."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "This layer builds on the peers plan and requires config-trust first. It changes no runtime code."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/shared-relay/readme.md",
+     "collapsed": false,
+     "note": "Defines the ready shared-relay design, its acceptance cases, and explicit follow-ups.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Project metadata is valid and the configured gate plus exact-head CI passed."
+      },
+      {
+       "kind": "flag",
+       "line": 67,
+       "text": "A configured relay is promised for a checkout without a GitHub origin, but the required source repository has no defined value, validation, or notice behavior there."
+      },
+      {
+       "kind": "flag",
+       "line": 152,
+       "text": "Existing valid messages have neither new source field. The required receiver shape has no legacy decode/default path, so the stated no-migration upgrade can reject queued or rolling-upgrade messages."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
