@@ -110,6 +110,7 @@ SETTINGS: dict[str, type] = {
     "agent.key": str,
     "agent.peers": dict,
     "agent.peer_limit": int,
+    "agent.relay": str,
     "ios.app": str,
     "ios.project": str,
     "ios.output": str,
@@ -140,8 +141,14 @@ PRIORITY = re.compile(r"[1-9][0-9]?")
 
 # The settings that say where your data goes. The owner of a repository's
 # default branch may not be you, so a value read from it applies only once you
-# allow it with `project config allow`. The relay plans add their settings.
-DESTINATIONS: frozenset[str] = frozenset()
+# allow it with `project config allow`.
+DESTINATIONS: frozenset[str] = frozenset({"agent.relay"})
+
+# The forms `agent.relay` takes: `origin`, the checkout's own repository, or a
+# GitHub repository the relay carries records through.
+RELAY_ORIGIN = "origin"
+RELAY_GITHUB = "github:"
+RELAY_SLUG = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 # Keys whose value can be a secret. A value under `keychain:` names an item in
 # the OS keychain and holds no secret; any other value is the secret itself.
@@ -162,6 +169,20 @@ class NotAllowed(ConfigError):
         self.key, self.value, self.source = key, value, source
         super().__init__(f"{source} sets {key} = {value!r}, which sends your data where that file's owner chooses; "
                          f"run `project config allow {key} {shlex.quote(str(value))}` in a terminal to use it")
+
+
+def relay_location(value: str) -> Optional[str]:
+    """The repository an `agent.relay` value names, `owner/repo`, or None for `origin`, the checkout's own
+    repository. Any other value is refused, naming the forms."""
+
+    if value == RELAY_ORIGIN:
+        return None
+    slug = value[len(RELAY_GITHUB):] if value.startswith(RELAY_GITHUB) else None
+    if slug is not None and RELAY_SLUG.fullmatch(slug) and slug.split("/")[1] not in (".", ".."):
+        return slug
+    reserved = "; s3:// is not supported yet" if value.startswith("s3://") else ""
+    raise ConfigError(f"agent.relay is {value!r}, and it takes origin or github:<owner>/<repo>, such as "
+                      f"github:acme/agents{reserved}")
 
 
 def is_destination(key: str) -> bool:
@@ -351,6 +372,11 @@ def parse_value(key: str, text: str) -> Any:
         text.encode("utf-8")
     except UnicodeEncodeError:
         raise UsageError(f"{key} must be text that UTF-8 can encode") from None
+    if key == "agent.relay":
+        try:
+            relay_location(text)
+        except ConfigError as error:
+            raise UsageError(str(error)) from None
     return text
 
 

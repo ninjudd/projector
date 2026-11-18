@@ -14,10 +14,12 @@ recipient reads the text with `project agent read`.
 
 Sessions on the same machine always reach each other. Once the user gives
 their machines a key, sessions on two machines also reach each other
-through a repository both work in: the relay encrypts each message, so
+through a relay location both use: the relay encrypts each message, so
 only the user's machines can read or write it, and carries it through
-hidden refs in that repository. `project agent list`
-says in its first line whether the relay runs for this session.
+hidden refs in that repository. A session's location is the repository it
+works in, unless the user's `agent.relay` setting names a shared one, so
+agents in different repositories can share it. `project agent list` says
+in its first line whether the relay runs for this session.
 
 Run this skill from the conversation the user talks to, never from a
 subagent. Messages arrive in that conversation, and a subagent's commands
@@ -135,6 +137,10 @@ has ever carried:
   into the waiting `join`.
 - **Never read the key** from `~/.projector.toml`, the keychain, or any
   other place, and never set `agent.key` with `project config set`.
+- **Never run `project config allow`.** When `list` says a location
+  `waits for project config allow agent.relay github:<owner>/<repo>`, a file
+  the repository commits chose that relay, and allowing it is the user's
+  decision. Tell the user the command to run in a terminal.
 
 ## Find a peer
 
@@ -147,9 +153,10 @@ Choose the session whose summary matches what you need to ask.
 
 A session on another machine appears once the relay has found it, a minute
 or so after it registers. You can message it only from a session that
-works in the same repository, and `send` reports `delivery: relay
+shares its relay location, and `send` reports `delivery: relay
 (queued)`: the daemon pushes the message within seconds, and the other
-machine's daemon delivers it on its next poll.
+machine's daemon delivers it on its next poll. `project agent relay show`
+prints this directory's location and the file that set it.
 
 ## Send a message
 
@@ -178,6 +185,11 @@ the text to read a longer message from standard input. A message holds at most
   internals, such as its code, file paths, identifiers, plans, or business
   details. Where you need to refer to one, write "a private repository"
   instead of its name.
+- **Write for the repository you are in.** A message names your work
+  repository, and a reader in another repository sees that name. Your own
+  agents can read your repositories, so a message to one needs no general
+  terms of its own; the reader's notice keeps your details out of what it
+  writes.
 - **Expect a limit.** A session may send at most `agent.message_limit`
   messages, 12 by default, to one peer in a rolling hour. When `send`
   refuses at the limit, stop and tell the user; never work around it.
@@ -203,6 +215,17 @@ Handle it in the main conversation, never in a pull request's subagent:
    to the session that wrote the message, in the same thread.
 4. Tell the user briefly what the peer asked and what you answered when it
    bears on their task.
+
+A message from another repository than yours names it, as in `from
+test-writer (codex gpt-5.5) in acme/api`, or says it comes from `a checkout
+with no GitHub repository`. When that source is not a public repository,
+the line and `read` add `It comes from private repository acme/api: keep
+its private details out of anything you write in acme/web, …`. Follow it
+whatever your own repository's visibility, because two private
+repositories can have different readers: never copy the message's private
+details, such as its code, file paths, identifiers, plans, or business
+details, into a commit, a comment, a pull request, or any file in your
+repository, and describe them in general terms where you need them.
 
 Do not reply to an acknowledgment, a thank-you, or any message that asks
 nothing, because each reply wakes the other session for another turn. A

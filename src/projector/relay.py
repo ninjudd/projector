@@ -1,24 +1,25 @@
-"""The relay: agents' presence and messages carried between machines through hidden refs in a repository that
-both machines work in.
+"""The relay: agents' presence and messages carried between machines through hidden refs in a repository, the
+relay location. A session's location is its own repository, unless `agent.relay` names another.
 
 The relay runs on a machine that holds `agent.key`, an X25519 private key in the OS keychain or inline in
 `~/.projector.toml`. Every record is sealed with `crypto.seal` to the key's own public key before it leaves the
 machine, so the repository holds only ciphertext, under ref names made of the key's ID and random IDs, and only
 machines holding the key can read or write the records.
 
-Commands never push and never write a Git object: they queue each ref change in the repository's outbox. The watch
-daemon runs one job per repository on a pool of worker threads, never on the loop that delivers events. A job
+Commands never push and never write a Git object: they queue each ref change in the location's outbox. The watch
+daemon runs one job per location on a pool of worker threads, never on the loop that delivers events. A job
 fetches the key's refs, opens and checks what is new, delivers messages to the sessions on this machine, queues
-renewals and cleanup, then writes each queued record as a commit in a checkout of the repository and pushes every
-queued change in one `git push`.
+renewals and cleanup, then writes each queued record as a commit in a checkout of the location, or in a bare clone
+of it, and pushes every queued change in one `git push`.
 
-Files under the watch state root:
+Files under the watch state root, each named by the location:
 
     key.json                       where `agent.key`'s private key is stored, and why when it is inline
     outbox/<owner>/<repo>.json     the ref changes waiting for a push, and the checkouts that queued them
-    relay/<owner>/<repo>.json      the repository's visibility, the rejected count and the last 20 rejections, the
-                                   key's refs on origin, what each held when it was opened, and other machines'
-                                   agents
+    relay/<owner>/<repo>.json      the location's visibility and your permission there, the rejected count and the
+                                   last 20 rejections, the key's refs on origin, what each held when it was opened,
+                                   and other machines' agents
+    relays/<owner>/<repo>.git      a bare clone of a location that `agent.relay` names, which holds only relay refs
 
 Refs in the repository, each a parentless commit whose tree holds one `sealed.json`:
 
@@ -83,6 +84,11 @@ STALE = ("stale info", "fetch first", "non-fast-forward")
 NO_KEY = "no agent.key is set; run `project agent key init` to make one"
 NO_ORIGIN = "this checkout has no GitHub origin to relay through"
 NO_CHECKOUT = "no recorded checkout of the repository remains"
+# The permissions on a location that `agent.relay` names that let the relay push there.
+WRITERS = ("WRITE", "MAINTAIN", "ADMIN")
+# Every relay Git command in a bare clone authenticates as the `gh` login, whatever helpers Git configures.
+CREDENTIALS = ("-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential")
+CLONE_URL = "https://github.com/{location}.git"
 PUBLIC_REMINDER = "public repository: name no private repository and describe none of its internals"
 COPY = "To give another machine this key, run `project agent key join` there in a terminal."
 SHARE = "Give this public key to anyone whose agents should reach your inbox; it is not secret."
@@ -445,17 +451,23 @@ def inline_reason(root: Path, value: str) -> str:
     return "set inline in ~/.projector.toml"
 
 
-def header(root: Path, repo: Optional[str], environ: Optional[dict] = None) -> tuple[bool, str]:
-    """Whether the relay runs for a session in `repo`, and the line `project agent list` prints about it. Reads
-    no keychain: a keychain error comes from the daemon's last read."""
+def header(root: Path, location: Optional[str], repo: Optional[str], waits: str = "",
+           environ: Optional[dict] = None) -> tuple[bool, str]:
+    """Whether the relay runs for a session in `repo` whose relay location is `location`, and the line
+    `project agent list` prints about it. `waits` says why a location waits for `project config allow`. Reads no
+    keychain: a keychain error comes from the daemon's last read."""
     try:
         value = configured(environ)
     except ConfigError as error:
         return False, f"local only: {error}"
     if not value:
         return False, f"local only: {NO_KEY}"
-    if not repo:
+    if waits:
+        return False, f"local only: {waits}"
+    if not location:
         return False, f"local only: {NO_ORIGIN}"
+    if refused := location_refusal(root, location, repo):
+        return False, f"local only: {refused}"
     reported = ((read_json(root / "status.json") or {}).get("relay") or {}).get("key") or {}
     if reported.get("error") and reported.get("id") == value_id(value):
         return False, f"local only: the key could not be read: {reported['error']}"
@@ -503,7 +515,8 @@ def repo_file(root: Path, folder: str, repo: str) -> Path:
 def read_cache(root: Path, repo: str) -> dict:
     found = read_json(repo_file(root, "relay", repo)) or {}
     return {"schema_version": 1, "repo": found.get("repo") or repo, "polled_at": found.get("polled_at"),
-            "visibility": found.get("visibility") or "unknown", "rejected": found.get("rejected") or 0,
+            "visibility": found.get("visibility") or "unknown", "permission": found.get("permission"),
+            "checked_at": found.get("checked_at"), "rejected": found.get("rejected") or 0,
             "rejections": found.get("rejections") or [], "senders": found.get("senders") or {},
             "agents": found.get("agents") or {}, "remote": found.get("remote") or {}, "seen": found.get("seen") or {}}
 
@@ -512,33 +525,60 @@ def visibility(root: Path, repo: str) -> str:
     return read_cache(root, repo)["visibility"]
 
 
-def remote_agents(root: Path, now: float, repos: Optional[set[str]] = None) -> dict[str, dict]:
-    """Other machines' agents whose leases run, from the relay's cache, by session ID."""
+def refusal(location: str, seen: str, permission: Optional[str]) -> str:
+    """Why the relay refuses a location that `agent.relay` names, from its visibility and your permission there as
+    `gh` last reported them, or "" when it is private or internal and you can write to it."""
+    if seen not in ("PRIVATE", "INTERNAL"):
+        if seen == "unknown":
+            return f"gh could not say whether {location} is private, so the relay does not use it yet"
+        return f"{location} is {seen.lower()}, and a relay location that agent.relay names must be private or internal"
+    if permission not in WRITERS:
+        held = f"{permission.lower()} permission" if permission else "no permission"
+        return f"you have {held} on {location}, and the relay needs write permission there"
+    return ""
+
+
+def location_refusal(root: Path, location: str, repo: Optional[str]) -> str:
+    """Why the relay refuses `location` for a session in `repo`, as the location's last check found it. A location
+    that is the session's own repository, or that no job has checked yet, is not refused."""
+    if repo and location.lower() == repo.lower():
+        return ""
+    cache = read_cache(root, location)
+    return refusal(location, cache["visibility"], cache["permission"]) if cache["checked_at"] else ""
+
+
+def remote_agents(root: Path, now: float, locations: Optional[set[str]] = None) -> dict[str, dict]:
+    """Other machines' agents whose leases run, from the relay's cache of each location, by session ID, each with
+    the `location` it was found in."""
     found: dict[str, dict] = {}
     for path in sorted((root / "relay").glob("*/*.json")):
         cache = read_json(path) or {}
-        repo = cache.get("repo")
-        if not isinstance(repo, str) or (repos is not None and repo.lower() not in repos):
+        location = cache.get("repo")
+        if not isinstance(location, str) or (locations is not None and location.lower() not in locations):
             continue
         for agent in (cache.get("agents") or {}).values():
             expires = agent.get("expires_at") if isinstance(agent, dict) else None
             if isinstance(expires, (int, float)) and expires > now and isinstance(agent.get("session"), str):
-                found[agent["session"]] = {**agent, "repo": repo}
+                found[agent["session"]] = {**agent, "location": location}
     return found
 
 
 def remote_reviews(root: Path, repo: str, login: str, now: float) -> Optional[list[list[dict]]]:
-    """The review targets of each live presence of `login` from another machine in the relay's cache for `repo`,
-    one list for each presence, or None when the relay has not polled the repository within a lease. A presence
-    from a version before review targets reviews nothing."""
-    cache = read_cache(root, repo)
-    polled = watch.seconds_of(cache["polled_at"])
-    if polled is None or now - polled >= LEASE:
+    """The review targets of each live presence of `login` from another machine that works in `repo`, one list for
+    each presence, or None when the relay has polled none of the locations it would be found in within a lease:
+    the repository itself, and each location this machine's sessions in it use. A presence from a version before
+    review targets reviews nothing."""
+    locations = {repo.lower(), *((agents.location_of(found) or "").lower() for found in agents.records(root).values()
+                                 if (found.get("repo") or "").lower() == repo.lower())} - {""}
+    caches = [cache for cache in (read_cache(root, location) for location in sorted(locations))
+              if (polled := watch.seconds_of(cache["polled_at"])) is not None and now - polled < LEASE]
+    if not caches:
         return None
     machine = agents.this_machine(root)
     found = []
-    for agent in cache["agents"].values():
+    for agent in (agent for cache in caches for agent in cache["agents"].values()):
         if (isinstance(agent, dict) and str(agent.get("login") or "").lower() == login.lower()
+                and str(agent.get("repo") or "").lower() == repo.lower()
                 and agent.get("machine") != machine and isinstance(agent.get("expires_at"), (int, float))
                 and agent["expires_at"] > now):
             reviews = agent.get("reviews") if isinstance(agent.get("reviews"), list) else []
@@ -639,7 +679,8 @@ def merged_seal(key: Key, sealed: dict, found: Optional[dict]) -> tuple[dict, Op
 def presence(root: Path, session: str, found: dict, now: float) -> dict:
     """The session's presence: its registration, what it reviews in the registration's repository as its
     subscriptions and this machine's adoptions say when the presence is sealed, and its lease."""
-    record = {key: value for key, value in found.items() if key not in ("relay", "ended_at", "summary_auto")}
+    record = {key: value for key, value in found.items()
+              if key not in ("relay", "ended_at", "summary_auto", "location_source")}
     repo = found.get("repo")
     reviews = agents.review_targets(watch.subscriptions(watch.session_folder(root, session)), repo,
                                     watch.read_adopted(root, repo)[0] if repo else ())
@@ -661,9 +702,9 @@ def sealed_text(sealed: dict) -> str:
 
 
 def publish(root: Path, session: str, found: dict, key: Key, now: float) -> None:
-    """Queue the session's sealed presence."""
+    """Queue the session's sealed presence in its location's outbox."""
     record = presence(root, session, found, now)
-    queue(root, found["repo"], found["cwd"], [(presence_ref(key.id, found["relay_id"]), seal(key, record),
+    queue(root, agents.location_of(found), found["cwd"], [(presence_ref(key.id, found["relay_id"]), seal(key, record),
                                                presence_meta(record))], now)
 
 
@@ -680,9 +721,10 @@ def digest(record: dict) -> str:
 
 
 def forget(root: Path, found: dict, now: float) -> int:
-    """Queue the deletion of every ref under the relay ID of the registration `found` that origin holds, as the
-    cache last recorded it, or that waits in the outbox. Answers how many refs on origin it queued for deletion."""
-    repo, relay_id = found.get("repo"), found.get("relay_id")
+    """Queue the deletion of every ref under the relay ID of the registration `found` that its location holds, as
+    the cache last recorded it, or that waits in the outbox. Answers how many refs on origin it queued for
+    deletion."""
+    repo, relay_id = found.get("location") or found.get("repo"), found.get("relay_id")
     if not repo or not relay_id:
         return 0
     remote = read_cache(root, repo)["remote"]
@@ -692,22 +734,23 @@ def forget(root: Path, found: dict, now: float) -> int:
     return sum(1 for item in outbox_items(root, repo) if item["ref"] in refs and item["sealed"] is None)
 
 
-def queue_message(root: Path, repo: str, cwd: str, key: Key, message: dict, now: float) -> None:
+def queue_message(root: Path, location: str, cwd: str, key: Key, message: dict, now: float) -> None:
     meta = {"kind": "message", "to": message["to"], "sent_at": watch.seconds_of(message["sent_at"])}
-    queue(root, repo, cwd, [(inbox_ref(key.id, message["to"], message["id"]), seal(key, message), meta)], now)
+    queue(root, location, cwd, [(inbox_ref(key.id, message["to"], message["id"]), seal(key, message), meta)], now)
 
 
 # Git
 
 def git(cwd: Path, *args: str, input: Optional[bytes] = None, env: Optional[dict] = None,
-        timeout: float = FETCH_TIMEOUT) -> subprocess.CompletedProcess:
-    """Run Git on the repository at `cwd` with standard input closed or fed `input`, no terminal prompt, and a
-    timeout after which its process group is killed. It drops the inherited `config.GIT_LOCATION` variables, such
-    as the `GIT_DIR` a Git hook sets, which would point Git at another repository than `cwd`'s."""
+        timeout: float = FETCH_TIMEOUT, options: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
+    """Run Git on the repository at `cwd`, with `options`, such as `CREDENTIALS`, before the command, with standard
+    input closed or fed `input`, no terminal prompt, and a timeout after which its process group is killed. It
+    drops the inherited `config.GIT_LOCATION` variables, such as the `GIT_DIR` a Git hook sets, which would point
+    Git at another repository than `cwd`'s."""
     inherited = {name: value for name, value in os.environ.items() if name not in config.GIT_LOCATION}
     environment = {**inherited, "GIT_TERMINAL_PROMPT": "0", **(env or {})}
     try:
-        return run_bounded(["git", *args], cwd=cwd, input=input, env=environment, timeout=timeout)
+        return run_bounded(["git", *options, *args], cwd=cwd, input=input, env=environment, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise RelayError(f"git {args[0]} did not finish within {timeout:g} seconds, so it was stopped") from None
     except OSError as error:
@@ -770,12 +813,12 @@ def checked(cwd: Path, *args: str, **options) -> str:
     return text(done.stdout)
 
 
-def write_commit(cwd: Path, sealed: dict) -> str:
+def write_commit(cwd: Path, sealed: dict, options: tuple[str, ...] = ()) -> str:
     """A parentless commit holding `sealed.json`, with a fixed identity, date, and message and no signature, so
     nothing about the checkout or the session goes into the repository outside the sealed blob."""
-    blob = checked(cwd, "hash-object", "-w", "--stdin", input=sealed_text(sealed).encode())
-    tree = checked(cwd, "mktree", input=f"100644 blob {blob}\tsealed.json\n".encode())
-    return checked(cwd, "commit-tree", "--no-gpg-sign", "-m", COMMIT_MESSAGE, tree, env=IDENTITY)
+    blob = checked(cwd, "hash-object", "-w", "--stdin", input=sealed_text(sealed).encode(), options=options)
+    tree = checked(cwd, "mktree", input=f"100644 blob {blob}\tsealed.json\n".encode(), options=options)
+    return checked(cwd, "commit-tree", "--no-gpg-sign", "-m", COMMIT_MESSAGE, tree, env=IDENTITY, options=options)
 
 
 def push_results(stdout: str) -> dict[str, tuple[bool, str]]:
@@ -795,17 +838,33 @@ def origin_is(cwd: Path, repo: str) -> bool:
         return False
 
 
+def clone_path(root: Path, location: str) -> Path:
+    owner, name = location.lower().split("/")
+    return root / "relays" / owner / f"{name}.git"
+
+
+def bare_clone(root: Path, location: str) -> Path:
+    """The bare clone of `location` the relay keeps, made the first time, with `origin` naming the location on
+    GitHub. It holds only what the relay's fetches bring, and has no hooks of its own."""
+    path = clone_path(root, location)
+    if not (path / "HEAD").is_file():
+        path.mkdir(parents=True, exist_ok=True)
+        checked(path, "init", "--bare", "--quiet")
+        checked(path, "config", "remote.origin.url", CLONE_URL.format(location=location))
+    return path
+
+
 # One repository's job
 
 class Job:
-    """One pass of the relay over one repository, run on a worker thread: poll, open, deliver, renew, clean up,
-    and push."""
+    """One pass of the relay over one location, run on a worker thread: check the location, poll, open, deliver,
+    renew, clean up, and push."""
 
-    def __init__(self, root: Path, repo: str, key: Optional[Key], live: set[str], now: float, *, poll: bool,
+    def __init__(self, root: Path, location: str, key: Optional[Key], live: set[str], now: float, *, poll: bool,
                  full: bool, gh: Callable[[list[str]], watch.GhResult], held: Optional[str] = None,
                  peers: Optional[dict[str, bytes]] = None, peer_limit: Optional[int] = None) -> None:
         self.root = root
-        self.repo = repo
+        self.location = location
         self.key = key
         # Each peer's key, by its ID, with your name for them.
         self.peers = {crypto.key_id(public): (name, public) for name, public in (peers or {}).items()}
@@ -819,10 +878,10 @@ class Job:
         self.poll = poll
         self.full = full
         self.gh = gh
-        self.cache = read_cache(root, repo)
+        self.cache = read_cache(root, location)
         self.machine = agents.this_machine(root)
         self.sessions = {name: record for name, record in found.items()
-                         if (record.get("repo") or "").lower() == repo.lower()}
+                         if (agents.location_of(record) or "").lower() == location.lower()}
         self.relays = {found["relay_id"]: name for name, found in self.sessions.items()
                        if isinstance(found.get("relay_id"), str)}
         self.changes: list[tuple[str, Optional[dict], dict]] = []
@@ -832,11 +891,21 @@ class Job:
         # The changes this job tried to push: those its push took, or, when it pushes nothing, those queued when
         # it started and those it queued. A change queued after that starts the next job without a poll.
         self.attempted: frozenset[tuple[str, str]] = frozenset()
+        # Why the location is refused to the sessions that agent.relay sent here, and their relay IDs.
+        self.refused = ""
+        self.withheld: set[str] = set()
+        # The Git options of a bare clone, which every command in it takes.
+        self.options: tuple[str, ...] = ()
+        self.checkouts: dict[str, bool] = {}
 
     def run(self) -> dict:
-        self.attempted = pending(read_outbox(repo_file(self.root, "outbox", self.repo)))
-        cwd = self.checkout()
+        self.attempted = pending(read_outbox(repo_file(self.root, "outbox", self.location)))
+        cwd = None
         try:
+            self.check_location()
+            if self.full:
+                self.refresh_visibility()
+            cwd = self.checkout()
             if self.poll and cwd is not None and self.key_ids():
                 self.fetch(cwd, self.key_ids())
                 self.rebase(cwd)
@@ -844,39 +913,102 @@ class Job:
                     self.examine(cwd)
                     if self.full:
                         self.sweep()
-            if self.full:
-                self.read_visibility()
             self.maintain()
-            queue(self.root, self.repo, None, self.changes, self.now, self.cache["remote"])
+            queue(self.root, self.location, None, self.changes, self.now, self.cache["remote"])
             self.attempted |= {change(ref, sealed) for ref, sealed, _ in self.changes}
             if cwd is not None:
                 self.push(cwd)
         except RelayError as error:
             self.error = str(error)
         finally:
-            path = repo_file(self.root, "relay", self.repo)
+            path = repo_file(self.root, "relay", self.location)
             path.parent.mkdir(parents=True, exist_ok=True)
             write_json(path, self.cache)
-        if cwd is None:
+        if cwd is None and not self.error:
             return self.result("waiting", NO_CHECKOUT)
+        if self.refused and all(self.chose(found) for found in self.sessions.values()):
+            return self.result("off", self.refused)
         return self.result("error" if self.error else "ok", self.error)
 
     def result(self, state: str, error: str) -> dict:
-        items = outbox_items(self.root, self.repo)
+        items = outbox_items(self.root, self.location)
         return {"state": state, "error": error, "queued": len(items), "rejected": self.cache["rejected"],
                 "rejections": self.cache["rejections"], "visibility": self.cache["visibility"],
-                "polled_at": self.cache["polled_at"], "senders": sorted(self.cache["senders"]),
+                "permission": self.cache["permission"], "refused": self.refused,
+                "clone": bool(self.options), "polled_at": self.cache["polled_at"],
+                "senders": sorted(self.cache["senders"]),
                 "errors": sorted({item["last_error"] for item in items if item.get("last_error")})}
 
+    def chose(self, found: dict) -> bool:
+        """Whether `agent.relay` sent a registration here: its location is not its own repository."""
+        return (found.get("repo") or "").lower() != self.location.lower()
+
+    def in_location(self, cwd: object) -> bool:
+        """Whether `cwd` is a checkout whose origin is the location, asked once a job."""
+        if not isinstance(cwd, str):
+            return False
+        if cwd not in self.checkouts:
+            self.checkouts[cwd] = origin_is(Path(cwd), self.location)
+        return self.checkouts[cwd]
+
+    def check_location(self) -> None:
+        """Read the location's visibility and your permission there on each full pass, and when a session that
+        `agent.relay` sent here first uses it. While the location is not private or internal, or you cannot write
+        to it, the relay is off for those sessions: they count as lapsed, so their refs are deleted and nothing
+        new of theirs is pushed."""
+        chose = {name for name, found in self.sessions.items() if self.chose(found)}
+        if self.full or (chose and not self.cache["checked_at"]):
+            self.read_location()
+        self.refused = refusal(self.location, self.cache["visibility"], self.cache["permission"]) if chose else ""
+        if self.refused:
+            self.live -= chose
+            self.withheld = {self.sessions[name]["relay_id"] for name in chose}
+
+    def read_location(self) -> None:
+        """Record the location's visibility and your permission there, keeping what the last check found when
+        `gh` cannot say."""
+        result = self.gh(["repo", "view", self.location, "--json", "visibility,viewerPermission"])
+        try:
+            found = json.loads(result.stdout) if result.returncode == 0 else None
+        except ValueError:
+            found = None
+        self.cache["checked_at"] = watch.stamp(self.now)
+        if isinstance(found, dict) and isinstance(found.get("visibility"), str) and found["visibility"]:
+            permission = found.get("viewerPermission")
+            self.cache["visibility"] = found["visibility"].upper()
+            self.cache["permission"] = permission.upper() if isinstance(permission, str) and permission else None
+
+    def refresh_visibility(self) -> None:
+        """Read the visibility of each work repository a live session here relays from, which its messages carry.
+        The location's own visibility comes from its check."""
+        repos = sorted({found["repo"] for name, found in self.sessions.items()
+                        if name in self.live and found.get("repo")}, key=str.lower)
+        agents.record_visibility(self.root, {repo: self.cache["visibility"] if repo.lower() == self.location.lower()
+                                             else agents.visibility_of(self.gh, repo) for repo in repos}, self.now)
+
+    def withholds(self, item: dict) -> bool:
+        """Whether the push leaves a queued record behind because the location is refused to the session that
+        queued it: one a command queued outside a checkout of the location, or one under a refused session's relay
+        ID. A deletion always goes."""
+        if not self.refused or item["sealed"] is None:
+            return False
+        parsed = parse_ref(item["ref"])
+        return bool(parsed and parsed[2] in self.withheld) or (item.get("cwd") is not None
+                                                                and not self.in_location(item["cwd"]))
+
     def checkout(self) -> Optional[Path]:
-        """The cwd of a live registered session in the repository, else the newest checkout the outbox records,
-        that still exists and whose origin still names the repository."""
+        """The cwd of a live registered session in the location's repository, else the newest checkout of it that
+        the outbox records, that still exists and whose origin still names it, else, for a location `agent.relay`
+        names, the relay's bare clone of it, whose Git commands authenticate as the `gh` login."""
         live = sorted((found for name, found in self.sessions.items() if name in self.live),
                       key=lambda found: found.get("updated_at") or "", reverse=True)
-        recorded = read_outbox(repo_file(self.root, "outbox", self.repo))["checkouts"]
+        recorded = read_outbox(repo_file(self.root, "outbox", self.location))["checkouts"]
         for cwd in [found.get("cwd") for found in live] + [found.get("cwd") for found in recorded]:
-            if isinstance(cwd, str) and origin_is(Path(cwd), self.repo):
+            if self.in_location(cwd):
                 return Path(cwd)
+        if any(self.chose(found) for found in self.sessions.values()):
+            self.options = CREDENTIALS
+            return bare_clone(self.root, self.location)
         return None
 
     def delete(self, ref: str) -> None:
@@ -904,11 +1036,11 @@ class Job:
     def fetch(self, cwd: Path, key_ids: list[str]) -> None:
         prefixes = self.prefixes(key_ids)
         done = git(cwd, "fetch", "--prune", "--quiet", "--no-write-fetch-head", REMOTE,
-                   *[f"+{prefix}*:{tracking(prefix)}*" for prefix in prefixes])
+                   *[f"+{prefix}*:{tracking(prefix)}*" for prefix in prefixes], options=self.options)
         if done.returncode != 0:
             raise RelayError(f"git fetch failed: {last_line(done)}")
         listed = checked(cwd, "for-each-ref", "--format=%(objectname) %(refname)",
-                         *[tracking(prefix) for prefix in prefixes])
+                         *[tracking(prefix) for prefix in prefixes], options=self.options)
         fetched = {}
         for line in listed.splitlines():
             sha, name = line.split(" ", 1)
@@ -926,7 +1058,7 @@ class Job:
         of a ref another machine owns is dropped instead: the ref moved, so that machine renewed it. A repository
         inbox entry's deletion is dropped too, since another machine or the peer already deleted or replaced it.
         A state record is merged with the record the fetch found, so neither machine's change is lost."""
-        path = repo_file(self.root, "outbox", self.repo)
+        path = repo_file(self.root, "outbox", self.location)
         remote = self.cache["remote"]
         fetched = self.prefixes(self.key_ids())
         with locked(path.parent):
@@ -966,7 +1098,7 @@ class Job:
             found = None
         sealed, merged = merged_seal(self.key, queued, found)
         if merged is not None:
-            repo_inbox.take_state(self.root, self.repo, merged)
+            repo_inbox.take_state(self.root, self.location, merged)
         return sealed
 
     def examine(self, cwd: Path) -> None:
@@ -1022,7 +1154,7 @@ class Job:
             except RECORD_ERRORS as error:
                 self.reject(ref, sha, Rejected("unexpected"), type(error).__name__)
         self.prune_mirror()
-        repo_inbox.wake(self.root, self.repo, self.live, self.machine, self.now)
+        repo_inbox.wake(self.root, self.location, self.live, self.machine, self.now)
 
     def user_senders(self) -> set[bytes]:
         assert self.key is not None
@@ -1035,17 +1167,17 @@ class Job:
         if record.get("id") != entry_id:
             raise Rejected("message-id-mismatch")
         location = record.get("location")
-        if not isinstance(location, str) or location.lower() != self.repo.lower():
+        if not isinstance(location, str) or location.lower() != self.location.lower():
             raise Rejected("location-mismatch")
         key_id = crypto.key_id(sender)
         if sender == self.key.public:
-            if not repo_inbox.well_formed_sent(record, self.repo):
+            if not repo_inbox.well_formed_sent(record, self.location):
                 raise Rejected("field-shape")
             role, peer = "sent", (self.peers.get(record["to"]) or (None,))[0]
         elif "answers" in record:
             if not repo_inbox.well_formed_reply(record):
                 raise Rejected("field-shape")
-            asked = repo_inbox.by_id(self.root, self.repo, record["answers"], "sent")
+            asked = repo_inbox.by_id(self.root, self.location, record["answers"], "sent")
             if asked is None:
                 answered = user_ref(self.key.id, record["answers"])
                 if (answered in self.cache["remote"]
@@ -1054,17 +1186,18 @@ class Job:
                 raise Rejected("no-sent-copy")
             if asked["to"] != key_id:
                 raise Rejected("sender-mismatch")
-            kept = {entry["id"] for entry in repo_inbox.entries(self.root, self.repo) if entry["role"] == "sent"}
+            kept = {entry["id"] for entry in repo_inbox.entries(self.root, self.location) if entry["role"] == "sent"}
             if not repo_inbox.count_reply(self.root, record["answers"], key_id, self.peer_limit, kept, self.now):
                 raise Rejected("peer-limit")
             role, peer = "reply", self.peers[key_id][0]
         else:
-            if not repo_inbox.well_formed_item(record, self.repo):
+            if not repo_inbox.well_formed_item(record, self.location):
                 raise Rejected("field-shape")
             if not repo_inbox.count_item(self.root, key_id, self.peer_limit, self.now):
                 raise Rejected("peer-limit")
             role, peer = "incoming", self.peers[key_id][0]
-        if repo_inbox.mirror(self.root, self.repo, record, role=role, peer=peer, key_id=key_id, now=self.now) is None:
+        if repo_inbox.mirror(self.root, self.location, record, role=role, peer=peer, key_id=key_id,
+                             now=self.now) is None:
             raise Rejected("collision")
         sent = max(record["sent_at"], record.get("reopened_at") or 0) / 1000
         self.cache["seen"][ref] = {"sha": sha, "kind": "user", "at": min(sent, self.now)}
@@ -1074,11 +1207,11 @@ class Job:
         if record.get("id") != entry_id:
             raise Rejected("message-id-mismatch")
         location = record.get("location")
-        if not isinstance(location, str) or location.lower() != self.repo.lower():
+        if not isinstance(location, str) or location.lower() != self.location.lower():
             raise Rejected("location-mismatch")
         if not repo_inbox.well_formed_state(record):
             raise Rejected("field-shape")
-        repo_inbox.take_state(self.root, self.repo, record)
+        repo_inbox.take_state(self.root, self.location, record)
         self.cache["seen"][ref] = {"sha": sha, "kind": "state"}
 
     def prune_mirror(self) -> None:
@@ -1086,9 +1219,9 @@ class Job:
         of your machines dismissed it or the peer closed it."""
         assert self.key is not None
         prefix = f"{USER}{self.key.id}/"
-        queued = [item["ref"] for item in outbox_items(self.root, self.repo) if item["sealed"] is not None]
+        queued = [item["ref"] for item in outbox_items(self.root, self.location) if item["sealed"] is not None]
         present = {ref[len(prefix):] for ref in [*self.cache["remote"], *queued] if ref.startswith(prefix)}
-        self.forget_entries([entry["id"] for entry in repo_inbox.entries(self.root, self.repo)
+        self.forget_entries([entry["id"] for entry in repo_inbox.entries(self.root, self.location)
                              if entry["id"] not in present])
 
     def forget_entries(self, ids: list[str]) -> None:
@@ -1096,11 +1229,11 @@ class Job:
         assert self.key is not None
         for entry_id in ids:
             self.delete(state_ref(self.key.id, entry_id))
-        repo_inbox.forget(self.root, self.repo, ids)
+        repo_inbox.forget(self.root, self.location, ids)
 
     def sealed_blob(self, cwd: Path, sha: str) -> str:
         """The blob of a commit whose tree is exactly one `sealed.json` of at most 32 KiB."""
-        done = git(cwd, "ls-tree", "-l", sha)
+        done = git(cwd, "ls-tree", "-l", sha, options=self.options)
         lines = text(done.stdout).splitlines()
         found = TREE.fullmatch(lines[0]) if done.returncode == 0 and len(lines) == 1 else None
         if found is None:
@@ -1113,7 +1246,7 @@ class Job:
         """The key that sealed a blob, and the record the blob holds, when it opens with this machine's key and was
         sealed by one of `senders`, by default this machine's own key."""
         assert self.key is not None
-        done = git(cwd, "cat-file", "blob", blob)
+        done = git(cwd, "cat-file", "blob", blob, options=self.options)
         if done.returncode != 0:
             raise Rejected("unreadable")
         try:
@@ -1206,7 +1339,7 @@ class Job:
                     stale.append(ref.rsplit("/", 1)[1])
         self.forget_entries(stale)
         # A state record outlives its entry only when the entry's deletion landed without it.
-        queued = {item["ref"] for item in outbox_items(self.root, self.repo) if item["sealed"] is not None}
+        queued = {item["ref"] for item in outbox_items(self.root, self.location) if item["sealed"] is not None}
         for ref in self.cache["remote"]:
             parsed = parse_ref(ref)
             if parsed and parsed[0] == "state" and parsed[1] == self.held:
@@ -1215,21 +1348,12 @@ class Job:
                         (self.now - (seen.get(entry) or {}).get("at", self.now) >= agents.KEEP):
                     self.delete(ref)
 
-    def read_visibility(self) -> None:
-        result = self.gh(["repo", "view", self.repo, "--json", "visibility"])
-        try:
-            found = json.loads(result.stdout).get("visibility") if result.returncode == 0 else None
-        except (ValueError, AttributeError):
-            found = None
-        if isinstance(found, str) and found:
-            self.cache["visibility"] = found.upper()
-
     # Renew and clean up this machine's agents
 
     def maintain(self) -> None:
         """Renew each live agent's presence before its lease runs out, and delete the refs of each agent that
         lapsed, and of every agent under a key this machine no longer holds."""
-        queued = {item["ref"] for item in outbox_items(self.root, self.repo)}
+        queued = {item["ref"] for item in outbox_items(self.root, self.location)}
         for ref in self.cache["remote"]:
             parsed = parse_ref(ref)
             if parsed and parsed[2] in self.relays and parsed[1] != self.held:
@@ -1261,10 +1385,10 @@ class Job:
     # Push
 
     def push(self, cwd: Path) -> None:
-        path = repo_file(self.root, "outbox", self.repo)
+        path = repo_file(self.root, "outbox", self.location)
         with locked(path.parent):
             box = read_outbox(path)
-            snapshot = [dict(item) for item in box["items"]]
+            snapshot = [dict(item) for item in box["items"] if not self.withholds(item)]
             self.attempted = pending(box)
             if not snapshot:
                 return
@@ -1275,7 +1399,7 @@ class Job:
         try:
             for item in snapshot:
                 if item["sealed"] is not None:
-                    commits[item["ref"]] = write_commit(cwd, item["sealed"])
+                    commits[item["ref"]] = write_commit(cwd, item["sealed"], self.options)
             # An item you sent to a peer is published again with no lease: only your machines write it, and the
             # peer may have deleted it since this machine last pushed it.
             forced = {item["ref"] for item in snapshot
@@ -1284,7 +1408,8 @@ class Job:
                       if item["old"] and item["ref"] not in forced]
             specs = [f"{'+' if item['ref'] in forced else ''}{commits[item['ref']]}:{item['ref']}"
                      if item["sealed"] is not None else f":{item['ref']}" for item in snapshot]
-            done = git(cwd, "push", "--porcelain", *leases, REMOTE, *specs, timeout=PUSH_TIMEOUT)
+            done = git(cwd, "push", "--porcelain", *leases, REMOTE, *specs, timeout=PUSH_TIMEOUT,
+                       options=self.options)
             results = push_results(text(done.stdout))
             failed = f"git push failed: {last_line(done)}"
         except RelayError as error:
@@ -1333,7 +1458,7 @@ class Job:
         metas = {item["ref"]: item.get("meta") or {} for item in snapshot}
         lines = "".join(f"update {tracking(ref)} {sha}\n" if sha else f"delete {tracking(ref)}\n"
                         for ref, sha in landed.items())
-        git(cwd, "update-ref", "--stdin", input=lines.encode())
+        git(cwd, "update-ref", "--stdin", input=lines.encode(), options=self.options)
         published: dict[str, Optional[str]] = {}
         for ref, sha in landed.items():
             parsed = parse_ref(ref)
@@ -1386,6 +1511,8 @@ class Relay:
         self.peer_limit = agents.PEER_LIMIT
         self.peers_error = ""
         self.peers_signature: object = ()
+        # Each location a live registration waits to relay through until you allow it, with the file that set it.
+        self.waiting: list[tuple[str, str]] = []
 
     def start(self) -> None:
         """Forget the push each outbox records as running: only this daemon pushes, and it has not started."""
@@ -1399,8 +1526,8 @@ class Relay:
         return any(not future.done() for _, future in self.jobs.values()) or self.reading is not None
 
     def tick(self, live: set[str], polled: bool, full_every: float) -> bool:
-        """Read finished jobs, follow `agent.key`, and start each due repository's job. Answers whether the
-        status the daemon reports changed."""
+        """Read finished jobs, follow `agent.key`, let each registration whose location you have since allowed
+        relay, and start each due location's job. Answers whether the status the daemon reports changed."""
         before = self.status()
         now = self.wall()
         full = polled and (self.last_full is None or now - self.last_full >= full_every)
@@ -1409,31 +1536,37 @@ class Relay:
         self.collect()
         self.check_key(full)
         self.check_peers()
+        if polled:
+            agents.admit(self.root, config.allowed_path(self.environ), self.value is not None, self.wall())
         records, gone = agents.relayed(self.root)
+        self.waiting = sorted({(found["location"], found.get("location_source") or "")
+                               for name, found in records.items()
+                               if name in live and found.get("relay") == "waiting" and found.get("location")})
         live = live - gone
         lapsed = self.was_live - live
         self.was_live = set(live)
         if self.fresh:
-            self.owed.update(self.repositories(records, True, lapsed))
+            self.owed.update(self.locations(records, True, lapsed))
             self.fresh = False
-        for name, repo in sorted({**self.repositories(records, polled, lapsed), **self.owed}.items()):
+        for name, location in sorted({**self.locations(records, polled, lapsed), **self.owed}.items()):
             if name in self.jobs:
                 continue
             owed = self.owed.pop(name, None) is not None
-            here = {session: found for session, found in records.items() if (found.get("repo") or "").lower() == name}
-            remote = read_cache(self.root, repo)["remote"]
+            here = {session: found for session, found in records.items()
+                    if (agents.location_of(found) or "").lower() == name}
+            remote = read_cache(self.root, location)["remote"]
             lingering = {found.get("relay_id") for session, found in here.items() if session not in live}
             poll = (polled or owed) and (any(session in live for session in here)
                                          or any((parsed := parse_ref(ref)) and parsed[2] in lingering
                                                 for ref in remote))
-            job = Job(self.root, repo, self.key, set(live), now, poll=poll, full=full, gh=self.gh,
+            job = Job(self.root, location, self.key, set(live), now, poll=poll, full=full, gh=self.gh,
                       held=self.held(), peers=self.peers, peer_limit=self.peer_limit)
             self.jobs[name] = (job, self.pool.submit(job.run))
         return self.status() != before
 
-    def repositories(self, records: dict[str, dict], polled: bool, lapsed: set[str]) -> dict[str, str]:
-        """The repositories whose job runs now, lowercased, with their spelling: on a poll, every repository a
-        registered session here works in, and otherwise each one with a queued change its last job did not try to
+    def locations(self, records: dict[str, dict], polled: bool, lapsed: set[str]) -> dict[str, str]:
+        """The locations whose job runs now, lowercased, with their spelling: on a poll, every location a
+        registered session here uses, and otherwise each one with a queued change its last job did not try to
         push, or with a session that just lapsed."""
         found = {}
         for path in (self.root / "outbox").glob("*/*.json"):
@@ -1442,10 +1575,10 @@ class Relay:
             if box["items"] and (polled or name not in self.settled or pending(box) - self.settled[name]):
                 found[name] = name
         for name, record in records.items():
-            repo = record.get("repo")
-            if repo and (polled or name in lapsed) and (
-                    self.key is not None or repo_file(self.root, "relay", repo).exists()):
-                found[repo.lower()] = repo
+            location = agents.location_of(record)
+            if location and (polled or name in lapsed) and (
+                    self.key is not None or repo_file(self.root, "relay", location).exists()):
+                found[location.lower()] = location
         return found
 
     def collect(self) -> None:
@@ -1455,7 +1588,7 @@ class Relay:
                 self.settled[repo] = job.attempted
                 for rejection in job.rejections:
                     error = f" ({rejection['error']})" if rejection.get("error") else ""
-                    self.log(f"relay {job.repo}: rejected {rejection['ref']}: {rejection['reason']}{error}, at "
+                    self.log(f"relay {job.location}: rejected {rejection['ref']}: {rejection['reason']}{error}, at "
                              f"{rejection['at']}")
                 try:
                     self.results[repo] = future.result()
@@ -1516,6 +1649,7 @@ class Relay:
         return {"key": {"state": state, "id": self.held(), "store": self.key.store if self.key else None,
                         "error": self.key_error if not self.key and not self.reading else ""},
                 "peers": {"count": len(self.peers), "error": self.peers_error},
+                "waiting": [{"location": location, "source": source} for location, source in self.waiting],
                 "repositories": dict(sorted(self.results.items()))}
 
     def wait(self, timeout: Optional[float] = None) -> None:
