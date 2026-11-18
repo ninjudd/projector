@@ -326,6 +326,22 @@ class ConfigSetTests(unittest.TestCase):
         self.assertEqual(0, code, stderr)
         return stdout
 
+    def test_agent_relay_takes_origin_or_a_github_repository_and_nothing_else(self) -> None:
+        self.assert_set("agent.relay", "github:acme/agents", "--user")
+        self.assert_set("agent.relay", "origin")
+        refused = {value: self.invoke("config", "set", "agent.relay", value) for value in
+                   ("acme/agents", "github:acme", "github:acme/agents/extra", "s3://bucket/agents", "github:")}
+
+        self.assertEqual("acme/agents", config_module.relay_location("github:acme/agents"))
+        self.assertIsNone(config_module.relay_location("origin"))
+        self.assertEqual(('relay = "origin"', 'relay = "github:acme/agents"'),
+                         (self.repo_file.read_text().splitlines()[-1], self.user_file.read_text().splitlines()[-1]))
+        for value, (code, _, stderr) in refused.items():
+            self.assertNotEqual(0, code, value)
+            self.assertIn("it takes origin or github:<owner>/<repo>", stderr, value)
+        self.assertIn("s3:// is not supported yet", refused["s3://bucket/agents"][2])
+        self.assertIn("agent.relay", config_module.DESTINATIONS)
+
     def test_each_type_lands_in_its_table_in_a_new_file(self) -> None:
         self.assert_set("watch.auto_start", "false")
         self.assert_set("review.username", 'mi"n\\judd')

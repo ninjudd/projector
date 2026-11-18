@@ -61,6 +61,7 @@ DECISIONS = (
     ("project inbox close r3", "allow", "allow"),
     ("project inbox answer r3.a --as agent", "ask", "none"),
     ("project agent peer list --json", "allow", "allow"),
+    ("project agent relay show --json", "allow", "allow"),
     ("project agent peer add jason q3Jx", "allow", "none"),
     ("project agent peer remove jason", "allow", "none"),
     ("project list --json", "allow", "allow"),
@@ -128,7 +129,7 @@ DECISIONS = (
 # What the Codex rules leave to Codex's usual approval: each command with the
 # subcommands left out, or None where the whole command is.
 CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None,
-                  "agent": {"key", "peer"},
+                  "agent": {"key", "peer", "relay"},
                   "config": {"set", "unset", "allow"},
                   "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},
                   "review": {"gate"},

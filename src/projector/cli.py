@@ -1411,6 +1411,12 @@ def add_agent_parser(subcommands) -> None:
     removed_peer.add_argument("name", help="the name you listed them under")
     add_output(peers.add_parser("list", help="list your peers, with each one's key ID"))
 
+    relayed = commands.add_parser("relay", help="show the relay location agent.relay gives this directory")
+    relays = relayed.add_subparsers(dest="relay_command", required=True)
+    add_output(relays.add_parser("show", help="print the relay location this directory resolves to, the file that "
+                                              "set it, whether it waits for `project config allow`, and its last "
+                                              "state"))
+
 
 def terminal_line(prompt: str, deadline: float, outcome: str) -> str:
     """A line typed at the terminal by `deadline`, of at most `MAX_PASTE` bytes, or an error that ends with
@@ -1578,6 +1584,8 @@ def run_agent(arguments: argparse.Namespace) -> int:
         return run_agent_key(arguments)
     if arguments.agent_command == "peer":
         return run_agent_peer(arguments)
+    if arguments.agent_command == "relay":
+        return show_relay(arguments)
     root = watch.state_root()
     command = arguments.agent_command
     now = time.time()
@@ -1587,8 +1595,14 @@ def run_agent(arguments: argparse.Namespace) -> int:
     if command == "list":
         rows = agents.listing(root, session, now, everyone=arguments.everyone)
         caller = agents.record(root, session) if session else None
-        repo = (caller or {}).get("repo") or agents.checkout(Path.cwd()).get("repo")
-        running, line = relay.header(root, repo)
+        if caller:
+            repo, location = caller.get("repo"), caller.get("location") or caller.get("repo")
+            waits = agents.waiting_text(location, caller.get("location_source") or "") \
+                if caller.get("relay") == "waiting" else ""
+        else:
+            repo = agents.checkout(Path.cwd()).get("repo")
+            location, _, waits = agents.relay_place(Path.cwd(), repo)
+        running, line = relay.header(root, location, repo, waits)
         if arguments.json_output:
             print(json_text({"local_only": not running, "relay": line, "agents": rows}))
             return 0
@@ -1601,9 +1615,12 @@ def run_agent(arguments: argparse.Namespace) -> int:
     if command == "read":
         message, sender = agents.read(root, session, arguments.id, now)
         if arguments.json_output:
-            print(json_text({"message": message, "sender": sender, "notice": agents.NOTICE}))
+            reader = (agents.record(root, session) or {}).get("repo")
+            print(json_text({"message": message, "sender": sender, "notice": agents.NOTICE,
+                             "crosses": agents.crosses(message, reader),
+                             "private_notice": agents.private_notice(message, reader) or None}))
         else:
-            print(agents.read_text(message, sender))
+            print(agents.read_text(message, sender, (agents.record(root, session) or {}).get("repo")))
         return 0
     ensure = lambda: watch.ensure_daemon(root, distribution_version(), newer_release)
     if command == "register":
@@ -1616,7 +1633,9 @@ def run_agent(arguments: argparse.Namespace) -> int:
                              "relay_off": off}))
         else:
             place = " ".join(part for part in (found.get("repo"), found.get("branch")) if part) or found["cwd"]
-            relayed = "queued for the relay" if found["relay"] == "pending" else f"local only: {off}"
+            relayed = ("queued for the relay" + (f" through {found['location']}" if found.get("location")
+                                                  and found["location"] != found.get("repo") else "")
+                       if found["relay"] == "pending" else f"local only: {off}")
             print(f"registered {agents.label(found, session)} ({agents.describe(found['host'], found.get('model'))}) "
                   f"in {place}; delivery: {way}; {relayed}")
         return 0
@@ -1640,7 +1659,7 @@ def run_agent(arguments: argparse.Namespace) -> int:
     else:
         message, found, way = agents.reply(root, session, arguments.id, text, now, limit=limit)
     ensure()
-    public = way.startswith("relay") and relay.visibility(root, found["repo"]) != "PRIVATE"
+    public = way.startswith("relay") and relay.visibility(root, found["location"]) != "PRIVATE"
     if arguments.json_output:
         print(json_text({"message": message, "to": found, "delivery": way,
                          **({"reminder": relay.PUBLIC_REMINDER} if public else {})}))
@@ -1648,6 +1667,40 @@ def run_agent(arguments: argparse.Namespace) -> int:
         print(agents.summary_of(message, found, way))
         if public:
             print(relay.PUBLIC_REMINDER)
+    return 0
+
+
+def show_relay(arguments: argparse.Namespace) -> int:
+    """`project agent relay show`: the relay location the current directory resolves to, the file that set it,
+    whether it waits for `project config allow`, and what the location's last job found."""
+    root = watch.state_root()
+    repo = agents.checkout(Path.cwd()).get("repo")
+    location, source, waits = agents.relay_place(Path.cwd(), repo)
+    found = (watch.status(root, time.time())["relay"]["repositories"] or {}).get((location or "").lower())
+    cache = relay.read_cache(root, location) if location else {}
+    refused = relay.location_refusal(root, location, repo) if location else ""
+    report = {"location": location, "repo": repo, "source": source if location else None, "waiting": bool(waits),
+              "allow": f"project config allow agent.relay github:{location}" if waits else None,
+              "state": (found or {}).get("state"), "polled_at": cache.get("polled_at"),
+              "visibility": cache.get("visibility"), "permission": cache.get("permission"), "refused": refused,
+              "error": (found or {}).get("error") or ""}
+    if arguments.json_output:
+        print(json_text(report))
+        return 0
+    if not location:
+        print(f"location: none; {relay.NO_ORIGIN}, and no agent.relay names one")
+        return 0
+    print(f"location: {location}" + ("" if location == repo else f", for work in {repo or 'this checkout'}"))
+    print(f"set by: {source}")
+    if waits:
+        print(f"waits for: `{report['allow']}`, run in a terminal")
+    state = report["state"] or "not run yet"
+    print(f"state: {state}" + (f", polled {report['polled_at']}" if report["polled_at"] else "")
+          + (f", {report['visibility']}" if report["visibility"] not in (None, "unknown") else "")
+          + (f", permission {report['permission']}" if report["permission"] else ""))
+    for problem in (refused, report["error"]):
+        if problem and problem != state:
+            print(f"off: {problem}" if problem == refused else f"error: {problem}")
     return 0
 
 
@@ -1773,14 +1826,24 @@ def run_watch(arguments: argparse.Namespace) -> int:
             print(f"relay: on, key {key['id']} ({key['store']}){listed}" if key["state"] == "on" else
                   f"relay: reading key {key['id']}" if key["state"] == "reading" else
                   f"relay: off ({key['error'] or 'no agent.key'})")
+            for waiting in report["relay"].get("waiting") or []:
+                print(f"relay {waiting['location']}: waiting, set by {waiting['source']}; run `project config allow "
+                      f"agent.relay github:{waiting['location']}` in a terminal to relay through it")
             for repo, found in report["relay"]["repositories"].items():
                 problems = "; ".join(part for part in (found.get("error"), *found.get("errors", [])) if part)
+                if found.get("refused") and found.get("refused") != found.get("error"):
+                    problems = "; ".join(part for part in (f"off for the sessions agent.relay sends here: "
+                                                           f"{found['refused']}", problems) if part)
                 latest = (found.get("rejections") or [None])[-1]
                 why = (f" (latest: {relay.REASONS.get(latest['reason'], latest['reason'])}, {latest['at'][11:16]})"
                        if latest else "")
                 unknown = f", unknown senders: {', '.join(found['senders'])}" if found.get("senders") else ""
-                print(f"relay {repo}: {found.get('state')}, {found.get('queued', 0)} queued, "
-                      f"{found.get('rejected', 0)} rejected{why}{unknown}" + (f"; {problems}" if problems else ""))
+                seen = ", ".join(part.lower() for part in (found.get("visibility"), found.get("permission"))
+                                 if part and part != "unknown")
+                print(f"relay {repo}: {found.get('state')}" + (f" ({seen})" if seen else "")
+                      + (", bare clone" if found.get("clone") else "")
+                      + f", {found.get('queued', 0)} queued, {found.get('rejected', 0)} rejected{why}{unknown}"
+                      + (f"; {problems}" if problems else ""))
             for checkout, found in report["default_branches"].items():
                 print(f"default branch {checkout}: {found.get('state')} at {found.get('at')}"
                       + (f"; {found['error']}" if found.get("error") else ""))
@@ -2599,6 +2662,11 @@ def post_to_peers(arguments: argparse.Namespace, root: Path, now: float) -> int:
     repo = agents.checkout(Path.cwd()).get("repo")
     if not repo:
         raise repo_inbox.RepoInboxError(relay.NO_ORIGIN)
+    location = agents.location_of(registration) or repo
+    if location.lower() != repo.lower():
+        raise repo_inbox.RepoInboxError(f"this session relays through {location}, which agent.relay names, and the "
+                                        f"repository inbox reaches a peer only through the repository you work in, "
+                                        f"{repo}, until it learns to share a relay location")
     key = repo_inbox.sealing_key()
     detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
     if command == "ask":
