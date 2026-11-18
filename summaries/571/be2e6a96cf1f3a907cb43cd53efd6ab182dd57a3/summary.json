@@ -1,0 +1,98 @@
+{
+ "version": 1,
+ "name": "Isolate test configuration",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 571,
+  "title": "Give the console and inbox tests a home of their own",
+  "head": "be2e6a96cf1f3a907cb43cd53efd6ab182dd57a3",
+  "headRef": "tests/isolate-home",
+  "base": "75dcfa3c51b6997aa1605d751ebe4a0cee1cddfc",
+  "baseRef": "s3-relay/notices",
+  "basePr": 570
+ },
+ "overview": {
+  "summary": [
+   "Projector keeps the user configuration, including the reference to the relay key, in <code>~/.projector.toml</code>. Console and inbox tests already gave their saved state a temporary directory, but some still inherited the home directory of the person running them. A configured relay key could therefore make a test pass locally while the same code failed in CI.",
+   "This layer gives the affected test fixtures a temporary <code>HOME</code> as well as temporary <code>XDG_STATE_HOME</code>, the variable that places saved state. Two new console regressions verify that configuration comes from the test home in both the test process and a child command. Production code is unchanged."
+  ],
+  "cards": [
+   {
+    "id": "boundaries",
+    "title": "What is isolated",
+    "html": "<ul class=\"tight\"><li><b>User configuration:</b> <code>HOME</code> places <code>~/.projector.toml</code> inside the fixture.</li><li><b>Saved state:</b> <code>XDG_STATE_HOME</code> continues to place inbox and watch records inside temporary directories.</li><li><b>Child processes:</b> terminal tests pass the same temporary home to the commands they start.</li></ul>"
+   },
+   {
+    "id": "verification",
+    "title": "Review result",
+    "html": "<ul class=\"tight\"><li>The full review is clean, with no findings or suggestions.</li><li>The configured gate and exact-head CI passed, including 256 hook tests.</li><li>All 246 tests in the four affected modules passed.</li><li>Removing the two console <code>HOME</code> assignments made both new regressions fail; the original file was then restored.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "console-home",
+   "title": "Give console fixtures a private home",
+   "kicker": "Configuration lookup in the test process and its child commands",
+   "intro": [
+    "The console tests drive both an in-process console model and a console launched in a pseudo-terminal. Their fixtures now create a home directory beside the directory that holds saved state. Child commands receive that home in their environment, and conversation tests retain their separate Claude configuration directory.",
+    "The first new regression writes a synthetic relay-key reference in the fixture home and checks that the configuration reader returns it. Before writing, it verifies that the destination is inside the fixture. The second writes a panel color in the fixture home and checks the output and exit status of a child configuration command."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_console.py",
+     "collapsed": false,
+     "note": "Console fixtures now isolate HOME, and two regressions exercise user-configuration lookup across process boundaries.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 54,
+       "text": "The environment patch is registered for cleanup after the temporary directory, so cleanup restores the environment before deleting the fixture. Nested conversation setup keeps its separate Claude configuration directory."
+      },
+      {
+       "kind": "verify",
+       "line": 144,
+       "text": "With the fixture HOME assignment removed and a synthetic parent home supplied, this assertion failed before any configuration write; the parent configuration remained untouched."
+      },
+      {
+       "kind": "verify",
+       "line": 1247,
+       "text": "With the child environment HOME assignment removed, the command returned no setting and exit code 1, so this assertion failed. Both new regressions passed with the assignments restored."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "related-fixtures",
+   "title": "Isolate the related inbox and transcript fixtures",
+   "kicker": "The same configuration boundary for the remaining affected tests",
+   "intro": [
+    "Inbox tests exercise questions and notices, Codex delivery tests exercise sending those records to a session, and conversation tests locate transcript files. Each changed fixture already provided temporary saved state. It now also supplies a temporary home, so calls that consult user configuration cannot inherit the operator’s relay settings.",
+    "The shared inbox base creates a separate home directory. The small standalone cases and the Codex inbox-delivery base reuse their existing scratch directory as home. Their existing assertions and public behavior stay the same."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The four affected modules passed together: 246 tests. Existing inbox behavior, delivery, transcript lookup, and terminal behavior all remained green."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_inbox.py",
+     "note": "The inbox base and standalone changed-choice test now provide temporary HOME values alongside saved state."
+    },
+    {
+     "path": "tests/test_codex_watch.py",
+     "note": "The Codex inbox-delivery base now uses its existing temporary directory as HOME as well as the state root."
+    },
+    {
+     "path": "tests/test_conversation.py",
+     "note": "The saved Codex-rollout lookup case now supplies HOME inside its scratch directory."
+    }
+   ]
+  }
+ ]
+}
