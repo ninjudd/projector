@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+import contextlib
 import datetime
 import importlib.metadata
 import json
 import os
+import queue
 import re
 import signal
 import stat
 import subprocess
 import tempfile
+import threading
+import time
 from dataclasses import asdict, dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from typing import Callable, Iterable, Iterator, Optional
 from urllib.parse import unquote, urlsplit
 
 from . import instructions
@@ -25,6 +29,8 @@ NAME_PART = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 IPHONEOS = re.compile(rb"\biphoneos\b")
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 FRONTMATTER_LINE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):[ \t]*(.*)$")
+# A wait for another thread's work runs in slices this long, so it notices a Ctrl-C within one.
+INTERRUPT_CHECK = 0.1
 
 
 def _field_line(field: str) -> re.Pattern[str]:
@@ -133,6 +139,39 @@ def run_bounded(args: list[str], *, timeout: float, cwd: Optional[Path] = None, 
         process.communicate()
         raise
     return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+
+
+@contextlib.contextmanager
+def interruptible_waits() -> Iterator[Callable[[queue.Queue, float], object]]:
+    """Hold Ctrl-C off for the block, and give it a `wait(items, deadline)` that returns the next item from the
+    queue, raises `queue.Empty` at `deadline`, and raises KeyboardInterrupt once Ctrl-C is pressed. A Ctrl-C that
+    no wait saw raises KeyboardInterrupt as the block ends.
+
+    Raised by Python's own handler, KeyboardInterrupt can land inside `threading`'s lock code, which then fails with a
+    RuntimeError, and a wait that the signal arrives just before, or that another thread takes the signal during,
+    sleeps through it to its timeout. So the handler only records the signal, and each wait runs in slices of
+    `INTERRUPT_CHECK` seconds. Python runs signal handlers on the main thread only, and only it can set one."""
+    interrupted: list[int] = []
+    handling = threading.current_thread() is threading.main_thread()
+    if handling:
+        previous = signal.signal(signal.SIGINT, lambda number, frame: interrupted.append(number))
+
+    def wait(items: queue.Queue, deadline: float) -> object:
+        while not interrupted:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise queue.Empty
+            with contextlib.suppress(queue.Empty):
+                return items.get(timeout=min(remaining, INTERRUPT_CHECK))
+        raise KeyboardInterrupt
+
+    try:
+        yield wait
+    finally:
+        if handling:
+            signal.signal(signal.SIGINT, previous)
+    if interrupted:
+        raise KeyboardInterrupt
 
 
 class InitError(ProjectorError):

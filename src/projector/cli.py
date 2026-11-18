@@ -64,6 +64,7 @@ from .core import (
     discover_git_root,
     distribution_version,
     grouped_projects,
+    interruptible_waits,
     json_scalar,
     json_text,
     state_home,
@@ -1309,8 +1310,6 @@ JOIN_TIMEOUT = 30 * 60.0
 # A line `key grant` prints is 318 characters, so a longer paste is something else.
 MAX_PASTE = 4096
 STORED_NOTHING = "nothing was stored"
-# A prompt waits for its line in slices this long, so it notices a Ctrl-C within one.
-INTERRUPT_CHECK = 0.1
 
 
 def add_agent_parser(subcommands) -> None:
@@ -1368,11 +1367,7 @@ def add_agent_parser(subcommands) -> None:
 def terminal_line(prompt: str, deadline: float, outcome: str) -> str:
     """A line typed at the terminal by `deadline`, of at most `MAX_PASTE` bytes, or an error that ends with
     `outcome`, such as "nothing was stored". A thread reads standard input's file descriptor a byte at a time, so a
-    read that never returns cannot hold the process, and no byte after the line is consumed.
-
-    Ctrl-C raises KeyboardInterrupt here only between waits. Raised by Python's own handler, it can land inside
-    `threading`'s lock code, which then fails with a RuntimeError, and a wait that the signal arrives just before,
-    or that another thread takes the signal during, sleeps through it to its timeout."""
+    read that never returns cannot hold the process, and no byte after the line is consumed."""
     stream = sys.stdin.fileno()
     lines: queue.Queue = queue.Queue()
 
@@ -1385,22 +1380,13 @@ def terminal_line(prompt: str, deadline: float, outcome: str) -> str:
             pass
         lines.put(bytes(data))
 
-    interrupted: list[int] = []
-    previous = signal.signal(signal.SIGINT, lambda number, frame: interrupted.append(number))
-    try:
+    with interruptible_waits() as wait:
         print(prompt, end="", flush=True)
         threading.Thread(target=read, name="terminal", daemon=True).start()
-        data = None
-        while data is None and not interrupted:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise relay.RelayError(f"nothing was entered within {JOIN_TIMEOUT / 60:g} minutes, so {outcome}")
-            with contextlib.suppress(queue.Empty):
-                data = lines.get(timeout=min(remaining, INTERRUPT_CHECK))
-    finally:
-        signal.signal(signal.SIGINT, previous)
-    if interrupted:
-        raise KeyboardInterrupt
+        try:
+            data = wait(lines, deadline)
+        except queue.Empty:
+            raise relay.RelayError(f"nothing was entered within {JOIN_TIMEOUT / 60:g} minutes, so {outcome}") from None
     if len(data) > MAX_PASTE:
         raise relay.RelayError(f"the line is longer than {MAX_PASTE} bytes, so {outcome}")
     return data.decode("utf-8", "replace").strip()

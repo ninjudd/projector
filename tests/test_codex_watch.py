@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -788,3 +789,32 @@ for line in sys.stdin:
     def test_a_silent_server_is_given_up_on_without_a_verdict(self):
         executable = self.fake(self.hooks("modified"), answers=False)
         self.assertIsNone(codex.hook_problem(executable, str(self.root), timeout=0.5))
+
+    def test_a_ctrl_c_ends_the_wait_for_a_silent_server_before_its_timeout(self):
+        # A SIGINT that another thread takes trips Python's signal flag without waking the main thread's wait, as
+        # one arriving just before the wait does; the striker sends it once the check waits for an answer.
+        executable = self.fake(self.hooks("modified"), answers=False)
+        waiting = threading.Event()
+
+        class Watched(codex.queue.Queue):
+            def get(self, *args, **kwargs):
+                waiting.set()
+                return super().get(*args, **kwargs)
+
+        def strike() -> None:
+            waiting.wait()
+            signal.pthread_kill(threading.get_ident(), signal.SIGINT)
+
+        handler = signal.getsignal(signal.SIGINT)
+        striker = threading.Thread(target=strike)
+        timeout = 5.0
+        deadline = time.monotonic() + timeout
+        with mock.patch.object(codex.queue, "Queue", Watched):
+            striker.start()
+            with self.assertRaises(KeyboardInterrupt):
+                codex.hook_problem(executable, str(self.root), timeout=timeout)
+        ended = time.monotonic()
+        striker.join()
+
+        self.assertLess(ended, deadline)
+        self.assertIs(handler, signal.getsignal(signal.SIGINT))
