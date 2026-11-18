@@ -31,7 +31,7 @@
    {
     "id": "rereview",
     "title": "Finding verification",
-    "html": "<ul class=\"tight\"><li>The newer-head verdict and Windows timeout findings remain verified fixed.</li><li>The cleanup finding remains open after the rebase; its runner code is unchanged.</li><li>Temporary local fixtures confirm the lock deletion. No live agent, real credential, review workflow, or Windows machine was used.</li></ul>"
+    "html": "<ul class=\"tight\"><li>The newer-head verdict and Windows timeout findings remain verified fixed.</li><li>The author accepted the remaining handover case and described a lock-fence fix, but the pull request still points to the same head without that fix.</li><li>The temporary handover fixture still loses the next owner’s lock and shared state. The existing finding stays open with no duplicate thread.</li><li>The configured gate passed again. No live agent, real credential, or review workflow was used.</li></ul>"
    }
   ]
  },
