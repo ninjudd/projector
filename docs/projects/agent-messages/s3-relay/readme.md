@@ -1,0 +1,252 @@
+---
+status: ready
+priority: next
+---
+
+# Relay through an S3 bucket
+
+`agent.relay = "s3://<bucket>/<prefix>"` carries the relay's sealed records
+as objects in an S3 bucket, or any store that speaks S3 with conditional
+writes, instead of as refs in a Git repository. The relay then answers in
+seconds, and its cost does not grow with a repository's ref count.
+
+## 1. Problem
+
+The relay (`../readme.md` § 2.2) stores each sealed record as a ref in a
+GitHub repository, and `../shared-relay/readme.md` lets you choose that
+repository. Git makes the relay free to set up, but it limits how fast and how
+far it goes:
+
+- **Latency.** A daemon fetches once per watch pass, every `watch.interval`
+  seconds: 60 by default and at least 30. A message or peers reply waits up to
+  that long before its recipient sees it, and each fetch from GitHub takes
+  about 0.8 seconds even when it finds nothing.
+- **Leftovers.** Every renewal and every message leaves a commit in the
+  repository's object store after its ref is gone, and GitHub keeps a
+  deleted ref's commit readable by its SHA until GitHub Support collects it.
+  A company relay accumulates them from every person's agents.
+- **Scale.** Each push carries a pass's changes in one Git transaction, and
+  every relay shares GitHub's rate limits on Git operations with the people
+  pushing code.
+
+An object store has none of these costs. Listing a prefix takes tens of
+milliseconds, a deleted object is gone, and S3 now supports the conditional
+writes that the relay's leases need.
+
+## 2. Solution
+
+Accept `s3://<bucket>/<prefix>` as a relay location, beside
+`github:<owner>/<repo>`. Behind the relay job, add a transport with three
+operations: list the records under some prefixes with their versions, read
+one record, and apply a batch of changes with expected versions. The Git code
+that exists today becomes the Git transport, unchanged in behavior. A new S3
+transport implements the same three operations with `ListObjectsV2`,
+`GetObject`, `PutObject`, and `DeleteObject`, signed with AWS Signature
+Version 4 from the standard library. Each object holds one `sealed.json`,
+named like its ref, and its ETag plays the part of a commit SHA:
+`If-None-Match: *` creates, `If-Match: <etag>` updates or deletes under a
+lease, and a `412` is a stale lease. Objects are laid out by recipient key,
+`<prefix>/<key-id>/…`, so one listing per poll finds everything addressed to
+you. An S3 location is polled every `agent.s3_poll` seconds, 10 by default,
+on the relay's worker pool. Everything above the transport stays as it is:
+sealing, the outbox, the checks before opening, delivery, the peers inbox,
+and the controls in `../shared-relay/readme.md` § 2.3.
+
+### 2.1 Runtime flow
+
+1. **Configure.** You set `agent.relay = "s3://acme-agents/relay"` in the
+   `.projector.toml` whose reach you want, and run `project agent relay
+   allow s3://acme-agents/relay` when that file is not `~/.projector.toml`,
+   as for any location. `agent.s3_region`, `agent.s3_endpoint`, and
+   `agent.s3_profile` say where the bucket is and which credentials to use.
+2. **Find credentials.** The S3 client takes the first of these that is
+   present, reads it again when it expires, and never prints, logs, or
+   passes a secret as a process argument:
+   1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
+      `AWS_SESSION_TOKEN` in the daemon's environment.
+   2. The profile named by `agent.s3_profile`, then `AWS_PROFILE`, then
+      `default`, in `~/.aws/credentials` and `~/.aws/config`, which
+      `configparser` reads.
+   3. That profile's `credential_process`, run through `core.run_bounded`
+      with a 30-second timeout. Its JSON gives the keys and an
+      `Expiration`. This covers AWS IAM Identity Center sign-in through
+      `aws configure export-credentials --format process`.
+
+   The region comes from `agent.s3_region`, then `AWS_REGION` or
+   `AWS_DEFAULT_REGION`, then the profile, then `us-east-1`. With no
+   credentials, the location's state is `off` with the reason in
+   `project agent list` and `watch status`.
+3. **Probe the store.** On first use and on each full pass, the job checks
+   two things and records the result in the location's cache:
+   - **Not public.** An unsigned `ListObjectsV2` on the prefix must fail. If
+     it succeeds, anyone can list the relay, so the location is `off` with
+     the reason `the bucket lets anyone list s3://…`.
+   - **Conditional writes.** `PutObject` with `If-None-Match: *` on
+     `<prefix>/<key-id>/probe/<machine-id>` must succeed, and the same request
+     again must answer `412`. A store that ignores the condition would break
+     every lease, so the location is `off` with the reason `this store does
+     not honor If-None-Match`. The probe object is then deleted.
+4. **Poll.** Each S3 location's job runs when its outbox changes, as today,
+   and otherwise every `agent.s3_poll` seconds. It lists
+   `<prefix>/<own-key-id>/`, following continuation tokens. It also lists
+   `<prefix>/<key-id>/` for each key this machine gave up, as the Git
+   transport fetches those namespaces today. The listing gives each object's
+   name, ETag, and size, which the job keeps in the cache's `remote` map in
+   place of commit SHAs.
+5. **Open.** The job applies the existing limits. It examines at most
+   `EXAMINE_LIMIT` new objects and opens at most `OPEN_LIMIT`. It rejects a
+   name outside the layout in § 2.3, and rejects an object over 32 KiB
+   without reading it, because the listing already gave its size. That
+   replaces the Git transport's tree check. It reads the rest with
+   `GetObject` and `If-Match: <etag>`, so it reads the version it listed.
+   From there, opening, checking, and delivering are the code that runs
+   today.
+6. **Apply changes.** The outbox holds the same items as for Git, each with
+   the version its lease expects. The transport sends one request per item,
+   up to 8 at a time:
+
+   | Change | Request | Lease failure |
+   | --- | --- | --- |
+   | Create | `PutObject` with `If-None-Match: *` | `412`: the object exists |
+   | Update | `PutObject` with `If-Match: <old-etag>` | `412` |
+   | Delete | `DeleteObject` with `If-Match: <old-etag>` | `412`; a `404` counts as deleted |
+
+   A `412` marks the item stale, as a lease failure does today, so `rebase`
+   gives it the version the next listing finds, or drops a stale deletion
+   of another machine's record. A `409`, a `5xx`, or a timeout keeps the item
+   queued with the error for the next job. A request that succeeds returns
+   the new ETag, which the job records as the item's landed version.
+7. **Report.** `project agent relay show` prints an S3 location with its
+   region, its endpoint, where the credentials came from, such as `profile
+   acme`, never the keys, and the probe's result.
+
+### 2.2 Settings
+
+| Setting | Type and meaning |
+| --- | --- |
+| `agent.relay` | Gains the form `s3://<bucket>/<prefix>`. The prefix may be empty, holds no `..`, and has no trailing `/`. |
+| `agent.s3_region` | `str`, optional. The bucket's region. |
+| `agent.s3_endpoint` | `str`, optional. An `https://` URL for a store that speaks S3, such as Cloudflare R2 or MinIO. With it, requests use path-style addressing. Without it, they go to `https://<bucket>.s3.<region>.amazonaws.com`. |
+| `agent.s3_profile` | `str`, optional. The AWS profile to read credentials from. |
+| `agent.s3_poll` | `int`, default 10 (kept in `relay.py`), minimum 2. Seconds between polls of an S3 location. |
+
+Every one of these is read from every layer, like `agent.relay`, and none
+holds a secret.
+
+### 2.3 Objects
+
+Each object's body is one `sealed.json`, as a ref's tree holds today, with
+`Content-Type: application/json`. Its name is its ref's name with
+`refs/projector/` replaced by the prefix and with the recipient's key ID
+moved to the front:
+
+| Ref | Object |
+| --- | --- |
+| `refs/projector/agents/<key-id>/<relay-id>` | `<prefix>/<key-id>/agents/<relay-id>` |
+| `refs/projector/inbox/<key-id>/<relay-id>/<id>` | `<prefix>/<key-id>/inbox/<relay-id>/<id>` |
+| `refs/projector/user/<key-id>/<id>` | `<prefix>/<key-id>/user/<id>` |
+| `refs/projector/user-state/<key-id>/<id>` | `<prefix>/<key-id>/user-state/<id>` |
+
+The transport maps between the two forms, so the job, the outbox, and the
+cache keep using ref names. A location's cache and outbox live at
+`relay/s3/<digest>.json` and `outbox/s3/<digest>.json`. The digest is the
+first 16 hex digits of the SHA-256 of the location, and each file records the
+location itself.
+
+### 2.4 Components
+
+| File | Change |
+| --- | --- |
+| New `src/projector/s3.py` | A small S3 client from the standard library. It signs requests with Signature Version 4 over `hmac` and `hashlib`, and sends them with `urllib.request` and the default `ssl` context, with a 30-second timeout. It finds credentials as § 2.1 step 2 describes. It provides `list_objects(prefix)`, `get_object(name, if_match)`, `put_object(name, body, if_match=None, if_none_match=False)`, and `delete_object(name, if_match)`, and raises `PreconditionFailed`, `NotFound`, and `S3Error`. It reads at most 1 MiB of any response, refuses an XML body that holds a `<!DOCTYPE`, and parses listings with `xml.etree.ElementTree`. Its errors and its `repr` never include a secret key or a session token. |
+| `src/projector/relay.py` | Add the `Transport` interface: `snapshot(prefixes)`, `read(ref, version)`, and `apply(items)`. Move today's fetch, `for-each-ref`, `ls-tree`, `cat-file`, `write_commit`, and push code into `GitTransport`, without changing its behavior. Add `S3Transport` with the mapping in § 2.3 and the requests in § 2.1 step 6, and the probe in § 2.1 step 3. `Job` takes a transport, and its examine step asks the transport whether an object is too large before it reads one. Key caches and outboxes of S3 locations as § 2.3 says. |
+| `src/projector/config.py` | Accept `s3://` in `relay_location`. Add the four `agent.s3_*` settings, and `agent.s3_poll` to `MINIMUMS` with 2. |
+| `src/projector/watch.py` | Start an S3 location's job every `agent.s3_poll` seconds as well as when its outbox changes, and report its probe result and credential source in `watch status`. |
+| `src/projector/cli.py` | Show S3 locations in `project agent relay show`, as § 2.1 step 7 says. |
+| `docs/cli.md` | Document the S3 relay. Give the IAM policy each person needs: `s3:ListBucket` on the bucket with an `s3:prefix` condition, and `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on `<prefix>/*`. Recommend a lifecycle rule that expires objects after 8 days, as a backstop for the relay's own 7-day sweep. Say that a bucket with versioning keeps deleted records. |
+| New `tests/test_s3.py`, `tests/test_relay.py` | The criteria in § 4, against a fake S3 server that the tests run on a local port. |
+
+## 3. Why this design
+
+- **Add a transport rather than branch inside the job.** The relay's hard
+  parts are sealing, the outbox and its leases, the bounded checks before
+  opening, and delivery. None of them depends on Git. A transport with three
+  operations keeps them in one place for both stores, and moving the Git
+  code behind it changes no behavior that the existing tests pin.
+- **Map leases onto conditional requests.** A ref lease expects a commit,
+  and an S3 conditional request expects an ETag. S3 accepts `If-None-Match`
+  on `PutObject`, and `If-Match` on `PutObject` and `DeleteObject` in general
+  purpose buckets, at no extra cost, so the outbox's rules carry over
+  exactly.
+- **Lay objects out by recipient key.** Everything a machine must read sits
+  under one prefix, so a poll is one listing, or a few for a large backlog,
+  however many people share the bucket.
+- **Keep the standard library.** Projector's core takes no runtime
+  dependencies, and `boto3` would add tens of megabytes. Signature Version 4
+  is a published algorithm with AWS's test suite to check it against, and
+  the relay needs only four operations.
+- **Refuse a public or unconditional store.** A bucket anyone can list
+  exposes the same metadata a public relay repository would, and a store
+  that ignores conditions would let two machines overwrite each other's
+  leases without either noticing.
+- **Poll first.** Polling every 10 seconds already cuts the Git relay's
+  latency by a factor of 6 or more, with no infrastructure beyond the
+  bucket. Event notifications need a queue or a server per subscriber, so
+  they wait for a hosted relay (§ 6).
+- **Rejected: running the `aws` CLI for each request.** It adds a process per
+  request and an install the core does not require. Its credential support
+  is still reachable through `credential_process`.
+
+## 4. Acceptance criteria
+
+The tests run a fake S3 server on a local port. It implements
+`ListObjectsV2` with continuation, `GetObject`, `PutObject`, and
+`DeleteObject` with `If-Match` and `If-None-Match`, and it checks each
+request's Signature Version 4. They point `agent.s3_endpoint` at it, and run
+the relay tests' two-machine setup with an S3 location.
+
+| Exercise | Expected result, and the bug it catches |
+| --- | --- |
+| Sign the requests in cases from the AWS Signature Version 4 test suite, such as `get-vanilla`. | Each signature matches the suite's. Catches a wrong canonical request or signing key. |
+| Register A on machine 1 and B on machine 2 with an S3 location, send from A to B, and reply. | Each machine lists the other's agent, the message and reply arrive, and the Git `origin` gains no ref. Catches a job that still uses Git. |
+| Send from A while machine 2 polls every `agent.s3_poll` seconds. | B's line is appended within `agent.s3_poll` plus 2 seconds of the send. Catches a location polled only on watch passes. |
+| Renew A's presence from two jobs at once. | One `PutObject` succeeds. The other gets `412`, is marked stale, and lands after the next listing with that version as its lease. Catches a lease the transport does not send. |
+| Delete an object another machine already deleted. | The `404` counts as deleted, and the outbox empties. Catches a deletion retried forever. |
+| List an object of 33 KiB, an object with a malformed name, and 300 new valid objects. | The first is rejected with no `GetObject`, the second is ignored, and the job examines 256 and opens 64. Catches a transport that reads unbounded input. |
+| Make the fake server ignore `If-None-Match`, then let it answer an unsigned listing. | The location is `off` with each reason, and nothing else is written. Catches a relay on a store that breaks leases, or on a public bucket. |
+| Give credentials through the environment, then a profile, then a `credential_process` whose credentials expire during the test. | Each signs correctly, and the expired credentials are read again. No output, log line, `watch status`, or process argument holds the secret key or the token. Catches a credential leak and a stale session. |
+| Make `credential_process` hang, and make the server hang on a request. | The process is killed after 30 seconds and the request times out, each with the error in `watch status`. A Codex event for an unrelated session still arrives within 2 seconds. Catches an S3 call that stalls the daemon's loop. |
+| Answer a listing with a `<!DOCTYPE` body, and with a body over 1 MiB. | Each is an error for that job, and nothing is parsed. Catches an XML entity attack and unbounded reads. |
+| Run the existing Git relay tests unchanged. | They pass. Catches a behavior change from moving the Git code behind `GitTransport`. |
+| Read every object in the fake bucket after an exchange. | No object holds a name, summary, or text in plain form. Catches plaintext reaching the store. |
+
+Each test must fail when the fault it names is introduced, as
+`skills/testing.md` asks. After merge, relay between two real machines
+through an S3 bucket with the IAM policy in `docs/cli.md`, and record the
+observed delivery time in this plan.
+
+## 5. Cost
+
+- **Requests.** One `ListObjectsV2` per location per poll on each machine:
+  8,640 a day at the default 10 seconds, about $0.04 a day at S3 Standard's
+  listed $0.005 per 1,000 in `us-east-1`. Each record costs one `PutObject`
+  to write, one `GetObject` per reader, and one `DeleteObject`.
+- **Storage.** Records are at most about 22 KiB and live at most 7 days, so
+  storage costs nothing worth measuring.
+- **Daemon.** S3 calls run on the relay's worker pool, never on the loop that
+  scans sessions, and each is bounded by its timeout. Signing costs a few
+  HMAC operations per request.
+- **Latency.** Sending waits about a second for the daemon to see the outbox
+  plus one request, and receiving waits up to one poll, so about 10 seconds
+  at worst by default, against 60 for the Git relay.
+
+## 6. Open questions
+
+- **A hosted relay.** Deferred. Projector could run an S3-compatible relay as
+  a paid service, with credentials scoped to each key's prefix and
+  `agent.s3_endpoint` pointing at it. Nothing in this plan stands in its way.
+  A hosted relay could also push notifications, which § 3 leaves for later.
+- **Instance and container credentials.** Deferred. The client reads no
+  EC2 instance metadata or container credentials, because the relay runs on
+  people's own machines.
+</content>
+</invoke>
