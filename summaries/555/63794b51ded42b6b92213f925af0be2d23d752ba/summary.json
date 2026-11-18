@@ -1,0 +1,108 @@
+{
+ "version": 1,
+ "name": "Dependent work stacking",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 555,
+  "title": "Keep working by stacking on unmerged pull requests, and build overlapping work as one stack",
+  "head": "63794b51ded42b6b92213f925af0be2d23d752ba",
+  "headRef": "work-stack-dependents",
+  "base": "f78962341ca90ab1d29e4bef0e4a8df0db6ece22",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s skills are instructions for agents carrying out implementation work. A session could stop at an unmerged prerequisite or build overlapping changes on separate branches. This change tells it to extend one stack of dependent pull requests and keep working on everything it can complete.",
+   "The workflow also directs agents to build recommendations so that a different answer is easy to swap in, then ask the user to confirm. Hard-to-undo or external actions are an explicit exception: those wait for authorization. The stopping point becomes visible in the inbox, with a completion notice or an actionable request. The user still owns each merge.",
+   "This head also tells finished fixer agents to detach their worktrees, and adds a recovery procedure for stack branches held by other worktrees. The review found that the recovery copies remote heads and can omit a fix that is committed only locally."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation",
+    "html": "<ul class=\"tight\"><li>Configured gate passed: both plugin validations, 268 hook tests, hook type checking, and whitespace checks.</li><li><a href=\"https://github.com/ninjudd/projector/actions/runs/44328550622/job/134886358110\">CI passed on this exact head</a>; the job API confirms the commit.</li><li>A temporary two-layer Git repository reproduced a recovery that pushes successfully without the local fix.</li><li>No autonomous agent run performed.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review result",
+    "html": "<p><a href=\"https://github.com/ninjudd/projector/pull/555#pullrequestreview-5959009854\">Changes requested</a>: preserve local fixes when creating recovery copies. The earlier work-continuation and stack-placement instructions remain covered.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "stack-placement",
+   "title": "Keep overlapping work in one stack",
+   "kicker": "Choose a dependency chain before starting parallel work",
+   "intro": [
+    "A stack is a chain of pull requests, with each layer based on the one below. The implementation workflow now puts changes that share files or depend on an open stack above that stack.",
+    "When work depends on two stacks, the agent combines them where authorized or starts with layers that need only one. Every layer must remain safe to merge independently.",
+    "If another worktree holds a stack branch, the new fallback copies the layers to new branches, rebases those copies, validates them, and pushes them with explicit leases. The intended benefit is to leave the held branches alone while updating GitHub."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Compared stack placement and recovery with the implementation and fixer commit/rebase/push paths. The existing draft, ownership, independent layer safety, and merge-checkpoint rules remain in place."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "collapsed": false,
+     "note": "The first addition chooses one stack for overlapping work. The later addition provides the worktree recovery commands, where the review found a missing local-fix transfer.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 432,
+       "text": "The recovery copies origin/<layer>, so it omits a fix committed only on the local layer. Reproduced with a bottom fix and a held top worktree: both leased pushes succeeded while both remote heads remained unchanged. Preserve local layer heads and record remote heads separately for leases."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "work-continuation",
+   "title": "Continue until only the user can unblock work",
+   "kicker": "Separate an unmerged dependency from a genuine prerequisite",
+   "intro": [
+    "The work workflow points agents to the implementation stack rules instead of treating an unmerged dependency as a stopping point. It directs them to build a recommendation in a form that is easy to replace, ask for confirmation, and continue. Hard-to-undo or external actions are excluded from guesses.",
+    "When nothing remains to build, the agent posts a completion notice or a request with steps for the user. Its final report lists inbox items first, followed by pull requests, recorded decisions, and remaining work."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Read the complete work workflow and followed its links to the decision, inbox, and stack sections. The recommendation rule requires easy reversal and explicitly excludes hard-to-undo or external actions; the preamble retains repository and skill authorization limits."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/work/SKILL.md",
+     "collapsed": false,
+     "note": "The additions connect dependency handling, reversible recommendations, and final handover. A request for an action requiring authorization is distinct from leaving a bare question as the final response."
+    }
+   ]
+  },
+  {
+   "id": "release-fixer-branches",
+   "title": "Release finished fixer branches",
+   "kicker": "Detach a finished subagent’s worktree before the next stack update",
+   "intro": [
+    "The fixer workflow now tells a finished subagent to leave its worktree on a detached HEAD. The worktree remains available while its branch becomes free for later updates."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Read the fixer worktree and handoff rules, and used a held top-layer worktree in the recovery reproduction. The new detach instruction acts only on the fixer’s own finished worktree."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "collapsed": false,
+     "note": "The addition belongs to the existing per-pull-request subagent isolation and handoff instructions."
+    }
+   ]
+  }
+ ]
+}
