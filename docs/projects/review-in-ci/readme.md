@@ -437,11 +437,14 @@ each repository's visibility with `gh repo view --json visibility`, and
 leaves it out with a warning unless one of these holds:
 
 - **The context repository is public.**
-- **Neither repository is public.** The repository's committed list is the
-  owner's explicit choice to share one private repository's code with the
-  other's reviewers.
+- **Both repositories are private or internal.** The repository's committed
+  list is the owner's explicit choice to share one private repository's
+  code with the other's reviewers.
 
-A failed visibility check counts as not public.
+Each condition needs a visibility that a check reported. A failed check
+proves nothing, so a context repository whose own check fails is left out,
+and so is every private or internal one when the reviewed repository's
+check fails.
 
 ### 2.10 `project init --ci-review` sets a repository up
 
@@ -624,6 +627,7 @@ file:
 | Make the agent exit without publishing, such as by giving it a model ID the CLI refuses | The job fails, the start comment and `reviewing` label are gone, and one comment names the head and the run |
 | Run `project review status` on the reviewed pull request from a session with `review.reviewers` set, and without it | The bot's verdict signs the head off with the setting, and is ignored without it |
 | List a private repository in `review.context_repos` of a public repository | The run warns and leaves it out, and the agent's working folders do not include it |
+| List a private repository in `review.context_repos`, and make the reviewed repository's own visibility check fail | The run warns and leaves it out, as it does for a public repository |
 | Inside the agent, run `git push` and `gh pr merge` | Both are refused, in auto mode and in allowlist mode |
 | Review a pull request in Projector's repository, which hosts its site | The `summary` job pushes the summary, the site workflow deploys it, and the pull request gets the link comment and the description line |
 | Push a new head while an older run's `summary` job waits | The older summary is pushed to the site, but the comment and the description link only the newer head's summary |
@@ -694,8 +698,10 @@ These tests fail before the change, and each catches the bug it names:
   calls no `gh secret` command. Catches an agent's or a CI job's `init` that
   adds a workflow nobody asked for.
 - **`test_context_repo_visibility`.** A private, internal, or unreadable
-  context repository is left out of a public repository's review. Catches a
-  private repository's code reaching a public review.
+  context repository is left out of a public repository's review, and a
+  private or internal one is left out when the reviewed repository's own
+  check fails. Catches a private repository's code reaching a public
+  review, including through a lookup that failed.
 
 ## 5. Cost
 
