@@ -286,11 +286,15 @@ full pass, which transfers only commits this clone lacks.
 
 ## 6. Open questions
 
-- **A personal file inside a checkout.** Deferred. A repository that tracks
-  `.projector.toml` leaves no room for an untracked one beside it, so a
-  person's per-checkout setting goes in a parent directory or in
-  `~/.projector.toml`. A `.projector.local.toml` that Git ignores could
-  follow if that proves awkward.
+- **A setting for one checkout only.** Deferred. Overrides already let a
+  parent directory's file or `~/.projector.toml` beat a value the repository
+  commits, which was the main reason for a personal file inside a checkout.
+  What remains is scope: checkouts usually sit side by side under one
+  parent, so a parent file reaches all of them, and a setting meant for one
+  repository, such as turning off the default-branch fetch for a very large
+  one, has no file of its own. Moving that checkout into a directory of its
+  own works today. A `.projector.local.toml` that Git ignores, read from disk
+  just above the repository's own file, could follow if that proves awkward.
 - **Superprojects.** Deferred. A file tracked by a superproject that contains
   the repository as a submodule is read from disk, like any file another
   repository tracks.
