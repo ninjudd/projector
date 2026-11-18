@@ -1,0 +1,117 @@
+{
+ "version": 1,
+ "name": "S3 relay client",
+ "project": "agent-messages/s3-relay",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 568,
+  "title": "Add an S3 client from the standard library for the relay",
+  "head": "be61f903746be5a5847d60870c851f62b39bcebb",
+  "headRef": "s3-relay/client",
+  "base": "bfa35d893216c5f3c824c9492264dc26ae8f2613",
+  "baseRef": "s3-relay/transport",
+  "basePr": 567
+ },
+ "overview": {
+  "summary": [
+   "The relay moves encrypted agent messages between machines. This stack adds an S3 bucket as another place to store those messages, alongside the Git transport. This layer supplies the HTTP client; the next layer connects it to the relay.",
+   "The client uses Python’s standard library, signs requests with AWS Signature Version 4, and attaches the conditions that prevent one machine from overwriting another machine’s newer record. Credentials come from the environment, an AWS profile, or that profile’s external credential process.",
+   "The current head fixes all three findings from the first review. The XML parser refuses document types after decoding the response, DNS waiting shares the request deadline, and credentials returned by a refresh are checked against the clock after the helper finishes."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used here",
+    "html": "<ul><li><b>Signature Version 4:</b> AWS’s scheme for authenticating a request with a timestamp and a keyed hash.</li><li><b>ETag:</b> the object version token used by conditional reads, writes, and deletions.</li><li><b>Credential process:</b> a local command that returns access keys and an optional expiration time as JSON.</li></ul>"
+   },
+   {
+    "id": "verification",
+    "title": "Verification at this head",
+    "html": "<ul><li>The configured gate and exact-head CI check passed.</li><li>The S3 and packaging suite passed all 31 tests against local fixtures.</li><li>Independent checks confirmed that UTF-16 DTDs and expired refreshed keys are refused, and a delayed DNS request ends at its deadline.</li><li>No live cloud operation was exercised.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "client",
+   "title": "Sign and bound S3 requests",
+   "kicker": "A small HTTP client supplies the relay’s object-store operations",
+   "intro": [
+    "An S3 object holds one sealed relay record. The client lists object names and their ETags, reads an exact version with <code>If-Match</code>, creates an absent object with <code>If-None-Match: *</code>, and conditionally replaces or deletes an existing version. HTTP 412 becomes <code>PreconditionFailed</code>, so the next layer can recognize a stale lease.",
+    "Every signed request includes the host, payload hash, timestamp, and optional session token. The client refuses redirects and caps response bodies and listing pages. It rejects XML document types at the parser boundary, bounds DNS waiting and socket connection attempts by one deadline, and checks the lifetime of refreshed credentials before signing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/s3.py",
+     "note": "Introduces request signing, credential lookup and refresh, the four S3 operations, and HTTP/XML limits.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 397,
+       "text": "Verified that UTF-16 DTDs raise S3Error. The parser refuses the decoded document-type declaration before any declared entity can expand."
+      },
+      {
+       "kind": "verify",
+       "line": 368,
+       "text": "A local resolver delayed by 0.7 seconds returned control to a 0.1-second request in 0.11 seconds. The regression suite also checks a lookup blocked until test cleanup."
+      },
+      {
+       "kind": "verify",
+       "line": 253,
+       "text": "Verified that keys which expire while a credential helper runs are rejected before a request is sent; the new tests also cover keys within the refresh margin."
+      },
+      {
+       "kind": "verify",
+       "line": 479,
+       "text": "Ran the signing vectors and fake-store operation suite. Ordinary signatures, signed Host values, pagination, and conditional headers passed."
+      },
+      {
+       "kind": "context",
+       "line": 367,
+       "text": "A resolver call that never returns leaves its daemon lookup thread behind. The request stops waiting at the deadline; the plan records this remaining thread lifetime."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Check signatures and object operations locally",
+   "kicker": "A fake store verifies the bytes the client sends",
+   "intro": [
+    "The fake S3 server runs on a local port and independently verifies the signature from the request bytes. It tracks object ETags and credentials, can reject stale conditions, and can simulate public listings, hangs, and malformed bodies.",
+    "The tests check AWS signing vectors, pagination, conditional writes and deletes, credential precedence and refresh, body limits, and response timeouts. New regressions cover DTD rejection across UTF-8 and UTF-16, stalled DNS with the signed host preserved, and keys whose expiration passes while the credential helper runs. The S3 and packaging run passed all 31 tests."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/fake_s3.py",
+     "note": "Adds the reusable local S3 server, independent signature verification, and failure controls.",
+     "collapsed": true
+    },
+    {
+     "path": "tests/test_s3.py",
+     "note": "Exercises signing, object operations, credential sources, refresh, and request bounds against the fake store.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "plan",
+   "title": "Record the client decisions",
+   "kicker": "The in-progress plan records choices settled by this layer",
+   "intro": [
+    "The plan records why HTTP requests do not follow redirects, why dotted AWS bucket names use path-style addressing, and why listings stop at 50 pages. It also records AWS credential-file overrides, expired-sign-in notices, and the published vectors used to check signing. Section 8 now also records parser-level document-type rejection, the DNS deadline and remaining lookup-thread lifetime, and the post-refresh credential check."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/s3-relay/readme.md",
+     "note": "Appends client decisions in section 8 while the S3 relay project remains in progress.",
+     "collapsed": true
+    }
+   ]
+  }
+ ]
+}
