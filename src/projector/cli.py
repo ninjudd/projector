@@ -1842,12 +1842,10 @@ def config_file(arguments: argparse.Namespace) -> Path:
         raise EnvironmentError(f"{error}; pass --user or --file to name a configuration file") from error
 
 
-def report_override(arguments: argparse.Namespace, change: Change) -> None:
+def report_override(config: Optional[Config], change: Change) -> None:
     """Say on stderr when the merged configuration here does not give the value just written."""
 
-    try:
-        config = load_config(config_start(arguments))
-    except ConfigError:
+    if config is None:
         return
     effective = config.get(change.key)
     if same_value(effective, change.new):
@@ -1871,13 +1869,23 @@ def change_config(arguments: argparse.Namespace) -> int:
         change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value))
     else:
         change = unset_value(path, arguments.key)
+    try:
+        config: Optional[Config] = load_config(config_start(arguments))
+    except ConfigError:
+        config = None
+    # A file the repository tracks applies from the default branch, so a change to its working copy waits there.
+    written = change.path.parent.resolve() / change.path.name
+    waits = config.committed.get(written) if config is not None and change.action != "unchanged" else None
     if arguments.json_output:
         print(json_text({"action": change.action, "key": change.key, "old": redact(change.key, change.old),
-                         "new": redact(change.key, change.new), "file": str(change.path)}), flush=True)
+                         "new": redact(change.key, change.new), "file": str(change.path),
+                         **({"takes_effect_on_merge_to": waits} if waits else {})}), flush=True)
     else:
         shown = "" if change.new is None else f" = {format_value(redact(change.key, change.new))}"
-        print(f"{change.action} {change.key}{shown} in {change.path}", flush=True)
-    report_override(arguments, change)
+        pending = f"; takes effect once this change merges to {waits}" if waits else ""
+        print(f"{change.action} {change.key}{shown} in {change.path}{pending}", flush=True)
+    if not waits:
+        report_override(config, change)
     return 0
 
 
@@ -1919,20 +1927,25 @@ def run_config(arguments: argparse.Namespace) -> int:
                 json_text(
                     {
                         "config": redact("", config.values),
-                        "sources": {key: str(path) for key, path in config.sources.items()},
+                        "sources": {key: str(source) for key, source in config.sources.items()},
+                        "notes": [{"file": str(path), "note": note} for path, note in config.notes],
                     }
                 )
             )
         else:
+            for path, note in config.notes:
+                print(f"project: {path}: {note}", file=sys.stderr)
             for key in sorted(flat):
-                print(f"{key} = {format_value(redact(key, flat[key]))}")
+                print(f"{key} = {format_value(redact(key, flat[key]))}  # {config.source(key)}")
         return 0
 
     if arguments.json_output:
-        print(json_text({"paths": [str(path) for path in config.paths]}))
+        print(json_text({"paths": [str(source) for source in config.paths]}))
     else:
-        for path in config.paths:
-            print(path)
+        for path, note in config.notes:
+            print(f"project: {path}: {note}", file=sys.stderr)
+        for source in config.paths:
+            print(source)
     return 0
 
 

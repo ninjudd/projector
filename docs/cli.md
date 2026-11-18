@@ -767,6 +767,52 @@ mounted volume, a container's `/workspace` -- no ancestor is read, and
 `.claude/worktrees/<name>` is, keeps the repository and its parents on the
 walk.
 
+### Read committed files from the default branch
+
+A `.projector.toml` that the repository tracks is the repository's policy, so
+Projector reads it from the default branch, the commit
+`refs/remotes/origin/HEAD` names, and never from the branch you have checked
+out. A change to it on a branch takes effect once it merges, which is where
+the repository reviews its changes. So a branch you check out to review or
+test, such as a contributor's, cannot change the gate a review runs, the
+checks it waits for, or any other setting the repository commits.
+
+Projector chooses each walked file's source this way:
+
+- **A file on the default branch** is read from there, whatever your working
+  copy holds. This holds in every worktree of the repository, and even when
+  your branch deletes the file.
+- **A file Git tracks on your branch only**, which the branch added, is
+  ignored until it merges.
+- **A file Git does not track** is read from disk.
+
+Every file outside the repository, including a parent directory's file and
+`~/.projector.toml`, is read from disk, because you put it there. So is a
+file another repository tracks, such as a dotfiles checkout in your home
+directory. A repository with no `origin/HEAD` reads every file from disk.
+`git clone` sets `origin/HEAD`, and `git remote set-head origin --auto` sets
+it in a clone that lacks one.
+
+The default branch is as new as your last fetch. Projector caches each blob it
+reads under `$XDG_STATE_HOME/projector/config-cache/`, by commit and path, so
+reading configuration starts no Git process until the default branch moves
+or the index changes.
+
+`config list` prints each value with its source, and notes on stderr each
+walked file whose working copy does not apply:
+
+```console
+$ project config list
+project: /Users/you/work/repo/.projector.toml: working copy ignored until merged; origin/main:.projector.toml applies
+review.gate_checks = check  # origin/main:.projector.toml
+watch.auto_start = false  # /Users/you/.projector.toml
+```
+
+A file a branch added says `not on origin/main yet, so it is ignored until it
+merges` instead. `config list --json` gives the same notes under `notes`, and
+`config paths` lists `origin/main:.projector.toml` for a file it reads from
+the default branch.
+
 Tables merge key by key, so a nearer file overrides one setting without
 discarding the rest:
 
@@ -823,6 +869,11 @@ project config get review.summarize --json
   "value": false
 }
 ```
+
+A value from a file the repository commits names its source on the default
+branch, such as `origin/main:.projector.toml`, as
+[Read committed files from the default branch](#read-committed-files-from-the-default-branch)
+describes.
 
 `get` reads any key, so a skill or a script can keep settings of its own in
 these files. [`set`](#change-configuration) accepts only the keys Projector
@@ -890,9 +941,8 @@ project config unset watch.auto_start
 ```
 
 Both change the repository's own `.projector.toml` at the root of the
-checkout, which is the file nearest the code and the last one merged, so the
-value you set is the value the repository's commands read. Choose another
-file with one of these options:
+checkout, which is the file nearest the code and the last one merged. Choose
+another file with one of these options:
 
 - **`--user`** changes `~/.projector.toml`, which applies in every
   repository. Use it for a personal preference, such as `watch.auto_start`,
@@ -949,6 +999,18 @@ checks that the key has the new value and that every other key is
 unchanged. When the check fails, it restores the file and exits 65. A
 symlink, such as a `~/.projector.toml` that links into a dotfiles
 repository, stays a link, and the command changes the file it points at.
+
+A file the repository tracks applies from the default branch, so `set` and
+`unset` change its working copy and say that the change waits for a merge.
+Commit the change and merge it as you would any other:
+
+```console
+$ project config set review.gate "make check"
+set review.gate = make check in /Users/you/work/repo/.projector.toml; takes effect once this change merges to origin/main
+```
+
+With `--json`, the output adds `takes_effect_on_merge_to`, which names the
+default branch.
 
 A nearer file can override the value you set, as a repository's file
 overrides `~/.projector.toml`. When the merged configuration does not give

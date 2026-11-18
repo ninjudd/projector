@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -13,8 +14,9 @@ from unittest import mock
 
 from projector import config as config_module
 from projector.cli import main
-from projector.config import SETTINGS, ConfigError, config_paths, load, merge
+from projector.config import SETTINGS, ConfigError, Source, load, merge
 from projector.core import json_scalar
+from tests.scratch import copy_of
 
 
 def write(path: Path, text: str) -> Path:
@@ -58,8 +60,8 @@ class ConfigTests(unittest.TestCase):
 
         config = self.merged()
 
-        self.assertEqual(parent, config.source("review.effort"))
-        self.assertEqual(self.home / ".projector.toml", config.source("review.model"))
+        self.assertEqual(parent, config.source("review.effort").path)
+        self.assertEqual(self.home / ".projector.toml", config.source("review.model").path)
 
     def test_walk_stops_at_home(self) -> None:
         write(self.base / ".projector.toml", 'reviewer = "above-home"\n')
@@ -77,8 +79,8 @@ class ConfigTests(unittest.TestCase):
 
         config = self.merged()
 
-        self.assertEqual([user], config.paths)
-        self.assertEqual(user, config.source("reviewer"))
+        self.assertEqual([Source(user)], config.paths)
+        self.assertEqual(Source(user), config.source("reviewer"))
 
     def test_repo_outside_home_reads_no_ancestor_but_keeps_the_user_layer(self) -> None:
         # The case the separate user layer exists for: a checkout with no home
@@ -100,7 +102,7 @@ class ConfigTests(unittest.TestCase):
         parent = write(self.home / "work" / ".projector.toml", "b = 2\n")
         repo = write(self.repo / ".projector.toml", "c = 3\n")
 
-        self.assertEqual([user, parent, repo], config_paths(self.repo, self.home, self.environ))
+        self.assertEqual([Source(user), Source(parent), Source(repo)], self.merged().paths)
 
     def test_missing_files_are_simply_absent(self) -> None:
         config = self.merged()
@@ -125,7 +127,7 @@ class ConfigTests(unittest.TestCase):
         config = self.merged()
 
         self.assertEqual({"effort": "xhigh"}, config.get("review"))
-        self.assertEqual(repo, config.source("review.effort"))
+        self.assertEqual(Source(repo), config.source("review.effort"))
         self.assertIsNone(config.source("review"))
 
     def test_invalid_toml_names_the_file(self) -> None:
@@ -149,8 +151,8 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual("ninjudd", config.get("org"))
         self.assertTrue(config.get("repo"))
-        self.assertIn(org, config.paths)
-        self.assertIn(repo, config.paths)
+        self.assertIn(Source(org), config.paths)
+        self.assertIn(Source(repo), config.paths)
 
     def test_merge_does_not_mutate_its_inputs(self) -> None:
         base = {"review": {"effort": "medium"}}
@@ -650,3 +652,178 @@ class ConfigSetTests(unittest.TestCase):
         names = {bool: "boolean", str: "string", int: "whole number"}
 
         self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))
+
+
+GIT_IDENTITY = {"GIT_AUTHOR_NAME": "Tester", "GIT_AUTHOR_EMAIL": "tester@example.invalid",
+                "GIT_COMMITTER_NAME": "Tester", "GIT_COMMITTER_EMAIL": "tester@example.invalid"}
+POLICY = '[review]\ngate_checks = "ci"\n'
+
+
+def git(cwd: Path, *arguments: str) -> str:
+    done = subprocess.run(["git", *arguments], cwd=cwd, check=True, capture_output=True, text=True,
+                          env={**os.environ, **GIT_IDENTITY})
+    return done.stdout.strip()
+
+
+def cloned_repository(directory: Path) -> None:
+    """A bare `origin` whose default branch `main` commits `POLICY`, and a clone of it at `home/work/repo`."""
+
+    git(directory, "init", "-q", "--bare", "-b", "main", "origin.git")
+    seed = directory / "seed"
+    git(directory, "init", "-q", "-b", "main", str(seed))
+    write(seed / ".projector.toml", POLICY)
+    write(seed / "README.md", "# Repo\n")
+    git(seed, "add", ".")
+    git(seed, "commit", "-q", "-m", "Add policy")
+    git(directory / "origin.git", "fetch", "-q", str(seed), "+main:main")
+    (directory / "home" / "work").mkdir(parents=True)
+    git(directory, "clone", "-q", str(directory / "origin.git"), str(directory / "home" / "work" / "repo"))
+
+
+class DefaultBranchTests(unittest.TestCase):
+    """A `.projector.toml` the repository tracks applies from `origin/HEAD`, never from the working copy."""
+
+    def setUp(self) -> None:
+        base, _ = copy_of(cloned_repository)
+        self.base = base.resolve()
+        self.home = self.base / "home"
+        self.repo = self.home / "work" / "repo"
+        self.environ = {"HOME": str(self.home)}
+        environment = mock.patch.dict(os.environ, {"HOME": str(self.home),
+                                                   "XDG_STATE_HOME": str(self.base / "state")})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def merged(self, start: Path | None = None):
+        return load(start or self.repo, self.home, self.environ)
+
+    def invoke(self, *arguments: str, root: Path | None = None) -> tuple[int, str, str]:
+        stdout, stderr = StringIO(), StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main([*arguments, "--root", str(root or self.repo)])
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def push_to_origin(self, text: str) -> None:
+        """Merge a new policy on `origin` from the seed, then fetch it, as a merged pull request arrives."""
+
+        seed = self.base / "seed"
+        write(seed / ".projector.toml", text)
+        git(seed, "commit", "-q", "-am", "Change policy")
+        git(self.base / "origin.git", "fetch", "-q", str(seed), "+main:main")
+        git(self.repo, "fetch", "-q", "origin")
+
+    def test_a_branch_cannot_rewrite_the_policy_the_default_branch_commits(self) -> None:
+        git(self.repo, "switch", "-q", "-c", "feature")
+        write(self.repo / ".projector.toml", '[review]\ngate_checks = ""\n')
+        git(self.repo, "commit", "-q", "-am", "Weaken the gate")
+        write(self.repo / ".projector.toml", '[review]\ngate_checks = "none"\n')
+
+        code, stdout, stderr = self.invoke("config", "get", "review.gate_checks", "--json")
+        listed, listing, notes = self.invoke("config", "list")
+
+        self.assertEqual((0, "ci", "origin/main:.projector.toml"),
+                         (code, json.loads(stdout)["value"], json.loads(stdout)["source"]), stderr)
+        self.assertEqual(0, listed)
+        self.assertIn("review.gate_checks = ci  # origin/main:.projector.toml", listing)
+        self.assertIn(f"{self.repo / '.projector.toml'}: working copy ignored until merged", notes)
+
+    def test_a_branch_that_deletes_the_file_still_gets_the_default_branch_policy(self) -> None:
+        git(self.repo, "switch", "-q", "-c", "feature")
+        git(self.repo, "rm", "-q", ".projector.toml")
+        git(self.repo, "commit", "-q", "-m", "Drop the policy")
+
+        self.assertEqual("ci", self.merged().get("review.gate_checks"))
+
+    def test_a_file_a_branch_adds_waits_until_it_merges(self) -> None:
+        git(self.repo, "switch", "-q", "-c", "feature")
+        added = write(self.repo / "sub" / ".projector.toml", "[review]\nallow_approve = true\n")
+        git(self.repo, "add", "sub/.projector.toml")
+        git(self.repo, "commit", "-q", "-m", "Allow approvals")
+
+        config = self.merged(self.repo / "sub")
+        _, _, notes = self.invoke("config", "list", root=self.repo / "sub")
+
+        self.assertIsNone(config.get("review.allow_approve"))
+        self.assertEqual([(added, "not on origin/main yet, so it is ignored until it merges")], config.notes)
+        self.assertIn(f"{added}: not on origin/main yet", notes)
+
+    def test_untracked_files_apply_from_disk_at_once(self) -> None:
+        parent = self.home / "work" / ".projector.toml"
+        user = self.home / ".projector.toml"
+        inside = self.repo / "sub" / ".projector.toml"
+        for value in ("first", "second"):
+            write(parent, f'[review]\nusername = "{value}"\n')
+            write(user, f'[panel]\nbackground = "{value}"\n')
+            write(inside, f'[ios]\napp = "{value}"\n')
+
+            config = self.merged(self.repo / "sub")
+
+            self.assertEqual((value, value, value),
+                             (config.get("review.username"), config.get("panel.background"), config.get("ios.app")))
+        self.assertEqual([Source(user), Source(parent),
+                          Source(self.repo / ".projector.toml", "origin/main:.projector.toml"), Source(inside)],
+                         config.paths)
+
+    def test_a_worktree_reads_the_default_branch_as_its_main_checkout_does(self) -> None:
+        git(self.repo, "switch", "-q", "-c", "other")
+        write(self.repo / ".projector.toml", '[review]\ngate_checks = "main-checkout"\n[ios]\napp = "main"\n')
+        worktree = self.repo / ".claude" / "worktrees" / "agent"
+        git(self.repo, "worktree", "add", "-q", "-b", "agent", str(worktree), "origin/main")
+        write(worktree / ".projector.toml", '[review]\ngate_checks = "worktree"\n')
+
+        from_worktree, from_main = self.merged(worktree), self.merged()
+
+        self.assertEqual({"review": {"gate_checks": "ci"}}, from_worktree.values)
+        self.assertEqual((from_main.values, ["origin/main:.projector.toml"]),
+                         (from_worktree.values, [str(source) for source in from_worktree.paths]))
+
+    def test_a_repository_without_origin_head_reads_every_file_from_disk(self) -> None:
+        git(self.repo, "remote", "set-head", "origin", "-d")
+        write(self.repo / ".projector.toml", '[review]\ngate_checks = "working"\n')
+
+        config = self.merged()
+
+        self.assertEqual(("working", []), (config.get("review.gate_checks"), config.notes))
+
+    def test_a_merged_change_applies_once_fetched(self) -> None:
+        self.assertEqual("ci", self.merged().get("review.gate_checks"))
+
+        self.push_to_origin('[review]\ngate_checks = "check"\n')
+
+        self.assertEqual("check", self.merged().get("review.gate_checks"))
+
+    def test_set_on_a_tracked_file_says_it_waits_for_the_merge(self) -> None:
+        code, stdout, stderr = self.invoke("config", "set", "review.gate", "x")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(f"set review.gate = x in {self.repo / '.projector.toml'}; takes effect once this change "
+                         "merges to origin/main\n", stdout)
+        self.assertEqual(POLICY + 'gate = "x"\n', (self.repo / ".projector.toml").read_text())
+        self.assertIsNone(self.merged().get("review.gate"))
+
+    def test_a_warm_cache_starts_no_git_and_notices_a_new_commit_or_index(self) -> None:
+        # The untracked file is absent from the default branch, so a load asks the index about it too.
+        write(self.repo / "sub" / ".projector.toml", '[ios]\napp = "local"\n')
+        log = self.base / "git.log"
+        fake = write(self.base / "bin" / "git", f'#!/bin/sh\necho "$1" >> "{log}"\nexec "{shutil.which("git")}" "$@"\n')
+        fake.chmod(0o755)
+
+        def runs() -> int:
+            return len(log.read_text().splitlines()) if log.exists() else 0
+
+        with mock.patch.dict(os.environ, {"PATH": f"{fake.parent}{os.pathsep}{os.environ['PATH']}"}):
+            self.merged(self.repo / "sub")
+            cold = runs()
+            for _ in range(100):
+                self.merged(self.repo / "sub")
+            warm = runs() - cold
+            self.push_to_origin('[review]\ngate_checks = "check"\n')
+            fetched = runs()
+            self.assertEqual("check", self.merged(self.repo / "sub").get("review.gate_checks"))
+            after_commit = runs() - fetched
+            os.utime(self.repo / ".git" / "index", ns=(1, 1))
+            before_index = runs()
+            self.merged(self.repo / "sub")
+            after_index = runs() - before_index
+
+        self.assertEqual((0, 1, 1), (warm, after_commit, after_index))
