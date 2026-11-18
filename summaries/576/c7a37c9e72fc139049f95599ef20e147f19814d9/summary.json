@@ -1,0 +1,131 @@
+{
+ "version": 1,
+ "name": "Reviews in GitHub Actions",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 576,
+  "title": "Review Projector's own pull requests in GitHub Actions",
+  "head": "c7a37c9e72fc139049f95599ef20e147f19814d9",
+  "headRef": "review-ci-own",
+  "base": "2550b899ecc8abf0aa6173b7722cab0cf676affa",
+  "baseRef": "review-ci-setup",
+  "basePr": 575
+ },
+ "overview": {
+  "summary": [
+   "Projector currently reviews this repository’s pull requests from agent sessions. This layer enables the same review flow on GitHub-hosted runners, so ready pull requests with a branch in this repository can receive a review without a laptop session.",
+   "The workflow checks this repository out and runs Claude through the review action in that checkout, so pull requests that change the action can exercise it before merge. A separate job publishes the resulting review page. The settings identify the workflow’s bot as a trusted source of Projector verdicts, and a runner-specific gate override retains the exact-head CI check."
+  ],
+  "cards": [
+   {
+    "id": "rollout",
+    "title": "Complete the credential-backed rollout",
+    "html": "<ul class=\"tight\"><li>The local action now starts from this pull request’s checkout; it no longer needs the action on <code>main</code> first.</li><li>The <a href=\"https://github.com/ninjudd/projector/actions/runs/44390005222/job/135104755450\">hosted review job</a> resolved the action, then stopped because neither Claude credential secret is set.</li><li>Configure exactly one of <code>CLAUDE_CODE_OAUTH_TOKEN</code> or <code>ANTHROPIC_API_KEY</code> to complete the hosted-agent check. This review read or changed no credential secret.</li><li>The first credential-backed run still needs to verify the hosted-runner facts in the plan.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Review evidence",
+    "html": "<ul class=\"tight\"><li>The local-action workflow, settings and plan decision are unchanged by the clean rebase. The current clean incremental review builds on the full review of <code>197b02b2</code>.</li><li>The configured gate and exact-head <code>check</code> workflow passed, including 256 hook tests, plugin validation, type-checking, and the diff check.</li><li>The full review verified four focused action checks and an independent local-action setup fixture.</li><li>No finding or suggestion remains on this layer.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "verdicts",
+   "title": "Count the workflow’s reviews",
+   "kicker": "Enable CI review and recognize its bot",
+   "intro": [
+    "A review posted by <code>github-actions[bot]</code> is not a human collaborator’s review. Public repositories ignore verdicts from untrusted accounts, so enabling the workflow also records that this bot’s Projector verdicts count.",
+    "The settings select Claude and enable later <code>init</code> refreshes. Once they reach the default branch, sessions, the panel, and the site can use the bot’s verdict in the same sign-off calculation as other trusted reviews."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".projector.toml",
+     "note": "Enable CI reviews with Claude and add the Actions bot to the counted reviewer list.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 11,
+       "text": "Focused status, watch, and site tests confirm that the named bot’s verdict counts on a public repository while an unlisted account’s verdict does not."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "workflow",
+   "title": "Review with the action in the checkout",
+   "kicker": "Exercise action changes before merge with separate publication permissions",
+   "intro": [
+    "The review job runs for ready pull requests whose heads are in this repository and can also be started manually. Each job checks the repository out before using <code>./actions/review</code>, which loads the action from the workspace. A pull-request run therefore exercises the action in its checked-out result. Each new head cancels the older review for the same pull request and agent.",
+    "Each matrix entry names an agent and can name its model. This repository’s single Claude entry leaves the model empty, so the action supplies <code>claude-opus-5-5</code>. The updated workflow forwards the model field through to the action instead of leaving per-agent model choices behind.",
+    "The agent’s job can post reviews and statuses but cannot push code. A second job, which runs no agent, holds the write permission needed to publish summaries. The runner also refuses drafts and fork heads, so a manual trigger does not bypass that boundary.",
+    "The local review gate normally runs hook tests and a type-check that depends on declarations from an interactive Claude Code session. The workflow supplies a configuration override that runs plugin validation and the whitespace check on a hosted runner; the existing <code>check</code> workflow still supplies the suite and project checks."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".github/workflows/projector-review.yml",
+     "note": "Check out before loading the local review action in both jobs, forward per-agent models, and preserve the runner gate override.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 32,
+       "text": "Traced the job condition and the runner’s own refusal: drafts and fork heads are excluded, including manual dispatch."
+      },
+      {
+       "kind": "verify",
+       "line": 57,
+       "text": "Both jobs check out before resolving the local action. Traced its inner checkout and setup order, then ran the real setup script with fake Git from this layout; its project shim worked without changing a remote or global Git settings."
+      },
+      {
+       "kind": "verify",
+       "line": 60,
+       "text": "Executed this committed workflow’s resolved Claude inputs through the action’s review script against a command stub. It reached the command with model claude-opus-5-5, without starting an agent or using credentials."
+      },
+      {
+       "kind": "verify",
+       "line": 67,
+       "text": "The workflow adds two deliberate changes to the generator: local checkout/action steps in both jobs and the five-line gate override. The override keeps review.gate_checks=check, and the edited digest makes init preserve the workflow."
+      },
+      {
+       "kind": "context",
+       "line": 69,
+       "text": "Exactly one of the two Claude secrets must be set. The action rejects both and neither; credential values were not read or changed during this review."
+      },
+      {
+       "kind": "verify",
+       "line": 76,
+       "text": "Traced the action’s two modes and the declared permissions: the review job lacks contents write, while only the summary job can push the page’s hidden ref."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "plan-source",
+   "title": "Record the action-source decision",
+   "kicker": "Keep the repository’s own rollout choice with the plan",
+   "intro": [
+    "The plan records why Projector loads its own review action from the pull request’s checkout: the action can review the changes that build it before those changes reach the default branch. Workflows installed by <code>init</code> in other repositories continue to call a release reference."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "collapsed": true,
+     "note": "Record the local-action choice for Projector’s own workflow.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 938,
+       "text": "The added implementation decision matches both local-action calls in this workflow; the shared generator still writes a release-based action reference."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
