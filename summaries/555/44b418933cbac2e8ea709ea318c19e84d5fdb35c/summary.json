@@ -1,0 +1,73 @@
+{
+ "version": 1,
+ "name": "Dependent work stacking",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 555,
+  "title": "Keep working by stacking on unmerged pull requests, and build overlapping work as one stack",
+  "head": "44b418933cbac2e8ea709ea318c19e84d5fdb35c",
+  "headRef": "work-stack-dependents",
+  "base": "f78962341ca90ab1d29e4bef0e4a8df0db6ece22",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s skills are instructions for agents carrying out implementation work. A session could stop at an unmerged prerequisite or build overlapping changes on separate branches. This change tells it to extend one stack of dependent pull requests and keep working on everything it can complete.",
+   "It also makes the stopping point visible in the inbox: a completion notice names the ready pull requests, while an unfinished task leaves an actionable request for what only the user can do. The user still owns each merge."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation",
+    "html": "<ul class=\"tight\"><li>Configured local review gate and exact-head CI checked.</li><li>All 14 focused packaging tests passed on the first reviewed head.</li><li>Instruction behavior checked by reading the work, implementation, and stack workflows; no autonomous agent run performed.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "stack-placement",
+   "title": "Keep overlapping work in one stack",
+   "kicker": "Choose a dependency chain before starting parallel work",
+   "intro": [
+    "A stack is a chain of pull requests, with each layer based on the one below. The implementation workflow now puts changes that share files or depend on an open stack above that stack.",
+    "When work depends on two stacks, the agent combines them where authorized or starts with layers that need only one. Every layer must remain safe to merge independently."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Compared these additions with the existing stack split, rebase propagation, draft, and handover rules. They preserve independent layer safety and the user’s merge checkpoint."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "collapsed": false,
+     "note": "Read the new placement rule together with the surrounding stack workflow. It also explains the two-stack case and why a held merge does not block building dependent layers."
+    }
+   ]
+  },
+  {
+   "id": "work-continuation",
+   "title": "Continue until only the user can unblock work",
+   "kicker": "Separate an unmerged dependency from a genuine prerequisite",
+   "intro": [
+    "The work workflow now points agents to the implementation stack rules instead of treating an unmerged dependency as a stopping point. Decisions that are safe to build on go to the inbox while the rest of the work continues.",
+    "When nothing remains to build, the agent posts a completion notice or a request with steps for the user. Its final report lists inbox items first, followed by pull requests, recorded decisions, and remaining work."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Read the complete work workflow and followed its links to the decision, inbox, and stack sections. The new stopping guidance retains the earlier authorization boundary and permits stopping for a user-only prerequisite."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/work/SKILL.md",
+     "collapsed": false,
+     "note": "The additions connect dependency handling, decision-making, and final handover. A request to answer a blocking question is distinct from leaving a bare question as the final response."
+    }
+   ]
+  }
+ ]
+}
