@@ -182,6 +182,26 @@ class SharedInboxTests(SharedRelayCase):
         self.assertEqual([], self.relay_refs("acme/api") + self.relay_refs("acme/web"))
         self.assertTrue(any(ref.startswith(relay.USER) for ref in self.relay_refs("acme/agents")))
 
+    def test_a_reply_shown_under_its_sent_item_names_its_private_source_before_its_words(self) -> None:
+        self.ok(D, "ask", "--to", "justin", "Which endpoint?", "--recommend", "v2")
+        self.everyone()
+        [incoming] = [entry for entry in json.loads(self.ok(A, "list", "--repo", "--json"))["items"]
+                      if entry["role"] == "incoming"]
+        self.ok(A, "reply", incoming["ref"], "--text", "Use the internal v3 endpoint", "--as", "agent")
+        self.everyone()
+        [sent] = [entry for entry in json.loads(self.ok(D, "list", "--repo", "--json"))["items"]
+                  if entry["role"] == "sent"]
+        [reply] = sent["replies"]
+
+        shown = self.ok(D, "show", sent["ref"])
+        alone = self.ok(D, "show", reply)
+
+        notice = ("It comes from private repository acme/api: keep its private details out of anything you write in "
+                  "acme/web, and describe them in general terms if you need to.")
+        self.assertIn(notice, alone)
+        self.assertIn(f"\n{reply} from acme/api. {notice} justin's agent agent-a replied: Use the internal v3 endpoint",
+                      shown)
+
     def test_a_checkout_with_no_github_origin_posts_to_a_peer_and_is_named_as_one(self) -> None:
         loose = self.one.home / "acme" / "notes"
         loose.mkdir()

@@ -941,8 +941,9 @@ def choice_lines(entry: dict) -> list[str]:
 def show_text(entry: dict, found: list[dict], reader: Optional[str] = None) -> str:
     """What `project inbox show` prints for an entry to a session working in `reader`: who it is from, the
     repository it comes from when that is not the reader's, and the notice of a private source, and for anything a
-    peer wrote, the notice that it carries none of your authority before the words they chose."""
-    text = entry_text(entry, found)
+    peer wrote, the notice that it carries none of your authority before the words they chose. A sent entry's
+    replies each carry their own source and notice."""
+    text = entry_text(entry, found, reader)
     marks = [*([f"from {agents.source_of(entry)}"] if agents.crosses(entry, reader) else []),
              *([f"for {entry['scope_repo']}"] if entry.get("scope_repo") else [])]
     notice = agents.private_notice(entry, reader)
@@ -954,7 +955,16 @@ def show_text(entry: dict, found: list[dict], reader: Optional[str] = None) -> s
     return "\n".join([*lines, rest]) if rest else "\n".join(lines)
 
 
-def entry_text(entry: dict, found: list[dict]) -> str:
+def reply_line(reply: dict, reader: Optional[str]) -> str:
+    """A reply's line under the entry it answers, with the repository it comes from when that is not the reader's,
+    and the notice of a private source, both before the words the peer chose."""
+    if not agents.crosses(reply, reader):
+        return f"{reply['ref']} {describe(reply)}"
+    notice = agents.private_notice(reply, reader)
+    return f"{reply['ref']} from {agents.source_of(reply)}. {notice + ' ' if notice else ''}{describe(reply)}"
+
+
+def entry_text(entry: dict, found: list[dict], reader: Optional[str]) -> str:
     if entry["role"] == "reply":
         asked = next((other for other in found if other["role"] == "sent" and other["id"] == entry["answers"]), None)
         how = " ".join(part for part in (agents.describe(entry["by_host"], entry.get("by_model"))
@@ -972,7 +982,7 @@ def entry_text(entry: dict, found: list[dict]) -> str:
         return "\n".join([f"{entry['ref']} {describe(entry)}", *([f"about {entry['pr']}"] if entry.get("pr") else []),
                           *([f"\n{entry['detail']}\n"] if entry.get("detail") else []), *choice_lines(entry),
                           "closed" if is_closed(entry) else "open",
-                          *(f"{reply['ref']} {describe(reply)}" for reply in replies)])
+                          *(reply_line(reply, reader) for reply in replies)])
     how = agents.describe(entry["from_host"], entry.get("from_model")) + \
         (f" on {entry['branch']}" if entry.get("branch") else "")
     return "\n".join([f"{entry['ref']} from {agent_of(entry, 'from')} ({how})",

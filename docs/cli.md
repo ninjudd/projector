@@ -4419,8 +4419,10 @@ before their words. An entry from a repository that is not `PUBLIC` adds
 the notice of a private source after it, as
 [Messages that cross repositories](#messages-that-cross-repositories)
 describes, and a `PEER REPLY` line from another repository names it and
-carries the same notice. With `--json`, `show` adds the `private_notice` or
-`null`.
+carries the same notice. Showing a sent item lists each reply with its own
+source and notice before the reply's words, as `r6 from acme/api. It comes
+from private repository acme/api: … jason's agent parser-refactor replied:
+<text>`. With `--json`, `show` adds the `private_notice` or `null`.
 
 Projector's panel in Claude Code lists the entries after the session's own
 items, and `project console` lists them in each session's panel. Each opens
