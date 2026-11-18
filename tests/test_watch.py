@@ -145,12 +145,23 @@ class FakeGitHub:
         return found
 
     def pull_request(self, number, *, repo="acme/app", reviews=(), requested=(), teams=(), contexts=(),
-                     **fields) -> None:
+                     fork=None, **fields) -> None:
         """A pull request, with `contexts` its head's whole rollup, which the GraphQL queries page through as
-        GitHub does. The REST pull request does not show `contexts`, so only a full pass sees them change."""
+        GitHub does, and `fork` the repository its head branch is in when that is not `repo`. The REST pull
+        request does not show `contexts`, so only a full pass sees them change."""
         self.repository(repo)["pulls"][number] = {"node": node(number, repo=repo, **fields), "requested": list(requested),
                                                   "teams": list(teams), "reviews": list(reviews),
-                                                  "contexts": list(contexts)}
+                                                  "contexts": list(contexts), "fork": fork}
+
+    def stack(self, number, *layers, repo="acme/app", open_layers=None, is_open=True) -> None:
+        """A GitHub stack of the pull requests `layers`, bottom first, of which `open_layers` are open."""
+        still = set(layers if open_layers is None else open_layers)
+        self.repository(repo).setdefault("stacks", []).append({
+            "number": number, "open": is_open, "base": {"ref": "main"},
+            "pull_requests": [{"number": layer, "state": "open" if layer in still else "closed"} for layer in layers]})
+
+    def stack_lookups(self) -> list[str]:
+        return [call[-1] for call in self.calls if call[:1] == ["api"] and "/stacks?" in call[-1]]
 
     def queried(self) -> list[str]:
         found = []
@@ -283,9 +294,16 @@ class FakeGitHub:
             listed = [{"number": number, "user": {"login": pull["node"]["author"]["login"]},
                        "requested_reviewers": [{"login": login} for login in pull["requested"]],
                        "requested_teams": [{"slug": slug} for slug in pull["teams"]],
-                       "head": {"sha": pull["node"]["headRefOid"]}, "draft": pull["node"]["isDraft"]}
+                       "head": {"sha": pull["node"]["headRefOid"], "ref": pull["node"]["headRefName"],
+                                "repo": {"full_name": pull.get("fork") or repo["name"]}},
+                       "base": {"ref": pull["node"]["baseRefName"]}, "draft": pull["node"]["isDraft"]}
                       for number, pull in open_pulls]
             return self.answer(200, listed[(page - 1) * 100:page * 100], include, etag)
+        if tail == ["stacks"] and set(query) == {"pull_request"}:
+            number = int(query["pull_request"])
+            return self.answer(200, [stack for stack in repo.get("stacks", [])
+                                     if number in [layer["number"] for layer in stack["pull_requests"]]],
+                               include, etag)
         if tail[:1] == ["pulls"] and len(tail) >= 2 and tail[1].isdigit():
             pull = repo["pulls"].get(int(tail[1]))
             if pull is None:
@@ -2103,6 +2121,166 @@ class OwnerTests(WatchCase):
         self.cycle()
 
         self.assertEqual({"acme/app#1 fix": "A"}, self.owners())
+
+
+class StackFixerTests(WatchCase):
+    """A stack gets one fixing subagent, named for its bottom layer, because two would push the same branches."""
+
+    def layers(self, *numbers: int, fields: Optional[dict] = None) -> None:
+        """Open drafts chained by base branch, the first based on main, with `fields` for some by number."""
+        base = "main"
+        for number in numbers:
+            self.github.pull_request(number, ref=f"layer-{number}", base=base, draft=True,
+                                     **(fields or {}).get(number, {}))
+            base = f"layer-{number}"
+
+    def live(self, session: str, *lines: str) -> None:
+        self.subscribe(session, *lines)
+        self.renew(session)
+
+    def test_each_fix_line_for_a_layer_of_a_github_stack_names_the_stacks_fixer(self) -> None:
+        self.github.stack(20, 4, 5, 6, 7, open_layers=(5, 6, 7))
+        self.layers(5, 6, 7, fields={6: {"threads": [thread("T6")], "mergeable": "CONFLICTING",
+                                       "contexts": [check_run("check", "FAILURE")], "decision": "CHANGES_REQUESTED",
+                                       "changes": {"author": {"login": "teammate"}, "body": "Split",
+                                                   "commit": {"oid": SHA_A}}}})
+        self.live("fixer", "acme/app#6 fix")
+
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(["CONFLICT", "CHECKS", "VERDICT", "FINDING"], [line.split()[0] for line in events])
+        for line in events:
+            self.assertTrue(line.endswith(" — run fix-pr on acme/app#6 in subagent fix-stack-4"), line)
+
+    def test_a_pull_request_in_no_chain_keeps_its_own_fixer_and_costs_no_stack_lookup(self) -> None:
+        self.github.pull_request(1, threads=[thread("T1")], draft=True)
+        self.github.pull_request(2, ref="other")
+        self.live("fixer", "acme/app#1 fix")
+
+        events = self.cycle()["fixer"]
+
+        self.assertEqual([f"FINDING acme/app#1 src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}"], events)
+        self.assertEqual([], self.github.stack_lookups())
+
+    def test_a_fork_branch_named_like_the_base_is_not_a_layer_below(self) -> None:
+        self.github.pull_request(1, threads=[thread("T1")], draft=True)
+        self.github.pull_request(2, ref="main", fork="someone/app")
+        self.live("fixer", "acme/app#1 fix")
+
+        events = self.cycle()["fixer"]
+
+        self.assertEqual([f"FINDING acme/app#1 src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}"], events)
+        self.assertEqual([], self.github.stack_lookups())
+
+    def test_a_chain_of_base_branches_that_github_records_no_stack_for_names_its_bottom(self) -> None:
+        self.layers(5, 6, 7, fields={7: {"threads": [thread("T7")]}})
+        self.live("fixer", "acme/app#7 fix")
+
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(["FINDING acme/app#7 src/x.py:3 [bugbot]: P1 nil deref — run fix-pr on acme/app#7 in "
+                          "subagent fix-stack-5"], events)
+        self.assertEqual(["repos/acme/app/stacks?pull_request=7"], self.github.stack_lookups())
+
+    def test_a_list_page_cached_without_branches_is_read_again_whole(self) -> None:
+        self.layers(5, 6, fields={6: {"threads": [thread("T6")]}})
+        page = watch.cache_dir(self.root, "acme/app") / "open" / "1.json"
+        page.parent.mkdir(parents=True)
+        write_json(page, {"etag": 'W/"old"', "pulls": [{"number": 5, "author": "operator", "requested": []}]})
+        self.live("fixer", "acme/app#6 fix")
+
+        events = self.cycle()["fixer"]
+
+        listing = next(call for call in self.github.calls if "pulls?state=open" in call[-1])
+        self.assertNotIn("-H", listing)
+        self.assertTrue(events[0].endswith(" subagent fix-stack-5"), events)
+
+    def test_a_chain_names_its_bottom_when_github_cannot_list_stacks(self) -> None:
+        self.github.failing["repos/acme/app/stacks"] = 404
+        self.layers(5, 6, fields={5: {"threads": [thread("T5")]}})
+        self.live("fixer", "acme/app#5 fix")
+
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(["FINDING acme/app#5 src/x.py:3 [bugbot]: P1 nil deref — run fix-pr on acme/app#5 in "
+                          "subagent fix-stack-5"], events)
+
+    def test_the_stack_is_looked_up_once_for_all_its_layers_until_the_next_full_pass(self) -> None:
+        self.github.stack(20, 5, 6, 7)
+        self.layers(5, 6, 7, fields={number: {"threads": [thread(f"T{number}")]} for number in (5, 6, 7)})
+        self.live("fixer", "acme/app#5 fix", "acme/app#6 fix", "acme/app#7 fix")
+
+        first = self.cycle()["fixer"]
+        lookups = [self.github.stack_lookups()]
+        self.advance(60)
+        self.cycle()
+        lookups.append(self.github.stack_lookups())
+        self.advance(self.settings.renotify - 60)
+        again = self.cycle()["fixer"]
+        lookups.append(self.github.stack_lookups())
+
+        self.assertEqual([1, 0, 1], [len(found) for found in lookups])
+        self.assertEqual(3, len(first))
+        self.assertEqual(3, len(again))
+        for line in first + again:
+            self.assertTrue(line.endswith(" subagent fix-stack-5"), line)
+
+    def test_a_moved_layer_stops_the_stacks_fixer(self) -> None:
+        self.github.stack(20, 5, 6)
+        self.layers(5, 6)
+        self.live("A", "acme/app#6 fix")
+        self.cycle()
+        self.live("B", "acme/app#6 fix")
+
+        events = self.cycle()
+
+        self.assertEqual(["MOVED acme/app#6 fix to another session — stop subagent fix-stack-5"], events["A"])
+
+    def test_a_merged_layer_leaves_the_stacks_fixer_to_its_open_layers(self) -> None:
+        self.github.stack(20, 5, 6)
+        self.layers(5, 6)
+        self.live("fixer", "acme/app#5 fix", "acme/app#6 fix")
+        self.cycle()
+
+        self.github.pull_request(5, ref="layer-5", state="MERGED")
+        self.github.pull_request(6, ref="layer-6", base="main", draft=True)
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(["MERGED acme/app#5 into main — send subagent fix-stack-5 no more work for acme/app#5, and "
+                          "finish it once no layer of its stack is open"], events)
+
+    def merge_the_bottom_and_refresh(self) -> list[str]:
+        """Merge layer 5, retarget layer 6 to main, and run the pass after the next full pass's lookup."""
+        self.github.pull_request(5, ref="layer-5", state="MERGED")
+        self.github.pull_request(6, ref="layer-6", base="main", draft=True, threads=[thread("T6")])
+        self.cycle()
+        self.advance(self.settings.renotify)
+        return self.cycle()["fixer"]
+
+    def test_a_failed_stack_refresh_keeps_the_fixer_after_the_bottom_merges(self) -> None:
+        self.github.stack(20, 5, 6)
+        self.layers(5, 6, fields={6: {"threads": [thread("T6")]}})
+        self.live("fixer", "acme/app#6 fix")
+        first = self.cycle()["fixer"]
+        self.github.failing["repos/acme/app/stacks"] = 500
+
+        events = self.merge_the_bottom_and_refresh()
+
+        self.assertTrue(first[0].endswith(" subagent fix-stack-5"), first)
+        self.assertEqual(["FINDING acme/app#6 (still open) src/x.py:3 [bugbot]: P1 nil deref — run fix-pr on "
+                          "acme/app#6 in subagent fix-stack-5"], events)
+
+    def test_a_chain_keeps_its_fixer_after_its_bottom_merges_out_of_view(self) -> None:
+        self.layers(5, 6, fields={6: {"threads": [thread("T6")]}})
+        self.live("fixer", "acme/app#6 fix")
+        first = self.cycle()["fixer"]
+
+        events = self.merge_the_bottom_and_refresh()
+
+        self.assertTrue(first[0].endswith(" subagent fix-stack-5"), first)
+        self.assertEqual(["FINDING acme/app#6 (still open) src/x.py:3 [bugbot]: P1 nil deref — run fix-pr on "
+                          "acme/app#6 in subagent fix-stack-5"], events)
+        self.assertEqual(["repos/acme/app/stacks?pull_request=6"], self.github.stack_lookups())
 
 
 class AdoptionTests(WatchCase):
