@@ -498,9 +498,11 @@ These tests fail before the change, and each catches the bug it names:
 
 ## 7. Open questions
 
-- **Fork pull requests.** Deferred. Review them only once the agent's shell
-  can run without the model key and a writing token in its environment.
-  This needs the user's decision.
+- **Fork pull requests.** Decided: the workflow skips them, as § 2.1 step 1
+  says. Review them only once the agent's shell can run without the model
+  credential and a writing token in its environment. Until then, the job's
+  `if` stays the boundary, and no change offers `pull_request_target` for
+  reviews.
 - **The app model.** Recommended: each owner creates their own app and
   passes `app-id` and `app-private-key`. One shared app that Projector hosts
   is rejected in § 3. This needs the user's decision.
