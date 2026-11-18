@@ -1,7 +1,7 @@
 import type { AgentInfo, ConfigRow, FsEntry, On, PromptEditInput, PromptEditResult } from 'claude-code'
 import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testing'
 
-import type { Message, MessageItem, Notice, Question, Request } from './types'
+import type { Entry, Message, MessageItem, Notice, Question, Request } from './types'
 
 const HOME = '/home/ada'
 const SESSION = 's1'
@@ -1736,7 +1736,7 @@ const without = <T extends Held>(item: T, ...keys: string[]): T =>
 const reopened = <T extends HeldQuestion | HeldRequest>(item: T): T => without(item, 'answer', 'claim')
 
 /** `project inbox`, answered from items held in memory the way the CLI keeps them. */
-function questionStore(clock: Clock, seed: readonly Held[]) {
+function questionStore(clock: Clock, seed: readonly Held[], entries: readonly Entry[] = []) {
   const store = new Map<string, Held>()
   const times = new Map<string, number>()
   /** How the tools' commands fail: an exit code and its message, or `rejection` when the command never finishes. */
@@ -1800,6 +1800,8 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     const [, group, command = '', ...args] = argv
     const time = clock.now()
     if (group !== 'inbox') return failed(2, `invalid choice: '${group ?? ''}'`)
+    // A repository inbox entry, such as r1, is the CLI's to record and seal; the panel only runs the command.
+    if (args[0]?.startsWith('r') === true) return ran(JSON.stringify({ item: {} }))
     if (command === 'list') {
       if (failing.hangs > 0) {
         failing.hangs -= 1
@@ -1810,7 +1812,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         return failed(1, 'the store could not be read')
       }
       const items = [...store.values()].map(one => ({ ...one, session: SESSION }))
-      const listed = ran(JSON.stringify({ schema_version: 2, items }))
+      const listed = ran(JSON.stringify({ schema_version: 2, items: [...items, ...entries] }))
       const write = during.list
       if (write === undefined) return listed
       delete during.list
@@ -2086,13 +2088,20 @@ type Options = Beneath & {
   isTurnRunning?: boolean
   /** What the session subscribes to, by default to review x/y#7. A session that subscribes to nothing keeps its panel hidden. */
   subscriptions?: Subscriptions
+  entries?: Entry[]
 }
+
+/** Where the session's registration and its repository's inbox live, for a session registered in x/y. */
+const REGISTRATION = `${HOME}/.local/state/projector/watch/sessions/${SESSION}/agent.json`
+const MIRROR = `${HOME}/.local/state/projector/repo-inbox/x/y`
 
 /** A session that subscribes to `options.subscriptions`, with a store of questions beneath the plugin. */
 function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options: Options = {}) {
-  const store = questionStore(clock, seed)
+  const store = questionStore(clock, seed, options.entries)
+  const registration: Record<string, string> =
+    options.entries === undefined ? {} : { [REGISTRATION]: '{"schema_version": 1, "repo": "x/y"}' }
   const files = daemonFiles(options.subscriptions ?? { review: ['x/y#7'] })
-  const { commands, filled } = world(on, files, store.run, options)
+  const { commands, filled } = world(on, { ...files, ...registration }, store.run, options)
   const registered: unknown[] = []
   const notified: string[] = []
   const toasts: string[] = []
@@ -2102,7 +2111,14 @@ function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options
     registered.push(e)
     return { value: { tool: `mcp__projector__${e.name}` } }
   })
-  on('fs.list', ($, e) => ({ value: e.path === STORE ? store.files() : [] }))
+  const mirrored = (options.entries ?? []).map(entry => ({
+    name: `${entry.ref}.json`,
+    kind: 'file' as const,
+    size: 100,
+    mtimeMs: 0,
+    isLink: false,
+  }))
+  on('fs.list', ($, e) => ({ value: e.path === STORE ? store.files() : e.path === MIRROR ? mirrored : [] }))
   on('agent.list', () => ({ value: options.agents ?? [] }))
   on('session.send', ($, e) => {
     sent.push({ to: e.to, text: e.text })
@@ -3580,6 +3596,67 @@ test('the tell tool refuses what the CLI refuses, and says when it hangs', async
   Object.assign(session.store.refusal, { code: undefined, rejection: 'project timed out after 15000 ms' })
   const hung = await $.tool.call(tell)
   expect(hung.deny ?? hung.text).toMatch(/^project did not finish \(.*\); tell the person in the conversation instead$/)
+})
+
+const ENTRY = { scope: 'repo', id: 'u-11111111111111111111111111111111', peer: 'jason', opened_at: NOW } as const
+const ENTRIES: Entry[] = [
+  {
+    ...ENTRY,
+    ref: 'r1',
+    role: 'incoming',
+    kind: 'question',
+    subject: 'Keep the old parser?',
+    detail: 'It is slower.',
+    choices: ['Yes', 'No'],
+    line: "jason's agent lexer asks: Keep the old parser?",
+    state: 'open',
+  },
+  {
+    ...ENTRY,
+    id: 'u-22222222222222222222222222222222',
+    ref: 'r2',
+    role: 'sent',
+    kind: 'request',
+    subject: 'What is your progress?',
+    line: 'you requested of jason: What is your progress?',
+    state: 'open',
+    replies: ['r3'],
+  },
+  {
+    ...ENTRY,
+    id: 'u-33333333333333333333333333333333',
+    ref: 'r3',
+    role: 'reply',
+    subject: 'What is your progress?',
+    answers: 'u-22222222222222222222222222222222',
+    text: 'Half done',
+    line: 'jason replied: Half done',
+    state: 'open',
+  },
+]
+
+test('the repository inbox’s entries show by their roles, and an option answers a peer as you with no line to the session', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [], { entries: ENTRIES })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  for (const line of ENTRIES.map(entry => entry.line)) expect(await ui.find({ type: 'Text', text: line })).toBeDefined()
+  await ui.press({ key: 'entry:r2' })
+  expect((await ui.find({ key: 'drawer:entry:r2' }))?.text).toContain('jason replied: Half done')
+  expect(await ui.find({ type: 'Button', key: 'close:r2' })).toBeDefined()
+  await ui.press({ key: 'entry:r1' })
+  expect(await ui.find({ type: 'Button', key: 'answer-b:r1' })).toBeDefined()
+  await ui.press({ key: 'answer-a:r1' })
+  await clock.settle()
+
+  expect(session.project().filter(command => /^inbox (answer|done|dismiss|close)/.test(command))).toEqual([
+    'inbox answer r1.a --as user --session s1 --json',
+  ])
+  expect(session.submitted).toEqual([])
+  expect(session.sent).toEqual([])
+  expect(session.filled).toEqual([])
 })
 
 test('a notice’s drawer quotes it, and dismiss clears it without sending anything', async ($, on) => {

@@ -5,7 +5,10 @@ import {
   ASK_DESCRIPTION,
   ASK_SCHEMA,
   askArguments,
+  entriesStoreOf,
+  entryArguments,
   forMainLoop,
+  isEntry,
   isShownAt,
   isSnoozedAt,
   liveAgent,
@@ -16,6 +19,7 @@ import {
   relayNote,
   replyNote,
   reportArguments,
+  repoOf,
   REQUEST_DESCRIPTION,
   REQUEST_SCHEMA,
   requestArguments,
@@ -41,7 +45,7 @@ import {
   wokeBetween,
   type Proposal,
 } from './inbox'
-import type { Item, MessageItem, Notice, Question, Request } from './types'
+import type { Entry, Item, MessageItem, Notice, Question, Request } from './types'
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
 
@@ -1065,4 +1069,52 @@ test('a message you sent waits for a deliverer until DISCUSS is delivered, whate
   // A message item owes nothing but its messages: it has no answer to send.
   const delivered = { delivered: true as const, answeredAt: NOW }
   expect(needsDelivery({ ...about, answer: delivered, messages: [{ ...said, deliveredAt: NOW }] }, NOW)).toBe(false)
+})
+
+const entry = (fields: Partial<Entry> = {}): Entry => ({
+  scope: 'repo',
+  ref: 'r1',
+  id: 'u-11111111111111111111111111111111',
+  role: 'incoming',
+  kind: 'question',
+  subject: 'Keep the old parser?',
+  choices: ['Yes', 'No'],
+  line: "jason's agent lexer asks: Keep the old parser?",
+  state: 'open',
+  peer: 'jason',
+  opened_at: NOW,
+  ...fields,
+})
+
+test('a press on a peer’s entry records it as yours, with --as user, and a press on your own entry needs no --as', () => {
+  const tail = ['--session', 's1', '--json']
+  const yours = ['--as', 'user', ...tail]
+  expect(entryArguments(entry(), 's1', { kind: 'answer', letter: 'a' })).toEqual(['inbox', 'answer', 'r1.a', ...yours])
+  const request = entry({ kind: 'request', choices: undefined })
+  expect(entryArguments(request, 's1', { kind: 'done' })).toEqual(['inbox', 'done', 'r1', ...yours])
+  expect(entryArguments(request, 's1', { kind: 'done', choice: 'Shipped' })).toEqual([
+    'inbox',
+    'done',
+    'r1',
+    '--text=Shipped',
+    ...yours,
+  ])
+  expect(entryArguments(request, 's1', { kind: 'decline' })).toEqual(['inbox', 'decline', 'r1', ...yours])
+  expect(entryArguments(entry(), 's1', { kind: 'dismiss' })).toEqual(['inbox', 'dismiss', 'r1', ...yours])
+  // A snooze sends the peer nothing, and nor does anything done to your own entries.
+  expect(entryArguments(entry(), 's1', { kind: 'snooze', minutes: 60 })).toEqual(['inbox', 'snooze', 'r1', '--for', '60', ...tail])
+  const sent = entry({ role: 'sent', ref: 'r2' })
+  expect(entryArguments(sent, 's1', { kind: 'close' })).toEqual(['inbox', 'close', 'r2', ...tail])
+  expect(entryArguments(sent, 's1', { kind: 'dismiss' })).toEqual(['inbox', 'dismiss', 'r2', ...tail])
+})
+
+test('the repository inbox lives under the state directory, and a registration names its repository', () => {
+  const env = (name: string) => (name === 'HOME' ? '/home/ada' : undefined)
+  expect(entriesStoreOf(env, 'Acme/App')).toBe('/home/ada/.local/state/projector/repo-inbox/acme/app')
+  expect(repoOf('{"schema_version": 1, "repo": "acme/app"}')).toBe('acme/app')
+  expect(repoOf('{"schema_version": 1}')).toBeUndefined()
+  expect(repoOf('{"repo": "../../etc"}')).toBeUndefined()
+  expect(repoOf(undefined)).toBeUndefined()
+  expect(isEntry(entry())).toBe(true)
+  expect(isEntry(question())).toBe(false)
 })

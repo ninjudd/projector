@@ -3,6 +3,7 @@ import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-
 
 import type {
   Checks,
+  Entry,
   Item,
   MessageItem,
   Notice,
@@ -38,9 +39,13 @@ import {
   BLOCK_DESCRIPTION,
   BLOCK_SCHEMA,
   choicesOf,
+  entriesStoreOf,
+  entryArguments,
+  type EntryAction,
   forMainLoop,
   holdsQuote,
   isAnswerable,
+  isEntry,
   isShownAt,
   isSnoozedAt,
   letterAt,
@@ -57,6 +62,7 @@ import {
   relayNote,
   replyNote,
   reportArguments,
+  repoOf,
   REQUEST_DESCRIPTION,
   REQUEST_SCHEMA,
   requestArguments,
@@ -359,6 +365,7 @@ const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
 const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const, null)
 const openFiles = atom({ plugin: 'projector', key: 'panelOpenFiles' } as const, null)
 const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
+const entries = atom({ plugin: 'projector', key: 'panelEntries' } as const, [])
 const collapsed = atom({ plugin: 'projector', key: 'panelCollapsed' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
 const themeBackground = atom({ plugin: 'projector', key: 'panelThemeBackground' } as const, OTHER_BACKGROUND)
@@ -693,7 +700,9 @@ async function closeLeftDrawer($: Engine, time: number): Promise<void> {
   if (opened === null) return
   const isListed = opened.startsWith('item:')
     ? (await read($, items)).some(item => `item:${item.ref}` === opened && isShownAt(item, time))
-    : current(await read($, snapshot)).rows.some(row => keyOf(row.pr) === opened)
+    : opened.startsWith('entry:')
+      ? (await read($, entries)).some(entry => `entry:${entry.ref}` === opened)
+      : current(await read($, snapshot)).rows.some(row => keyOf(row.pr) === opened)
   if (!isListed) await closeDrawer($, opened)
 }
 
@@ -738,21 +747,52 @@ async function setItems($: Engine, list: Item[]): Promise<void> {
  * once the read succeeds, so a read that fails runs again on the next tick.
  */
 async function readStore($: Engine, session: string): Promise<void> {
-  const store = storeOf(await envOf($), session)
+  const env = await envOf($)
+  const store = storeOf(env, session)
   if (store === undefined) return
-  const entries = await $.fs.list(store).catch(() => [] as FsEntry[])
-  const files = signatureOf(entries, new Set(Object.keys(await read($, sending))))
-  const signature = `${session}\n${files}`
+  const found = await $.fs.list(store).catch(() => [] as FsEntry[])
+  const files = signatureOf(found, new Set(Object.keys(await read($, sending))))
+  // The repository inbox of the repository the session is registered in,
+  // whose mirror the relay changes without touching the session's store.
+  const root = watchRootOf(env)
+  const repo = root === undefined ? undefined : repoOf(await textOf($, `${folderOf(root, session)}/agent.json`))
+  const mirror = repo === undefined ? undefined : entriesStoreOf(env, repo)
+  const mirrored =
+    mirror === undefined ? '' : signatureOf(await $.fs.list(mirror).catch(() => [] as FsEntry[]), new Set())
+  const signature = `${session}\n${files}\n${mirrored}`
   if (signature === listed) return
-  if (files === '') {
+  if (files === '' && mirrored === '') {
     await setItems($, [])
+    await update($, entries, () => [])
   } else {
     const ran = await project($, ['inbox', 'list', '--all', '--json', '--session', session])
     if (ran.exitCode !== 0) return
-    const { items: list } = JSON.parse(ran.stdout) as { items: Item[] }
-    await setItems($, list)
+    const { items: list } = JSON.parse(ran.stdout) as { items: (Item | Entry)[] }
+    await setItems($, list.filter((row): row is Item => !isEntry(row)))
+    await update($, entries, () => list.filter(isEntry))
   }
   listed = signature
+}
+
+/**
+ * Records a press on a repository inbox entry with its `project inbox`
+ * command, closes its drawer, and reads the inbox again. A response to a
+ * peer's item goes back to the peer as yours; nothing goes to the session.
+ */
+async function actOnEntry($: Engine, entry: Entry, action: EntryAction): Promise<void> {
+  if (acting.has(entry.ref)) return
+  acting.add(entry.ref)
+  try {
+    const ran = await project($, entryArguments(entry, await $.session.id(), action))
+    if (ran.exitCode !== 0) void $.ui.toast(`projector: ${errorOf(ran)}`)
+    await closeDrawer($, `entry:${entry.ref}`)
+    listed = undefined
+    checkSoon($)
+  } catch (error) {
+    void $.ui.toast(`projector: ${messageOf(error)}`)
+  } finally {
+    acting.delete(entry.ref)
+  }
 }
 
 /** Remembers an answer the panel is delivering, in the session's state so a reloaded module finds it. */
@@ -1700,6 +1740,7 @@ export const register: Register = on => {
     const asking = await read($, asked)
     const opening = await read($, openFiles)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
+    const shownEntries = (await read($, entries)).filter(entry => entry.state !== 'snoozed')
     // Each count in the header is a button that collapses your pull requests,
     // the review requests, or a kind of item to one line at the top of their
     // place in the list, and the line expands them again. A section stays
@@ -2479,6 +2520,101 @@ export const register: Register = on => {
       )
     }
 
+    // A repository inbox entry reads as its line says: a peer's item in its
+    // kind's color, the copy of one your agent sent, or a peer's reply, muted
+    // once its item is closed. Its drawer shows what the peer wrote, then its
+    // presses. A peer's question takes its answers and a request its outcomes,
+    // each recorded at once as yours with `--as user` and sealed back to the
+    // peer, with no line to the session, whose agent did not ask. Discuss puts
+    // its quote in the prompt, as an item's does.
+    const drawEntry = (entry: Entry) => {
+      const { ref } = entry
+      const key = `entry:${ref}`
+      const isOpened = opened === key
+      const press = (action: EntryAction) => () => void actOnEntry($, entry, action)
+      const color =
+        entry.role === 'incoming' && entry.kind !== undefined ? colorOf[entry.kind] : entry.state === 'closed' ? 'subtle' : undefined
+      const choices: Line[] =
+        entry.role !== 'incoming'
+          ? []
+          : entry.kind === 'question'
+            ? (entry.choices ?? []).map((choice, index) => ({
+                name: `answer-${letterAt(index)}`,
+                label: index === 0 ? `${choice} (recommended)` : choice,
+                hotkey: String(index + 1),
+                onPress: press({ kind: 'answer', letter: letterAt(index) }),
+              }))
+            : entry.kind === 'request'
+              ? (entry.choices ?? ['Done']).map((choice, index) => ({
+                  name: `outcome-${letterAt(index)}`,
+                  label: choice,
+                  hotkey: String(index + 1),
+                  onPress: press({ kind: 'done', ...(entry.choices === undefined ? {} : { choice }) }),
+                }))
+              : []
+      const actions: Line[] = [
+        ...(entry.role === 'incoming' && entry.kind === 'request'
+          ? [{ name: 'decline', label: 'Decline', hotkey: '6', onPress: press({ kind: 'decline' }) }]
+          : []),
+        ...(entry.role === 'sent'
+          ? [
+              entry.state === 'closed'
+                ? { name: 'reopen', label: 'Reopen', hotkey: '6', onPress: press({ kind: 'reopen' }) }
+                : { name: 'close', label: 'Close', hotkey: '6', onPress: press({ kind: 'close' }) },
+            ]
+          : []),
+        {
+          name: 'discuss',
+          label: 'Discuss',
+          hotkey: '7',
+          onPress: () => fill(`[${ref}] "${entry.subject}"\n\n`),
+        },
+        { name: 'dismiss', label: 'Dismiss', hotkey: '8', onPress: press({ kind: 'dismiss' }) },
+        { name: 'snooze', label: 'Snooze', hotkey: '9', onPress: press({ kind: 'snooze', minutes: SNOOZES[1].minutes }) },
+      ]
+      const said = [entry.role === 'reply' ? entry.text : entry.detail, entry.follow_up].filter(
+        (text): text is string => text !== undefined && text !== '',
+      )
+      const replies = shownEntries.filter(other => other.role === 'reply' && other.answers === entry.id)
+      return (
+        <Box key={`entry-line:${ref}`} flexDirection="column">
+          <Box flexDirection="row" columnGap={1}>
+            <Box flexGrow={1} flexShrink={1}>
+              <Button
+                key={key}
+                plain
+                hotkey={isOpened ? CLOSE_HOTKEY : undefined}
+                onPress={() => toggle(key, key, isOpened ? key : `discuss:${ref}`)}
+              >
+                {!isOpened && <Text color={color}>- </Text>}
+                <Text color={color}>{entry.line}</Text>
+              </Button>
+            </Box>
+            {entry.state === 'replied' && (
+              <Box flexShrink={0}>
+                <Text color="subtle">replied</Text>
+              </Box>
+            )}
+            {ageColumn(key, entry.opened_at)}
+          </Box>
+          {isOpened && (
+            <Box key={`drawer:${key}`} flexDirection="column" marginLeft={DRAWER_INDENT}>
+              {said.map((text, at) => (
+                <Markdown key={`said:${ref}.${at}`} text={text} />
+              ))}
+              {replies.map(reply => (
+                <Text key={`reply:${ref}.${reply.ref}`}>{reply.line}</Text>
+              ))}
+              {choices.length > 0 && <Text key={`before-choices:${ref}`}> </Text>}
+              {drawLines(ref, choices)}
+              <Text key={`before-buttons:${ref}`}> </Text>
+              {drawActions(ref, actions)}
+            </Box>
+          )}
+        </Box>
+      )
+    }
+
     // An open item's drawer has the panel to itself, until it is closed or the
     // item leaves the panel. The header steps aside too, so the item is the
     // top row and, in a terminal, the drawer has another row before the
@@ -2506,6 +2642,10 @@ export const register: Register = on => {
         .filter(item => !isCollapsed(item.kind))
         .sort((a, b) => b.postedAt - a.postedAt)
         .map(drawItem),
+      shownEntries.length > 0 && (shownItems.length > 0 || shown.rows.length > 0) && (
+        <Text key="before-entries"> </Text>
+      ),
+      ...shownEntries.map(drawEntry),
     ])
   })
 }

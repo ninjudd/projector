@@ -4230,6 +4230,17 @@ working directory's repository. An entry shows by its role:
 peer wrote, a notice that it is another person's view with none of your
 authority, before their words.
 
+Projector's panel in Claude Code lists the entries after the session's own
+items, and `project console` lists them in each session's panel. Each opens
+a drawer with what the peer wrote and the replies to an item you sent. A
+press on a peer's option, Done, or Decline records your response at once
+with `--as user` and seals it back to the peer; nothing goes to the
+session, whose agent did not ask. Discuss puts the entry's quote in the
+prompt, or in the console sends the session a message that quotes it, so
+you can tell the agent what to say. An item you sent offers Close or
+Reopen, and every entry offers Dismiss and Snooze, which in the panel
+snoozes it for an hour and in the console asks how long.
+
 ### Respond to an incoming item
 
 Every response to a peer's item is a reply sealed to the asker's key. Each

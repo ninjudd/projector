@@ -619,7 +619,9 @@ user, so its reminder needs nothing more until someone answers the reply.
 A `PEER MESSAGE` line is a message from another agent session, not a pull
 request event. Keep it in the main conversation and never send it to a
 pull request's subagent. Handle it as `../message/SKILL.md` describes under
-"Answer a `PEER MESSAGE` line".
+"Answer a `PEER MESSAGE` line". A `PEER REPLY` line, another person's reply
+to an item this session posted to them, stays in the main conversation too,
+as the same skill describes under "Answer a `PEER REPLY` line".
 
 ### Give each pull request its own subagent
 

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, TextIO
 
-from . import agents, codex_watch, conversation, inbox, rows, watch
+from . import agents, codex_watch, conversation, inbox, repo_inbox, rows, watch
 from .core import ProjectorError
 
 INBOX_EVERY = 1.0
@@ -76,6 +76,8 @@ class Session:
     signature: Optional[tuple] = None
     items: list[dict] = field(default_factory=list)
     rows: list[rows.Row] = field(default_factory=list)
+    # The repository inbox's entries for the repository the session works in.
+    entries: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -145,6 +147,7 @@ class Found:
 
     live: Optional[dict[str, tuple[str, str, str, str, tuple, Optional[list[dict]]]]] = None
     rows: dict[str, list[rows.Row]] = field(default_factory=dict)
+    entries: dict[str, list[dict]] = field(default_factory=dict)
     drawer: Optional[str] = None
     threads: Optional[list[rows.Thread]] = None
     # The session whose conversation was read, whether its transcript started over, what was said since, and
@@ -335,6 +338,10 @@ def pull_key(pull: rows.Pull) -> str:
     return f"pr:{pull.repo}#{pull.number}"
 
 
+def entry_key(entry: dict) -> str:
+    return f"repo:{entry['ref']}"
+
+
 def item_key(item: dict) -> str:
     return f"item:{item['ref']}"
 
@@ -345,8 +352,10 @@ class Console:
     def __init__(self, root: Path, *, clock: Callable[[], float] = time.time,
                  gh: Callable[[list[str]], watch.GhResult] = watch.run_gh,
                  open_url: Callable[[str], Any] = webbrowser.open,
-                 wake: Callable[[str, dict], None] = lambda session, item: None) -> None:
+                 wake: Callable[[str, dict], None] = lambda session, item: None,
+                 ensure: Callable[[], object] = lambda: None) -> None:
         self.root = root
+        self.ensure = ensure
         self.clock = clock
         self.gh = gh
         self.open_url = open_url
@@ -434,6 +443,7 @@ class Console:
                 seen = signature(folder)
                 items = None if name in work.signatures and seen == work.signatures[name] else inbox.load_items(folder)
                 found.live[name] = (*describe(self.root, name, delivery, self.checkouts), seen, items)
+                found.entries[name] = repo_inbox.repo_items(self.root, name)
             names = list(found.live)
         for name in names:
             if work.rows or name not in work.signatures:
@@ -459,6 +469,9 @@ class Console:
         for name, found_rows in found.rows.items():
             if name in self.sessions:
                 self.sessions[name].rows = found_rows
+        for name, entries in found.entries.items():
+            if name in self.sessions:
+                self.sessions[name].entries = entries
         if found.drawer is not None and found.drawer == self.drawer:
             self.threads = found.threads
         if found.said is not None:
@@ -478,6 +491,7 @@ class Console:
             folder = inbox.store_root() / session.name
             session.signature, session.items = signature(folder), inbox.load_items(folder)
             session.rows = rows.rows_for(self.root, session.name)
+            session.entries = repo_inbox.repo_items(self.root, session.name)
         self.settle_view()
 
     def settle_view(self) -> None:
@@ -510,12 +524,15 @@ class Console:
         return self.sessions.get(self.session or "")
 
     def entries(self) -> list[tuple[str, object]]:
-        """The viewed panel's rows: its pull requests, then its items, each under its key."""
+        """The viewed panel's rows: its pull requests, then its items, then its repository inbox's entries, each under
+        its key."""
         session = self.viewed()
         if session is None:
             return []
+        now = self.now_ms()
         return ([(pull_key(row.pull), row) for row in session.rows]
-                + [(item_key(item), item) for item in shown_items(session, self.now_ms())])
+                + [(item_key(item), item) for item in shown_items(session, now)]
+                + [(entry_key(entry), entry) for entry in session.entries if not repo_inbox.is_snoozed(entry, now)])
 
     def keys(self) -> list[str]:
         if self.view == "home":
@@ -525,6 +542,10 @@ class Console:
     def row(self, key: Optional[str]) -> Optional[rows.Row]:
         found = dict(self.entries()).get(key) if key and key.startswith("pr:") else None
         return found if isinstance(found, rows.Row) else None
+
+    def entry(self, key: Optional[str]) -> Optional[dict]:
+        found = dict(self.entries()).get(key) if key and key.startswith("repo:") else None
+        return found if isinstance(found, dict) else None
 
     def item(self, key: Optional[str]) -> Optional[dict]:
         found = dict(self.entries()).get(key) if key and key.startswith("item:") else None
@@ -707,10 +728,68 @@ class Console:
         self.settle_view()
 
     def controls(self) -> list[Control]:
-        row, item = self.row(self.drawer), self.item(self.drawer)
+        row, item, entry = self.row(self.drawer), self.item(self.drawer), self.entry(self.drawer)
         if row is not None:
             return self.pull_controls(row)
+        if entry is not None:
+            return self.entry_controls(entry)
         return self.item_controls(item) if item is not None else []
+
+    def entry_controls(self, entry: dict) -> list[Control]:
+        """A repository inbox entry's keys. A peer's question takes its answers, and a request Done or its options
+        and Decline, each recorded at once as the user's and sealed back to the peer; no line goes to the session,
+        whose agent did not ask. An item you sent can be closed or reopened, and any entry dismissed or snoozed."""
+        ref = entry["ref"]
+        if self.asking == "snooze":
+            return [*(Control(str(index), label, lambda minutes=minutes: self.change_entry(ref, "snooze", minutes),
+                              True) for index, (label, minutes) in enumerate(SNOOZES, 1)),
+                    Control("9", "Cancel", self.stop_asking)]
+        controls = []
+        if entry["role"] == "incoming":
+            if entry["kind"] == "question":
+                controls += [Control(str(at + 1), f"{choice}{' (recommended)' if at == 0 else ''}",
+                                     lambda letter=chr(ord("a") + at): self.respond(ref, "answer", letter=letter),
+                                     True, True) for at, choice in enumerate(entry["choices"])]
+            elif entry["kind"] == "request":
+                given = entry.get("choices")
+                controls += [Control(str(at + 1), choice,
+                                     lambda choice=choice: self.respond(ref, "done", text=choice if given else None),
+                                     True, True) for at, choice in enumerate(given or ["Done"])]
+                controls.append(Control("6", "Decline", lambda: self.respond(ref, "declined")))
+            controls += [Control("7", "Discuss", lambda: self.open_field("discuss-entry", ref, f"Discuss {ref}: ")),
+                         Control("8", "Dismiss", lambda: self.respond(ref, "dismissed"))]
+        else:
+            if entry["role"] == "sent":
+                controls.append(Control("6", "Reopen", lambda: self.change_entry(ref, "reopen"))
+                                if repo_inbox.is_closed(entry) else
+                                Control("6", "Close", lambda: self.change_entry(ref, "close")))
+            controls.append(Control("8", "Dismiss", lambda: self.change_entry(ref, "dismiss")))
+        controls.append(Control("9", "Snooze", lambda: self.ask("snooze")))
+        return controls
+
+    def respond(self, ref: str, outcome: str, *, letter: Optional[str] = None, text: Optional[str] = None) -> None:
+        self.change(lambda name: repo_inbox.respond_for(self.root, name, ref, outcome, letter=letter, text=text,
+                                                        now=self.clock()))
+
+    def change_entry(self, ref: str, command: str, minutes: int = 0) -> None:
+        self.change(lambda name: repo_inbox.change_for(self.root, name, ref, command, self.clock(), minutes))
+
+    def change(self, act: Callable[[str], dict]) -> None:
+        """Change a repository inbox entry for the viewed session, then start the watch daemon, which pushes it."""
+        session = self.viewed()
+        if session is None:
+            return
+        try:
+            act(session.name)
+        except ProjectorError as error:
+            self.status = str(error)
+            return
+        self.stop_asking()
+        try:
+            self.ensure()
+        except (ProjectorError, OSError) as error:
+            self.status = f"recorded, but the watch daemon did not start: {error}"
+        self.reload()
 
     def pull_controls(self, row: rows.Row) -> list[Control]:
         pull = row.pull
@@ -888,6 +967,12 @@ class Console:
                 return
         elif typing.purpose == "discuss":
             item = self.record(inbox.discuss, target, said)
+        elif typing.purpose == "discuss-entry":
+            # A peer's entry has no item in the session's own inbox to hang the message on, so it becomes a
+            # message about the session that quotes the entry.
+            entry = self.entry(f"repo:{target}")
+            quoted = f'[{target}] "{entry["subject"]}" from {repo_inbox.peer_label(entry)}: ' if entry else ""
+            item = self.record(lambda name: inbox.send(name, quoted + said))
         else:
             item = self.record(lambda name: inbox.send(name, said, pr=target))
         if item is None:
@@ -1025,7 +1110,7 @@ class Console:
         author_width = max((len(row.pull.author or "") for row in session.rows if row.section == "review"), default=0)
         previous = None
         for key, entry in entries:
-            group = entry.section if isinstance(entry, rows.Row) else "items"
+            group = entry.section if isinstance(entry, rows.Row) else "repo" if key.startswith("repo:") else "items"
             if previous is not None and group != previous:
                 lines.append(Line([]))
             previous = group
@@ -1036,6 +1121,10 @@ class Console:
                 lines.append(self.pull_line(entry, label_width, author_width, lit))
                 if key == self.drawer:
                     lines += self.pull_drawer(entry, width)
+            elif key.startswith("repo:"):
+                lines.append(self.entry_line(entry, now, lit))
+                if key == self.drawer:
+                    lines += self.entry_drawer(entry, session.entries, width)
             else:
                 lines.append(self.item_line(entry, now, lit))
                 if key == self.drawer:
@@ -1149,6 +1238,51 @@ class Console:
             lines.append(Line([(f"{indent[:-2]}› {one.key}: {one.label}", "")], selected=True, spot=True))
             if self.field is not None and self.field.inline and self.field.target == item["ref"]:
                 lines.append(self.note_line(self.field, indent + " " * (len(one.key) + 2), width))
+        rest = [one for one in controls if not one.option]
+        if rest:
+            lines += [Line([]), self.controls_line(rest)]
+        return lines
+
+    def entry_line(self, entry: dict, now: int, selected: bool) -> Line:
+        """A repository inbox entry's line, by its role: a peer's item in its kind's style, a sent item or a reply
+        muted once it is closed."""
+        style = {"question": "permission", "request": "request", "notice": "inactive"}.get(entry.get("kind", ""), "")
+        if entry["role"] != "incoming":
+            style = "subtle" if repo_inbox.is_closed(entry) else ""
+        parts = [(f"- {entry['line']}", style)]
+        marks = [entry["state"]] if entry["state"] in ("replied", "closed") else []
+        if entry["role"] == "incoming" and entry.get("reply_count"):
+            marks.append(f"{entry['reply_count']} {'reply' if entry['reply_count'] == 1 else 'replies'}")
+        parts += [(f"  {mark}", "subtle") for mark in marks]
+        parts.append((f"  {age(now - entry.get('opened_at', now))}", "subtle"))
+        return Line(parts, selected)
+
+    def entry_drawer(self, entry: dict, entries: list[dict], width: int) -> list[Line]:
+        indent = " " * DRAWER_INDENT
+        wrap = max(10, width - DRAWER_INDENT)
+        said = [entry.get("detail") or "", f"follow-up: {entry['follow_up']}" if entry.get("follow_up") else ""]
+        if entry["role"] == "reply":
+            said = [entry.get("text") or ""]
+        lines: list[Line] = []
+        for text in [part for part in said if part]:
+            lines.append(Line([]))
+            for paragraph in text.splitlines():
+                lines += [Line([(indent + part, "")]) for part in textwrap.wrap(paragraph, wrap) or [""]]
+        if entry["role"] == "sent":
+            replies = [found for found in entries if found["role"] == "reply" and found.get("answers") == entry["id"]]
+            if replies:
+                lines.append(Line([]))
+            lines += [Line([(indent + part, "")]) for found in replies for part in textwrap.wrap(found["line"], wrap)]
+        controls = self.controls()
+        _, focused = self.focus()
+        options = [one for one in controls if one.option]
+        if options:
+            lines.append(Line([]))
+        for one in options:
+            if one.key == focused:
+                lines.append(Line([(f"{indent[:-2]}› {one.key}: {one.label}", "")], selected=True, spot=True))
+            else:
+                lines.append(Line([(f"{indent}{one.key}: {one.label}", "")]))
         rest = [one for one in controls if not one.option]
         if rest:
             lines += [Line([]), self.controls_line(rest)]
@@ -1432,12 +1566,12 @@ class Screen:
         return 0
 
 
-def main(wake: Callable[[str, dict], None]) -> int:
+def main(wake: Callable[[str, dict], None], ensure: Callable[[], object] = lambda: None) -> int:
     """Run the console in this terminal until Ctrl-C quits it."""
     import curses
 
     os.environ.setdefault("ESCDELAY", "25")
-    console = Console(watch.state_root(), wake=wake)
+    console = Console(watch.state_root(), wake=wake, ensure=ensure)
     try:
         return curses.wrapper(lambda window: Screen(window, console, curses).run())
     except KeyboardInterrupt:

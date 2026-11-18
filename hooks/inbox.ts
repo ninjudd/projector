@@ -1,6 +1,6 @@
 import type { AgentInfo, FsEntry } from 'claude-code'
 
-import type { Answerable, Item, Question, Request } from './types'
+import type { Answerable, Entry, Item, Question, Request } from './types'
 import type { Env } from './parse'
 
 /** How long a delivered item stays in the panel. */
@@ -377,6 +377,59 @@ export function storeOf(env: Env, session: string): string | undefined {
   const home = env('HOME')
   const base = env('XDG_STATE_HOME') ?? (home === undefined ? undefined : `${home}/.local/state`)
   return base === undefined ? undefined : `${base}/projector/inbox/${session}`
+}
+
+/** Where the repository inbox of `repo`, as `owner/repo`, lives: `project inbox`'s mirror, found by the CLI's own rule. */
+export function entriesStoreOf(env: Env, repo: string): string | undefined {
+  const home = env('HOME')
+  const base = env('XDG_STATE_HOME') ?? (home === undefined ? undefined : `${home}/.local/state`)
+  return base === undefined ? undefined : `${base}/projector/repo-inbox/${repo.toLowerCase()}`
+}
+
+/** The repository a session's registration names, from its `agent.json`, or undefined when it names none. */
+export function repoOf(registration: string | undefined): string | undefined {
+  try {
+    const repo = (JSON.parse(registration ?? '') as { repo?: unknown }).repo
+    return typeof repo === 'string' && /^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Whether a row `project inbox list --json` gives is a repository inbox entry rather than a session's item. */
+export const isEntry = (row: Item | Entry): row is Entry => (row as Partial<Entry>).scope === 'repo'
+
+/** What a press on a repository inbox entry records. */
+export type EntryAction =
+  | { kind: 'answer'; letter: string }
+  | { kind: 'done'; choice?: string }
+  | { kind: 'decline' }
+  | { kind: 'dismiss' }
+  | { kind: 'snooze'; minutes: number }
+  | { kind: 'close' }
+  | { kind: 'reopen' }
+
+/**
+ * The arguments of the `project inbox` command a press on an entry runs. A
+ * response to a peer's item is recorded as yours, with `--as user`, and is
+ * sealed back to the peer; no line goes to the session, whose agent did not
+ * ask.
+ */
+export function entryArguments(entry: Entry, session: string, action: EntryAction): string[] {
+  const { ref } = entry
+  const responds = entry.role === 'incoming' && action.kind !== 'snooze'
+  const as = responds ? ['--as', 'user'] : []
+  const tail = [...as, '--session', session, '--json']
+  switch (action.kind) {
+    case 'answer':
+      return ['inbox', 'answer', `${ref}.${action.letter}`, ...tail]
+    case 'done':
+      return ['inbox', 'done', ref, ...(action.choice === undefined ? [] : [`--text=${action.choice}`]), ...tail]
+    case 'snooze':
+      return ['inbox', 'snooze', ref, '--for', String(action.minutes), ...tail]
+    default:
+      return ['inbox', action.kind, ref, ...tail]
+  }
 }
 
 /**
