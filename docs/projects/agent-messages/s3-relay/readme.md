@@ -248,5 +248,3 @@ observed delivery time in this plan.
 - **Instance and container credentials.** Deferred. The client reads no
   EC2 instance metadata or container credentials, because the relay runs on
   people's own machines.
-</content>
-</invoke>
