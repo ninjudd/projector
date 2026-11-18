@@ -935,3 +935,8 @@ These tests fail before the change, and each catches the bug it names:
   lives in `src/projector/summary.py`, which `review.py` already imports,
   and both commands use it. The action sets the variable on every step that
   runs `project` with the workflow's token.
+- **Projector runs the action from the pull request's checkout.** Its own
+  workflow checks the repository out and uses `./actions/review` in place
+  of `@main`, so each pull request is reviewed by the action it carries and
+  CI review works on the pull requests that build the action. A repository
+  that `init` sets up calls the action at a release ref, as § 2.8 says.
