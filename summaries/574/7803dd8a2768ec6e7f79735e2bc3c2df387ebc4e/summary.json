@@ -1,0 +1,196 @@
+{
+ "version": 1,
+ "name": "Reviews in GitHub Actions",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 574,
+  "title": "Review a pull request's head with an agent and no session, through project review run",
+  "head": "7803dd8a2768ec6e7f79735e2bc3c2df387ebc4e",
+  "headRef": "review-ci-run",
+  "base": "11f2602c1141d6e36d8343b83ad9fe6b0344362a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector normally needs a running agent session to review a pull request. This layer adds <code>project review run</code>, which starts an agent for one ready head, checks that it published a verdict, and reports failure when it did not.",
+   "The runner supports Claude Code, Codex, or a configured command. It also lets existing review readers recognize a configured bot account and lets the review job leave a checked summary for a separate job that can push it. The action and this repository’s workflow arrive in the layers above.",
+   "The latest cleanup fence checks the current owner before deleting state, fixing the reported handover-before-cleanup sequence. One P2 cleanup finding remains: it releases the lock before removing the worktree, allowing a following setup to recreate a path that cleanup then deletes. This head is not signed off."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "The pieces of a CI review",
+    "html": "<ul class=\"tight\"><li><b>Reviewer:</b> the GitHub account that posts the review.</li><li><b>Loop:</b> the session or runner ID that owns local review state and published-review records.</li><li><b>Handoff:</b> a summary and diff written to a folder for another job to publish.</li></ul>"
+   },
+   {
+    "id": "checks",
+    "title": "Validation on this head",
+    "html": "<ul class=\"tight\"><li>The configured gate passed on this head: plugin validation, 256 hook tests, type-checking, diff checks, and exact-head GitHub check.</li><li>All 48 focused runner, finish, and handover tests passed.</li><li>A real temporary Git-worktree reproduction confirms the next review’s lock and state survive while its worktree is deleted.</li><li>The previous finish ordering refuses that overlapping same-head setup because it retains the lock.</li></ul>"
+   },
+   {
+    "id": "rereview",
+    "title": "Finding verification",
+    "html": "<ul class=\"tight\"><li>Newer-head verdict detection and Windows timeout termination remain fixed.</li><li>The new mutex-and-lock check fixes handover before cleanup begins.</li><li>The existing cleanup thread is reopened for releasing ownership before worktree removal, with no duplicate thread.</li><li>Checks used local fixtures and mocked GitHub responses; no live agent or real credential was used.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "identity",
+   "title": "Count the account that posts the review",
+   "kicker": "GitHub tokens and configured reviewers",
+   "intro": [
+    "A workflow token can act as a bot without belonging to a GitHub user, so the ordinary user lookup can fail. The identity helper now accepts <code>PROJECTOR_TOKEN_LOGIN</code> after GitHub returns that specific integration-token refusal; a person’s successful lookup still wins.",
+    "<code>review.reviewers</code> names additional GitHub accounts whose labeled Projector verdicts count. The CLI, watcher, and site apply the same list so a trusted bot verdict can sign off a public-repository head."
+   ],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers the reviewer-account list and runner command as typed configuration settings."
+    },
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds bot identity and configured verdict accounts; finish also gains the runner’s owner-loop fence.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "RunnerTokenTests passed: the environment fallback does not rename a successful person-token lookup, and an active token is reused only for its matching account."
+      },
+      {
+       "kind": "context",
+       "line": 1463,
+       "text": "The runner’s open cleanup finding concerns the lock being released here before worktree removal. The new owner check itself fixes handover before cleanup."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Reads configured reviewer accounts from live checkouts and uses them for sign-off and suggestion events."
+    },
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Lets the review pages count verdicts from configured accounts alongside repository members."
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "Checks token fallback, matching-account token reuse, and configured bot verdicts."
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Checks that the configured bot suppresses unreviewed work while an unlisted account does not."
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Checks that the site recognizes a configured bot without trusting an unlisted reviewer."
+    }
+   ]
+  },
+  {
+   "id": "runner",
+   "title": "Run one review without a conversation",
+   "kicker": "Agent startup, timeout and completion",
+   "intro": [
+    "<code>project review run</code> reads the pull request, refuses forks and drafts, skips an already reviewed head unless re-review is requested, and starts a preset or configured command. The environment gives the agent the model, loop, scratch folder, and any start comment to replace.",
+    "The runner accepts a new verdict on a head pushed while the agent runs, excludes earlier review IDs, and shares portable process helpers with the core. It now asks finish to check the current lock owner under the review mutex, but that cleanup releases ownership before deleting the worktree."
+   ],
+   "files": [
+    {
+     "path": "src/projector/core.py",
+     "note": "Shares process-group creation and termination between the runner and bounded subprocess callers.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The mocked Windows regression verifies taskkill for the process tree and a final wait for the agent. The POSIX path still kills the process group and now tolerates a group that already exited."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/run.py",
+     "note": "Starts the agent and delegates failed-run cleanup to finish with an explicit owner loop.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The newer-head and Windows regressions still pass. Failed-run cleanup now checks a handed-over lock through finish."
+      },
+      {
+       "kind": "flag",
+       "line": 291,
+       "text": "The called finish releases the lock before remove_worktrees runs. A following same-model, same-head setup can acquire that lock and recreate the path, which the old cleanup then deletes. Keep ownership until worktree deletion is complete or prevent path reuse until then."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Exposes the runner options and passes reviewer configuration through review, site, and summary commands."
+    },
+    {
+     "path": "tests/test_run.py",
+     "note": "Adds runner refusal, ownership, moved-head, and timeout regressions, including a handed-over lock.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused runner, finish and handover suite passes all 48 tests. The new pre-cleanup handover regression passes; the later overlapping-worktree sequence is reproduced separately."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "summaries",
+   "title": "Let another job publish the summary",
+   "kicker": "Checked artifact handoff",
+   "intro": [
+    "A review job does not need permission to push repository contents. When <code>PROJECTOR_SUMMARY_HANDOFF</code> names a folder and the site is hosted, summary publication validates the page and writes its JSON and diff there instead of pushing.",
+    "The later publishing job can require a particular pull request number with <code>--pr</code>. Publication also checks the current head before replacing GitHub summary links, while older-head summaries remain available on the site."
+   ],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Shares pre-publication validation with handoff, reads the current head, and includes review authors in site status data."
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "Checks handoff files without pushes, invalid-summary refusal, wrong-PR refusal, and old-head link preservation.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused summary tests passed, including a temporary bare remote whose summaries ref remains unchanged during handoff."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "policy",
+   "title": "Document the unattended review contract",
+   "kicker": "Permissions, skill behavior and plan state",
+   "intro": [
+    "The headless skill takes its loop and model from the runner, skips subscriptions, and writes questions to a report because nobody can answer interactively. Its normal review and summary method still applies.",
+    "The permission configuration asks before a person’s session starts another review agent. The CLI reference describes the new runner and summary flow, while the project plan moves to in-progress and records implementation decisions."
+   ],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Adds the no-session mode and its environment, scratch, question-reporting, and handoff rules."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Makes project review run an explicit ask in Claude Code and leaves Codex to its usual approval."
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Checks that runner startup does not inherit the broad automatic project-command allowance."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the runner presets, reviewer list, summary handoff, and current-head linking."
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "note": "Marks implementation in progress and records loop, identity, effort, and handoff decisions."
+    }
+   ]
+  }
+ ]
+}
