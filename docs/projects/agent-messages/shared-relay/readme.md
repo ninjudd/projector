@@ -151,6 +151,7 @@ repository says so to its sender and its reader.
 | `agent.json` | Adds `location` and `location_source`. `relay` gains the value `waiting`. |
 | Message and peers item | Add `repo` and `repo_visibility`. The receiver checks both against `review.repo_slug`'s shape and the four visibility values `PUBLIC`, `INTERNAL`, `PRIVATE`, and `unknown`. |
 | Peers item | Adds `scope_repo` (optional), the one repository whose sessions show it, in the same shape as `repo`. |
+| Peers records | Each record's `location` (`../peers/readme.md` § 2.3) names the relay location it is pushed to, not the work repository `repo` names, and the location's job rejects a record whose `location` is another. |
 | `relay/<owner>/<repo>.json` | Adds `permission`, beside `visibility`, for a location other than a work repository. |
 
 ### 2.3 Cross-repository controls
