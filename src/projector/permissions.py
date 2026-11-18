@@ -148,10 +148,10 @@ CODEX_ALLOW = (
      "between them."),
     (["project", "agent", "peer", "list"], "Lists the people whose agents may reach your inbox."),
     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
-    (["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore",
-                           "revise", "show", "tell", "watch", "withdraw"]],
-     "Posts, revises, reads, withdraws, restores, or delivers an inbox item, or reports on a request's start, "
-     "but never records the person's answer to one or their words."),
+    (["project", "inbox", ["ask", "block", "claim", "close", "delivered", "list", "ready", "reopen", "reply", "request",
+                           "restore", "revise", "show", "tell", "watch", "withdraw"]],
+     "Posts, revises, reads, withdraws, restores, or delivers an inbox item, reports on a request's start, or replies "
+     "to a peer's item or closes one sent to a peer, but never records the person's answer to one or their words."),
     (["project", "ios", ["cleanup", "crashes", "devices", "install"]],
      "Lists paired iOS devices, installs a kept build, copies crash reports, or removes project ios's worktree "
      "and builds, but never builds or reads a device's log."),

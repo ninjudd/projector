@@ -137,7 +137,7 @@ def relay_scratch(scratch: Path) -> None:
     checkout, and the fake keychain tools and `codex`."""
     origin = scratch / "origin.git"
     git("init", "-q", "--bare", str(origin))
-    for name in ("one", "two"):
+    for name in ("one", "two", "three"):
         (scratch / name / "home").mkdir(parents=True)
         clone(scratch / name / "work", origin)
     bin_dir = scratch / "bin"
@@ -1208,9 +1208,9 @@ class PeerCommandTests(RelayCase):
         self.assertIn(f"Does jason's project agent key show print key {jason_id}? [y/N] ", out)
         self.assertIn(f"added peer jason, key {jason_id}", out)
         self.assertEqual({"jason": crypto.public_key(self.JASON)}, added)
-        self.assertEqual(f"jason\tkey {jason_id}\n", listed[1])
-        self.assertEqual([{"name": "jason", "key_id": jason_id, "public_key": public_of(self.JASON)}],
-                         listed_json["peers"])
+        self.assertEqual(f"jason\tkey {jason_id}\tnothing opened yet\n", listed[1])
+        self.assertEqual([{"name": "jason", "key_id": jason_id, "public_key": public_of(self.JASON),
+                          "last_opened": None}], listed_json["peers"])
         self.assertEqual(0, removed[0], removed[2])
         self.assertIn(f"removed peer jason, key {jason_id}", removed[1])
         self.assertEqual({}, config.peers(self.one.env))
@@ -1694,7 +1694,7 @@ class PushTests(RelayCase):
             self.one.run_pass()
 
         ref = self.presence(self.one, A)
-        opened = relay.Job(self.one.root, "acme/app", self.key, set(), self.now, poll=False, full=False,
+        _, opened = relay.Job(self.one.root, "acme/app", self.key, set(), self.now, poll=False, full=False,
                            gh=self.github).open(self.one.work, git("rev-parse", f"{first}:sealed.json",
                                                                    cwd=self.origin))
         self.assertEqual([ref], [item["ref"] for item in queued])
@@ -1747,7 +1747,7 @@ class PushTests(RelayCase):
         self.assertEqual([ref], [item["ref"] for item in failed])
         self.assertIn("stale info", " ".join(status["errors"]))
         self.assertEqual([], self.one.outbox())
-        opened = relay.Job(self.one.root, "acme/app", self.key, set(), self.now, poll=False, full=False,
+        _, opened = relay.Job(self.one.root, "acme/app", self.key, set(), self.now, poll=False, full=False,
                            gh=self.github).open(self.one.work, git("rev-parse", f"{self.refs()[ref]}:sealed.json",
                                                                    cwd=self.origin))
         self.assertEqual("Moved on", opened["summary"])

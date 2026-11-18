@@ -109,6 +109,7 @@ SETTINGS: dict[str, type] = {
     "agent.auto_register": bool,
     "agent.key": str,
     "agent.peers": dict,
+    "agent.peer_limit": int,
     "ios.app": str,
     "ios.project": str,
     "ios.output": str,
@@ -123,6 +124,7 @@ MINIMUMS: dict[str, int] = {
     "watch.renotify": 1,
     "watch.review_stall": 1,
     "agent.message_limit": 1,
+    "agent.peer_limit": 1,
 }
 
 
