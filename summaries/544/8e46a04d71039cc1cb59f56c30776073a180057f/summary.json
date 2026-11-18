@@ -1,0 +1,68 @@
+{
+ "version": 1,
+ "name": "Configuration trust plan",
+ "project": "config-trust",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 544,
+  "title": "Plan reading committed configuration from the default branch, with overrides",
+  "head": "8e46a04d71039cc1cb59f56c30776073a180057f",
+  "headRef": "plan-config-trust",
+  "base": "0c945a8321f9deaf6432c8c313fb913c0cb9a0ce",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector reads layered <code>.projector.toml</code> settings that control reviews, output paths, and relay destinations. This plan makes tracked settings come from the reviewed default branch rather than a contributor's working copy.",
+   "Priority overrides let outer configuration win deliberately. Destination approval, path containment, cached blob reads, and background default-branch refresh complete the proposed policy. The plan is <code>ready</code>/<code>now</code>; this pull request adds no implementation."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Two decisions need correction",
+    "html": "<ul><li>The specified fetch still updates the user's remote-tracking ref unless configured mappings are disabled.</li><li>The overview permits an external user-level project path while the runtime rule forbids it.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "config-trust",
+   "title": "Make reviewed policy govern every checkout",
+   "kicker": "Default-branch sources, explicit overrides, and local consent",
+   "intro": [
+    "Tracked configuration is read from the default-branch commit shared by a repository's worktrees. Untracked and user configuration stays on disk. Overrides use priorities from 1 to 99, with farther files winning ties.",
+    "Destination values from tracked files require terminal approval. The daemon refreshes its private default-branch ref on full passes, while cached reads avoid processes on warm loads. The per-checkout local-file and superproject questions are explicitly deferred."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/config-trust/readme.md",
+     "collapsed": false,
+     "note": "Defines the configuration source, override precedence, destination approval, path rules, refresh command, and acceptance cases.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 100,
+       "text": "The priority and equal-priority distance rules agree across the runtime flow, rationale, decision record, and acceptance cases."
+      },
+      {
+       "kind": "flag",
+       "line": 168,
+       "text": "A temporary clone shows this fetch advances the configured origin tracking ref as well as Projector's ref. Add --refmap= to honor the no-origin-mutation contract."
+      },
+      {
+       "kind": "flag",
+       "line": 144,
+       "text": "The overview exempts a user-level projects.dir from containment, but this rule refuses it from every file. Choose one behavior and include its user-file acceptance case."
+      },
+      {
+       "kind": "verify",
+       "line": 288,
+       "text": "project check and project show confirm valid ready/now metadata. The two remaining scope questions are deliberately deferred."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
