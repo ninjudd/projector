@@ -360,3 +360,40 @@ observed delivery time in this plan.
   `update-ref` that follows a push inside `apply`, so the job's bookkeeping
   after a push names no Git command. `Job.open` still reads a Git blob, for
   the tests that open a record on the bare repository.
+- **The client sends with `http.client`, not `urllib.request`.** It follows
+  no redirect, so a signed request never goes to a host it did not name,
+  and a timer bounds each whole request at 30 seconds, since a socket's
+  timeout bounds only each read and a store could send a byte at a time.
+- **A bucket whose name holds a dot goes path-style on AWS,** to
+  `s3.<region>.amazonaws.com/<bucket>`, because no certificate for a
+  virtual host matches a dotted name.
+- **A listing stops at 50 pages,** 50,000 objects under one key's prefix,
+  and more is an error for that job rather than a backlog to page through.
+- **The client honors `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE`,**
+  as the AWS tools do, and rereads a profile's long-lived keys when either
+  file changes.
+- **An expired sign-in is a `credential_process` that fails saying so.**
+  Its last line of standard error names an expiry, a failed refresh, or an
+  SSO session, and the fix is `aws sso login` for the profile its command
+  names with `--profile`, else for the profile itself.
+- **The signer is checked against AWS's own cases,** `get-vanilla` and two
+  query cases from the Signature Version 4 test suite, and the four S3
+  examples in AWS's documentation, each with the signature AWS publishes.
+- **The parser refuses a document type, not a scan of the bytes.**
+  `parse_xml` builds the tree with an expat parser whose document type and
+  entity declaration handlers raise, so it refuses the declaration after
+  decoding the body. A UTF-16 body, whose bytes never spell `<!DOCTYPE`,
+  is refused as a UTF-8 one is.
+- **The 30 seconds bound the host's lookup too.** `http.client` resolves
+  the host before any socket exists for the timer to shut, so the client
+  opens the socket itself: it looks the host up on a daemon thread, stops
+  waiting at the request's deadline, and connects within the time left.
+  The connection keeps the host's name for TLS and the signed `Host`
+  header. A lookup that never returns leaves its thread behind until the
+  resolver gives up.
+- **Keys a refresh gives are judged by the clock after it.** A
+  `credential_process` can take most of its 30 seconds, so the provider
+  reads the clock again once it answers. Keys that have expired by then,
+  or that expire within the 5-minute refresh margin, are an `expired`
+  error rather than signing anything: the source has no fresher keys, so
+  each request would only run it again.
