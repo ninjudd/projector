@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Optional
 from unittest import mock
 
-from projector import agents, cli, codex_watch as codex, config, crypto, keychain, relay, watch
+from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, watch
 from projector.inbox import read_json, try_lock, unlock, write_json
 from tests.scratch import copy_of
 from tests.test_watch import FakeGitHub
@@ -1289,6 +1289,63 @@ class PeerCommandTests(RelayCase):
         self.assertEqual(65, code, out + err)
         self.assertIn("amy already holds key", err)
         self.assertEqual({"amy": crypto.public_key(self.JASON)}, config.peers(self.one.env))
+
+    def test_a_change_to_the_file_while_an_add_is_between_its_read_and_its_write_is_kept(self) -> None:
+        amy, jason = crypto.public_key(self.AMY), crypto.public_key(self.JASON)
+        path = self.one.home / ".projector.toml"
+        both = {"amy": amy, "jason": jason}
+        for label, change, peers, key, renotify in (
+                ("peer remove", lambda: relay.remove_peer("amy", environ=self.one.env), {"jason": jason}, True, None),
+                ("config unset", lambda: cli.main(["config", "unset", "--user", "agent.peers.amy"]),
+                 {"jason": jason}, True, None),
+                ("config set", lambda: cli.main(["config", "set", "--user", "watch.renotify", "600"]), both, True,
+                 600),
+                ("key remove", lambda: relay.remove_key(self.one.root, environ=self.one.env), both, False, None)):
+            with self.subTest(label):
+                self.one.inline_key(self.private)
+                with path.open("a") as stream:
+                    stream.write(f'[agent.peers]\namy = "{public_of(self.AMY)}"\n')
+                read, waiting, done = threading.Event(), threading.Event(), threading.Event()
+                write_through, try_lock = config.write_through, inbox.try_lock
+
+                def paused(target: Path, text: str) -> None:
+                    # The add has read the file. Let the other command run until it finishes or waits for the
+                    # lock the add holds, and only then write what the add read.
+                    if threading.current_thread().name == "add" and not read.is_set():
+                        read.set()
+                        while not (done.is_set() or waiting.is_set()):
+                            time.sleep(0.01)
+                    write_through(target, text)
+
+                def contended(descriptor: int) -> bool:
+                    taken = try_lock(descriptor)
+                    if not taken and threading.current_thread().name == "change":
+                        waiting.set()
+                    return taken
+
+                def other() -> None:
+                    read.wait(10)
+                    try:
+                        change()
+                    finally:
+                        done.set()
+
+                adding = threading.Thread(name="add", target=relay.add_peer, args=("jason", jason),
+                                          kwargs={"environ": self.one.env})
+                changing = threading.Thread(name="change", target=other)
+                with self.one.acting(), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), \
+                        mock.patch.object(config, "write_through", paused), \
+                        mock.patch.object(inbox, "try_lock", contended):
+                    adding.start()
+                    changing.start()
+                    adding.join(10)
+                    changing.join(10)
+
+                self.assertTrue(done.is_set())
+                self.assertEqual(peers, config.peers(self.one.env))
+                written = tomllib.loads(path.read_text())
+                self.assertEqual(key, "key" in written["agent"])
+                self.assertEqual(renotify, written.get("watch", {}).get("renotify"))
 
     def test_a_table_that_repeats_a_key_or_holds_your_own_is_refused_when_read(self) -> None:
         for table, said in ((f'amy = "{public_of(self.AMY)}"\njason = "{public_of(self.AMY)}"\n', "hold one key"),

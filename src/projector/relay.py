@@ -36,6 +36,7 @@ import os
 import re
 import subprocess
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -152,6 +153,13 @@ def command_key(environ: Optional[dict] = None) -> tuple[Optional[Key], str]:
         return None, str(error)
 
 
+def config_lock(environ: Optional[dict] = None) -> AbstractContextManager[None]:
+    """The lock that every change to `~/.projector.toml` holds from its read of the file to its write. A change
+    reads the whole file and writes it back, so without the lock, two that overlap write back a copy that drops
+    the other's change, which can trust a peer just removed again."""
+    return locked(watch.state_root(environ) / "user-config")
+
+
 def no_keychain(reason: str) -> RelayError:
     return RelayError(f"{reason}, so no keychain can hold the key and nothing was stored; pass --inline to store "
                       "it in ~/.projector.toml instead, where every process running as you can read it")
@@ -176,7 +184,8 @@ def save_key(root: Path, private: bytes, *, inline: bool, environ: Optional[dict
         os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
     if os.name == "posix":
         os.chmod(path, 0o600)
-    write_value(path, "agent.key", value)
+    with config_lock(environ):
+        write_value(path, "agent.key", value)
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "key.json", {"schema_version": 1, "key_id": key_id, "store": store, "reason": reason})
     return key, store, reason
@@ -349,9 +358,10 @@ def check_peer(name: str, text: str, *, replace: bool, environ: Optional[dict] =
 
 
 def add_peer(name: str, public: bytes, *, replace: bool = False, environ: Optional[dict] = None) -> None:
-    """Write the peer to `~/.projector.toml`, checking it again against the table as it is now, under a lock,
-    since another `peer add` may have changed the table while this one waited for its confirmation."""
-    with locked(watch.state_root(environ) / "peers"):
+    """Write the peer to `~/.projector.toml`, checking it again against the table as it is now, under
+    `config_lock`, since another `peer add` may have changed the table while this one waited for its
+    confirmation."""
+    with config_lock(environ):
         check_peer(name, crypto.encode(public), replace=replace, environ=environ)
         path = user_config_path(environ)
         if not path.exists():
@@ -360,13 +370,14 @@ def add_peer(name: str, public: bytes, *, replace: bool = False, environ: Option
 
 
 def remove_peer(name: str, environ: Optional[dict] = None) -> str:
-    """Remove a peer from `~/.projector.toml`, and answer the ID of the key it held."""
+    """Remove a peer from `~/.projector.toml`, under `config_lock`, and answer the ID of the key it held."""
     name = name.lower()
-    found = config.peers(environ)
-    if name not in found:
-        listed = ", ".join(sorted(found)) or "none"
-        raise RelayError(f"{name} is not a peer; your peers: {listed}")
-    unset_value(user_config_path(environ), f"agent.peers.{name}")
+    with config_lock(environ):
+        found = config.peers(environ)
+        if name not in found:
+            listed = ", ".join(sorted(found)) or "none"
+            raise RelayError(f"{name} is not a peer; your peers: {listed}")
+        unset_value(user_config_path(environ), f"agent.peers.{name}")
     return crypto.key_id(found[name])
 
 
@@ -390,7 +401,8 @@ def remove_key(root: Path, environ: Optional[dict] = None) -> tuple[str, str]:
             found = "the keychain item is deleted"
         except KeychainError as error:
             found = f"the keychain item could not be deleted: {error}"
-    unset_value(user_config_path(environ), "agent.key")
+    with config_lock(environ):
+        unset_value(user_config_path(environ), "agent.key")
     (root / "key.json").unlink(missing_ok=True)
     return removed, found
 

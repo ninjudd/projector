@@ -956,8 +956,8 @@ def _overrides(source: Source, loaded: dict[str, Any]) -> list[tuple[int, dict[s
 
 def drop_user_only(loaded: dict[str, Any]) -> list[str]:
     """Remove each `USER_ONLY` key, and everything under it, from a walked file's values or an override table, and
-    answer the dotted keys removed. The subtree is found by walking the parsed tables, never by splitting a flattened key, since a
-    quoted key such as `"alice.work"` holds a dot of its own."""
+    answer the dotted keys removed. The subtree is found by walking the parsed tables, never by splitting a
+    flattened key, since a quoted key such as `"alice.work"` holds a dot of its own."""
 
     removed: list[str] = []
     for name in sorted(USER_ONLY):

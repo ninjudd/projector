@@ -1924,10 +1924,14 @@ def change_config(arguments: argparse.Namespace) -> int:
         raise UsageError(f"{arguments.key} decides whose agents can post to your inbox, so only a terminal sets it; "
                          "run `project agent peer add <name> <public-key>` in a terminal")
     path = config_file(arguments)
-    if arguments.config_command == "set":
-        change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value), arguments.override)
-    else:
-        change = unset_value(path, arguments.key, arguments.override)
+    # The peer and key commands change ~/.projector.toml too, so a change to it holds their lock, an override's
+    # included.
+    user = path.resolve() == user_config_path().resolve()
+    with relay.config_lock() if user else contextlib.nullcontext():
+        if arguments.config_command == "set":
+            change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value), arguments.override)
+        else:
+            change = unset_value(path, arguments.key, arguments.override)
     try:
         config: Optional[Config] = load_config(config_start(arguments))
     except ConfigError:
