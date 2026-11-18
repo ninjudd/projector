@@ -95,18 +95,25 @@ and the controls in `../shared-relay/readme.md` § 2.3.
    - **Not public.** An unsigned `ListObjectsV2` on the prefix must fail. If
      it succeeds, anyone can list the relay, so the location is `off` with
      the reason `the bucket lets anyone list s3://…`.
-   - **Conditional writes.** `PutObject` with `If-None-Match: *` on
-     `<prefix>/<key-id>/probe/<machine-id>` must succeed, and the same request
-     again must answer `412`. A store that ignores the condition would break
-     every lease, so the location is `off` with the reason `this store does
-     not honor If-None-Match`. The probe object is then deleted.
+   - **Conditional writes.** `PutObject` with `If-None-Match: *` on a fresh
+     name, `<prefix>/<own-key-id>/probe/<random>` with 32 random hex digits,
+     must succeed, and the same request again must answer `412`. A store that
+     ignores the condition would break every lease, so the location is `off`
+     with the reason `this store does not honor If-None-Match`. The probe
+     object is then deleted.
+
+   Each probe picks a new name, so a probe interrupted before its deletion
+   cannot make the next one fail. Each full pass also deletes every object
+   under `<prefix>/<own-key-id>/probe/` that the listing shows as more than an
+   hour old, with `If-Match` on its listed ETag, so an interrupted probe's
+   object does not stay in the bucket.
 4. **Poll.** Each S3 location's job runs when its outbox changes, as today,
    and otherwise every `agent.s3_poll` seconds. It lists
    `<prefix>/<own-key-id>/`, following continuation tokens. It also lists
    `<prefix>/<key-id>/` for each key this machine gave up, as the Git
    transport fetches those namespaces today. The listing gives each object's
-   name, ETag, and size, which the job keeps in the cache's `remote` map in
-   place of commit SHAs.
+   name, ETag, size, and last-modified time. The job keeps the ETags in the
+   cache's `remote` map in place of commit SHAs.
 5. **Open.** The job applies the existing limits. It examines at most
    `EXAMINE_LIMIT` new objects and opens at most `OPEN_LIMIT`. It rejects a
    name outside the layout in § 2.3, and rejects an object over 32 KiB
@@ -181,7 +188,9 @@ moved to the front:
 | `refs/projector/user-state/<key-id>/<id>` | `<prefix>/<key-id>/user-state/<id>` |
 
 The transport maps between the two forms, so the job, the outbox, and the
-cache keep using ref names.
+cache keep using ref names. One more name has no ref:
+`<prefix>/<key-id>/probe/<random>` is a probe object (§ 2.1 step 3), which
+the job never reads or opens.
 
 An S3 location's identity is its endpoint, bucket, and prefix together,
 written as the path-style URL of the prefix, such as
@@ -211,8 +220,8 @@ SHA-256 of the identity, and each file records the identity itself.
 
 | File | Change |
 | --- | --- |
-| New `src/projector/s3.py` | A small S3 client from the standard library. It signs requests with Signature Version 4 over `hmac` and `hashlib`, and sends them with `urllib.request` and the default `ssl` context, with a 30-second timeout. It finds credentials as § 2.1 step 2 describes. It provides `list_objects(prefix)`, `get_object(name, if_match)`, `put_object(name, body, if_match=None, if_none_match=False)`, and `delete_object(name, if_match)`, and raises `PreconditionFailed`, `NotFound`, and `S3Error`. It reads at most 1 MiB of any response, refuses an XML body that holds a `<!DOCTYPE`, and parses listings with `xml.etree.ElementTree`. It refreshes credentials with an `Expiration` 5 minutes before it (§ 2.1 step 2). Its errors and its `repr` never include a secret key or a session token. |
-| `src/projector/relay.py` | Add the `Transport` interface: `snapshot(prefixes)`, `read(ref, version)`, and `apply(items)`. Move today's fetch, `for-each-ref`, `ls-tree`, `cat-file`, `write_commit`, and push code into `GitTransport`, without changing its behavior. Add `S3Transport` with the mapping in § 2.3 and the requests in § 2.1 step 6, and the probe in § 2.1 step 3. `Job` takes a transport, and its examine step asks the transport whether an object is too large before it reads one. Group S3 registrations into jobs, and key their caches and outboxes, by the identity in § 2.3. |
+| New `src/projector/s3.py` | A small S3 client from the standard library. It signs requests with Signature Version 4 over `hmac` and `hashlib`, and sends them with `urllib.request` and the default `ssl` context, with a 30-second timeout. It finds credentials as § 2.1 step 2 describes. It provides `list_objects(prefix)`, which gives each object's name, ETag, size, and last-modified time, `get_object(name, if_match)`, `put_object(name, body, if_match=None, if_none_match=False)`, and `delete_object(name, if_match)`, and raises `PreconditionFailed`, `NotFound`, and `S3Error`. It reads at most 1 MiB of any response, refuses an XML body that holds a `<!DOCTYPE`, and parses listings with `xml.etree.ElementTree`. It refreshes credentials with an `Expiration` 5 minutes before it (§ 2.1 step 2). Its errors and its `repr` never include a secret key or a session token. |
+| `src/projector/relay.py` | Add the `Transport` interface: `snapshot(prefixes)`, `read(ref, version)`, and `apply(items)`. Move today's fetch, `for-each-ref`, `ls-tree`, `cat-file`, `write_commit`, and push code into `GitTransport`, without changing its behavior. Add `S3Transport` with the mapping in § 2.3 and the requests in § 2.1 step 6, and the probe in § 2.1 step 3 with its sweep of old probe objects. `Job` takes a transport, and its examine step asks the transport whether an object is too large before it reads one. Group S3 registrations into jobs, and key their caches and outboxes, by the identity in § 2.3. |
 | `src/projector/config.py` | Accept `s3://` in `relay_location`, refuse an `agent.s3_endpoint` with a path, query, or user info, and add `s3_identity(endpoint, bucket, prefix)`, which writes the identity in § 2.3. Add the four `agent.s3_*` settings, `agent.s3_poll` to `MINIMUMS` with 2, and `agent.s3_endpoint` and `agent.s3_profile` to `DESTINATIONS`. |
 | `src/projector/watch.py` | Start an S3 location's job every `agent.s3_poll` seconds as well as when its outbox changes, and report its probe result and credential source in `watch status`. Post, replace, and withdraw the credential notice in § 2.1 step 8 as the location's state changes. |
 | `src/projector/repo_inbox.py` (from `../peers/readme.md`) | Hold local notices from Projector itself, which are never relayed, and let `withdraw` remove one. |
@@ -254,7 +263,7 @@ SHA-256 of the identity, and each file records the identity itself.
 ## 4. Acceptance criteria
 
 The tests run a fake S3 server on a local port. It implements
-`ListObjectsV2` with continuation, `GetObject`, `PutObject`, and
+`ListObjectsV2` with continuation and last-modified times, `GetObject`, `PutObject`, and
 `DeleteObject` with `If-Match` and `If-None-Match`, and it checks each
 request's Signature Version 4. They point `agent.s3_endpoint` at it, and run
 the relay tests' two-machine setup with an S3 location.
@@ -267,6 +276,7 @@ the relay tests' two-machine setup with an S3 location.
 | Renew A's presence from two jobs at once. | One `PutObject` succeeds. The other gets `412`, is marked stale, and lands after the next listing with that version as its lease. Catches a lease the transport does not send. |
 | Delete an object another machine already deleted. | The `404` counts as deleted, and the outbox empties. Catches a deletion retried forever. |
 | List an object of 33 KiB, an object with a malformed name, and 300 new valid objects. | The first is rejected with no `GetObject`, the second is ignored, and the job examines 256 and opens 64. Catches a transport that reads unbounded input. |
+| Stop the daemon after the probe's first `PutObject` and before its deletion, restart it, and run a full pass with the fake server's clock an hour later. | The probe after the restart passes on a new name, and the full pass deletes the first probe's object. Catches a probe name reused across runs, which turns a valid store `off` for good, and a leftover probe object nothing removes. |
 | Make the fake server ignore `If-None-Match`, then let it answer an unsigned listing. | The location is `off` with each reason, and nothing else is written. Catches a relay on a store that breaks leases, or on a public bucket. |
 | On each machine, register one session in a checkout whose `agent.s3_endpoint` names one fake server and one in a checkout whose endpoint names a second, all with `agent.relay = "s3://team/relay"`. Send a peers item from machine 1 through the first, and copy its object into the second server's bucket. Resolve a checkout with no endpoint. | Each machine runs two jobs with two cache files and two outbox files, and each server holds only the presence records of its own sessions. The item arrives through the first server, and its copy is rejected as `location-mismatch` on the second. The checkout with no endpoint resolves to the identity `https://s3.amazonaws.com/team/relay`. Catches a location keyed by its bucket and prefix alone, which sends one store's records to another. |
 | Commit `agent.s3_endpoint` and `agent.s3_profile` to the default branch's `.projector.toml`, and allow neither. | No request is sent to the endpoint and no credentials are read for the profile, and `list` names `project config allow` for each. Catches a repository that points your relay at its own server, or signs with an identity you did not choose. |
