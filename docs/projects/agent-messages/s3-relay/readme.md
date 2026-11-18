@@ -384,3 +384,10 @@ observed delivery time in this plan.
   entity declaration handlers raise, so it refuses the declaration after
   decoding the body. A UTF-16 body, whose bytes never spell `<!DOCTYPE`,
   is refused as a UTF-8 one is.
+- **The 30 seconds bound the host's lookup too.** `http.client` resolves
+  the host before any socket exists for the timer to shut, so the client
+  opens the socket itself: it looks the host up on a daemon thread, stops
+  waiting at the request's deadline, and connects within the time left.
+  The connection keeps the host's name for TLS and the signed `Host`
+  header. A lookup that never returns leaves its thread behind until the
+  resolver gives up.

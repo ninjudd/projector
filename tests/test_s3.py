@@ -246,6 +246,42 @@ class OperationTests(ServerCase):
                 self.assertLess(time.monotonic() - started, 2.5)
                 self.assertIn("did not finish within 1 seconds", str(stopped.exception))
 
+    def test_a_name_lookup_that_never_returns_is_stopped_at_the_timeout(self) -> None:
+        """The lookup of the store's host name counts toward the request's timeout. A lookup that answers is
+        connected to by address, with the name still in the `Host` header the request signs."""
+        self.env_keys()
+        port = self.server.server.server_address[1]
+        release = threading.Event()
+        self.addCleanup(release.set)
+        looked: list[str] = []
+
+        def stalled(host: str, *args: object, **options: object) -> list:
+            looked.append(host)
+            release.wait(10)
+            raise socket.gaierror("the lookup was released")
+
+        def answering(host: str, *args: object, **options: object) -> list:
+            looked.append(host)
+            return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", port))]
+
+        client = s3.Client("team", endpoint=f"https://s3.example.test:{port}", environ=self.environ,
+                           clock=lambda: self.now)
+        with mock.patch.object(socket, "getaddrinfo", stalled), mock.patch.object(s3, "TIMEOUT", 0.5):
+            started = time.monotonic()
+            with self.assertRaises(s3.S3Error) as stopped:
+                client.list_objects("relay/")
+            took = time.monotonic() - started
+        with mock.patch.object(socket, "getaddrinfo", answering):
+            listed = client.list_objects("relay/")
+
+        self.assertLess(took, 2)
+        self.assertIn("did not finish within 0.5 seconds", str(stopped.exception))
+        self.assertEqual(["s3.example.test", "s3.example.test"], looked)
+        self.assertEqual([], listed)
+        sent = self.server.seen("GET")
+        self.assertEqual([("AKIAENV", f"s3.example.test:{port}")],
+                         [(found.signed_by, found.headers["host"]) for found in sent])
+
     def test_requests_sign_for_the_region_the_setting_the_environment_or_the_profile_gives(self) -> None:
         self.env_keys()
         self.aws_file("config", "[default]\nregion = eu-west-1\n")

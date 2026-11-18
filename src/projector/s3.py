@@ -339,6 +339,46 @@ def connect(host: str, port: int, timeout: float) -> http.client.HTTPConnection:
     return http.client.HTTPSConnection(host, port, timeout=timeout, context=ssl.create_default_context())
 
 
+def open_socket(address: tuple[str, int], deadline: float) -> socket.socket:
+    """A TCP socket connected to `address`, or `TimeoutError` once `deadline`, a `time.monotonic` time, passes.
+
+    `socket.create_connection` waits on the host's lookup for as long as the resolver takes, which no socket
+    timeout or timer can interrupt, so the lookup runs on a daemon thread of its own that the request stops waiting
+    for at the deadline. A lookup that never returns leaves only that thread behind."""
+    host, port = address
+    addresses: list = []
+    errors: list[Exception] = []
+    done = threading.Event()
+
+    def look_up() -> None:
+        try:
+            addresses.extend(socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM))
+        except Exception as error:
+            errors.append(error)
+        finally:
+            done.set()
+
+    threading.Thread(target=look_up, name=f"s3-lookup-{host}", daemon=True).start()
+    if not done.wait(max(0.0, deadline - time.monotonic())):
+        raise TimeoutError(f"the lookup of {host} did not finish")
+    if errors:
+        raise errors[0]
+    failed: Optional[OSError] = None
+    for family, kind, protocol, _, place in addresses:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"the connection to {host} did not finish")
+        sock = socket.socket(family, kind, protocol)
+        try:
+            sock.settimeout(remaining)
+            sock.connect(place)
+            return sock
+        except OSError as error:
+            sock.close()
+            failed = error
+    raise failed or OSError(f"{host} has no address")
+
+
 def parse_xml(body: bytes) -> ElementTree.Element:
     """The XML document in a response body, refusing one that declares a document type, so no entity it could
     declare is expanded.
@@ -428,7 +468,11 @@ class Client:
                 sent["x-amz-security-token"] = credentials.token
             sent["authorization"] = authorization(method, path, query, sent, payload, credentials, self.region)
         target = canonical_path(path) + (f"?{canonical_query(query)}" if query else "")
+        deadline = time.monotonic() + TIMEOUT
         connection = connect(*self.address, TIMEOUT)
+        # `http.client` opens its socket through this hook, then for TLS wraps it with the host's name, so the
+        # certificate check, server name indication, and `Host` header keep the name the lookup resolved.
+        connection._create_connection = lambda place, *_: open_socket(place, deadline)  # type: ignore[attr-defined]
         stopped = threading.Event()
 
         def stop() -> None:
