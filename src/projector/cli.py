@@ -1208,11 +1208,14 @@ def add_ios_parser(subcommands) -> None:
 
 def ios_output(config: Config, checkout: Path) -> Path:
     """Where `project ios crashes` and `logs` write: `ios.output`, or `~/Desktop`. Only `~/.projector.toml`, which
-    you wrote yourself, may send them outside the checkout and Projector's state directory."""
+    you wrote yourself, may send them outside the checkout and Projector's state directory.
 
-    output = Path(config.setting("ios.output") or "~/Desktop").expanduser()
+    A relative value is resolved against the checkout here, and that absolute path is both the one checked and the
+    one returned, so the writer never resolves it again against the command's working directory."""
+
+    output = checkout / Path(config.setting("ios.output") or "~/Desktop").expanduser()
     if config.setting("ios.output") is not None and not config.from_user("ios.output"):
-        config.confine("ios.output", checkout / output, (checkout, state_home()))
+        config.confine("ios.output", output, (checkout, state_home()))
     return output
 
 

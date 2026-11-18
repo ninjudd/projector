@@ -913,7 +913,9 @@ every command that reads it exit 78 and name the value and the file.
 `ios.output` from a repository's file, or any file but `~/.projector.toml`,
 must lead inside the checkout or Projector's state directory, and
 `project ios crashes` and `logs` refuse another value the same way. In
-`~/.projector.toml` it may name any directory, such as your desktop.
+`~/.projector.toml` it may name any directory, such as your desktop. A
+relative `ios.output` is relative to the checkout's root, whichever
+directory you run the command from.
 
 Tables merge key by key, so a nearer file overrides one setting without
 discarding the rest:
@@ -1010,7 +1012,7 @@ reads, which are these:
 | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or, with `--inline`, the key itself, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key join`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
 | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
 | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
-| `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, inside the checkout or the state directory unless `~/.projector.toml` sets it |
+| `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, relative to the checkout's root, inside the checkout or the state directory unless `~/.projector.toml` sets it |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own

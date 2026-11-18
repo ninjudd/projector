@@ -1127,8 +1127,32 @@ class PathRuleTests(unittest.TestCase):
         self.assertIn(f"{repo_file} sets ios.output = '{outside}'", str(refused.exception))
 
         repo_file.write_text('[ios]\noutput = "build/crashes"\n')
-        self.assertEqual(Path("build/crashes"), ios_output(load(self.repo), self.repo))
+        self.assertEqual(self.repo / "build" / "crashes", ios_output(load(self.repo), self.repo))
 
         repo_file.unlink()
         write(self.home / ".projector.toml", f'[ios]\noutput = "{outside}"\n')
         self.assertEqual(outside, ios_output(load(self.repo), self.repo))
+
+
+class IosOutputBaseTests(ClonedCase):
+    """A relative `ios.output` leads where it was checked: under the checkout, from any working directory."""
+
+    def test_a_relative_output_is_written_under_the_checkout_from_a_subdirectory(self) -> None:
+        from projector import ios
+
+        self.push_to_origin('[ios]\noutput = "reports"\n')
+        outside = self.base / "outside"
+        outside.mkdir()
+        sub = self.repo / "sub"
+        sub.mkdir()
+        (sub / "reports").symlink_to(outside)
+        previous = Path.cwd()
+        os.chdir(sub)
+        self.addCleanup(os.chdir, previous)
+
+        with mock.patch.object(ios, "crash_reports") as crash_reports, redirect_stderr(StringIO()) as stderr:
+            code = main(["ios", "crashes", "--mac"])
+
+        self.assertEqual(0, code, stderr.getvalue())
+        used = crash_reports.call_args.kwargs["output"]
+        self.assertEqual(self.repo / "reports", used.resolve())

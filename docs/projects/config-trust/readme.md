@@ -444,3 +444,11 @@ full pass, which transfers only commits this clone lacks.
   than in `core.py` and `ios.py`. A path resolves with symbolic links
   followed, so a link inside the repository that leads out is refused too.
   `--projects-dir` on the command line is yours and is not checked.
+- **The path checked is the path used.** `ios_output` joins a relative
+  `ios.output` to the checkout once, checks that absolute path, and returns
+  it, so `project ios crashes` and `logs` run from a subdirectory write where
+  the check looked rather than resolving the value again against the working
+  directory. That holds for a relative value from `~/.projector.toml` too.
+  `configured_projects_dir` still returns `projects.dir` as written, because
+  the site workflow Projector generates names that relative form, and
+  every caller joins it to the same root the check used.
