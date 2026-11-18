@@ -42,13 +42,18 @@ these:
 - **A review finding a person left that you would decline**, because
   declining it overrules them.
 
-When such a decision blocks only part of the work, choose the answer you
-would recommend where it is safe to build on and easy to change later,
-build on it, and post the decision for review. When no answer is safe to
-build on, post it and build everything else first. When that question is
-all that is left, stop with a request to answer it, as
+Even then, make a call and keep going, and confirm it with the user through
+the inbox. Choose the answer you would recommend, build on it, and post the
+decision with `ask`, saying what you built on it. Build it so that another
+answer is easy to swap in, such as in a commit or a layer of its own, so a
+different answer costs a small change rather than a stop now. A question
+almost never blocks the work.
+
+The exception is an action that is hard to undo or reaches outside the
+repository, which you never take on a guess. Build everything else first.
+When that action is all that is left, stop with a request for it, as
 [Keep going until the work is done](#keep-going-until-the-work-is-done)
-describes, never with the question alone.
+describes.
 
 ## Post what the user must see
 
@@ -159,9 +164,8 @@ best case a session leaves a few such questions behind and still reaches
 the end.
 
 Only two things end the work: reaching its end, or something only the user
-can do, such as signing in, testing on their device, or answering a
-question that nothing left can be built past. A question alone never ends
-it. Never stop without posting to the inbox, because a user who is away
+can do, such as signing in, testing on their device, or approving an
+action you may not take on a guess. A question alone never ends it. Never stop without posting to the inbox, because a user who is away
 sees only what is above their prompt. Post the item that says why you
 stopped, as [Post what the user must see](#post-what-the-user-must-see)
 describes:
@@ -172,7 +176,7 @@ describes:
   notice says the session has nothing left to do.
 - **You stopped before the end, for any reason.** Post a request with
   `request` asking the user to do whatever blocked you, with numbered steps:
-  answer the question that holds the rest up, sign in to a service, test on
+  approve the action that holds the rest up, sign in to a service, test on
   their device, or fix a failure you cannot. A block never ends the work
   with nothing in the inbox.
 
