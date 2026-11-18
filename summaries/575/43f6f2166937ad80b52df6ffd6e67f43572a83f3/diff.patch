@@ -1,0 +1,1371 @@
+diff --git a/actions/review/action.yml b/actions/review/action.yml
+new file mode 100644
+index 00000000..0b293f96
+--- /dev/null
++++ b/actions/review/action.yml
+@@ -0,0 +1,187 @@
++name: Projector review
++description: Review a pull request's head with an agent and no session through `project review run`, or publish the summaries a run's reviews handed off, as docs/review-in-ci.md describes.
++inputs:
++  step:
++    description: "`review` runs the agent. `summary` publishes the run's summary artifacts and runs no agent."
++    default: review
++  pr:
++    description: The pull request to review.
++    default: ${{ github.event.pull_request.number }}
++  agent:
++    description: "`claude`, `codex`, or `command`, which runs the command the repository's review.runner names."
++    default: claude
++  model:
++    description: The model the agent runs, which names its review. Defaults to claude-opus-5-5 for claude; codex and command need one.
++    default: ''
++  effort:
++    description: The reasoning effort the agent runs at.
++    default: high
++  permission-mode:
++    description: "`auto` has the agent's own judgment decide what no rule covers; `allowlist` refuses it."
++    default: auto
++  rereview:
++    description: Review a head this model already reviewed.
++    default: 'false'
++  config:
++    description: TOML for $HOME/.projector.toml, where `[override.<priority>]` tables can replace a committed setting for CI, such as a review.gate step a runner cannot run.
++    default: ''
++  timeout-minutes:
++    description: The agent's time limit. Give the job 15 minutes more.
++    default: '45'
++  claude-code-version:
++    description: The version of Claude Code the claude agent runs.
++    default: 2.1.327
++  codex-version:
++    description: The version of Codex the codex agent runs.
++    default: 0.169.0
++runs:
++  using: composite
++  steps:
++    # Exactly one credential for the agent, so a review never draws on API credits that were meant to stay
++    # unused when a subscription token is set too.
++    - name: Check the agent's credentials
++      if: inputs.step == 'review'
++      shell: bash
++      env:
++        AGENT: ${{ inputs.agent }}
++      run: |
++        case "$AGENT" in
++          claude) subscription=CLAUDE_CODE_OAUTH_TOKEN key=ANTHROPIC_API_KEY ;;
++          codex) subscription=CODEX_AUTH_JSON key=OPENAI_API_KEY ;;
++          command) exit 0 ;;
++          *) echo "::error::agent $AGENT is not claude, codex, or command"; exit 1 ;;
++        esac
++        if [ -n "${!subscription:-}" ] && [ -n "${!key:-}" ]; then
++          echo "::error::both $subscription and $key are set for $AGENT; delete the secret you do not mean to use"
++          exit 1
++        fi
++        if [ -z "${!subscription:-}${!key:-}" ]; then
++          echo "::error::neither $subscription nor $key is set for $AGENT; run \`project init --ci-review\` to set one"
++          exit 1
++        fi
++    - uses: actions/checkout@v4
++      with:
++        fetch-depth: 0
++    # -P keeps the caller's checkout, the working directory, off sys.path, so a repository with its own top-level
++    # projector module cannot shadow this one. The agent runs `project` by name, so the shim goes on PATH.
++    - name: Set up Projector
++      shell: bash
++      env:
++        ACTION_ROOT: ${{ github.action_path }}/../..
++        CONFIG: ${{ inputs.config }}
++      run: |
++        root=$(cd "$ACTION_ROOT" && pwd)
++        bin="$RUNNER_TEMP/projector-bin"
++        mkdir -p "$bin"
++        printf '#!/bin/sh\nPYTHONPATH=%s/src exec python3 -P -m projector "$@"\n' "$(printf '%q' "$root")" > "$bin/project"
++        chmod +x "$bin/project"
++        echo "$bin" >> "$GITHUB_PATH"
++        {
++          echo "PROJECTOR_ROOT=$root"
++          echo "XDG_STATE_HOME=$RUNNER_TEMP/projector-state"
++        } >> "$GITHUB_ENV"
++        git remote set-head origin --auto
++        git config user.name 'github-actions[bot]'
++        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
++        if [ -n "$CONFIG" ]; then
++          printf '%s\n' "$CONFIG" >> "$HOME/.projector.toml"
++        fi
++    - name: Restore the review state
++      if: inputs.step == 'review'
++      uses: actions/cache/restore@v4
++      with:
++        path: |
++          ${{ runner.temp }}/projector-state/projector/reviews/loops
++          ${{ runner.temp }}/projector-state/projector/reviews/prs
++          !${{ runner.temp }}/projector-state/projector/reviews/prs/**/*.lock
++        key: projector-review-${{ inputs.pr }}-${{ inputs.agent }}-${{ github.run_id }}-${{ github.run_attempt }}
++        restore-keys: projector-review-${{ inputs.pr }}-${{ inputs.agent }}-
++    - name: Install the agent
++      if: inputs.step == 'review'
++      shell: bash
++      env:
++        AGENT: ${{ inputs.agent }}
++        CLAUDE_VERSION: ${{ inputs.claude-code-version }}
++        CODEX_VERSION: ${{ inputs.codex-version }}
++      run: |
++        case "$AGENT" in
++          claude)
++            npm install --global "@anthropic-ai/claude-code@$CLAUDE_VERSION"
++            ;;
++          codex)
++            npm install --global "@openai/codex@$CODEX_VERSION"
++            home="$RUNNER_TEMP/codex-home"
++            mkdir -p "$home"
++            ln -s "$PROJECTOR_ROOT/skills" "$home/skills"
++            echo "CODEX_HOME=$home" >> "$GITHUB_ENV"
++            if [ -n "${CODEX_AUTH_JSON:-}" ]; then
++              (umask 077 && printf '%s' "$CODEX_AUTH_JSON" > "$home/auth.json")
++            else
++              printf '%s' "$OPENAI_API_KEY" | CODEX_HOME="$home" codex login --with-api-key
++            fi
++            ;;
++        esac
++    - name: Review the pull request
++      if: inputs.step == 'review'
++      shell: bash
++      env:
++        GH_TOKEN: ${{ github.token }}
++        PROJECTOR_TOKEN_LOGIN: github-actions[bot]
++        # Only the review step hands its summary off; the summary job's publish pushes it.
++        PROJECTOR_SUMMARY_HANDOFF: ${{ runner.temp }}/projector-summary
++        PR: ${{ inputs.pr }}
++        AGENT: ${{ inputs.agent }}
++        MODEL: ${{ inputs.model }}
++        EFFORT: ${{ inputs.effort }}
++        MODE: ${{ inputs.permission-mode }}
++        REREVIEW: ${{ inputs.rereview }}
++        TIMEOUT: ${{ inputs.timeout-minutes }}
++      run: |
++        if [ -z "$MODEL" ] && [ "$AGENT" = claude ]; then
++          MODEL=claude-opus-5-5
++        fi
++        if [ -z "$MODEL" ]; then
++          echo "::error::the $AGENT agent needs the model input"
++          exit 1
++        fi
++        rereview=()
++        if [ "$REREVIEW" = true ]; then
++          rereview=(--rereview)
++        fi
++        project review run "$PR" --agent "$AGENT" --model "$MODEL" --effort "$EFFORT" --permission-mode "$MODE" \
++          --timeout "$TIMEOUT" --loop actions --plugin-dir "$PROJECTOR_ROOT" "${rereview[@]}"
++    - name: Save the review state
++      if: always() && inputs.step == 'review'
++      uses: actions/cache/save@v4
++      with:
++        path: |
++          ${{ runner.temp }}/projector-state/projector/reviews/loops
++          ${{ runner.temp }}/projector-state/projector/reviews/prs
++          !${{ runner.temp }}/projector-state/projector/reviews/prs/**/*.lock
++        key: projector-review-${{ inputs.pr }}-${{ inputs.agent }}-${{ github.run_id }}-${{ github.run_attempt }}
++    - name: Hand the summary to the summary job
++      if: success() && inputs.step == 'review'
++      uses: actions/upload-artifact@v4
++      with:
++        name: projector-summary-${{ inputs.pr }}-${{ inputs.agent }}
++        path: ${{ runner.temp }}/projector-summary
++        retention-days: 1
++        if-no-files-found: ignore
++    - name: Download the summaries
++      if: inputs.step == 'summary'
++      uses: actions/download-artifact@v4
++      with:
++        pattern: projector-summary-${{ inputs.pr }}-*
++        path: ${{ runner.temp }}/projector-summaries
++    - name: Publish the summaries
++      if: inputs.step == 'summary'
++      shell: bash
++      env:
++        GH_TOKEN: ${{ github.token }}
++        PROJECTOR_TOKEN_LOGIN: github-actions[bot]
++        PR: ${{ inputs.pr }}
++      run: |
++        for folder in "$RUNNER_TEMP"/projector-summaries/*/; do
++          [ -f "$folder/summary.json" ] || continue
++          project summary publish --summary "$folder/summary.json" --diff "$folder/diff.patch" --pr "$PR"
++        done
+diff --git a/docs/cli.md b/docs/cli.md
+index 65c1ceaa..0476fde3 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -256,7 +256,7 @@ what it did to each:
+       decision = "allow",
+   )
+   prefix_rule(
+-      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
++      pattern = ["project", "review", ["census", "ci-workflow", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
+       decision = "allow",
+   )
+   prefix_rule(
+@@ -593,6 +593,29 @@ When GitHub refuses, `init` says so and goes on, because the labels only show
+ a review. With `review.labels` set to `false`, `init` leaves the labels
+ alone.
+ 
++### Review pull requests in GitHub Actions
++
++When you run `init` at a terminal in a GitHub repository that has not
++answered yet, it asks:
++
++```text
++Review this repository's pull requests in GitHub Actions? [y/N]
++```
++
++`--ci-review` answers yes and `--no-ci-review` answers no, without a prompt,
++and `init` records the answer as `review.ci`. Without a terminal, a flag, or
++a recorded answer, `init` asks nothing and changes nothing. A yes writes
++`.github/workflows/projector-review.yml`, records `review.ci` and
++`review.ci_agents`, adds `github-actions[bot]` to `review.reviewers`, and has
++`gh` prompt for each agent's missing credential secret. `--ci-agents` picks
++the agents, `claude` by default, each as `agent=<model>` to name the model it
++runs, such as `claude,codex=<model>`. `codex` needs a model, so `init`
++refuses it without one. `--ci-credential` picks the kind of secret `init`
++asks for. Once `review.ci` is `true`, every later `init`
++refreshes the workflow, replacing one nobody edited and keeping an edited
++one. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
++setup, the credentials, and what each job does.
++
+ ## Browse projects
+ 
+ Run `list` to group projects by priority without creating an index. Each row
+@@ -1040,6 +1063,8 @@ reads, which are these:
+ | `review.require_check` | boolean | none | `init`, as your answer to whether the repository relies on Projector alone to sign off pull requests: none asks at a terminal, `true` keeps the ruleset and the label workflow in place, and `false` asks no more; `init` writes it when you answer, as [Require a clean review before merge](#require-a-clean-review-before-merge) describes |
+ | `review.reviewers` | string | none | `project review status`, `suggestions`, `setup`, and `publish`, and the watch daemon from the configuration of a checkout a live session works in, as the logins whose Projector verdicts count beside the reviewer's and those of the repository's owner, members, and collaborators, separated by commas, as `github-actions[bot]`. On a public repository a review from any other account does not count, so name an account here, such as the one a CI review posts as, only when you trust every review it posts |
+ | `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
++| `review.ci` | boolean | none | `init`, as your answer to whether the repository's pull requests get a review in GitHub Actions: none asks at a terminal, `true` refreshes the workflow, and `false` asks no more; `init` writes it when you answer, as [Review pull requests in GitHub Actions](#review-pull-requests-in-github-actions) describes |
++| `review.ci_agents` | string | `claude` | `init` and `project review ci-workflow`, as the agents the CI review workflow runs, separated by commas, from `claude` and `codex`, each as `agent=<model>` to name the model its job runs, which `codex` needs, such as `claude, codex=<model>` |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
+ | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
+@@ -1960,6 +1985,7 @@ project review hold 66
+ project review ready 66
+ project review rules
+ project review workflow
++project review ci-workflow
+ project review run 66 --model claude-opus-5-5
+ ```
+ 
+@@ -2579,7 +2605,10 @@ still allow the commands.
+ writes, as this release renders it, so you can compare it with a copy you
+ edited, as [Require a clean review before merge](#require-a-clean-review-before-merge)
+ describes. It writes nothing, takes no pull request, and runs from any
+-directory.
++directory. `ci-workflow` prints the `.github/workflows/projector-review.yml`
++that `init --ci-review` writes, for `--agents`, then `review.ci_agents`, then
++`claude`, at `--action-ref`, `v0` by default, so you can compare it with a
++copy you edited.
+ 
+ No command takes a SHA: each comes from GitHub or the state file. `setup` works
+ from the checkout containing the working directory, or `--checkout`, and
+diff --git a/docs/projects/review-in-ci/readme.md b/docs/projects/review-in-ci/readme.md
+index bf1163b3..9b03f7df 100644
+--- a/docs/projects/review-in-ci/readme.md
++++ b/docs/projects/review-in-ci/readme.md
+@@ -396,7 +396,8 @@ jobs:
+        github.event.pull_request.head.repo.full_name == github.repository)
+     strategy:
+       matrix:
+-        agent: [claude]
++        include:
++          - agent: claude
+     concurrency:
+       group: projector-review-${{ github.event.pull_request.number || inputs.pr }}-${{ matrix.agent }}
+       cancel-in-progress: true
+@@ -406,6 +407,7 @@ jobs:
+       - uses: ninjudd/projector/actions/review@v0
+         with:
+           agent: ${{ matrix.agent }}
++          model: ${{ matrix.model }}
+           pr: ${{ github.event.pull_request.number || inputs.pr }}
+           rereview: ${{ inputs.rereview || false }}
+         env:
+@@ -484,7 +486,7 @@ never adds a workflow by surprise. Once `review.ci` is `true`, every later
+ | Flag | Default | Effect |
+ | --- | --- | --- |
+ | `--ci-review`, `--no-ci-review` | The recorded `review.ci`, then the prompt | Set CI review up, or record that the repository has none |
+-| `--ci-agents <list>` | The recorded `review.ci_agents`, then `claude` | The agents in the workflow's matrix, such as `claude,codex` |
++| `--ci-agents <list>` | The recorded `review.ci_agents`, then `claude` | The agents in the workflow's matrix, each as `agent=<model>` to name its model, such as `claude,codex=<model>`. `codex` needs a model. |
+ | `--ci-credential <kind>` | `subscription` for `claude`, `api-key` for `codex` | Which secret `init` asks for, as the credentials table in § 2.4 lists them |
+ | `--ci-app <slug>` | None | Post as this GitHub App. `init` reads the app's ID with `gh api apps/<slug>`, which needs no credential. |
+ | `--action-ref <ref>` | `v0` | The existing flag, which now sets the ref of the review action too |
+@@ -888,3 +890,38 @@ These tests fail before the change, and each catches the bug it names:
+ - **The handoff runs only where the site is hosted.** Elsewhere
+   `project summary publish` keeps the summary in the checkout, as it does
+   in a session, and the action uploads nothing.
++- **The workflow passes both credentials of each agent.** A secret that is
++  not set reads as empty, and the action's check accepts exactly one, so the
++  workflow does not depend on the kind of credential you chose.
++  `--ci-credential` only picks the secret `init` asks for.
++- **A digest line marks a workflow nobody edited.** The workflow's second
++  line records the SHA-256 of the rest, and `init` replaces the file only
++  while the two agree. The site workflow's way, matching each earlier
++  template with its variable parts left free, would need a pattern for every
++  combination of agents, and the clean label workflow's list of earlier
++  digests would need one for every agent list and ref.
++- **Codex reads Projector's skills from a link.** The action links
++  `$CODEX_HOME/skills` to the skills in its own checkout, because a
++  downloaded action is not a Git checkout that `install.sh codex` can install
++  a marketplace from.
++- **`project` is a shim on `PATH`.** The agent runs `project` by name, so the
++  action writes a script that runs the action's own `src` with `python3 -P`.
++- **The app comes later.** `--ci-app` and the `app-id` input ship with
++  context repositories in the later pull request § 6 step 4 names.
++- **A runner fact to check:** that `actions/download-artifact` succeeds when
++  no artifact matches its pattern, as in a repository that hosts no site.
++- **Setup names each agent's model.** `--ci-agents` and `review.ci_agents`
++  take `agent=<model>` entries, and the workflow's matrix lists each agent
++  with its model, which the job passes as the action's `model` input. The
++  action has a default model only for `claude`, so `init` refuses `codex`
++  without one rather than write a job that stops before every review.
++  Projector names no default Codex model, because a model ID it chose would
++  go stale as models change, and a wrong one fails every run.
++- **The summary job names its token too.** `project summary publish` reads
++  the account it posts as before it links the summary, to find and replace
++  that account's earlier link, and GitHub refuses `gh api user` to the
++  summary job's token just as it does to the review job's. So the lookup
++  `authenticated_login` makes, with its `PROJECTOR_TOKEN_LOGIN` fallback,
++  lives in `src/projector/summary.py`, which `review.py` already imports,
++  and both commands use it. The action sets the variable on every step that
++  runs `project` with the workflow's token.
+diff --git a/docs/review-in-ci.md b/docs/review-in-ci.md
+new file mode 100644
+index 00000000..9f06742d
+--- /dev/null
++++ b/docs/review-in-ci.md
+@@ -0,0 +1,162 @@
++# Review pull requests in GitHub Actions
++
++A repository can have Projector review each ready pull request in a GitHub
++Actions job, with no agent session running anywhere. Each review gets the
++same labeled verdict, incremental review, summary, and sign-off that a
++session's review gives. The jobs post as `github-actions[bot]`, so every CI
++review is a cross-author review: findings are `REQUEST_CHANGES`, and a clean
++head gets a `COMMENT`, the `clean` label, and, where a ruleset requires it,
++the `projector/review` status.
++
++## Set a repository up
++
++Run `init` from a checkout of the repository, as an admin of it:
++
++```console
++$ project init --ci-review
++created .github/workflows/projector-review.yml
++project: created review.ci = true in .projector.toml
++project: created review.ci_agents = "claude" in .projector.toml
++project: created review.reviewers = "github-actions[bot]" in .projector.toml
++project: the claude review needs CLAUDE_CODE_OAUTH_TOKEN: run `claude setup-token`, signed in with your subscription, and paste the token it prints
++? Paste your secret ********
++```
++
++`init` does four things:
++
++1. **Writes the workflow**, `.github/workflows/projector-review.yml`, with
++   one review job for each agent. Pass `--ci-agents claude,codex=<model>` to
++   have two models review each pull request. An entry `agent=<model>` names
++   the model that agent runs. `codex` needs one, because the action has no
++   default model for it, so `init` refuses `codex` alone rather than write a
++   job that would stop before every review. `claude` runs `claude-opus-5-5`
++   unless you name another. A later `init`, such as the one you run after an
++   upgrade, replaces the workflow while nobody has edited it, and keeps an
++   edited one. `project review ci-workflow` prints the workflow `init` would
++   write, so you can compare it with yours.
++2. **Records the settings** in the committed `.projector.toml`:
++   `review.ci`, `review.ci_agents` with each agent's model, and
++   `github-actions[bot]` in `review.reviewers`. That last setting lets your
++   own sessions, the panel, and the site count the bot's verdicts on a
++   public repository.
++3. **Sets the credential secret** for each agent that has none. `gh`
++   prompts for the value without showing it, so the value never passes
++   through Projector or a command line. Without a terminal, `init` prints
++   the `gh secret set` command to run instead.
++4. **Says what the review depends on**: a Projector site, for summaries, and
++   any `review.gate` step that a hosted runner cannot run.
++
++Commit the workflow and `.projector.toml` through a pull request. A
++`pull_request` workflow runs from the pull request's own files, so that pull
++request is the first one the workflow reviews. Your sessions count the bot's
++verdicts once `review.reviewers` reaches the default branch.
++
++At a terminal, `init` asks whether to set CI review up until you answer.
++`--no-ci-review` records that the repository has none, and `init` stops
++asking.
++
++## Choose a credential
++
++Each agent reads one secret. A subscription credential bills the review to
++your plan's usage limits; an API key bills API credits:
++
++| Agent | Subscription | API key |
++| --- | --- | --- |
++| `claude` | `CLAUDE_CODE_OAUTH_TOKEN`, the token `claude setup-token` prints | `ANTHROPIC_API_KEY` |
++| `codex` | `CODEX_AUTH_JSON`, the `auth.json` that `codex login` writes | `OPENAI_API_KEY` |
++
++`init` asks for the subscription secret for `claude` and the API key for
++`codex` unless `--ci-credential` says otherwise. A job that finds both
++secrets for its agent refuses to start, so a review never draws on API
++credits you meant to keep unused.
++
++Keep these limits in mind:
++
++- **A subscription is for personal use.** Reviewing your own pull requests
++  with it fits that. For a shared repository where collaborators open pull
++  requests, use an API key.
++- **A subscription run shares your plan's limits** with your own sessions,
++  so a busy repository can slow your interactive work.
++- **A Codex ChatGPT login goes stale on a hosted runner.** Codex refreshes
++  its tokens and writes them back to `auth.json`, and a hosted runner
++  throws that file away, so the secret gets older with every run. Use an
++  API key for `codex` on hosted runners.
++
++## What a review job does
++
++The workflow runs on `opened`, `reopened`, `synchronize`, and
++`ready_for_review`, and by hand from the **Actions** tab with a pull request
++number. Each job:
++
++1. **Skips forks and drafts.** The job's condition skips them, and
++   `project review run` refuses them too, so a manual run cannot review
++   either. A fork's head is code an outsider wrote, and the agent would read
++   it with your credential in its environment.
++2. **Cancels a superseded review.** One job runs for each pull request and
++   agent. A new push cancels the job for the head it replaces.
++3. **Restores the review state** from the Actions cache, so a small push
++   gets an incremental review. GitHub evicts an entry after 7 days unused,
++   and a run without one gives a full review.
++4. **Runs the agent** with `project review run`, in a permission mode that
++   never waits for a prompt, as
++   [Review a head with no session](cli.md#review-a-head-with-no-session)
++   describes.
++5. **Fails loudly.** When the agent publishes no verdict, the job deletes
++   the start comment, takes `reviewing` off, posts one comment that says
++   why, and fails.
++
++A second job, `summary`, starts once every review job has ended. It holds
++the only token that can push `refs/projector/summaries`, and it runs no
++agent. Each review job's `project summary publish` checks its summary and
++hands it to this job, which publishes it, starts the site build, and links
++the summary from the pull request.
++
++## Tokens
++
++The workflow gives each job only what it needs:
++
++| Job | Permissions |
++| --- | --- |
++| `review` | `contents: read`, `pull-requests: write`, `issues: write`, `statuses: write`, `checks: read`, `actions: read`, and `pages: read` |
++| `summary` | `contents: write`, `pull-requests: write`, `issues: write`, and `pages: read` |
++
++The review job cannot push a branch or a ref, so a misled agent cannot
++change the code it reviews. The agent's own rules refuse `git push`,
++`git commit`, `gh pr merge`, `gh pr ready`, and every command that changes
++the repository's settings.
++
++## Override a setting for CI
++
++The review job runs `review.gate` on a trusted head, as a session does. When
++a step of the gate needs a tool a hosted runner lacks, give the action a
++`config` input. It is written to the runner's `~/.projector.toml`, where an
++`[override.<priority>]` table beats the committed setting:
++
++```yaml
++      - uses: ninjudd/projector/actions/review@v0
++        with:
++          agent: ${{ matrix.agent }}
++          model: ${{ matrix.model }}
++          pr: ${{ github.event.pull_request.number || inputs.pr }}
++          config: |
++            [override.50.review]
++            gate = 'git diff --check "$2" HEAD'
++```
++
++An edit like this one makes the workflow one that `init` keeps, rather than
++replaces.
++
++## Action inputs
++
++| Input | Default | Effect |
++| --- | --- | --- |
++| `step` | `review` | `review` runs the agent. `summary` publishes the run's summaries and runs no agent. |
++| `pr` | The event's pull request | The pull request to review |
++| `agent` | `claude` | `claude`, `codex`, or `command`, which runs the command `review.runner` names |
++| `model` | `claude-opus-5-5` for `claude` | The model the agent runs and the review records. `codex` and `command` need one. The workflow `init` writes passes the model `review.ci_agents` names for the job's agent. |
++| `effort` | `high` | The agent's reasoning effort |
++| `permission-mode` | `auto` | `auto`, or `allowlist`, which refuses whatever no rule allows |
++| `rereview` | `false` | Review a head this model already reviewed |
++| `config` | Empty | TOML for the runner's `~/.projector.toml` |
++| `timeout-minutes` | `45` | The agent's time limit. The job's own limit is 15 minutes longer. |
++| `claude-code-version`, `codex-version` | The versions Projector tests | The CLI version the agent runs |
+diff --git a/src/projector/ci.py b/src/projector/ci.py
+new file mode 100644
+index 00000000..7af98577
+--- /dev/null
++++ b/src/projector/ci.py
+@@ -0,0 +1,89 @@
++"""The GitHub Actions workflow that reviews pull requests with `project review run`, and the secrets it reads, as
++docs/projects/review-in-ci/readme.md § 2.8 and § 2.10 describe them."""
++
++from __future__ import annotations
++
++import hashlib
++import re
++from importlib import resources
++
++from .core import UsageError
++
++WORKFLOW_PATH = ".github/workflows/projector-review.yml"
++AGENTS = ("claude", "codex")
++KINDS = ("subscription", "api-key")
++# Each agent's credential secrets, by kind. The workflow passes both, and the action refuses a job that has
++# both or neither.
++CREDENTIALS = {
++    "claude": {"subscription": "CLAUDE_CODE_OAUTH_TOKEN", "api-key": "ANTHROPIC_API_KEY"},
++    "codex": {"subscription": "CODEX_AUTH_JSON", "api-key": "OPENAI_API_KEY"},
++}
++# A Codex ChatGPT login goes stale on a runner that throws its refreshed tokens away, so an API key is the
++# kind that keeps working there.
++DEFAULT_KIND = {"claude": "subscription", "codex": "api-key"}
++WHERE = {
++    "CLAUDE_CODE_OAUTH_TOKEN": "run `claude setup-token`, signed in with your subscription, and paste the token "
++                               "it prints",
++    "ANTHROPIC_API_KEY": "paste an API key from the Claude Console",
++    "CODEX_AUTH_JSON": "Projector passes gh the auth.json that `codex login` wrote",
++    "OPENAI_API_KEY": "paste an API key from the OpenAI platform",
++}
++HEADER = "# Written by `project init --ci-review`, which replaces this file while nobody has edited it.\n"
++DIGEST = re.compile(r"\A" + re.escape(HEADER) + r"# projector-workflow sha256=([0-9a-f]{64})\n")
++
++
++# The agents the action gives a model when the workflow names none. Every other agent's job would stop before it
++# reviews anything, so setup refuses it without a model rather than guessing a model ID.
++DEFAULT_MODEL = {"claude": "claude-opus-5-5"}
++# A model ID as a plain YAML scalar can carry it: no space, quote, comma, or `=`, and no leading flow indicator.
++MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*\Z")
++
++
++def parse_agents(text: str) -> dict[str, str]:
++    """The agents a comma-separated list names, in order and once each, each with the model an `agent=model`
++    entry gives it, or "" for the action's default. Refuses a name that is not an agent, a model that is not a
++    model ID, and an agent the action has no default model for that the list gives none."""
++    agents: dict[str, str] = {}
++    for entry in (part.strip() for part in text.split(",")):
++        if not entry:
++            continue
++        name, _, model = (piece.strip() for piece in entry.partition("="))
++        if name not in AGENTS:
++            raise UsageError(f"the CI review agents must be {', '.join(AGENTS)}, separated by commas; got {text!r}")
++        if model and not MODEL.match(model):
++            raise UsageError(f"{model!r} in {text!r} is not a model ID")
++        agents.setdefault(name, model)
++    if not agents:
++        raise UsageError(f"the CI review agents must be {', '.join(AGENTS)}, separated by commas; got {text!r}")
++    for name, model in agents.items():
++        if not model and name not in DEFAULT_MODEL:
++            raise UsageError(f"the {name} review needs a model, and the action has none for it; name one as "
++                             f"{name}=<model> in {text!r}")
++    return agents
++
++
++def format_agents(agents: dict[str, str]) -> str:
++    """`agents` as `review.ci_agents` records them, which `parse_agents` reads back."""
++    return ", ".join(f"{name}={model}" if model else name for name, model in agents.items())
++
++
++def body(action_ref: str, agents: dict[str, str]) -> str:
++    template = resources.files("projector").joinpath("templates/review-workflow.yml").read_text(encoding="utf-8")
++    matrix = "\n".join(f"          - agent: {name}" + (f"\n            model: {model}" if model else "")
++                       for name, model in agents.items())
++    env = "\n".join(f"          {name}: ${{{{ secrets.{name} }}}}"
++                    for agent in agents for name in CREDENTIALS[agent].values())
++    return template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@ENV@", env)
++
++
++def workflow_text(action_ref: str, agents: dict[str, str]) -> str:
++    """The review workflow for `agents`, calling the action at `action_ref`. Its second line records a digest of
++    the rest, so a later `init` can tell a file nobody edited, which it replaces, from one somebody did."""
++    text = body(action_ref, agents)
++    return f"{HEADER}# projector-workflow sha256={hashlib.sha256(text.encode()).hexdigest()}\n{text}"
++
++
++def unedited(text: str) -> bool:
++    """Whether `text` is a review workflow Projector wrote, with any agents and ref, that nobody edited since."""
++    found = DIGEST.match(text)
++    return bool(found) and hashlib.sha256(text[found.end():].encode()).hexdigest() == found.group(1)
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 8c6f650b..38da1ca4 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -27,6 +27,7 @@
+ 
+ from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
+                summary, watch)
++from . import ci
+ from . import run as headless
+ from .permissions import allow_commands
+ from .summary import WORKFLOW_PATH
+@@ -235,6 +236,7 @@ def init_digests() -> dict[str, dict[str, str]]:
+         "instructions": ("the Projector section in AGENTS.md and CLAUDE.md", instructions.render("docs/projects", ios=True)),
+         "site-workflow": (f"the site workflow, {WORKFLOW_PATH}", summary.workflow_text("v0")),
+         "clean-workflow": (f"the clean label workflow, {review.CLEAN_WORKFLOW_PATH}", review.clean_workflow_text()),
++        "ci-review-workflow": (f"the CI review workflow, {ci.WORKFLOW_PATH}", ci.workflow_text("v0", {"claude": ""})),
+         "permission-rules": (
+             "the permission rules in your Claude Code settings and Codex rules",
+             json.dumps([permissions.ALLOW, permissions.ASK, permissions.SUPERSEDED, permissions.RETIRED_ASK,
+@@ -602,6 +604,24 @@ def parser() -> argparse.ArgumentParser:
+         "--no-require-review", action="store_false", dest="require_review",
+         help="record that this repository requires no Projector review before merge, so init stops asking",
+     )
++    ci_choice = init.add_mutually_exclusive_group()
++    ci_choice.add_argument(
++        "--ci-review",
++        action="store_true",
++        default=None,
++        help=f"review this repository's pull requests in GitHub Actions: write {ci.WORKFLOW_PATH}, record the "
++        "settings, and set the agents' credential secrets (default: ask at a terminal)",
++    )
++    ci_choice.add_argument(
++        "--no-ci-review", action="store_false", dest="ci_review",
++        help="record that this repository's pull requests get no review in GitHub Actions, so init stops asking",
++    )
++    init.add_argument("--ci-agents", help="the agents that review in GitHub Actions, separated by commas, from "
++                                          f"{', '.join(ci.AGENTS)}, each as agent=model to name its model, which "
++                                          "codex needs (default: review.ci_agents, then claude)")
++    init.add_argument("--ci-credential", choices=ci.KINDS,
++                      help="the credential secret init asks for when an agent has none (default: subscription for "
++                           "claude, api-key for codex)")
+     rule_choice = init.add_mutually_exclusive_group()
+     rule_choice.add_argument(
+         "--publish-rule",
+@@ -818,6 +838,13 @@ def parser() -> argparse.ArgumentParser:
+     review_commands.add_parser(
+         "workflow", help=f"print the {review.CLEAN_WORKFLOW_PATH} that project init writes, to compare with yours"
+     )
++    review_ci_workflow = review_commands.add_parser(
++        "ci-workflow", help=f"print the {ci.WORKFLOW_PATH} that project init --ci-review writes, to compare with yours"
++    )
++    review_ci_workflow.add_argument("--agents", help="the agents, separated by commas, each as agent=model to "
++                                                     "name its model (default: review.ci_agents, then claude)")
++    review_ci_workflow.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow "
++                                                                       "runs (default: v0)")
+     review_status = review_commands.add_parser(
+         "status", help="report the newest Projector verdict on a pull request's current head"
+     )
+@@ -2484,6 +2511,10 @@ def run_review(arguments: argparse.Namespace) -> int:
+     if arguments.review_command == "workflow":
+         print(review.clean_workflow_text(), end="")
+         return 0
++    if arguments.review_command == "ci-workflow":
++        agents = arguments.agents or load_config(discover_git_root(Path.cwd())).get("review.ci_agents") or "claude"
++        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents)), end="")
++        return 0
+     if arguments.review_command in ("hold", "ready"):
+         return review_draft(arguments)
+     if arguments.review_command == "run":
+@@ -3555,9 +3586,132 @@ def init_labels(root: Path) -> None:
+         print(f"project: {change} on {repo}", file=sys.stderr)
+ 
+ 
++def record_setting(root: Path, key: str, value: object) -> None:
++    """Write an answer `init` records to the repository's `.projector.toml`, and say so."""
++    change = write_value(root / CONFIG_NAME, key, value)
++    print(f"project: {change.action} {key} = {format_value(value)} in {change.path}", file=sys.stderr)
++
++
+ def record_required_check(root: Path, value: bool) -> None:
+-    change = write_value(root / CONFIG_NAME, "review.require_check", value)
+-    print(f"project: {change.action} review.require_check = {format_value(value)} in {change.path}", file=sys.stderr)
++    record_setting(root, "review.require_check", value)
++
++
++CI_REVIEW_QUESTION = "Review this repository's pull requests in GitHub Actions? [y/N] "
++CI_REVIEWER = "github-actions[bot]"
++
++
++def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAction]) -> None:
++    """`init`'s setup of CI review, as docs/projects/review-in-ci/readme.md § 2.10 describes: it acts only in a
++    repository whose origin is on GitHub, asks only at a terminal while `review.ci` is unset, and once the answer
++    is yes writes the workflow, records the settings, and sets the credential secrets, refreshing the workflow
++    on every later run."""
++    answer = arguments.ci_review
++    try:
++        repo = review.origin_repo(root)
++    except review.ReviewError:
++        if answer:
++            raise InitError("--ci-review writes a GitHub Actions workflow, and this checkout has no origin on GitHub",
++                            files) from None
++        return
++    config = load_config(root)
++    recorded = config.get("review.ci")
++    if answer is False or answer is None and recorded is False:
++        if answer is False and recorded is not False:
++            record_setting(root, "review.ci", False)
++        return
++    if answer is None and recorded is None:
++        # Without a person to ask, an unanswered question changes nothing.
++        if not sys.stdin.isatty():
++            return
++        print(CI_REVIEW_QUESTION, end="", file=sys.stderr, flush=True)
++        if sys.stdin.readline().strip().lower() not in ("y", "yes"):
++            record_setting(root, "review.ci", False)
++            return
++    agents = ci.parse_agents(arguments.ci_agents or config.get("review.ci_agents") or "claude")
++    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents)))
++    if recorded is not True:
++        record_setting(root, "review.ci", True)
++    if config.get("review.ci_agents") != ci.format_agents(agents):
++        record_setting(root, "review.ci_agents", ci.format_agents(agents))
++    reviewers = review.extra_reviewers(config.get("review.reviewers"))
++    if CI_REVIEWER not in {login.lower() for login in reviewers}:
++        record_setting(root, "review.reviewers", ", ".join((*reviewers, CI_REVIEWER)))
++    set_ci_secrets(repo, agents, arguments.ci_credential)
++    site, why = summary.push_decision(repo)
++    if site is None:
++        print(f"project: CI reviews publish no summaries until the site is set up, because {why}", file=sys.stderr)
++    if config.get("review.gate"):
++        print("project: CI reviews run review.gate on a hosted runner; for a step the runner cannot run, give the "
++              "workflow's review step a config input with an `[override.50.review]` table that sets a gate it can "
++              "run", file=sys.stderr)
++
++
++def write_ci_workflow(root: Path, text: str) -> FileAction:
++    """Write the CI review workflow, replacing one `init` wrote that nobody edited but keeping one edited by
++    hand."""
++    path = root / ci.WORKFLOW_PATH
++    action = "created"
++    if path.is_file():
++        current = path.read_text(encoding="utf-8")
++        if current == text:
++            return FileAction(ci.WORKFLOW_PATH, "unchanged")
++        if not ci.unedited(current):
++            return FileAction(ci.WORKFLOW_PATH, "kept",
++                              f"{ci.WORKFLOW_PATH} has changes Projector did not write, so it was left alone; compare "
++                              f"it with `project review ci-workflow | diff -u {ci.WORKFLOW_PATH} -`")
++        action = "updated"
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(text, encoding="utf-8")
++    return FileAction(ci.WORKFLOW_PATH, action,
++                      f"commit {ci.WORKFLOW_PATH} and .projector.toml through a pull request, which is the first one "
++                      "the workflow reviews; readers count its verdicts once review.reviewers reaches the default "
++                      "branch")
++
++
++def run_interactive(argv: list[str], source: Optional[Path] = None) -> int:
++    """Run `argv` with the terminal as its input, or the file `source`, so a secret it reads never passes through
++    Projector or a command line."""
++    if source is None:
++        return subprocess.call(argv)
++    with source.open("rb") as handle:
++        return subprocess.call(argv, stdin=handle)
++
++
++def set_ci_secrets(repo: str, agents: dict[str, str], kind: Optional[str]) -> None:
++    """Report each agent's credential secret, and at a terminal have `gh` set a missing one, so the workflow can
++    start the agent."""
++    wanted = {agent: ci.CREDENTIALS[agent][kind or ci.DEFAULT_KIND[agent]] for agent in agents}
++    commands = [f"gh secret set {name} --repo {repo}" for name in wanted.values()]
++    try:
++        listed = {found["name"] for found in json.loads(summary.gh("secret", "list", "--repo", repo, "--json", "name"))}
++    except (summary.SummaryError, ValueError) as error:
++        print(f"project: could not list {repo}'s secrets: {error}; setting a secret takes admin access, so an admin "
++              f"of {repo} can run {', '.join(f'`{c}`' for c in commands)}", file=sys.stderr)
++        return
++    for agent, name in wanted.items():
++        present = [secret for secret in ci.CREDENTIALS[agent].values() if secret in listed]
++        command = f"gh secret set {name} --repo {repo}"
++        if len(present) > 1:
++            print(f"project: both {' and '.join(present)} are set, so the {agent} review refuses to start; delete "
++                  "the one you do not mean to use", file=sys.stderr)
++        elif present:
++            print(f"project: {present[0]} is set for the {agent} review", file=sys.stderr)
++        elif not sys.stdin.isatty():
++            print(f"project: the {agent} review needs {name}; {ci.WHERE[name]}, with `{command}`", file=sys.stderr)
++        else:
++            source = None
++            if name == "CODEX_AUTH_JSON":
++                source = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
++                print(f"project: a ChatGPT login goes stale on a hosted runner, which throws away the tokens Codex "
++                      f"refreshes; set {source} as {name} anyway? [y/N] ", end="", file=sys.stderr, flush=True)
++                if sys.stdin.readline().strip().lower() not in ("y", "yes"):
++                    print(f"project: left {name} unset; run `{command}` when you want it", file=sys.stderr)
++                    continue
++            else:
++                print(f"project: the {agent} review needs {name}: {ci.WHERE[name]}", file=sys.stderr)
++            if run_interactive(["gh", "secret", "set", name, "--repo", repo], source):
++                print(f"project: could not set {name}; setting a secret takes admin access, so an admin of {repo} "
++                      f"can run `{command}`", file=sys.stderr)
+ 
+ 
+ def write_clean_workflow(root: Path) -> FileAction:
+@@ -3727,6 +3881,7 @@ def run(arguments: argparse.Namespace) -> int:
+                     if needs_admin:
+                         print(f"project: to finish setting it up, {error.steps()}", file=sys.stderr)
+             init_required_check(arguments, root, files)
++            init_ci_review(arguments, root, files)
+             init_labels(root)
+         except InitError as error:
+             # Say what was written before saying what could not be.
+diff --git a/src/projector/config.py b/src/projector/config.py
+index de4029b8..9b217aeb 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -100,6 +100,8 @@
+     "review.require_check": bool,
+     "review.reviewers": str,
+     "review.runner": str,
++    "review.ci": bool,
++    "review.ci_agents": str,
+     "fix.resolve_human_threads": bool,
+     "watch.auto_start": bool,
+     "watch.interval": int,
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index d8502a1c..f5861b3a 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -156,8 +156,8 @@
+     (["project", "ios", ["cleanup", "crashes", "devices", "install"]],
+      "Lists paired iOS devices, installs a kept build, copies crash reports, or removes project ios's worktree "
+      "and builds, but never builds or reads a device's log."),
+-    (["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release",
+-                            "rules", "settle", "setup", "status", "suggestions", "workflow"]],
++    (["project", "review", ["census", "ci-workflow", "finish", "hold", "interdiff", "move", "prune", "publish", "ready",
++                            "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
+      "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
+     (["project", "site", ["page", "status", "workflow"]],
+      "Builds a summary page, says where the site is hosted, or writes the site's workflow file."),
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 7ff5407c..4755f9d3 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -56,7 +56,7 @@
+ 
+ from .core import ProjectorError, distribution_version, state_home
+ from .inbox import SESSION, locked, write_json
+-from .summary import repo_slug
++from .summary import TOKEN_LOGIN, repo_slug, token_login
+ 
+ FINDING_MARKER = "projector-finding"
+ # The mark that opens both the start comment and the review's signature line, as
+@@ -148,28 +148,8 @@ def model_key(model: str) -> str:
+     return key
+ 
+ 
+-# What GitHub answers `gh api user` with for a token that belongs to no user, such as a workflow's GITHUB_TOKEN
+-# or a GitHub App's installation token.
+-INTEGRATION_REFUSAL = "Resource not accessible by integration"
+-# The login the review action names for its token, since GitHub tells a token that belongs to no user nothing
+-# about whom it acts as. It is read only after that refusal, so it can never rename a person's token.
+-TOKEN_LOGIN = "PROJECTOR_TOKEN_LOGIN"
+-
+-
+ def authenticated_login() -> str:
+-    try:
+-        login = run_gh(["api", "user", "--jq", ".login"]).strip()
+-    except ReviewError as error:
+-        if INTEGRATION_REFUSAL not in str(error):
+-            raise
+-        named = os.environ.get(TOKEN_LOGIN, "").strip()
+-        if not named:
+-            raise ReviewError(f"this token belongs to no GitHub user, so GitHub does not say whom it acts as; set "
+-                              f"{TOKEN_LOGIN} to the login it posts as, such as github-actions[bot]") from error
+-        return named
+-    if not login:
+-        raise ReviewError("could not read the authenticated GitHub user; run `gh auth status`")
+-    return login
++    return token_login(lambda: run_gh(["api", "user", "--jq", ".login"]), ReviewError)
+ 
+ 
+ def reviewer_login(explicit: Optional[str], configured: Optional[str], operator: str) -> str:
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index ebb09008..bd8eff69 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -24,7 +24,7 @@
+ import tempfile
+ import time
+ from pathlib import Path
+-from typing import NamedTuple
++from typing import Callable, NamedTuple
+ from urllib.parse import urlparse
+ 
+ from .core import FileAction, ProjectorError, write_through
+@@ -521,6 +521,37 @@ def gh_lookup(*args: str) -> str | None:
+         raise SummaryError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+ 
+ 
++# What GitHub answers `gh api user` with for a token that belongs to no user, such as a workflow's GITHUB_TOKEN
++# or a GitHub App's installation token.
++INTEGRATION_REFUSAL = "Resource not accessible by integration"
++# The login the review action names for its token, since GitHub tells a token that belongs to no user nothing
++# about whom it acts as. It is read only after that refusal, so it can never rename a person's token.
++TOKEN_LOGIN = "PROJECTOR_TOKEN_LOGIN"
++
++
++def token_login(lookup: Callable[[], str], failure: type[ProjectorError]) -> str:
++    """The login `lookup`, a run of `gh api user --jq .login`, reads, or the one `TOKEN_LOGIN` names when GitHub
++    refuses the lookup to a token that belongs to no user. Every failure raises `failure`."""
++    try:
++        login = lookup().strip()
++    except failure as error:
++        if INTEGRATION_REFUSAL not in str(error):
++            raise
++        named = os.environ.get(TOKEN_LOGIN, "").strip()
++        if not named:
++            raise failure(f"this token belongs to no GitHub user, so GitHub does not say whom it acts as; set "
++                          f"{TOKEN_LOGIN} to the login it posts as, such as github-actions[bot]") from error
++        return named
++    if not login:
++        raise failure("could not read the authenticated GitHub user; run `gh auth status`")
++    return login
++
++
++def authenticated_login() -> str:
++    """The login this token posts as, which a workflow's token names through `TOKEN_LOGIN`."""
++    return token_login(lambda: gh("api", "user", "--jq", ".login"), SummaryError)
++
++
+ def exposure(repo: str, pages: dict) -> str:
+     """Why serving this repository's content on its Pages site would leak it, or ''.
+ 
+@@ -1448,7 +1479,7 @@ def comment_summary(repo: str, number: int, head: str, site: str | None = None)
+         return f"not linking the summary from a comment: GitHub's Pages answer for {repo} has no URL"
+     page = review_page(site, number)
+     body = summary_link(head, page)
+-    login = gh("api", "user", "--jq", ".login").strip()
++    login = authenticated_login()
+     # Every timeline item, oldest first, as its event, its id, a review's state,
+     # and its body only when it is this account's summary comment, whose id is
+     # the issue comment's: the last visible item decides whether one is at the end.
+diff --git a/src/projector/templates/review-workflow.yml b/src/projector/templates/review-workflow.yml
+new file mode 100644
+index 00000000..c24220be
+--- /dev/null
++++ b/src/projector/templates/review-workflow.yml
+@@ -0,0 +1,76 @@
++name: Projector review
++
++# Reviews each ready pull request whose head is in this repository with
++# `project review run`, one job for each agent, and publishes each review's
++# summary from a second job that runs no agent. `project review run` refuses a
++# fork's pull request and a draft however the workflow starts, so a manual run
++# cannot review either. Each agent's job reads the one credential secret that
++# is set for it: a subscription's or an API key. Secrets that are not set read
++# as empty.
++on:
++  pull_request:
++    types: [opened, reopened, synchronize, ready_for_review]
++  workflow_dispatch:
++    inputs:
++      pr:
++        description: The pull request to review
++        required: true
++      rereview:
++        description: Review a head this model already reviewed
++        type: boolean
++        default: false
++
++permissions: {}
++
++jobs:
++  review:
++    if: >-
++      github.event_name == 'workflow_dispatch' ||
++      (!github.event.pull_request.draft &&
++       github.event.pull_request.head.repo.full_name == github.repository)
++    permissions:
++      contents: read
++      pull-requests: write
++      issues: write
++      statuses: write
++      checks: read
++      actions: read
++      pages: read
++    strategy:
++      fail-fast: false
++      # An agent with no model runs the action's default for it.
++      matrix:
++        include:
++@MATRIX@
++    concurrency:
++      group: projector-review-${{ github.event.pull_request.number || inputs.pr }}-${{ matrix.agent }}
++      cancel-in-progress: true
++    runs-on: ubuntu-latest
++    timeout-minutes: 60
++    steps:
++      - uses: ninjudd/projector/actions/review@@REF@
++        with:
++          agent: ${{ matrix.agent }}
++          model: ${{ matrix.model }}
++          pr: ${{ github.event.pull_request.number || inputs.pr }}
++          rereview: ${{ inputs.rereview || false }}
++        env:
++@ENV@
++
++  summary:
++    needs: review
++    if: ${{ !cancelled() && needs.review.result != 'skipped' }}
++    permissions:
++      contents: write
++      pull-requests: write
++      issues: write
++      pages: read
++    concurrency:
++      group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
++    runs-on: ubuntu-latest
++    timeout-minutes: 10
++    steps:
++      - uses: ninjudd/projector/actions/review@@REF@
++        with:
++          step: summary
++          pr: ${{ github.event.pull_request.number || inputs.pr }}
+diff --git a/tests/test_ci.py b/tests/test_ci.py
+new file mode 100644
+index 00000000..57818da1
+--- /dev/null
++++ b/tests/test_ci.py
+@@ -0,0 +1,260 @@
++"""CI review setup: the workflow `project init --ci-review` writes, the secrets it sets, and the action's own checks,
++as docs/projects/review-in-ci/readme.md § 2.8 and § 2.10 describe."""
++
++from __future__ import annotations
++
++import json
++import os
++import re
++import shutil
++import subprocess
++import tempfile
++import tomllib
++import unittest
++from pathlib import Path
++from unittest import mock
++
++from projector import ci, cli, review, summary
++from projector.core import UsageError
++from tests.test_projector import RepositoryTestCase, RulesetGitHub
++
++ACTION = Path(__file__).parents[1] / "actions" / "review" / "action.yml"
++
++
++class InitCiReviewTests(RepositoryTestCase):
++    """`project init`'s CI review step in a repository whose origin is acme/app on GitHub."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        subprocess.run(["git", "-C", str(self.root), "remote", "add", "origin", "https://github.com/acme/app.git"],
++                       check=True)
++        self.enterContext(mock.patch.object(review, "run_gh", RulesetGitHub()))
++        self.secrets: list[str] = []
++        self.gh_calls: list[tuple[str, ...]] = []
++        self.enterContext(mock.patch.object(summary, "gh", side_effect=self.gh))
++        self.enterContext(mock.patch.object(summary, "push_decision",
++                                            return_value=("https://acme.github.io/app/", "")))
++        self.set: list[tuple[list[str], Path | None]] = []
++        self.enterContext(mock.patch.object(cli, "run_interactive",
++                                            side_effect=lambda argv, source=None: self.set.append((argv, source)) or 0))
++
++    def gh(self, *args: str) -> str:
++        self.gh_calls.append(args)
++        if args[:2] == ("secret", "list"):
++            return json.dumps([{"name": name} for name in self.secrets])
++        raise AssertionError(f"unexpected gh call: {args}")
++
++    def init(self, *extra: str) -> tuple[int, str, str]:
++        return self.invoke("init", "--no-site", "--no-publish-rule", "--no-require-review", *extra)
++
++    def workflow(self) -> Path:
++        return self.root / ci.WORKFLOW_PATH
++
++    def recorded(self) -> dict:
++        return tomllib.loads((self.root / ".projector.toml").read_text()).get("review", {})
++
++    def test_a_yes_writes_the_workflow_and_records_the_settings_keeping_every_reviewer(self) -> None:
++        (self.root / ".projector.toml").write_text('[review]\nreviewers = "someone"\n')
++
++        code, out, err = self.init("--ci-review", "--ci-agents", "claude,codex=gpt-5.5")
++        again, out_again, _ = self.init()
++
++        self.assertEqual((0, 0), (code, again), err)
++        self.assertEqual(ci.workflow_text("v0", {"claude": "", "codex": "gpt-5.5"}), self.workflow().read_text())
++        self.assertIn(f"created {ci.WORKFLOW_PATH}", out)
++        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again,
++                      "the recorded agents and models rebuild the same workflow")
++        self.assertEqual((True, "claude, codex=gpt-5.5", "someone, github-actions[bot]"),
++                         (self.recorded()["ci"], self.recorded()["ci_agents"], self.recorded()["reviewers"]),
++                         "the bot joins the reviewers the repository already counts, and joins them once")
++
++    def test_init_replaces_a_workflow_nobody_edited_and_keeps_an_edited_one(self) -> None:
++        self.workflow().parent.mkdir(parents=True)
++        self.workflow().write_text(ci.workflow_text("v0.0.1", {"codex": "gpt-5.5"}))
++
++        _, out, _ = self.init("--ci-review")
++        self.assertIn(f"updated {ci.WORKFLOW_PATH}", out)
++        self.assertEqual(ci.workflow_text("v0", {"claude": ""}), self.workflow().read_text())
++
++        edited = self.workflow().read_text().replace("timeout-minutes: 60", "timeout-minutes: 90")
++        self.workflow().write_text(edited)
++        _, out, err = self.init()
++
++        self.assertEqual(edited, self.workflow().read_text())
++        self.assertIn(f"kept {ci.WORKFLOW_PATH}", out)
++        self.assertIn("project review ci-workflow", err)
++
++    def test_init_has_gh_set_a_missing_secret_without_reading_it(self) -> None:
++        self.at_a_terminal()
++
++        code, _, err = self.init("--ci-review")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([(["gh", "secret", "set", "CLAUDE_CODE_OAUTH_TOKEN", "--repo", "acme/app"], None)], self.set,
++                         "no value on the command line, and gh reads it from the terminal")
++        self.assertIn("claude setup-token", err)
++
++    def test_a_codex_login_is_set_from_its_file_only_once_you_confirm(self) -> None:
++        self.at_a_terminal()
++        home = self.root.parent / "codex-home"
++        self.enterContext(mock.patch.dict(os.environ, {"CODEX_HOME": str(home)}))
++        for answer, expected in (("n\n", []), ("y\n", [(["gh", "secret", "set", "CODEX_AUTH_JSON", "--repo",
++                                                          "acme/app"], home / "auth.json")])):
++            with self.subTest(answer=answer), mock.patch("sys.stdin.readline", return_value=answer):
++                self.set.clear()
++                self.init("--ci-review", "--ci-agents", "codex=gpt-5.5", "--ci-credential", "subscription")
++                self.assertEqual(expected, self.set)
++
++    def test_a_present_secret_is_kept_and_two_of_one_agent_are_reported(self) -> None:
++        self.at_a_terminal()
++        self.secrets = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_AUTH_JSON"]
++
++        _, _, err = self.init("--ci-review", "--ci-agents", "claude,codex=gpt-5.5")
++
++        self.assertEqual([], self.set)
++        self.assertIn("ANTHROPIC_API_KEY is set for the claude review", err)
++        self.assertIn("both CODEX_AUTH_JSON and OPENAI_API_KEY are set, so the codex review refuses to start", err)
++
++    def test_an_agent_the_action_has_no_model_for_is_refused_before_anything_is_written(self) -> None:
++        # Its job would stop before it reviewed anything, on every pull request.
++        code, _, err = self.init("--ci-review", "--ci-agents", "claude,codex")
++
++        self.assertNotEqual(0, code)
++        self.assertIn("codex=<model>", err)
++        self.assertFalse(self.workflow().exists())
++        self.assertEqual(([], None, None), (self.set, self.recorded().get("ci"), self.recorded().get("ci_agents")),
++                         "no secret is set and nothing is recorded")
++
++    def test_without_a_terminal_or_a_flag_init_adds_no_ci_review(self) -> None:
++        code, _, err = self.init()
++
++        self.assertEqual(0, code, err)
++        self.assertFalse(self.workflow().exists())
++        self.assertEqual(([], []), (self.gh_calls, self.set), "no secret is listed or set")
++        self.assertNotIn("ci", self.recorded(), "nothing is recorded without an answer")
++
++    def test_a_no_at_the_terminal_is_recorded_and_asked_no_more(self) -> None:
++        self.at_a_terminal()
++        with mock.patch("sys.stdin.readline", return_value="\n"):
++            _, _, first = self.init()
++        _, _, second = self.init()
++
++        self.assertIn(cli.CI_REVIEW_QUESTION, first)
++        self.assertNotIn(cli.CI_REVIEW_QUESTION, second)
++        self.assertIs(False, self.recorded()["ci"])
++        self.assertFalse(self.workflow().exists())
++
++
++class WorkflowTests(unittest.TestCase):
++    def test_a_workflow_init_wrote_reads_as_unedited_with_any_agents_and_ref(self) -> None:
++        for ref, agents in (("v0", {"claude": ""}), ("main", {"claude": "", "codex": "gpt-5.5"}),
++                            ("abc123", {"codex": "gpt-5.5"})):
++            with self.subTest(ref=ref, agents=agents):
++                text = ci.workflow_text(ref, agents)
++                self.assertTrue(ci.unedited(text))
++                self.assertFalse(ci.unedited(text.replace("cancel-in-progress: true", "cancel-in-progress: false")))
++        self.assertFalse(ci.unedited(ci.body("v0", {"claude": ""})), "a file with no digest line is a hand-written one")
++
++    def test_the_workflow_passes_both_credentials_of_each_agent(self) -> None:
++        # The action reads the one that is set, so the workflow need not know which kind the repository chose.
++        text = ci.workflow_text("v0", {"claude": "", "codex": "gpt-5.5"})
++        for agent, names in ci.CREDENTIALS.items():
++            for name in names.values():
++                with self.subTest(agent=agent, name=name):
++                    self.assertIn(f"          {name}: ${{{{ secrets.{name} }}}}\n", text)
++        self.assertIn("uses: ninjudd/projector/actions/review@v0\n", text)
++
++    def test_parse_agents_reads_what_format_agents_records_and_refuses_the_rest(self) -> None:
++        agents = ci.parse_agents("codex = gpt-5.5, claude, codex=other")
++        self.assertEqual({"codex": "gpt-5.5", "claude": ""}, agents, "the first entry for an agent wins")
++        self.assertEqual(agents, ci.parse_agents(ci.format_agents(agents)))
++        self.assertEqual({"claude": "claude-opus-5-5[1m]"}, ci.parse_agents("claude=claude-opus-5-5[1m]"))
++        for text in ("", "claude,gemini", " , ", "codex", "codex=", "codex=gpt 5", "codex='gpt'", "claude=[x]"):
++            with self.subTest(text=text), self.assertRaises(UsageError):
++                ci.parse_agents(text)
++
++
++def step_script(name: str) -> str:
++    """The shell script of the review action's step called `name`."""
++    lines = ACTION.read_text().splitlines()
++    start = lines.index(f"    - name: {name}")
++    start = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |") + 1
++    end = next(i for i in range(start, len(lines)) if not lines[i].startswith("        ") and lines[i].strip())
++    return "\n".join(line[8:] for line in lines[start:end]) + "\n"
++
++
++def review_jobs(workflow: str) -> list[dict[str, str]]:
++    """The inputs the review job of a workflow `ci.workflow_text` wrote gives the action, once for each entry of
++    its matrix's `include:` list, with each `${{ matrix.<key> }}` read from that entry, as GitHub reads it."""
++    lines = workflow.splitlines()
++    entries: list[dict[str, str]] = []
++    for line in lines[lines.index("        include:") + 1:]:
++        if line.startswith("          - "):
++            entries.append({})
++        elif not line.startswith("            "):
++            break
++        key, _, value = line.strip().removeprefix("- ").partition(": ")
++        entries[-1][key] = value
++    start = lines.index("        with:") + 1
++    given = dict(line.strip().partition(": ")[::2] for line in lines[start:lines.index("        env:", start)])
++    expression = re.compile(r"\$\{\{ matrix\.(\w+) \}\}")
++    return [{name: expression.sub(lambda found: entry.get(found.group(1), ""), value)
++             for name, value in given.items()} for entry in entries]
++
++
++@unittest.skipIf(shutil.which("bash") is None, "the action's steps run in bash")
++class ActionTests(unittest.TestCase):
++    def check(self, agent: str, **secrets: str) -> subprocess.CompletedProcess:
++        environment = {"PATH": os.environ["PATH"], "AGENT": agent, **secrets}
++        return subprocess.run(["bash", "-c", step_script("Check the agent's credentials")], env=environment,
++                              capture_output=True, text=True)
++
++    def test_an_agent_runs_with_exactly_one_credential(self) -> None:
++        for agent, names in ci.CREDENTIALS.items():
++            subscription, key = names["subscription"], names["api-key"]
++            for given, passes in (({subscription: "s"}, True), ({key: "k"}, True),
++                                  ({subscription: "s", key: "k"}, False), ({}, False), ({subscription: ""}, False)):
++                with self.subTest(agent=agent, given=sorted(given)):
++                    result = self.check(agent, **given)
++                    self.assertEqual(passes, result.returncode == 0, result.stdout)
++        self.assertIn("delete the secret", self.check("claude", CLAUDE_CODE_OAUTH_TOKEN="s",
++                                                      ANTHROPIC_API_KEY="k").stdout)
++        self.assertEqual(0, self.check("command").returncode, "a command the repository names brings its own")
++
++    def test_every_job_the_generated_workflow_runs_reaches_the_review_with_a_model(self) -> None:
++        # The workflow's matrix and `with:` are one side of the seam, and the action's review step the other.
++        jobs = review_jobs(ci.workflow_text("v0", ci.parse_agents("claude, codex=gpt-5.5")))
++        stub = Path(self.enterContext(tempfile.TemporaryDirectory()))
++        (stub / "project").write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$STUB/args"\n')
++        (stub / "project").chmod(0o755)
++        ran = {}
++        for inputs in jobs:
++            environment = {"PATH": f"{stub}{os.pathsep}{os.environ['PATH']}", "STUB": str(stub), "PR": "7",
++                           "AGENT": inputs["agent"], "MODEL": inputs.get("model", ""), "EFFORT": "high",
++                           "MODE": "auto", "REREVIEW": "false", "TIMEOUT": "45", "PROJECTOR_ROOT": str(stub)}
++            result = subprocess.run(["bash", "-eo", "pipefail", "-c", step_script("Review the pull request")],
++                                    env=environment, capture_output=True, text=True)
++            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
++            args = (stub / "args").read_text().splitlines()
++            ran[inputs["agent"]] = args[args.index("--model") + 1]
++        self.assertEqual({"claude": "claude-opus-5-5", "codex": "gpt-5.5"}, ran)
++
++    def test_every_step_that_runs_project_with_the_workflow_token_names_the_login_it_posts_as(self) -> None:
++        # GitHub refuses `gh api user` to that token, so without the name a step fails after it pushes or posts.
++        steps = ACTION.read_text().split("\n    - ")[1:]
++        with_token = [step for step in steps if "GH_TOKEN: ${{ github.token }}" in step]
++        self.assertIn("name: Publish the summaries", [step.splitlines()[0] for step in with_token])
++        for step in with_token:
++            with self.subTest(step=step.splitlines()[0]):
++                self.assertIn(f"        {review.TOKEN_LOGIN}: {cli.CI_REVIEWER}\n", step)
++
++    def test_only_the_review_step_hands_its_summary_off(self) -> None:
++        # The summary job's publish must push; a handoff there would publish nothing.
++        text = ACTION.read_text()
++        review_step = text[text.index("    - name: Review the pull request"):text.index("    - name: Save the review")]
++        self.assertEqual(1, text.count("PROJECTOR_SUMMARY_HANDOFF"))
++        self.assertIn("PROJECTOR_SUMMARY_HANDOFF", review_step)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 89b99c2e..7002b5eb 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -1697,7 +1697,7 @@ def init(self, *extra: str, answer: str | None = None) -> tuple[int, str, str]:
+         if answer is not None:
+             self.at_a_terminal()
+             self.enterContext(mock.patch("sys.stdin.readline", return_value=answer))
+-        return self.invoke("init", "--no-site", "--no-publish-rule", *extra)
++        return self.invoke("init", "--no-site", "--no-publish-rule", "--no-ci-review", *extra)
+ 
+     def workflow(self) -> Path:
+         return self.root / review.CLEAN_WORKFLOW_PATH
+@@ -3024,6 +3024,7 @@ def test_each_thing_init_writes_has_a_digest_of_its_own(self) -> None:
+             "clean-workflow": mock.patch.object(review, "clean_workflow_text",
+                                                 return_value=review.clean_workflow_text() + "# x\n"),
+             "permission-rules": mock.patch.object(permissions, "ASK", (*permissions.ASK, "Bash(project x *)")),
++            "ci-review-workflow": mock.patch.object(cli.ci, "body", return_value=cli.ci.body("v0", {"claude": ""}) + "# x\n"),
+         }
+         self.assertEqual(set(edits), set(before))
+         for name, edit in edits.items():
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index daf8a16c..ed8eb747 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -1633,14 +1633,20 @@ def setUp(self) -> None:
+         self.calls: list[str] = []
+         self.hosted: tuple[str | None, str] = ("https://owner.github.io/repo/", "")
+         self.next_id = 101
++        # The account the token posts as, and whether GitHub refuses to say, as it does to a workflow's token.
++        self.account = "operator"
++        self.token_of_no_user = False
+ 
+     def gh(self, *args: str) -> str:
+         if args == ("api", "user", "--jq", ".login"):
+-            return "operator\n"
++            if self.token_of_no_user:
++                raise summary.SummaryError("gh api user --jq .login failed: gh: Resource not accessible by "
++                                           "integration (HTTP 403)")
++            return f"{self.account}\n"
+         if args[:3] == ("api", "--paginate", "repos/owner/repo/issues/7/timeline"):
+             return "".join(json.dumps([item.get("event"), item.get("id"), (item.get("state") or "").lower(),
+                                        item["body"] if item.get("event") == "commented"
+-                                       and item["user"]["login"].lower() == "operator"
++                                       and item["user"]["login"].lower() == self.account.lower()
+                                        and "<!-- projector-summary v=1 " in item["body"] else None]) + "\n"
+                            for item in self.timeline)
+         if args[:3] == ("api", "-X", "DELETE"):
+@@ -1649,10 +1655,11 @@ def gh(self, *args: str) -> str:
+             self.timeline.remove(next(item for item in self.timeline
+                                       if item.get("event") == "commented" and item["id"] == comment_id))
+             # GitHub records the deletion on the timeline, where only the actor's own feed shows it.
+-            self.timeline.append({"event": "comment_deleted", "id": 900 + comment_id, "actor": {"login": "operator"}})
++            self.timeline.append({"event": "comment_deleted", "id": 900 + comment_id,
++                                  "actor": {"login": self.account}})
+             return ""
+         if args[:2] == ("api", "repos/owner/repo/issues/7/comments") and args[2] == "-f":
+-            new = {"event": "commented", "id": self.next_id, "user": {"login": "operator"},
++            new = {"event": "commented", "id": self.next_id, "user": {"login": self.account},
+                    "body": args[3].removeprefix("body=")}
+             self.next_id += 1
+             self.timeline.append(new)
+@@ -1806,6 +1813,18 @@ def test_another_accounts_summary_comment_is_left_alone(self) -> None:
+         self.assertEqual(["post"], [call.split()[0] for call in self.calls], "a comment of your own is posted")
+         self.assertEqual(f"<!-- projector-summary v=1 sha={HEAD} -->\nTheirs.", self.timeline[1]["body"])
+ 
++    def test_a_workflow_token_links_the_summary_as_the_login_the_action_names(self) -> None:
++        # GitHub refuses `gh api user` to the summary job's token, which leaves the bot only its variable.
++        self.account, self.token_of_no_user = "github-actions[bot]", True
++        self.add_comment(2, f"<!-- projector-summary v=1 sha={'b' * 40} -->\nAn earlier head's.",
++                         login="github-actions[bot]")
++
++        with mock.patch.dict(os.environ, {summary.TOKEN_LOGIN: "github-actions[bot]"}):
++            result = self.comment()
++
++        self.assertEqual(["post 101", "delete 2"], self.calls, "the bot's own earlier link is the one it replaces")
++        self.assertIn("deleting comment 2", result)
++
+     def test_a_site_the_caller_already_found_is_not_looked_up_again(self) -> None:
+         with mock.patch.object(summary, "gh", side_effect=self.gh), \
+              mock.patch.object(summary, "hosting", side_effect=AssertionError("the caller already found the site")):
