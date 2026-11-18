@@ -1,0 +1,618 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index db9a93e1..038130ac 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -227,6 +227,10 @@ what it did to each:
+       pattern = ["project", "agent", ["list", "read", "register", "reply", "send", "unregister"]],
+       decision = "allow",
+   )
++  prefix_rule(
++      pattern = ["project", "agent", "peer", "list"],
++      decision = "allow",
++  )
+   prefix_rule(
+       pattern = ["project", "config", ["get", "list", "paths"]],
+       decision = "allow",
+@@ -854,6 +858,7 @@ reads, which are these:
+ | `agent.message_limit` | whole number | `12` | `project agent send` and `reply`, from the checkout the sending session works in, as the most messages one session sends to one other session in a rolling hour; at least `1` |
+ | `agent.auto_register` | boolean | `true` | `project watch add` and the Codex hooks, from the checkout the session works in, to register a session that subscribes to a pull request for agent messages, with a generated summary; `false` subscribes it without registering it, as [Registered when it subscribes](#registered-when-it-subscribes) describes. A session that ran `project agent unregister` is never registered this way, whatever the setting says |
+ | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or, with `--inline`, the key itself, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key join`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
++| `agent.peers` | table | none | `project agent peer`, from `~/.projector.toml` only, as each peer's name with the base64 of their public key. Set it with `project agent peer add`, never `config set`; see [Reach other people's inboxes](#reach-other-peoples-inboxes) |
+ | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
+ | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
+ | `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to |
+@@ -3766,7 +3771,7 @@ with `join` and whose fingerprint matches.
+ 
+ | Command | What it does |
+ | --- | --- |
+-| `key show` | Prints the key's ID, its public key, and where it is stored |
++| `key show` | Prints the key's ID, its public key, and where it is stored. The public key is not secret: give it to anyone whose agents should reach your inbox, as [Reach other people's inboxes](#reach-other-peoples-inboxes) describes |
+ | `key remove` | Deletes `agent.key` and the keychain item it names, which turns the relay off on this machine. The daemon then deletes this machine's agents' refs |
+ 
+ Projector reads `agent.key` only from `~/.projector.toml`. A checkout's
+@@ -3928,6 +3933,43 @@ repository's relay`. A reviewer on another machine takes no role here and
+ changes no other event. A presence from an earlier version of Projector has
+ no `reviews`, and reviews nothing.
+ 
++## Reach other people's inboxes
++
++You list another person's public key under a name you choose, and they list
++yours. The key identifies the person, and the name is only your label for
++them, so no GitHub login is involved.
++
++### List a peer
++
++Each of you runs `project agent key show` and gives the other the public key
++it prints, over any channel. The public key is not secret. Then, in a
++terminal, add the other person under a name of your choosing:
++
++```console
++$ project agent peer add jason q3Jx...=
++Does jason's project agent key show print key 3f2a9c1d7e4b6a05? [y/N] y
++added peer jason, key 3f2a9c1d7e4b6a05, to ~/.projector.toml. Their agents reach your inbox once jason lists your public key too, which `project agent key show` prints
++```
++
++`peer add` decides who can post to your inbox, so it runs only with a
++terminal on standard input and output, where no agent can run it. It
++refuses a name that is not 1 to 32 letters, digits, and hyphens, or that
++already names a peer unless you pass `--replace`, and a value that is not
++the base64 of a 32-byte public key, that is your own public key, or that
++another name holds. It writes nothing unless you answer `y` or `yes` once
++you have checked the key ID with the other person.
++
++| Command | What it does |
++| --- | --- |
++| `peer add <name> <public-key> [--replace]` | Lists the key under the name in `~/.projector.toml`, as `agent.peers.<name>`, after you confirm its key ID |
++| `peer remove <name>` | Removes the peer from `~/.projector.toml` |
++| `peer list [--json]` | Prints each peer's name and key ID |
++
++Projector reads `agent.peers` only from `~/.projector.toml`. A checkout's
++`.projector.toml` that sets it is ignored with a warning, so a repository
++cannot plant a peer. `project config set agent.peers.<name>` refuses and
++names `peer add`.
++
+ ## Change a loop's tracked file
+ 
+ A watch or review loop reads its tracked file, one `owner/repo#number` a
+diff --git a/docs/projects/agent-messages/peers/readme.md b/docs/projects/agent-messages/peers/readme.md
+index 5c5541ab..edda2c92 100644
+--- a/docs/projects/agent-messages/peers/readme.md
++++ b/docs/projects/agent-messages/peers/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: in-progress
+ priority: now
+ ---
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 70db4aa1..8ebf98b5 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1357,6 +1357,17 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+         # No help, so help lists none of them; a prefix no argument starts with takes any arguments they had.
+         keys.add_parser(removed, add_help=False, prefix_chars="\0").add_argument("ignored", nargs="*")
+ 
++    peer = commands.add_parser("peer", help="list another person's public key under a name, so their agents can "
++                                            "reach your inbox and yours theirs")
++    peers = peer.add_subparsers(dest="peer_command", required=True)
++    added = peers.add_parser("add", help="list a person's public key under a name you choose; terminal only")
++    added.add_argument("name", help="your name for them, 1 to 32 letters, digits, and hyphens")
++    added.add_argument("public_key", help="the public key their `project agent key show` prints")
++    added.add_argument("--replace", action="store_true", help="give a name you already listed this key instead")
++    removed_peer = peers.add_parser("remove", help="stop a person's agents reaching your inbox")
++    removed_peer.add_argument("name", help="the name you listed them under")
++    add_output(peers.add_parser("list", help="list your peers, with each one's key ID"))
++
+ 
+ def terminal_line(prompt: str, deadline: float, outcome: str) -> str:
+     """A line typed at the terminal by `deadline`, of at most `MAX_PASTE` bytes, or an error that ends with
+@@ -1439,7 +1450,8 @@ def run_agent_key(arguments: argparse.Namespace) -> int:
+         if arguments.json_output:
+             print(json_text(shown))
+         else:
+-            print(f"key {shown['key_id']}\npublic key: {shown['public_key']}\nstored: {shown['store']}")
++            print(f"key {shown['key_id']}\npublic key: {shown['public_key']}\nstored: {shown['store']}\n"
++                  f"{relay.SHARE}")
+         return 0
+     if command == "remove":
+         removed, found = relay.remove_key(root)
+@@ -1473,6 +1485,39 @@ def run_agent_key(arguments: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def run_agent_peer(arguments: argparse.Namespace) -> int:
++    command = arguments.peer_command
++    if command == "list":
++        rows = relay.peer_rows()
++        if arguments.json_output:
++            print(json_text({"peers": rows}))
++            return 0
++        for row in rows:
++            print(f"{row['name']}\tkey {row['key_id']}")
++        if not rows:
++            print("no peers; run `project agent peer add <name> <public-key>` in a terminal to add one")
++        return 0
++    if command == "remove":
++        key_id = relay.remove_peer(arguments.name)
++        print(f"removed peer {arguments.name.lower()}, key {key_id}, from {user_config_path()}; their agents can no "
++              "longer reach your inbox")
++        return 0
++    if not (sys.stdin.isatty() and sys.stdout.isatty()):
++        raise EnvironmentError("`project agent peer add` decides who can post to your inbox, so it runs only with a "
++                               "terminal on standard input and output, where no agent can run it; run it yourself in "
++                               "a terminal")
++    name, public = relay.check_peer(arguments.name, arguments.public_key, replace=arguments.replace)
++    key_id = crypto.key_id(public)
++    outcome = "no peer was added"
++    if not confirmed(f"Does {name}'s project agent key show print key {key_id}? [y/N] ",
++                     time.monotonic() + JOIN_TIMEOUT, outcome):
++        raise relay.RelayError(f"key {key_id} was not confirmed, so {outcome}")
++    relay.add_peer(name, public, replace=arguments.replace)
++    print(f"added peer {name}, key {key_id}, to {user_config_path()}. Their agents reach your inbox once {name} lists "
++          "your public key too, which `project agent key show` prints")
++    return 0
++
++
+ def warn_ignored(config: Config) -> None:
+     for path, key in config.ignored:
+         print(f"project: {path} sets {key}, which Projector reads only from {user_config_path()}; ignoring it",
+@@ -1482,6 +1527,8 @@ def warn_ignored(config: Config) -> None:
+ def run_agent(arguments: argparse.Namespace) -> int:
+     if arguments.agent_command == "key":
+         return run_agent_key(arguments)
++    if arguments.agent_command == "peer":
++        return run_agent_peer(arguments)
+     root = watch.state_root()
+     command = arguments.agent_command
+     now = time.time()
+@@ -1866,6 +1913,9 @@ def change_config(arguments: argparse.Namespace) -> int:
+         raise UsageError(f"{arguments.key} holds the relay's private key, which a command line would show; run "
+                          "`project agent key join` in a terminal to copy a key from another machine, or "
+                          "`project agent key init` to make one")
++    if arguments.config_command == "set" and (arguments.key + ".").startswith("agent.peers."):
++        raise UsageError(f"{arguments.key} decides whose agents can post to your inbox, so only a terminal sets it; "
++                         "run `project agent peer add <name> <public-key>` in a terminal")
+     path = config_file(arguments)
+     if arguments.config_command == "set":
+         change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value))
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 26968bc6..94dcb84e 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -76,6 +76,7 @@
+     "agent.message_limit": int,
+     "agent.auto_register": bool,
+     "agent.key": str,
++    "agent.peers": dict,
+     "ios.app": str,
+     "ios.project": str,
+     "ios.output": str,
+@@ -93,9 +94,10 @@
+ }
+ 
+ 
+-# Keys read only from the user layer, `~/.projector.toml`. A walked file's value
+-# is ignored, so a repository cannot plant a key its author knows.
+-USER_ONLY = frozenset({"agent.key"})
++# Keys read only from the user layer, `~/.projector.toml`, each with every key
++# under it. A walked file's value is ignored, so a repository cannot plant a
++# key its author knows, or a peer whose agents could then post to your inbox.
++USER_ONLY = frozenset({"agent.key", "agent.peers"})
+ 
+ # Keys whose value can be a secret. A value under `keychain:` names an item in
+ # the OS keychain and holds no secret; any other value is the secret itself.
+@@ -160,6 +162,57 @@ def user_value(key: str, environ: Optional[dict[str, str]] = None) -> Any:
+     return value
+ 
+ 
++def key_id_of(value: str) -> str:
++    """The key ID an `agent.key` value names, read without the keychain."""
++
++    if value.startswith(KEYCHAIN):
++        return value[len(KEYCHAIN):]
++    return crypto.key_id(crypto.public_key(inline_key(value)))
++
++
++def public_key(text: str) -> bytes:
++    """The 32-byte X25519 public key that `text` holds as base64, the form `project agent key show` prints."""
++
++    try:
++        public = base64.b64decode(text.strip(), validate=True)
++    except (binascii.Error, ValueError):
++        public = b""
++    if len(public) != 32:
++        raise ConfigError(f"{text!r} is not a public key, the base64 of 32 bytes that `project agent key show` prints")
++    return public
++
++
++def peers(environ: Optional[dict[str, str]] = None) -> dict[str, bytes]:
++    """`agent.peers` from `~/.projector.toml` alone: each peer's name with its public key. Every name matches
++    `agents.NAME`, no two names hold one key, and none holds the key `agent.key` names. Reads no keychain."""
++
++    from .agents import NAME
++
++    table = user_value("agent.peers", environ) or {}
++    value = user_value("agent.key", environ)
++    own = key_id_of(value) if value else None
++    found: dict[str, bytes] = {}
++    holders: dict[str, str] = {}
++    for name, text in table.items():
++        if not NAME.fullmatch(name):
++            raise ConfigError(f"agent.peers.{name} is not a peer name: use 1 to 32 lowercase letters, digits, and "
++                              "hyphens, starting with a letter or digit")
++        if not isinstance(text, str):
++            raise ConfigError(f"agent.peers.{name} must be a public key, not {type(text).__name__}")
++        try:
++            public = public_key(text)
++        except ConfigError:
++            raise ConfigError(f"agent.peers.{name} is not a public key, the base64 of 32 bytes") from None
++        key_id = crypto.key_id(public)
++        if key_id == own:
++            raise ConfigError(f"agent.peers.{name} holds your own public key, key {key_id}")
++        if key_id in holders:
++            raise ConfigError(f"agent.peers.{holders[key_id]} and agent.peers.{name} hold one key, key {key_id}")
++        holders[key_id] = name
++        found[name] = public
++    return found
++
++
+ def same_value(one: Any, other: Any) -> bool:
+     return type(one) is type(other) and one == other
+ 
+@@ -317,7 +370,7 @@ def setting(self, key: str) -> Any:
+         kind = SETTINGS[key]
+         # TOML reads `true` as a bool, which Python also counts as an int.
+         if value is not None and (not isinstance(value, kind) or (kind is int and isinstance(value, bool))):
+-            expected = {bool: "true or false", int: "a whole number"}.get(kind, "a string")
++            expected = {bool: "true or false", int: "a whole number", dict: "a table"}.get(kind, "a string")
+             raise ConfigError(f"{key} must be {expected}, not {type(value).__name__}")
+         return value
+ 
+@@ -328,6 +381,34 @@ def flat(self) -> dict[str, Any]:
+         return _flatten(self.values)
+ 
+ 
++def drop_user_only(loaded: dict[str, Any]) -> list[str]:
++    """Remove each `USER_ONLY` key, and everything under it, from a walked file's values, and answer the dotted
++    keys removed. The subtree is found by walking the parsed tables, never by splitting a flattened key, since a
++    quoted key such as `"alice.work"` holds a dot of its own."""
++
++    removed: list[str] = []
++    for name in sorted(USER_ONLY):
++        *tables, last = name.split(".")
++        chain = [loaded]
++        for part in tables:
++            child = chain[-1].get(part)
++            if not isinstance(child, dict):
++                break
++            chain.append(child)
++        else:
++            if last not in chain[-1]:
++                continue
++            value = chain[-1].pop(last)
++            removed += sorted(_flatten(value, f"{name}.")) if isinstance(value, dict) and value else [name]
++            # A table left empty, as `[agent]` is once `agent.peers` goes from a file that set nothing else
++            # there, is dropped too, so `config get` finds no value the file was refused.
++            for parent, part in zip(reversed(chain[:-1]), reversed(tables)):
++                if parent[part]:
++                    break
++                del parent[part]
++    return removed
++
++
+ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, str]] = None) -> Config:
+     env = os.environ if environ is None else environ
+     if home is None:
+@@ -342,13 +423,7 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
+     for path in paths:
+         loaded = read_config_file(path)
+         if path != user:
+-            for key in sorted(USER_ONLY & set(_flatten(loaded))):
+-                *tables, name = key.split(".")
+-                table = loaded
+-                for part in tables:
+-                    table = table[part]
+-                del table[name]
+-                ignored.append((path, key))
++            ignored += [(path, key) for key in drop_user_only(loaded)]
+         values = merge(values, loaded)
+         # Recorded after merging so the last writer of each leaf wins, which is
+         # the file whose value actually survived.
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 27bb9176..de79ad7b 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -144,6 +144,7 @@
+     (["project", "agent", ["list", "read", "register", "reply", "send", "unregister"]],
+      "Registers or unregisters the session, lists your registered sessions, or sends, reads, or answers a message "
+      "between them."),
++    (["project", "agent", "peer", "list"], "Lists the people whose agents may reach your inbox."),
+     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
+     (["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore",
+                            "revise", "show", "tell", "watch", "withdraw"]],
+diff --git a/src/projector/relay.py b/src/projector/relay.py
+index e3c2d603..63b253b3 100644
+--- a/src/projector/relay.py
++++ b/src/projector/relay.py
+@@ -74,6 +74,7 @@
+ NO_CHECKOUT = "no recorded checkout of the repository remains"
+ PUBLIC_REMINDER = "public repository: name no private repository and describe none of its internals"
+ COPY = "To give another machine this key, run `project agent key join` there in a terminal."
++SHARE = "Give this public key to anyone whose agents should reach your inbox; it is not secret."
+ REQUEST_PREFIX = "pj1-"
+ LINE_PREFIX = "pk1-"
+ REQUEST = re.compile(r"pj1-([a-z0-9-]{0,20})-([A-Za-z0-9_-]{43})")
+@@ -126,9 +127,7 @@ def configured(environ: Optional[dict] = None) -> Optional[str]:
+ 
+ def value_id(value: str) -> str:
+     """The key ID an `agent.key` value names, read without the keychain."""
+-    if value.startswith(KEYCHAIN):
+-        return value[len(KEYCHAIN):]
+-    return crypto.key_id(crypto.public_key(inline_key(value)))
++    return config.key_id_of(value)
+ 
+ 
+ def read_key(value: str, timeout: Optional[float] = None) -> Key:
+@@ -320,6 +319,63 @@ def show_key(environ: Optional[dict] = None) -> dict:
+     return {"key_id": key.id, "public_key": crypto.encode(key.public), "store": key.store}
+ 
+ 
++# Peers
++
++def check_peer(name: str, text: str, *, replace: bool, environ: Optional[dict] = None) -> tuple[str, bytes]:
++    """The peer `project agent peer add` would write, by its lowercased name, with its public key: refused for a
++    name that is not a peer name or that names a peer already, unless `replace`, and for a key that is not one,
++    that is your own, or that another name holds."""
++    name = name.lower()
++    if not agents.NAME.fullmatch(name):
++        raise RelayError(f"{name!r} is not a peer name: use 1 to 32 letters, digits, and hyphens, starting with a "
++                         "letter or digit")
++    try:
++        public = config.public_key(text)
++    except ConfigError as error:
++        raise RelayError(str(error)) from None
++    key_id = crypto.key_id(public)
++    found = config.peers(environ)
++    if name in found and not replace:
++        raise RelayError(f"{name} is already a peer, with key {crypto.key_id(found[name])}; pass --replace to give "
++                         f"{name} this key instead")
++    value = configured(environ)
++    if value and value_id(value) == key_id:
++        raise RelayError(f"key {key_id} is your own key, which needs no peer entry")
++    for other, held in found.items():
++        if other != name and held == public:
++            raise RelayError(f"{other} already holds key {key_id}; run `project agent peer remove {other}` first to "
++                             f"list it as {name}")
++    return name, public
++
++
++def add_peer(name: str, public: bytes, *, replace: bool = False, environ: Optional[dict] = None) -> None:
++    """Write the peer to `~/.projector.toml`, checking it again against the table as it is now, under a lock,
++    since another `peer add` may have changed the table while this one waited for its confirmation."""
++    with locked(watch.state_root(environ) / "peers"):
++        check_peer(name, crypto.encode(public), replace=replace, environ=environ)
++        path = user_config_path(environ)
++        if not path.exists():
++            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
++        write_value(path, f"agent.peers.{name}", crypto.encode(public))
++
++
++def remove_peer(name: str, environ: Optional[dict] = None) -> str:
++    """Remove a peer from `~/.projector.toml`, and answer the ID of the key it held."""
++    name = name.lower()
++    found = config.peers(environ)
++    if name not in found:
++        listed = ", ".join(sorted(found)) or "none"
++        raise RelayError(f"{name} is not a peer; your peers: {listed}")
++    unset_value(user_config_path(environ), f"agent.peers.{name}")
++    return crypto.key_id(found[name])
++
++
++def peer_rows(environ: Optional[dict] = None) -> list[dict]:
++    """Each peer, by name, with its key's ID and public key."""
++    return [{"name": name, "key_id": crypto.key_id(public), "public_key": crypto.encode(public)}
++            for name, public in sorted(config.peers(environ).items())]
++
++
+ def remove_key(root: Path, environ: Optional[dict] = None) -> tuple[str, str]:
+     """Delete `agent.key` and the keychain item it names, and answer the key's ID and what removing the item
+     found."""
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 9839c96b..e0929f02 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -646,7 +646,7 @@ def test_a_symlinked_user_file_stays_a_link(self) -> None:
+ 
+     def test_the_documented_keys_are_the_known_keys(self) -> None:
+         documentation = (Path(__file__).resolve().parents[1] / "docs" / "cli.md").read_text()
+-        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string|whole number) \|", documentation, re.MULTILINE)
+-        names = {bool: "boolean", str: "string", int: "whole number"}
++        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string|whole number|table) \|", documentation, re.MULTILINE)
++        names = {bool: "boolean", str: "string", int: "whole number", dict: "table"}
+ 
+         self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 287119db..ac4d50fd 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -57,6 +57,9 @@
+     ("project inbox discuss 3 --text 'Why decline it?' --session s1", "ask", "none"),
+     ("project inbox discuss --pr acme/app#12 --text hello --session s1", "ask", "none"),
+     ("project console", "ask", "none"),
++    ("project agent peer list --json", "allow", "allow"),
++    ("project agent peer add jason q3Jx", "allow", "none"),
++    ("project agent peer remove jason", "allow", "none"),
+     ("project list --json", "allow", "allow"),
+     ("project config get review.username", "allow", "allow"),
+     ("project config list", "allow", "allow"),
+@@ -119,7 +122,8 @@
+ 
+ # What the Codex rules leave to Codex's usual approval: each command with the
+ # subcommands left out, or None where the whole command is.
+-CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None, "agent": {"key"},
++CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None,
++                  "agent": {"key", "peer"},
+                   "config": {"set", "unset"},
+                   "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},
+                   "review": {"gate"},
+@@ -200,8 +204,12 @@ def test_codex_itself_reaches_the_same_decisions(self) -> None:
+ 
+     def test_the_codex_rules_name_every_command_or_leave_it_out(self) -> None:
+         (_, whole), *rest = (pattern for pattern, _ in permissions.CODEX_ALLOW)
+-        partial = {command: set(names) for _, command, names in rest}
++        partial = {pattern[1]: set(pattern[2]) for pattern in rest if len(pattern) == 3}
+         commands = subcommands(cli.parser())
++        for _, command, group, name in (pattern for pattern in rest if len(pattern) == 4):
++            # A rule that allows one subcommand of a group leaves the group out, so its other subcommands ask.
++            self.assertIn(group, CODEX_LEFT_OUT[command])
++            self.assertIn(name, subcommands(subcommands(commands[command])[group]))
+         self.assertLessEqual(set(whole) | set(partial), set(commands))
+         for command, parser in commands.items():
+             with self.subTest(command):
+diff --git a/tests/test_relay.py b/tests/test_relay.py
+index 2c83175b..17d380b8 100644
+--- a/tests/test_relay.py
++++ b/tests/test_relay.py
+@@ -1173,6 +1173,141 @@ def test_the_old_ways_to_copy_or_set_the_key_are_refused_and_name_key_join(self)
+         self.stored_nothing()
+ 
+ 
++def public_of(private: bytes) -> str:
++    return crypto.encode(crypto.public_key(private))
++
++
++class PeerCommandTests(RelayCase):
++    """`project agent peer` on machine one, which holds the shared key inline, listing other people's keys."""
++
++    JASON = bytes(range(40, 72))
++    AMY = bytes(range(80, 112))
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.one.inline_key(self.private)
++
++    def config_text(self) -> str:
++        return (self.one.home / ".projector.toml").read_text()
++
++    def add(self, name: str, key: str, *flags: str, answer: str = "y",
++            terminal: bool | str = True) -> tuple[int, str, str]:
++        return self.one.project("agent", "peer", "add", name, key, *flags, stdin=answer + "\n", terminal=terminal)
++
++    def test_a_peer_confirmed_at_a_terminal_is_listed_by_name_and_key_id_and_removed_by_name(self) -> None:
++        jason_id = crypto.key_id(crypto.public_key(self.JASON))
++
++        code, out, err = self.add("Jason", public_of(self.JASON))
++        listed = self.one.project("agent", "peer", "list")
++        listed_json = json.loads(self.one.project("agent", "peer", "list", "--json")[1])
++        added = config.peers(self.one.env)
++        removed = self.one.project("agent", "peer", "remove", "jason")
++        after = self.one.project("agent", "peer", "list")
++
++        self.assertEqual(0, code, err)
++        self.assertIn(f"Does jason's project agent key show print key {jason_id}? [y/N] ", out)
++        self.assertIn(f"added peer jason, key {jason_id}", out)
++        self.assertEqual({"jason": crypto.public_key(self.JASON)}, added)
++        self.assertEqual(f"jason\tkey {jason_id}\n", listed[1])
++        self.assertEqual([{"name": "jason", "key_id": jason_id, "public_key": public_of(self.JASON)}],
++                         listed_json["peers"])
++        self.assertEqual(0, removed[0], removed[2])
++        self.assertIn(f"removed peer jason, key {jason_id}", removed[1])
++        self.assertEqual({}, config.peers(self.one.env))
++        self.assertIn("no peers", after[1])
++
++    def test_peer_add_refuses_without_a_terminal_or_a_yes_and_refuses_a_bad_name_or_key_writing_nothing(
++            self) -> None:
++        self.assertEqual(0, self.add("amy", public_of(self.AMY))[0])
++        before = self.config_text()
++        cases = {
++            "no terminal on standard input": (("jason", public_of(self.JASON)), {"terminal": "stdout"}, 69,
++                                              "runs only with a terminal"),
++            "no terminal on standard output": (("jason", public_of(self.JASON)), {"terminal": "stdin"}, 69,
++                                               "runs only with a terminal"),
++            "your own key": (("jason", public_of(self.private)), {}, 65, "is your own key"),
++            "a key another name holds": (("jason", public_of(self.AMY)), {}, 65, "amy already holds key"),
++            "a malformed key": (("jason", "not-a-key"), {}, 65, "is not a public key"),
++            "a key of 31 bytes": (("jason", crypto.encode(bytes(31))), {}, 65, "is not a public key"),
++            "a name that is not a name": (("Jason Smith", public_of(self.JASON)), {}, 65, "is not a peer name"),
++            "an existing name": (("amy", public_of(self.JASON)), {}, 65, "pass --replace"),
++            "the answer n": (("jason", public_of(self.JASON)), {"answer": "n"}, 65, "no peer was added"),
++        }
++        for case, (args, options, status, said) in cases.items():
++            with self.subTest(case):
++                code, out, err = self.add(*args, **options)
++                self.assertEqual(status, code, out + err)
++                self.assertIn(said, err)
++                self.assertEqual(before, self.config_text())
++
++    def test_replace_gives_a_listed_name_another_key(self) -> None:
++        self.add("amy", public_of(self.AMY))
++
++        code, out, err = self.add("amy", public_of(self.JASON), "--replace")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({"amy": crypto.public_key(self.JASON)}, config.peers(self.one.env))
++
++    def test_a_peer_planted_in_a_checkout_is_ignored_and_config_set_refuses_to_add_one(self) -> None:
++        (self.one.work / ".projector.toml").write_text(f'[agent.peers]\nmallory = "{public_of(self.JASON)}"\n')
++
++        listed = self.one.project("agent", "peer", "list")
++        got = self.one.project("config", "get", "agent.peers")
++        refused = [self.one.project("config", "set", key, public_of(self.JASON), "--user")
++                   for key in ("agent.peers.mallory", "agent.peers")]
++
++        self.assertIn("no peers", listed[1])
++        self.assertEqual(1, got[0], got[1])
++        self.assertIn("sets agent.peers.mallory, which Projector reads only from", got[2])
++        for code, out, err in refused:
++            self.assertEqual(2, code, err)
++            self.assertIn("run `project agent peer add <name> <public-key>` in a terminal", err)
++        self.assertNotIn("peers", self.config_text())
++
++    def test_a_planted_peer_whose_quoted_name_holds_a_dot_is_ignored_without_breaking_other_settings(self) -> None:
++        (self.one.work / ".projector.toml").write_text(
++            f'[agent.peers]\n"alice.work" = "{public_of(self.JASON)}"\n[review]\ngate_checks = "check"\n')
++
++        got = self.one.project("config", "get", "review.gate_checks")
++        listed = self.one.project("agent", "peer", "list")
++
++        self.assertEqual((0, "check\n"), got[:2], got[2])
++        self.assertIn("sets agent.peers.alice.work, which Projector reads only from", got[2])
++        self.assertEqual(0, listed[0], listed[2])
++        self.assertIn("no peers", listed[1])
++
++    def test_a_peer_another_terminal_adds_while_add_waits_for_its_answer_is_rechecked_before_the_write(
++            self) -> None:
++        def meanwhile(*_) -> bool:
++            # A second terminal lists the same key as amy while this one waits for its yes.
++            relay.add_peer("amy", crypto.public_key(self.JASON), environ=self.one.env)
++            return True
++
++        with mock.patch.object(cli, "confirmed", side_effect=meanwhile):
++            code, out, err = self.add("jason", public_of(self.JASON))
++
++        self.assertEqual(65, code, out + err)
++        self.assertIn("amy already holds key", err)
++        self.assertEqual({"amy": crypto.public_key(self.JASON)}, config.peers(self.one.env))
++
++    def test_a_table_that_repeats_a_key_or_holds_your_own_is_refused_when_read(self) -> None:
++        for table, said in ((f'amy = "{public_of(self.AMY)}"\njason = "{public_of(self.AMY)}"\n', "hold one key"),
++                            (f'me = "{public_of(self.private)}"\n', "holds your own public key"),
++                            ('jason = "short"\n', "is not a public key")):
++            with self.subTest(said):
++                (self.one.home / ".projector.toml").write_text(
++                    f'[agent]\nkey = "x25519:{crypto.encode(self.private)}"\n[agent.peers]\n{table}')
++                with self.assertRaisesRegex(config.ConfigError, said):
++                    config.peers(self.one.env)
++
++    def test_key_show_says_the_public_key_is_not_secret(self) -> None:
++        code, out, err = self.one.project("agent", "key", "show")
++
++        self.assertEqual(0, code, err)
++        self.assertIn(f"public key: {public_of(self.private)}", out)
++        self.assertIn("Give this public key to anyone whose agents should reach your inbox; it is not secret.", out)
++
++
+ def wait_for(condition, seconds: float = 10.0) -> bool:
+     deadline = time.monotonic() + seconds
+     while not condition():
