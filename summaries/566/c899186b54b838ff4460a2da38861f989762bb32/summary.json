@@ -1,0 +1,165 @@
+{
+ "version": 1,
+ "name": "Shared relay inbox",
+ "project": "agent-messages/shared-relay",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 566,
+  "title": "Share the repository inbox by relay location, and let an agent scope an item to one repository",
+  "head": "c899186b54b838ff4460a2da38861f989762bb32",
+  "headRef": "shared-relay/inbox",
+  "base": "855700078420524b34b9a257e452e35c03c85e1d",
+  "baseRef": "shared-relay/locations",
+  "basePr": 564
+ },
+ "overview": {
+  "summary": [
+   "Projector lets an agent post a question, request, or notice to another person’s inbox. The preceding layer lets sessions share a relay location: one GitHub repository that carries encrypted records for several work repositories. This layer makes the peer inbox follow that location too, so the same entry can reach sessions working in different repositories.",
+   "The sender can restrict an item to one work repository with <code>--repo</code>. Other sessions can still find it with <code>inbox list --relay</code> or the console. Items and replies identify their source repository and its visibility, so a reader can recognize content that crosses a repository boundary.",
+   "This head displays each embedded reply in a clear order: its sender and crossing source, the notice that it carries none of the user’s authority, its private-source notice, and then its preview. A sent item’s own private-source notice now precedes its detail too. The earlier finding remains fixed; the real two-machine rollout check remains deferred until after merge."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used below",
+    "html": "<ul class=\"tight\"><li><b>Work repository:</b> the repository a session works in.</li><li><b>Relay location:</b> the repository carrying encrypted records for those sessions.</li><li><b>Mirror:</b> the local numbered inbox entries opened from those encrypted records.</li><li><b>Scope:</b> the optional work repository whose sessions should display an incoming item.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Validation",
+    "html": "<ul class=\"tight\"><li>The configured gate passed, including 255 hook tests and the exact-head CI <code>check</code>.</li><li>All 47 focused peer inbox tests passed on this head.</li><li>The updated cross-repository regression and new authority-notice regression check that the notices precede embedded reply previews.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "records",
+   "title": "Keep the inbox at the shared location",
+   "kicker": "Routing and source metadata belong to each record.",
+   "intro": [
+    "A peer inbox entry is an encrypted record addressed to a person’s key. Its mirror now belongs to the relay location instead of the sender’s work repository. Each new item or reply carries the work repository it comes from, while older records without source fields remain accepted.",
+    "An incoming item can carry <code>scope_repo</code>, which hides it from ordinary lists in other work repositories. The relay-wide list and console keep those entries visible with a label. When you show a sent item, each embedded reply identifies its sender and crossing source, then prints its authority and private-source notices before the preview."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/agents.py",
+     "note": "Centralizes source fields and the reminder printed when content leaves a repository that is not public."
+    },
+    {
+     "path": "src/projector/repo_inbox.py",
+     "note": "Routes posts, responses, lists, and wakeups through the relay location, and renders the sender’s source and optional scope.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 975,
+       "text": "The focused shared-inbox and exchange regressions pass: each embedded reply prints its sender and source before the authority and private-source notices, then its preview."
+      },
+      {
+       "kind": "verify",
+       "line": 955,
+       "text": "Traced sent-item rendering: its own private-source notice is added before the remainder containing the detail and replies."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "commands",
+   "title": "Use the registration’s location in commands",
+   "kicker": "CLI and console actions resolve the same inbox.",
+   "intro": [
+    "The registration records both where a session works and where it relays. Inbox commands now use that recorded relay location to find and change numbered entries. Without a session, they resolve the current checkout’s configured location.",
+    "Posting refuses a location waiting for consent or one whose relay check refuses it. The CLI adds <code>--relay</code> for the full location inbox and <code>--repo</code> beside <code>--to</code> for an item’s display scope. The console deliberately includes items scoped to other repositories so they remain discoverable."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds scope and relay-wide listing options, resolves location-based mirrors, and passes source fields into replies."
+    },
+    {
+     "path": "src/projector/console.py",
+     "note": "Requests every location entry, including those scoped to another work repository."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "Watch the location’s mirror in the panel",
+   "kicker": "The panel follows the same inbox as the CLI.",
+   "intro": [
+    "The Claude Code panel notices new inbox entries by watching a local mirror directory. It now reads the registration’s <code>location</code> to choose that directory, falls back to <code>repo</code> for older registrations, and watches no relay inbox while consent is pending. The regular CLI list still supplies the panel’s filtered rows."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Resolves a safe relay location from the registration, including legacy and waiting cases."
+    },
+    {
+     "path": "hooks/register.tsx",
+     "note": "Watches the relay location’s mirror before refreshing the panel’s inbox rows."
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Exercise shared and scoped inbox delivery",
+   "kicker": "Temporary machines verify the visible behavior.",
+   "intro": [
+    "The relay fixtures provide temporary repositories and simulated machines with different peer keys. Cases send through a shared location, check repository scope and relay-wide discovery, and exchange replies. This head adds a same-repository authority-notice regression and strengthens the private-source regression to require the notices before an embedded reply’s preview."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran the focused peer inbox module on this head: all 47 tests passed, including the updated private-source and new authority-notice regressions."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_peers.py",
+     "collapsed": true
+    },
+    {
+     "path": "tests/test_relay.py",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Explain scope and private-source handling",
+   "kicker": "Document the commands and record what remains to check.",
+   "intro": [
+    "The command reference and message skill now describe a location-wide peer inbox and how one item can target sessions in a single work repository. They tell an agent to describe private work in general terms before sending it to a peer. The project plan records the implemented decisions and automated acceptance evidence."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "collapsed": true
+    },
+    {
+     "path": "skills/message/SKILL.md",
+     "collapsed": true
+    },
+    {
+     "path": "docs/projects/agent-messages/shared-relay/readme.md",
+     "collapsed": true,
+     "checks": [
+      {
+       "kind": "context",
+       "line": 431,
+       "text": "The outcome marks the implementation complete while deferring the exchange across two real repositories on two machines until after merge."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
