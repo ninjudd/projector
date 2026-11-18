@@ -232,6 +232,10 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
+      pattern = ["project", "agent", "peer", "list"],
+      decision = "allow",
+  )
+  prefix_rule(
       pattern = ["project", "config", ["get", "list", "paths"]],
       decision = "allow",
   )
@@ -1034,6 +1038,7 @@ reads, which are these:
 | `agent.message_limit` | whole number | `12` | `project agent send` and `reply`, from the checkout the sending session works in, as the most messages one session sends to one other session in a rolling hour; at least `1` |
 | `agent.auto_register` | boolean | `true` | `project watch add` and the Codex hooks, from the checkout the session works in, to register a session that subscribes to a pull request for agent messages, with a generated summary; `false` subscribes it without registering it, as [Registered when it subscribes](#registered-when-it-subscribes) describes. A session that ran `project agent unregister` is never registered this way, whatever the setting says |
 | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or, with `--inline`, the key itself, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key join`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
+| `agent.peers` | table | none | `project agent peer`, from `~/.projector.toml` only, as each peer's name with the base64 of their public key. Set it with `project agent peer add`, never `config set`; see [Reach other people's inboxes](#reach-other-peoples-inboxes) |
 | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
 | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
 | `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, relative to the checkout's root, inside the checkout or the state directory unless `~/.projector.toml` sets it |
@@ -3975,7 +3980,7 @@ with `join` and whose fingerprint matches.
 
 | Command | What it does |
 | --- | --- |
-| `key show` | Prints the key's ID, its public key, and where it is stored |
+| `key show` | Prints the key's ID, its public key, and where it is stored. The public key is not secret: give it to anyone whose agents should reach your inbox, as [Reach other people's inboxes](#reach-other-peoples-inboxes) describes |
 | `key remove` | Deletes `agent.key` and the keychain item it names, which turns the relay off on this machine. The daemon then deletes this machine's agents' refs |
 
 Projector reads `agent.key` only from `~/.projector.toml`, and never from an
@@ -4137,6 +4142,43 @@ session on this machine or on your other machines that share this
 repository's relay`. A reviewer on another machine takes no role here and
 changes no other event. A presence from an earlier version of Projector has
 no `reviews`, and reviews nothing.
+
+## Reach other people's inboxes
+
+You list another person's public key under a name you choose, and they list
+yours. The key identifies the person, and the name is only your label for
+them, so no GitHub login is involved.
+
+### List a peer
+
+Each of you runs `project agent key show` and gives the other the public key
+it prints, over any channel. The public key is not secret. Then, in a
+terminal, add the other person under a name of your choosing:
+
+```console
+$ project agent peer add jason q3Jx...=
+Does jason's project agent key show print key 3f2a9c1d7e4b6a05? [y/N] y
+added peer jason, key 3f2a9c1d7e4b6a05, to ~/.projector.toml. Their agents reach your inbox once jason lists your public key too, which `project agent key show` prints
+```
+
+`peer add` decides who can post to your inbox, so it runs only with a
+terminal on standard input and output, where no agent can run it. It
+refuses a name that is not 1 to 32 letters, digits, and hyphens, or that
+already names a peer unless you pass `--replace`, and a value that is not
+the base64 of a 32-byte public key, that is your own public key, or that
+another name holds. It writes nothing unless you answer `y` or `yes` once
+you have checked the key ID with the other person.
+
+| Command | What it does |
+| --- | --- |
+| `peer add <name> <public-key> [--replace]` | Lists the key under the name in `~/.projector.toml`, as `agent.peers.<name>`, after you confirm its key ID |
+| `peer remove <name>` | Removes the peer from `~/.projector.toml` |
+| `peer list [--json]` | Prints each peer's name and key ID |
+
+Projector reads `agent.peers` only from `~/.projector.toml`. A checkout's
+`.projector.toml` that sets it is ignored with a warning, so a repository
+cannot plant a peer. `project config set agent.peers.<name>` refuses and
+names `peer add`.
 
 ## Put an iOS app on a device
 

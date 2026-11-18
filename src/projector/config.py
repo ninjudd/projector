@@ -108,6 +108,7 @@ SETTINGS: dict[str, type] = {
     "agent.message_limit": int,
     "agent.auto_register": bool,
     "agent.key": str,
+    "agent.peers": dict,
     "ios.app": str,
     "ios.project": str,
     "ios.output": str,
@@ -125,9 +126,10 @@ MINIMUMS: dict[str, int] = {
 }
 
 
-# Keys read only from the user layer, `~/.projector.toml`. A walked file's value
-# is ignored, so a repository cannot plant a key its author knows.
-USER_ONLY = frozenset({"agent.key"})
+# Keys read only from the user layer, `~/.projector.toml`, each with every key
+# under it. A walked file's value is ignored, so a repository cannot plant a
+# key its author knows, or a peer whose agents could then post to your inbox.
+USER_ONLY = frozenset({"agent.key", "agent.peers"})
 
 # The table that holds a file's overrides, `[override.<priority>]`, so no
 # setting's name may start with it.
@@ -212,6 +214,12 @@ def disallow(path: Path, key: str, value: Any) -> bool:
     return True
 
 
+def user_only(key: str) -> bool:
+    """Whether a dotted key is one of `USER_ONLY` or lies under one, as `agent.peers.jason` does."""
+
+    return any(key == name or key.startswith(f"{name}.") for name in USER_ONLY)
+
+
 def is_secret(key: str, value: Any) -> bool:
     return key in SECRETS and isinstance(value, str) and not value.startswith(KEYCHAIN)
 
@@ -262,6 +270,57 @@ def user_value(key: str, environ: Optional[dict[str, str]] = None) -> Any:
     if is_secret(key, value):
         check_private(path)
     return value
+
+
+def key_id_of(value: str) -> str:
+    """The key ID an `agent.key` value names, read without the keychain."""
+
+    if value.startswith(KEYCHAIN):
+        return value[len(KEYCHAIN):]
+    return crypto.key_id(crypto.public_key(inline_key(value)))
+
+
+def public_key(text: str) -> bytes:
+    """The 32-byte X25519 public key that `text` holds as base64, the form `project agent key show` prints."""
+
+    try:
+        public = base64.b64decode(text.strip(), validate=True)
+    except (binascii.Error, ValueError):
+        public = b""
+    if len(public) != 32:
+        raise ConfigError(f"{text!r} is not a public key, the base64 of 32 bytes that `project agent key show` prints")
+    return public
+
+
+def peers(environ: Optional[dict[str, str]] = None) -> dict[str, bytes]:
+    """`agent.peers` from `~/.projector.toml` alone: each peer's name with its public key. Every name matches
+    `agents.NAME`, no two names hold one key, and none holds the key `agent.key` names. Reads no keychain."""
+
+    from .agents import NAME
+
+    table = user_value("agent.peers", environ) or {}
+    value = user_value("agent.key", environ)
+    own = key_id_of(value) if value else None
+    found: dict[str, bytes] = {}
+    holders: dict[str, str] = {}
+    for name, text in table.items():
+        if not NAME.fullmatch(name):
+            raise ConfigError(f"agent.peers.{name} is not a peer name: use 1 to 32 lowercase letters, digits, and "
+                              "hyphens, starting with a letter or digit")
+        if not isinstance(text, str):
+            raise ConfigError(f"agent.peers.{name} must be a public key, not {type(text).__name__}")
+        try:
+            public = public_key(text)
+        except ConfigError:
+            raise ConfigError(f"agent.peers.{name} is not a public key, the base64 of 32 bytes") from None
+        key_id = crypto.key_id(public)
+        if key_id == own:
+            raise ConfigError(f"agent.peers.{name} holds your own public key, key {key_id}")
+        if key_id in holders:
+            raise ConfigError(f"agent.peers.{holders[key_id]} and agent.peers.{name} hold one key, key {key_id}")
+        holders[key_id] = name
+        found[name] = public
+    return found
 
 
 def same_value(one: Any, other: Any) -> bool:
@@ -771,7 +830,7 @@ class Config:
         kind = SETTINGS[key]
         # TOML reads `true` as a bool, which Python also counts as an int.
         if value is not None and (not isinstance(value, kind) or (kind is int and isinstance(value, bool))):
-            expected = {bool: "true or false", int: "a whole number"}.get(kind, "a string")
+            expected = {bool: "true or false", int: "a whole number", dict: "a table"}.get(kind, "a string")
             raise ConfigError(f"{key} must be {expected}, not {type(value).__name__}")
         source = self.sources.get(key)
         if value is not None and is_destination(key) and source is not None and source.blob is not None and (
@@ -902,12 +961,18 @@ def _overrides(source: Source, loaded: dict[str, Any]) -> list[tuple[int, dict[s
 
 
 def _drop_user_only(source: Source, loaded: dict[str, Any], ignored: list[tuple[Source, str]]) -> None:
-    for key in sorted(USER_ONLY & set(_flatten(loaded))):
+    for key in sorted(filter(user_only, _flatten(loaded))):
         *tables, name = key.split(".")
-        table = loaded
+        chain = [loaded]
         for part in tables:
-            table = table[part]
-        del table[name]
+            chain.append(chain[-1][part])
+        del chain[-1][name]
+        # A table left empty, as `[agent.peers]` is once its peers go, is dropped too, so `config get`
+        # finds no value the file was refused.
+        for parent, part in zip(reversed(chain[:-1]), reversed(tables)):
+            if parent[part]:
+                break
+            del parent[part]
         ignored.append((source, key))
 
 

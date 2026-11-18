@@ -74,6 +74,7 @@ NO_ORIGIN = "this checkout has no GitHub origin to relay through"
 NO_CHECKOUT = "no recorded checkout of the repository remains"
 PUBLIC_REMINDER = "public repository: name no private repository and describe none of its internals"
 COPY = "To give another machine this key, run `project agent key join` there in a terminal."
+SHARE = "Give this public key to anyone whose agents should reach your inbox; it is not secret."
 REQUEST_PREFIX = "pj1-"
 LINE_PREFIX = "pk1-"
 REQUEST = re.compile(r"pj1-([a-z0-9-]{0,20})-([A-Za-z0-9_-]{43})")
@@ -126,9 +127,7 @@ def configured(environ: Optional[dict] = None) -> Optional[str]:
 
 def value_id(value: str) -> str:
     """The key ID an `agent.key` value names, read without the keychain."""
-    if value.startswith(KEYCHAIN):
-        return value[len(KEYCHAIN):]
-    return crypto.key_id(crypto.public_key(inline_key(value)))
+    return config.key_id_of(value)
 
 
 def read_key(value: str, timeout: Optional[float] = None) -> Key:
@@ -318,6 +317,59 @@ def show_key(environ: Optional[dict] = None) -> dict:
         raise RelayError(NO_KEY)
     key = read_key(value)
     return {"key_id": key.id, "public_key": crypto.encode(key.public), "store": key.store}
+
+
+# Peers
+
+def check_peer(name: str, text: str, *, replace: bool, environ: Optional[dict] = None) -> tuple[str, bytes]:
+    """The peer `project agent peer add` would write, by its lowercased name, with its public key: refused for a
+    name that is not a peer name or that names a peer already, unless `replace`, and for a key that is not one,
+    that is your own, or that another name holds."""
+    name = name.lower()
+    if not agents.NAME.fullmatch(name):
+        raise RelayError(f"{name!r} is not a peer name: use 1 to 32 letters, digits, and hyphens, starting with a "
+                         "letter or digit")
+    try:
+        public = config.public_key(text)
+    except ConfigError as error:
+        raise RelayError(str(error)) from None
+    key_id = crypto.key_id(public)
+    found = config.peers(environ)
+    if name in found and not replace:
+        raise RelayError(f"{name} is already a peer, with key {crypto.key_id(found[name])}; pass --replace to give "
+                         f"{name} this key instead")
+    value = configured(environ)
+    if value and value_id(value) == key_id:
+        raise RelayError(f"key {key_id} is your own key, which needs no peer entry")
+    for other, held in found.items():
+        if other != name and held == public:
+            raise RelayError(f"{other} already holds key {key_id}; run `project agent peer remove {other}` first to "
+                             f"list it as {name}")
+    return name, public
+
+
+def add_peer(name: str, public: bytes, environ: Optional[dict] = None) -> None:
+    path = user_config_path(environ)
+    if not path.exists():
+        os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    write_value(path, f"agent.peers.{name}", crypto.encode(public))
+
+
+def remove_peer(name: str, environ: Optional[dict] = None) -> str:
+    """Remove a peer from `~/.projector.toml`, and answer the ID of the key it held."""
+    name = name.lower()
+    found = config.peers(environ)
+    if name not in found:
+        listed = ", ".join(sorted(found)) or "none"
+        raise RelayError(f"{name} is not a peer; your peers: {listed}")
+    unset_value(user_config_path(environ), f"agent.peers.{name}")
+    return crypto.key_id(found[name])
+
+
+def peer_rows(environ: Optional[dict] = None) -> list[dict]:
+    """Each peer, by name, with its key's ID and public key."""
+    return [{"name": name, "key_id": crypto.key_id(public), "public_key": crypto.encode(public)}
+            for name, public in sorted(config.peers(environ).items())]
 
 
 def remove_key(root: Path, environ: Optional[dict] = None) -> tuple[str, str]:

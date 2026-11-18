@@ -1173,6 +1173,115 @@ class PairingTests(RelayCase):
         self.stored_nothing()
 
 
+def public_of(private: bytes) -> str:
+    return crypto.encode(crypto.public_key(private))
+
+
+class PeerCommandTests(RelayCase):
+    """`project agent peer` on machine one, which holds the shared key inline, listing other people's keys."""
+
+    JASON = bytes(range(40, 72))
+    AMY = bytes(range(80, 112))
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.one.inline_key(self.private)
+
+    def config_text(self) -> str:
+        return (self.one.home / ".projector.toml").read_text()
+
+    def add(self, name: str, key: str, *flags: str, answer: str = "y",
+            terminal: bool | str = True) -> tuple[int, str, str]:
+        return self.one.project("agent", "peer", "add", name, key, *flags, stdin=answer + "\n", terminal=terminal)
+
+    def test_a_peer_confirmed_at_a_terminal_is_listed_by_name_and_key_id_and_removed_by_name(self) -> None:
+        jason_id = crypto.key_id(crypto.public_key(self.JASON))
+
+        code, out, err = self.add("Jason", public_of(self.JASON))
+        listed = self.one.project("agent", "peer", "list")
+        listed_json = json.loads(self.one.project("agent", "peer", "list", "--json")[1])
+        added = config.peers(self.one.env)
+        removed = self.one.project("agent", "peer", "remove", "jason")
+        after = self.one.project("agent", "peer", "list")
+
+        self.assertEqual(0, code, err)
+        self.assertIn(f"Does jason's project agent key show print key {jason_id}? [y/N] ", out)
+        self.assertIn(f"added peer jason, key {jason_id}", out)
+        self.assertEqual({"jason": crypto.public_key(self.JASON)}, added)
+        self.assertEqual(f"jason\tkey {jason_id}\n", listed[1])
+        self.assertEqual([{"name": "jason", "key_id": jason_id, "public_key": public_of(self.JASON)}],
+                         listed_json["peers"])
+        self.assertEqual(0, removed[0], removed[2])
+        self.assertIn(f"removed peer jason, key {jason_id}", removed[1])
+        self.assertEqual({}, config.peers(self.one.env))
+        self.assertIn("no peers", after[1])
+
+    def test_peer_add_refuses_without_a_terminal_or_a_yes_and_refuses_a_bad_name_or_key_writing_nothing(
+            self) -> None:
+        self.assertEqual(0, self.add("amy", public_of(self.AMY))[0])
+        before = self.config_text()
+        cases = {
+            "no terminal on standard input": (("jason", public_of(self.JASON)), {"terminal": "stdout"}, 69,
+                                              "runs only with a terminal"),
+            "no terminal on standard output": (("jason", public_of(self.JASON)), {"terminal": "stdin"}, 69,
+                                               "runs only with a terminal"),
+            "your own key": (("jason", public_of(self.private)), {}, 65, "is your own key"),
+            "a key another name holds": (("jason", public_of(self.AMY)), {}, 65, "amy already holds key"),
+            "a malformed key": (("jason", "not-a-key"), {}, 65, "is not a public key"),
+            "a key of 31 bytes": (("jason", crypto.encode(bytes(31))), {}, 65, "is not a public key"),
+            "a name that is not a name": (("Jason Smith", public_of(self.JASON)), {}, 65, "is not a peer name"),
+            "an existing name": (("amy", public_of(self.JASON)), {}, 65, "pass --replace"),
+            "the answer n": (("jason", public_of(self.JASON)), {"answer": "n"}, 65, "no peer was added"),
+        }
+        for case, (args, options, status, said) in cases.items():
+            with self.subTest(case):
+                code, out, err = self.add(*args, **options)
+                self.assertEqual(status, code, out + err)
+                self.assertIn(said, err)
+                self.assertEqual(before, self.config_text())
+
+    def test_replace_gives_a_listed_name_another_key(self) -> None:
+        self.add("amy", public_of(self.AMY))
+
+        code, out, err = self.add("amy", public_of(self.JASON), "--replace")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({"amy": crypto.public_key(self.JASON)}, config.peers(self.one.env))
+
+    def test_a_peer_planted_in_a_checkout_is_ignored_and_config_set_refuses_to_add_one(self) -> None:
+        (self.one.work / ".projector.toml").write_text(f'[agent.peers]\nmallory = "{public_of(self.JASON)}"\n')
+
+        listed = self.one.project("agent", "peer", "list")
+        got = self.one.project("config", "get", "agent.peers")
+        refused = [self.one.project("config", "set", key, public_of(self.JASON), "--user")
+                   for key in ("agent.peers.mallory", "agent.peers")]
+
+        self.assertIn("no peers", listed[1])
+        self.assertEqual(1, got[0], got[1])
+        self.assertIn("sets agent.peers.mallory, which Projector reads only from", got[2])
+        for code, out, err in refused:
+            self.assertEqual(2, code, err)
+            self.assertIn("run `project agent peer add <name> <public-key>` in a terminal", err)
+        self.assertNotIn("peers", self.config_text())
+
+    def test_a_table_that_repeats_a_key_or_holds_your_own_is_refused_when_read(self) -> None:
+        for table, said in ((f'amy = "{public_of(self.AMY)}"\njason = "{public_of(self.AMY)}"\n', "hold one key"),
+                            (f'me = "{public_of(self.private)}"\n', "holds your own public key"),
+                            ('jason = "short"\n', "is not a public key")):
+            with self.subTest(said):
+                (self.one.home / ".projector.toml").write_text(
+                    f'[agent]\nkey = "x25519:{crypto.encode(self.private)}"\n[agent.peers]\n{table}')
+                with self.assertRaisesRegex(config.ConfigError, said):
+                    config.peers(self.one.env)
+
+    def test_key_show_says_the_public_key_is_not_secret(self) -> None:
+        code, out, err = self.one.project("agent", "key", "show")
+
+        self.assertEqual(0, code, err)
+        self.assertIn(f"public key: {public_of(self.private)}", out)
+        self.assertIn("Give this public key to anyone whose agents should reach your inbox; it is not secret.", out)
+
+
 def wait_for(condition, seconds: float = 10.0) -> bool:
     deadline = time.monotonic() + seconds
     while not condition():
