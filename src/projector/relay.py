@@ -999,14 +999,17 @@ class Job:
     def checkout(self) -> Optional[Path]:
         """The cwd of a live registered session in the location's repository, else the newest checkout of it that
         the outbox records, that still exists and whose origin still names it, else, for a location `agent.relay`
-        names, the relay's bare clone of it, whose Git commands authenticate as the `gh` login."""
+        names, the relay's bare clone of it, whose Git commands authenticate as the `gh` login. A bare clone made
+        while `agent.relay` named the location also serves the changes queued there once no registration names it,
+        such as the deletion of the refs of the last session that moved away."""
         live = sorted((found for name, found in self.sessions.items() if name in self.live),
                       key=lambda found: found.get("updated_at") or "", reverse=True)
-        recorded = read_outbox(repo_file(self.root, "outbox", self.location))["checkouts"]
-        for cwd in [found.get("cwd") for found in live] + [found.get("cwd") for found in recorded]:
+        box = read_outbox(repo_file(self.root, "outbox", self.location))
+        for cwd in [found.get("cwd") for found in live] + [found.get("cwd") for found in box["checkouts"]]:
             if self.in_location(cwd):
                 return Path(cwd)
-        if any(self.chose(found) for found in self.sessions.values()):
+        if any(self.chose(found) for found in self.sessions.values()) or (
+                box["items"] and (clone_path(self.root, self.location) / "HEAD").is_file()):
             self.options = CREDENTIALS
             return bare_clone(self.root, self.location)
         return None

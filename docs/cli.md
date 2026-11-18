@@ -4271,7 +4271,9 @@ with `-c credential.helper= -c credential.helper='!gh auth git-credential'`,
 so it authenticates as the `gh` login whatever helpers your Git configures.
 Its fetch names only `refs/projector/` refspecs, so no branch is
 transferred. The clone has no hooks of its own, and a global
-`core.hooksPath` still applies.
+`core.hooksPath` still applies. Once no registration names the location,
+the clone still pushes what is queued there, such as the deletion of a
+session's refs after it moves to another location.
 
 ### Messages that cross repositories
 

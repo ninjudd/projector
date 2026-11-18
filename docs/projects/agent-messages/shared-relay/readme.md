@@ -342,7 +342,10 @@ repository, so a peers item never goes where no job polls for its replies.
   in the bare clone, and only when a registration here names the location
   through `agent.relay`. A location that is only some session's own
   repository keeps today's `waiting` state when no checkout of it remains,
-  so the default relay never starts cloning from GitHub.
+  so the default relay never starts cloning from GitHub. A bare clone that
+  already exists also pushes the changes still queued for its location once
+  no registration names it, so the last session to move away still has its
+  refs there deleted.
 - **A refused location treats its sessions as lapsed.** When the check in
   § 2.1 step 4 refuses a location, the sessions that `agent.relay` sent
   there count as not live to its job: their refs there are deleted, no
