@@ -1,0 +1,128 @@
+{
+ "version": 1,
+ "name": "Inbox quote references",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 543,
+  "title": "Quote an inbox item's number before its subject, so two items that share a subject are told apart",
+  "head": "ae07e3ada9cc024335099918ae6d2df1c9e1cc36",
+  "headRef": "inbox-quote-ref",
+  "base": "0c945a8321f9deaf6432c8c313fb913c0cb9a0ce",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s panel lets the person answer questions, finish requests, and discuss items posted by agents. Several items can have the same subject, so a subject-only quote can select the wrong one.",
+   "Generated quotes now start with the item’s number, such as <code>[3] \"Test the build\"</code>. A matching number limits answer, reply, and unclear parsing to that item. A missing number, or a number that names no item with that subject, retains subject-only matching.",
+   "The prompt parser and panel cleanup share the same quote lookup. One revision-safety defect remains: choosing identical text in another drawer discards the first item’s stale-pick record, allowing its old numbered quote to answer the revised item."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation",
+    "html": "<ul class=\"tight\"><li><b>Gate and CI:</b> both passed at the reviewed head, including 267 hook tests.</li><li><b>Focused Python tests:</b> all 196 instruction, inbox, and console tests passed.</li><li><b>Additional reproduction:</b> a temporary panel regression records an answer on a revised item after another drawer removes its stale-pick record. Scratch changes were restored.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "quote-contract",
+   "title": "Recognize item references in quotes",
+   "kicker": "The prompt format and its shared parser",
+   "intro": [
+    "A prompt quote identifies the inbox item the person is answering or discussing. The item number now precedes the quoted subject, so identical subjects can be distinguished without relying on which drawer was used last.",
+    "The shared parser finds each known subject and reads a valid bracketed number before it. It applies that number to answers, request outcomes, replies, and unclear marks, while retaining the existing fallback for quotes without a matching number. The next quote’s bracket also ends the preceding answer."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Build bracketed quotes and share reference-aware lookup across answer, reply, and unclear parsing.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Traced every quote producer and parser caller. The passing hook suite exercises multi-digit references, duplicate subjects, resolved items, and subject-only fallback."
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Exercise named-item routing, fallback, multi-quote boundaries, and the revised prompt text.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "panel-integration",
+   "title": "Keep drawer state attached to its item",
+   "kicker": "Prompt submission, proposal cleanup, and routing to agents",
+   "intro": [
+    "The panel remembers what each drawer placed in the composer as a proposal. That record prevents an old choice from resolving an item after the agent revises it.",
+    "Prompt submission now uses the reference-aware lookup when closing drawers and clearing proposals. A quote aimed at one item therefore leaves another same-subject item’s proposal intact. The stale-proposal pruning in <code>propose</code> still needs the same reference distinction."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Use referenced quotes for prompt cleanup and generated request text while preserving subject-only display text.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 450,
+       "text": "After item 1 is revised, choosing the same option in same-subject item 2 discards item 1’s stale proposal. Submitting item 1’s saved numbered quote then answers the revised item. Preserve stale proposals belonging to other references when recording a new pick."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Check generated numbered prompts and ensure one referenced item does not clear another drawer’s pick.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "docs-and-instructions",
+   "title": "Document the numbered prompt contract",
+   "kicker": "User reference, agent instructions, and template compatibility",
+   "intro": [
+    "The user reference now shows the bracketed item number and explains how it selects between matching subjects. The agent instructions describe the same prompt shape, so an agent receiving the prompt can identify which request it concerns.",
+    "The generated instruction block advances to version 32 and gains a matching content hash. That version lets instruction checking distinguish the new shipped text from a repository edit."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describe the question-and-option prompt with its bracketed reference.",
+     "collapsed": true
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Show numbered examples and explain precedence and subject-only fallback.",
+     "collapsed": true
+    },
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Teach agents the numbered request quote and advance the generated block version.",
+     "collapsed": true
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "Regenerate this repository’s Projector block from version 32 of the template.",
+     "collapsed": true
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pin the version-32 template hash so shipped text and version remain consistent.",
+     "collapsed": true,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused instruction tests pass with the version-32 hash and generated block."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
