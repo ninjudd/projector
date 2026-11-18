@@ -738,7 +738,8 @@ class Console:
     def entry_controls(self, entry: dict) -> list[Control]:
         """A repository inbox entry's keys. A peer's question takes its answers, and a request Done or its options
         and Decline, each recorded at once as the user's and sealed back to the peer; no line goes to the session,
-        whose agent did not ask. An item you sent can be closed or reopened, and any entry dismissed or snoozed."""
+        whose agent did not ask. An item you sent can be closed or reopened, and any entry dismissed, and snoozed
+        unless it is Projector's own local notice, which takes a dismissal and nothing else."""
         ref = entry["ref"]
         if self.asking == "snooze":
             return [*(Control(str(index), label, lambda minutes=minutes: self.change_entry(ref, "snooze", minutes),
@@ -764,7 +765,8 @@ class Console:
                                 if repo_inbox.is_closed(entry) else
                                 Control("6", "Close", lambda: self.change_entry(ref, "close")))
             controls.append(Control("8", "Dismiss", lambda: self.change_entry(ref, "dismiss")))
-        controls.append(Control("9", "Snooze", lambda: self.ask("snooze")))
+        if entry["role"] != repo_inbox.LOCAL:
+            controls.append(Control("9", "Snooze", lambda: self.ask("snooze")))
         return controls
 
     def respond(self, ref: str, outcome: str, *, letter: Optional[str] = None, text: Optional[str] = None) -> None:

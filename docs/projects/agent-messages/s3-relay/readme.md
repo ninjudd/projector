@@ -446,8 +446,8 @@ observed delivery time in this plan.
   shows as `Projector: Relay off: …` in `project inbox list`, the panel,
   and the console, `inbox show` names it as from Projector on this machine,
   and it takes a dismissal and nothing else: a response or a snooze is
-  refused, so no state record of it is ever queued, and the panel offers no
-  Snooze. The job posts and withdraws it on its worker thread, so a busy
+  refused, so no state record of it is ever queued, and neither the panel
+  nor the console offers Snooze. The job posts and withdraws it on its worker thread, so a busy
   mirror never holds up the daemon's loop. `notice.json` records a text
   only once the mirror holds it, so a notice that a busy mirror kept out
   posts on the next job.
