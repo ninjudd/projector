@@ -1,0 +1,125 @@
+{
+ "version": 1,
+ "name": "Push subscription filtering",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 562,
+  "title": "Subscribe only to open pull requests a push reached, not every URL in a command's output",
+  "head": "d62491fdc7f7d5f9efee28d6b29c416c98746ea2",
+  "headRef": "watch-only-pushed-prs",
+  "base": "8d59a63369a026a3c7306c864ef7c49c1ad300d8",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector subscribes an agent session to fix a pull request when the session opens or pushes it, so later review work reaches the right session. Previously, a command classified as a push could subscribe the session to every pull request URL in its output, including examples in help text and links to other repositories.",
+   "This change checks the command, the repository named by its output, and whether a linked pull request is open before adding a new subscription. It keeps discovery from pushed branch names and respects subscriptions the session already holds or has explicitly excluded."
+  ],
+  "cards": [
+   {
+    "id": "verification",
+    "title": "Review evidence",
+    "html": "<ul class=\"tight\"><li>Clean full review of <code>d62491fdc7f7</code>; no finding threads.</li><li>Configured gate passed: 247 hook tests, plugin validation, type checking, and exact-head CI.</li><li>231 focused Python tests passed. Two new filter tests failed against the old functions, confirming they detect the reported bug.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "candidates",
+   "title": "Filter the pull requests found in output",
+   "kicker": "The shared watcher checks repository and open state before subscribing.",
+   "intro": [
+    "A fix subscription asks Projector to send a session the review work for a pull request. The shared watcher now accepts a URL only when its repository appears in push or pull request creation output, or matches the checkout’s origin remote. It then asks GitHub whether a new linked pull request is open.",
+    "The origin remote is the repository configured as <code>origin</code> in the checkout. It is read only when the output contains a URL that the explicit push or creation targets do not already cover. Existing fix subscriptions need no extra lookup, and an explicit exclusion still wins."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Collect the repositories named by push and creation output, filter URLs, and confirm new candidates are open.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Traced the existing subscription update: excluded URLs are skipped before lookup, and add() still enforces exclusions for branch discoveries."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Exercise origin and push targets, unrelated repositories, missing and closed pull requests, and held or excluded subscriptions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The new repository and open-state tests pass on this head and fail with the merge-base filter functions substituted in memory."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "hosts",
+   "title": "Recognize commands that can create subscriptions",
+   "kicker": "The Claude Code and Codex paths apply the same narrower command rule.",
+   "intro": [
+    "A host hook observes shell commands and passes their output to the watcher after a command that can push or open a pull request. Both hosts now recognize only <code>gh stack submit</code>, <code>push</code>, <code>sync</code>, and <code>link</code>, alongside <code>git push</code> and <code>gh pr create</code>. A request for help with <code>--help</code> or <code>-h</code> does not count.",
+    "The CLI passes its current checkout directory into the shared filter. Codex passes the directory recorded in the hook event, which lets the filter find the appropriate origin remote."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The configured gate passed all 247 hook tests, and the focused Python run passed all 231 watch, Codex, and agent tests."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/parse.ts",
+     "note": "Limit stack commands and exclude help before recognizing a push."
+    },
+    {
+     "path": "hooks/parse.test.ts",
+     "note": "Check pushing stack commands and reject help or read-only commands."
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Confirm stack checkout help sends no output to the subscription command."
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Supply the CLI working directory to the output filter."
+    },
+    {
+     "path": "src/projector/codex_watch.py",
+     "note": "Match the narrower command rule and pass the hook checkout directory."
+    },
+    {
+     "path": "tests/test_codex_watch.py",
+     "note": "Cover the Codex classifier and an open pull request created by a child session."
+    },
+    {
+     "path": "tests/test_agents.py",
+     "note": "Provide open pull requests for registration cases that now require a GitHub lookup."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Describe when automatic subscriptions are added",
+   "kicker": "The public contract explains repository filtering and lookup failures.",
+   "intro": [
+    "The CLI reference now tells users which repositories can contribute linked pull requests and why a missing or closed pull request adds no subscription. The plugin guide names the stack commands that trigger this behavior and explains that asking for help does not trigger it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Document the repository allowlist, open-state lookup, exclusions, and advisory errors."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Document the narrower host command classification."
+    }
+   ]
+  }
+ ]
+}

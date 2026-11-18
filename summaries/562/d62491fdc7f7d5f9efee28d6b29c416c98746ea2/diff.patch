@@ -1,0 +1,449 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 53f6b034..7ea27a52 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3449,8 +3449,21 @@ It finds each pull request URL, as `gh pr create` prints one, and each
+ `<old>..<new>  <source> -> <branch>` lines. For each pushed branch, it asks
+ GitHub for the open pull request whose head is that branch, one REST
+ request, and subscribes to it. A branch with no open pull request adds
+-nothing, and a pull request the session drops from `fix` is skipped. A
+-lookup that fails is named on stderr, and the command still exits 0. When
++nothing, and a pull request the session drops from `fix` is skipped.
++
++A URL counts only when its repository is one the output shows a push to,
++in a `To <remote>` line, or a pull request opened in, in the
++`Creating pull request for <branch> into <base> in <owner>/<repo>` line
++that `gh pr create` prints, or when it is the origin of the current
++directory's checkout. A link to any other repository adds nothing, so
++output that quotes another project's pull request subscribes the session
++to none. For each URL left whose pull request the session does not
++already subscribe to, it asks GitHub for that pull request, one REST
++request, and subscribes only when it is open. An example URL in help text
++then adds nothing, rather than a subscription that the next pass removes
++with a `MISSING` line.
++
++A lookup that fails is named on stderr, and the command still exits 0. When
+ `watch.auto_start` is `false`, it adds nothing and says so.
+ 
+ ### End or exclude a subscription
+diff --git a/docs/plugins.md b/docs/plugins.md
+index bd7db2af..f0652d10 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -69,8 +69,8 @@ the session to fix it, every layer of a stack included. `review-pr`
+ subscribes the session to review the pull request it reviews, and
+ `review-repo` subscribes it to review the repository. In Claude Code,
+ Projector's mod also subscribes the session to fix each pull request that a
+-`git push`, `gh pr create`, or `gh stack` command in the session opened or
+-pushed to, inside a skill or not. A subagent's commands carry its session's
++`git push`, `gh pr create`, or `gh stack submit`, `push`, `sync`, or `link`
++command in the session opened or pushed to, inside a skill or not. A subagent's commands carry its session's
+ id, so a pull request that a subagent opens subscribes the session it
+ belongs to. One background process per machine, the watch daemon, polls
+ every subscribed pull request and sends each finding, conflict, CI failure,
+@@ -556,11 +556,13 @@ the daemon's events into the conversation, so no watcher runs in it:
+   a new id, as `/clear` moves it, the mod renews the new id at the next
+   check, so a skill that subscribes the session there finds the mod
+   delivering its events.
+-- **After a Bash command that runs `git push`, `gh pr create`, or a
+-  `gh stack` command**, the mod passes the command's output to
+-  `project watch add --from-output -`. The CLI subscribes the session to fix
+-  each pull request that the output shows it opened or pushed to, and adds
+-  nothing when `watch.auto_start` is `false`. The command's result does not
++- **After a Bash command that runs `git push`, `gh pr create`, or
++  `gh stack submit`, `push`, `sync`, or `link`**, other than a run that
++  asks for its help with `--help` or `-h`, the mod passes the command's
++  output to `project watch add --from-output -`. The CLI subscribes the
++  session to fix each open pull request that the output shows it opened or
++  pushed to, in the checkout's repository or one the output pushed to, and
++  adds nothing when `watch.auto_start` is `false`. The command's result does not
+   wait for it.
+ 
+ Each event line names what to do, such as
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index b169498b..1f486933 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -5698,7 +5698,15 @@ test('passes the output of a push, a new pull request, or a stack command to pro
+   const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
+ 
+-  for (const command of ['git status', 'echo git push', 'cd /w && git push -u origin fix-branch', 'gh pr create --fill', 'gh stack push']) {
++  const commands = [
++    'git status',
++    'echo git push',
++    'gh stack checkout --help',
++    'cd /w && git push -u origin fix-branch',
++    'gh pr create --fill',
++    'gh stack push',
++  ]
++  for (const command of commands) {
+     await $.tool.call({ tool: 'Bash', command })
+   }
+   await session.clock.settle()
+diff --git a/hooks/parse.test.ts b/hooks/parse.test.ts
+index 35479b74..b81ad40e 100644
+--- a/hooks/parse.test.ts
++++ b/hooks/parse.test.ts
+@@ -309,15 +309,17 @@ describe('isPushCommand', () => {
+       'GIT_TRACE=1 git push',
+       'env GH_TOKEN=x gh pr create --draft --title "Add a thing" --body-file b.md',
+       '/usr/bin/git push --force-with-lease',
+-      'gh stack submit',
++      'gh stack submit --auto',
+       'npm test; gh stack push',
++      'gh stack sync',
++      'gh stack link 12 13',
+       '(cd sub && git push)',
+     ]) {
+       expect([command, isPushCommand(command)]).toEqual([command, true])
+     }
+   })
+ 
+-  test('leaves out a command that only mentions one, or runs another subcommand', () => {
++  test('leaves out a command that only mentions one, runs another subcommand, or asks for help', () => {
+     for (const command of [
+       'echo git push',
+       "git commit -m 'git push later'",
+@@ -329,6 +331,14 @@ describe('isPushCommand', () => {
+       'grep -r "gh pr create" skills',
+       'my-git push',
+       '# git push',
++      'gh stack view',
++      'gh stack checkout 12',
++      'gh stack add next-layer',
++      'gh stack checkout --help',
++      'gh stack submit -h',
++      'gh stack help submit',
++      'git push --help',
++      'gh pr create --help',
+     ]) {
+       expect([command, isPushCommand(command)]).toEqual([command, false])
+     }
+diff --git a/hooks/parse.ts b/hooks/parse.ts
+index 56eb56fa..4570e1f9 100644
+--- a/hooks/parse.ts
++++ b/hooks/parse.ts
+@@ -14,6 +14,7 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
+ 
+ const GIT_OPTIONS_WITH_VALUES = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env'])
+ const WRAPPERS = new Set(['command', 'env', 'exec', 'nohup', 'time'])
++const STACK_PUSHES = new Set(['submit', 'push', 'sync', 'link'])
+ 
+ /** The words of each simple command in a command line, as the shell would split and unquote them. */
+ function commandsOf(command: string): string[][] {
+@@ -80,8 +81,10 @@ function commandsOf(command: string): string[][] {
+ 
+ /**
+  * Whether a command line runs `git push`, `gh pr create`, or a `gh stack`
+- * command, whose output can name a pull request the session opened or pushed
+- * to. A command only mentioned, as in `echo git push`, does not count.
++ * command that pushes or opens pull requests, whose output can name a pull
++ * request the session opened or pushed to. A command only mentioned, as in
++ * `echo git push`, or asked for its help, as in `gh stack submit --help`,
++ * does not count.
+  */
+ export function isPushCommand(command: string): boolean {
+   return commandsOf(command).some(words => {
+@@ -89,7 +92,10 @@ export function isPushCommand(command: string): boolean {
+     while (at < words.length && (ASSIGNMENT.test(words[at] ?? '') || WRAPPERS.has(words[at] ?? ''))) at += 1
+     const name = (words[at] ?? '').split('/').pop()
+     const rest = words.slice(at + 1)
+-    if (name === 'gh') return rest[0] === 'stack' || (rest[0] === 'pr' && rest[1] === 'create')
++    if (rest.includes('--help') || rest.includes('-h')) return false
++    if (name === 'gh') {
++      return (rest[0] === 'stack' && STACK_PUSHES.has(rest[1] ?? '')) || (rest[0] === 'pr' && rest[1] === 'create')
++    }
+     if (name !== 'git') return false
+     for (let next = 0; next < rest.length; next += 1) {
+       const word = rest[next] ?? ''
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 06579d26..12c5df67 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1274,8 +1274,8 @@ def roles(parsed: argparse.ArgumentParser) -> None:
+     add = command("add", "subscribe the session to fix or review a pull request, or to review a repository's")
+     add.add_argument("target", nargs="?", help="owner/repo#number, a pull request URL, or, for review, owner/repo")
+     add.add_argument("--from-output", metavar="FILE",
+-                     help="subscribe to fix each pull request that a command's output shows it opened or pushed to; "
+-                          "- reads standard input")
++                     help="subscribe to fix each open pull request that a command's output shows it opened or pushed "
++                          "to, in the checkout's origin or a repository the output pushed to; - reads standard input")
+     roles(add)
+     add.add_argument("--reviewer", help="for review, the login the reviews post as (default: review.username, then "
+                                         "the account gh is signed in as)")
+@@ -1723,7 +1723,7 @@ def run_watch(arguments: argparse.Namespace) -> int:
+                 report_added(root, session, [], json_output,
+                              "watch.auto_start is false, so the output subscribes the session to nothing")
+                 return 0
+-            added, problems, subscribed = watch.add_from_output(root, session, text)
++            added, problems, subscribed = watch.add_from_output(root, session, text, Path.cwd())
+             if subscribed:
+                 agents.register_subscriber(root, session, Path.cwd(), time.time(), here)
+             for problem in problems:
+diff --git a/src/projector/codex_watch.py b/src/projector/codex_watch.py
+index 074a6b51..9a6b0efe 100644
+--- a/src/projector/codex_watch.py
++++ b/src/projector/codex_watch.py
+@@ -564,7 +564,10 @@ def push_command(command: str) -> bool:
+         if not group:
+             continue
+         name, rest = Path(group[0]).name, group[1:]
+-        if name == "gh" and (rest[:1] == ["stack"] or rest[:2] == ["pr", "create"]):
++        if "--help" in rest or "-h" in rest:
++            continue
++        if name == "gh" and ((rest[:1] == ["stack"] and rest[1:2] in (["submit"], ["push"], ["sync"], ["link"]))
++                             or rest[:2] == ["pr", "create"]):
+             return True
+         if name == "git":
+             while rest:
+@@ -609,7 +612,7 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
+     text = tool_output(event) if name == "PostToolUse" else None
+     if text is not None:
+         config = load_config(Path(cwd))
+-        if config.setting("watch.auto_start") is not False and watch.add_from_output(root, session, text)[2]:
++        if config.setting("watch.auto_start") is not False and watch.add_from_output(root, session, text, Path(cwd))[2]:
+             agents.register_subscriber(root, session, Path(cwd), now, config)
+     consumed, lines = acknowledge(folder, session, event.get("prompt", ""), now) if name == "UserPromptSubmit" else (False, [])
+     if record.get("enabled") and has_work(folder):
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 6b4ce111..affb3f91 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -80,6 +80,7 @@
+ PULL_URL = re.compile(rf"^https?://github\.com/(?P<repo>{REPO})/pull/(?P<number>[1-9][0-9]*)(?:[/?#].*)?$")
+ PULL_URL_IN_TEXT = re.compile(rf"https?://github\.com/({REPO})/pull/([1-9][0-9]*)")
+ PUSH_REMOTE = re.compile(r"^To (\S+)$")
++CREATED_IN = re.compile(rf"^Creating (?:draft )?pull request for \S+ into \S+ in ({REPO})$")
+ PUSH_UPDATE = re.compile(r"^\s*\+?\s*[0-9a-f]{4,}\.\.\.?[0-9a-f]{4,}\s+\S+\s+->\s+(\S+)")
+ GITHUB_REMOTE = re.compile(rf"github\.com[:/]({REPO}?)(?:\.git)?/?$")
+ STATUS_LINE = re.compile(r"^HTTP/\S+\s+([0-9]{3})\b")
+@@ -488,11 +489,13 @@ def stream(root: Path, session: str, emit: Callable[[str], None], ensure: Callab
+ 
+ # Subscriptions from a command's output
+ 
+-def pushed(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, str]]]:
+-    """The pull requests a command's output links, as `gh pr create` prints one, and each branch a
+-    `git push` to GitHub updated, as `(owner/repo, branch)`."""
++def pushed(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, str]], set[str]]:
++    """The pull requests a command's output links, as `gh pr create` prints one, each branch a `git push`
++    to GitHub updated, as `(owner/repo, branch)`, and each repository, lowercased, that the output shows a
++    push to or a pull request opened in."""
+     pulls = [(repo, int(number)) for repo, number in PULL_URL_IN_TEXT.findall(text)]
+     branches = []
++    targets = set()
+     remote: Optional[str] = None
+     for line in text.splitlines():
+         line = line.rstrip()
+@@ -500,12 +503,17 @@ def pushed(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, str]]]:
+         if to:
+             found = GITHUB_REMOTE.search(to.group(1))
+             remote = found.group(1) if found else None
++            if remote:
++                targets.add(remote.lower())
+             continue
++        created = CREATED_IN.match(line)
++        if created:
++            targets.add(created.group(1).lower())
+         update = PUSH_UPDATE.match(line)
+         if update and remote:
+             branch = update.group(1).removeprefix("refs/heads/")
+             branches.append((remote, branch))
+-    return pulls, branches
++    return pulls, branches, targets
+ 
+ 
+ def unique(pairs: list[tuple[str, object]]) -> list[tuple[str, object]]:
+@@ -518,13 +526,40 @@ def unique(pairs: list[tuple[str, object]]) -> list[tuple[str, object]]:
+     return kept
+ 
+ 
+-def add_from_output(root: Path, session: str, text: str) -> tuple[list[str], list[str], bool]:
++def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tuple[list[str], list[str], bool]:
+     """Subscribe the session to `fix auto` on each pull request the output opened or pushed to, and answer
+-    the lines added, a problem for each branch whose pull request could not be looked up, and whether the
+-    session now subscribes to any of those pull requests, through a line added or one it already had."""
+-    pulls, branches = pushed(text)
+-    found: list[tuple[str, object]] = list(pulls)
++    the lines added, a problem for each pull request that could not be looked up, and whether the session
++    now subscribes to any of those pull requests, through a line added or one it already had.
++
++    A linked pull request counts only in a repository the output pushed to or opened a pull request in, or
++    the checkout's origin, so a link to another repository, or an example in help text, adds nothing. Each
++    one the session does not already hold must be open on GitHub, which one REST request confirms."""
++    pulls, branches, targets = pushed(text)
++    if any(repo.lower() not in targets for repo, _ in pulls):
++        with contextlib.suppress(review.ReviewError):
++            targets.add(review.origin_repo(checkout).lower())
++    lines = [line for line in subscriptions(session_folder(root, session)) if line.role == "fix"]
++    held = {(line.repo.lower(), line.number) for line in lines if not line.excluded}
++    dropped = {(line.repo.lower(), line.number) for line in lines if line.excluded}
++    found: list[tuple[str, object]] = []
+     problems = []
++    for repo, number in unique([(repo, number) for repo, number in pulls if repo.lower() in targets]):
++        key = (repo.lower(), number)
++        if key in dropped:
++            continue
++        if key not in held:
++            result = run_gh(["api", f"repos/{repo}/pulls/{number}"])
++            try:
++                pull = json.loads(result.stdout) if result.returncode == 0 else None
++            except ValueError:
++                pull = None
++            if not isinstance(pull, dict):
++                problems.append(f"could not look up {repo}#{number}: "
++                                f"{(result.stderr or result.stdout).strip() or 'gh failed'}")
++                continue
++            if str(pull.get("state", "")).lower() != "open":
++                continue
++        found.append((repo, number))
+     for repo, branch in unique(branches):
+         owner = repo.split("/")[0]
+         result = run_gh(["api", f"repos/{repo}/pulls?head={quote(f'{owner}:{branch}', safe=':')}&state=open"])
+diff --git a/tests/test_agents.py b/tests/test_agents.py
+index 2fca99e6..454c48ee 100644
+--- a/tests/test_agents.py
++++ b/tests/test_agents.py
+@@ -508,6 +508,7 @@ def test_an_explicit_add_registers_the_session_without_changing_what_add_prints(
+                          tuple(found.get(key) for key in ("summary", "summary_auto", "login", "host", "repo", "name")))
+ 
+     def test_an_add_from_a_push_command_registers_the_session(self) -> None:
++        self.github.pull_request(13)
+         self.claude(A)
+ 
+         self.watch("add", "--from-output", "-", stdin="https://github.com/acme/app/pull/13\n")
+@@ -515,6 +516,7 @@ def test_an_add_from_a_push_command_registers_the_session(self) -> None:
+         self.assertEqual("Fixing acme/app#13", self.summary())
+ 
+     def test_a_pull_request_codex_opens_registers_the_codex_session(self) -> None:
++        self.github.pull_request(17)
+         self.codex(B)
+         event = {"hook_event_name": "PostToolUse", "session_id": B, "cwd": str(self.work), "tool_name": "Bash",
+                  "tool_input": {"command": "gh pr create --draft"},
+@@ -584,6 +586,7 @@ def test_a_session_nothing_delivers_to_subscribes_unregistered_with_the_usual_ou
+         self.assertFalse((self.folder(A) / "agent.json").exists())
+ 
+     def test_an_add_that_finds_its_line_registers_a_session_unreachable_when_it_first_subscribed(self) -> None:
++        self.github.pull_request(13)
+         self.watch("add", "acme/app#12")
+         self.watch("add", "--from-output", "-", stdin="https://github.com/acme/app/pull/13\n")
+         self.claude(A)
+diff --git a/tests/test_codex_watch.py b/tests/test_codex_watch.py
+index 00bf634f..5e625b35 100644
+--- a/tests/test_codex_watch.py
++++ b/tests/test_codex_watch.py
+@@ -395,14 +395,20 @@ def test_old_cli_capability_failure_is_cached_and_does_not_claim_delivery(self):
+     def test_push_output_from_child_hooks_uses_parent_and_respects_disabled_auto_start(self):
+         event = {"hook_event_name": "PostToolUse", "session_id": "session-A", "cwd": str(self.root),
+                  "tool_input": {"command": "gh pr create --draft"},
+-                 "tool_name": "Bash", "tool_response": {"exit_code": 0, "output": "https://github.com/acme/app/pull/17"}}
++                 "tool_name": "Bash", "tool_response": {"exit_code": 0, "output": (
++                     "Creating draft pull request for feature into main in acme/app\n\n"
++                     "https://github.com/acme/app/pull/17")}}
+         config = mock.Mock()
+         config.setting.return_value = False
+         with mock.patch("projector.config.load", return_value=config):
+             codex.hook(self.root, event, self.now, mock.Mock())
+         self.assertEqual([14], [line.number for line in watch.subscriptions(self.folder)])
+         config.setting.return_value = True
+-        with mock.patch("projector.config.load", return_value=config):
++        opened = watch.GhResult(0, json.dumps({"number": 17, "state": "open"}))
++        signed_out = watch.GhResult(1, "", "gh is not signed in")
++        gh = mock.patch.object(watch, "run_gh", side_effect=lambda args: opened
++                               if args == ["api", "repos/acme/app/pulls/17"] else signed_out)
++        with gh, mock.patch("projector.config.load", return_value=config):
+             codex.hook(self.root, event, self.now, mock.Mock())
+         self.assertEqual([14, 17], [line.number for line in watch.subscriptions(self.folder)])
+         self.assertEqual(["session-A"], watch.session_names(self.root))
+@@ -424,6 +430,9 @@ def test_real_codex_text_output_is_parsed_only_for_authoring_commands(self):
+         self.assertTrue(codex.push_command("git -C 'some dir' push origin feature"))
+         self.assertTrue(codex.push_command("git status\ngit push"))
+         self.assertFalse(codex.push_command("echo 'git push'"))
++        self.assertTrue(codex.push_command("gh stack submit --auto"))
++        for command in ("gh stack view", "gh stack checkout --help", "gh stack submit -h", "git push --help"):
++            self.assertFalse(codex.push_command(command), command)
+ 
+     def test_hung_session_does_not_block_another_and_pool_has_no_unbounded_backlog(self):
+         entered, release, other_done = threading.Event(), threading.Event(), threading.Event()
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index afc1f350..fdf6d688 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -2353,9 +2353,10 @@ def test_reads_pull_requests_and_pushed_branches_from_a_commands_output(self) ->
+                   " * [new branch]      fresh -> fresh\n"
+                   "To https://gitlab.com/acme/app.git\n"
+                   "   1a2b3c4..5d6e7f8  mirrored -> mirrored\n"
+-                  "https://github.com/acme/web/pull/13\n")
++                  "https://github.com/acme/web/pull/13\n"
++                  "Creating draft pull request for fresh into main in Acme/Web\n")
+ 
+-        self.assertEqual(([("acme/web", 13)], [("acme/app", "feature"), ("acme/app", "other")]),
++        self.assertEqual(([("acme/web", 13)], [("acme/app", "feature"), ("acme/app", "other")], {"acme/app", "acme/web"}),
+                          watch.pushed(output))
+ 
+     def test_reads_the_status_line_and_etag_that_gh_api_i_prints(self) -> None:
+@@ -2417,6 +2418,10 @@ def project(self, *args: str, stdin: str = "") -> tuple[int, str, str]:
+     def lines(self, session: str = "top-level") -> list[str]:
+         return watch.read_lines(self.root / "sessions" / session)
+ 
++    def origin(self, url: str) -> None:
++        for args in (["init", "-q"], ["remote", "add", "origin", url]):
++            subprocess.run(["git", *args], cwd=self.cwd, check=True, capture_output=True)
++
+     def test_add_starts_the_daemon_and_says_how_events_arrive(self) -> None:
+         code, out, err = self.project("add", "acme/app#12")
+ 
+@@ -2534,6 +2539,7 @@ def test_add_from_output_subscribes_to_each_pull_request_a_push_or_create_shows(
+         self.assertIn(["api", "repos/acme/app/pulls?head=acme:lonely&state=open"], self.github.calls)
+ 
+     def test_add_from_output_keeps_an_existing_fix_line_and_skips_a_dropped_pull_request(self) -> None:
++        self.origin("git@github.com:acme/app.git")
+         watch.edit_subscriptions(self.root / "sessions" / "top-level", lambda lines: ["acme/app#12 fix",
+                                                                                        "!acme/app#14 fix"])
+         output = "https://github.com/acme/app/pull/12\nhttps://github.com/acme/app/pull/14\n"
+@@ -2545,6 +2551,45 @@ def test_add_from_output_keeps_an_existing_fix_line_and_skips_a_dropped_pull_req
+         self.assertEqual(0, code, err)
+         self.assertTrue(out.startswith("the output shows no new pull request to fix\n"), out)
+         self.assertEqual(["acme/app#12 fix", "!acme/app#14 fix"], self.lines())
++        self.assertEqual([], self.github.calls, "a pull request the session holds or drops needs no lookup")
++
++    def test_add_from_output_takes_a_link_only_in_the_origin_or_a_repository_the_output_pushed_to(self) -> None:
++        self.origin("https://github.com/acme/app.git")
++        for repo, number in (("acme/app", 12), ("acme/web", 13), ("other/lib", 14)):
++            self.github.pull_request(number, repo=repo)
++        output = ("To github.com:acme/web.git\n"
++                  "https://github.com/acme/app/pull/12\n"
++                  "https://github.com/acme/web/pull/13\n"
++                  "See https://github.com/other/lib/pull/14 for the upstream fix\n")
++
++        code, out, err = self.project("add", "--from-output", "-", "--json", stdin=output)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(["acme/app#12 fix auto", "acme/web#13 fix auto"], self.lines())
++        self.assertNotIn(["api", "repos/other/lib/pulls/14"], self.github.calls)
++
++    def test_add_from_output_takes_no_link_outside_a_checkout_without_a_push(self) -> None:
++        self.github.pull_request(12)
++
++        code, out, err = self.project("add", "--from-output", "-", stdin="https://github.com/acme/app/pull/12\n")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([], self.lines())
++        self.assertEqual([], self.github.calls)
++
++    def test_add_from_output_skips_a_link_that_is_no_open_pull_request(self) -> None:
++        self.origin("git@github.com:acme/app.git")
++        self.github.pull_request(41, state="MERGED")
++        self.github.pull_request(42)
++        output = ("Examples:\n"
++                  "  $ gh stack checkout https://github.com/acme/app/pull/123\n"
++                  "  $ gh stack link https://github.com/acme/app/pull/41 https://github.com/acme/app/pull/42\n")
++
++        code, out, err = self.project("add", "--from-output", "-", stdin=output)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(["acme/app#42 fix auto"], self.lines())
++        self.assertIn("project: could not look up acme/app#123: gh: Not Found (HTTP 404)", err)
+ 
+     def test_add_from_output_adds_nothing_when_auto_start_is_off(self) -> None:
+         (self.home / ".projector.toml").write_text("[watch]\nauto_start = false\n")
