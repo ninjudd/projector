@@ -517,7 +517,7 @@ class InboxDeliveryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="codex inbox ")
         self.addCleanup(self.temp.cleanup)
         state = Path(self.temp.name).resolve()
-        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(state)})
+        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(state), "HOME": str(state)})
         environ.start()
         self.addCleanup(environ.stop)
         self.root = watch.state_root()

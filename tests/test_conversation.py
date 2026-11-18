@@ -142,7 +142,7 @@ class Finding(Case):
              conversation.claude_transcript("*", {"HOME": str(home)})))
 
     def test_a_codex_rollout_is_the_one_codex_json_names(self) -> None:
-        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state")}):
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state"), "HOME": str(self.scratch)}):
             root = watch.state_root()
             folder = watch.session_folder(root, SESSION)
             folder.mkdir(parents=True)

@@ -1,7 +1,7 @@
 """`project console`'s model, driven without a terminal against a temporary state directory.
 
-Each test points `XDG_STATE_HOME` at its own directory, writes the files a live session leaves there, and drives
-`console.Console` with key names and an injected clock, `gh`, browser, and Codex wake.
+Each test points `XDG_STATE_HOME` and `HOME` at its own directories, writes the files a live session leaves there,
+and drives `console.Console` with key names and an injected clock, `gh`, browser, and Codex wake.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional
 from unittest import mock
 
-from projector import cli, console, inbox, repo_inbox, watch
+from projector import cli, config, console, inbox, relay, repo_inbox, watch
 from projector.inbox import read_json, write_json
 
 SOURCE = Path(cli.__file__).resolve().parents[1]
@@ -46,10 +46,13 @@ class ConsoleCase(unittest.TestCase):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         self.scratch = Path(scratch.name)
-        # Local, with no `BROWSER`, so a run over SSH or with a browser helper opens URLs as a run at the machine
-        # does.
-        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state"), "PROJECTOR_REMOTE": "0",
-                                               "BROWSER": ""})
+        # A home of its own, so no test reads the `~/.projector.toml` of whoever runs it: a key there let a test pass
+        # on a machine that has one and fail on CI. Local, with no `BROWSER`, so a run over SSH or with a browser
+        # helper opens URLs as a run at the machine does.
+        self.home = self.scratch / "home"
+        self.home.mkdir()
+        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state"), "HOME": str(self.home),
+                                               "PROJECTOR_REMOTE": "0", "BROWSER": ""})
         environ.start()
         self.addCleanup(environ.stop)
         self.root = watch.state_root()
@@ -130,6 +133,18 @@ class ConsoleCase(unittest.TestCase):
         self.console.selected = key
         self.press("enter")
         self.assertEqual(key, self.console.drawer)
+
+
+class Isolation(ConsoleCase):
+    def test_a_console_test_reads_the_user_configuration_from_its_own_home(self) -> None:
+        # Catches `ConsoleCase` leaving `HOME` at the real home, whose `~/.projector.toml` held an `agent.key`
+        # that let a console test pass on that machine and fail on CI, which has none.
+        path = config.user_config_path()
+        # Checked before the write, so a case that is not isolated never writes the real file.
+        self.assertTrue(path.is_relative_to(self.scratch), path)
+        path.write_text('[agent]\nkey = "keychain:0123456789abcdef"\n')
+
+        self.assertEqual("keychain:0123456789abcdef", relay.configured())
 
 
 class SessionSet(ConsoleCase):
@@ -963,8 +978,7 @@ class Conversation(TerminalCase):
 
     def setUp(self) -> None:
         super().setUp()
-        environ = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.scratch / "claude"),
-                                               "HOME": str(self.scratch / "home")})
+        environ = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.scratch / "claude")})
         environ.start()
         self.addCleanup(environ.stop)
 
@@ -1157,11 +1171,14 @@ class Terminal(unittest.TestCase):
     """`project console` run in a pseudo-terminal, with the bytes a terminal sends for each key."""
 
     def prepare(self) -> None:
-        """A state directory of its own with one live Claude Code session, `S`, asking one question."""
+        """A state directory and a home of its own with one live Claude Code session, `S`, asking one question."""
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
-        self.state = scratch.name
-        self.env = {**os.environ, "XDG_STATE_HOME": self.state, "PYTHONPATH": str(SOURCE), "TERM": "xterm-256color"}
+        self.state = str(Path(scratch.name) / "state")
+        self.home = Path(scratch.name) / "home"
+        self.home.mkdir()
+        self.env = {**os.environ, "XDG_STATE_HOME": self.state, "HOME": str(self.home), "PYTHONPATH": str(SOURCE),
+                    "TERM": "xterm-256color"}
         self.env.pop("PROJECTOR_SESSION", None)
         for args in (["inbox", "ask", "Decline the finding?", "--recommend", "Decline it", "--option", "Fix it",
                       "--session", "S"], ["watch", "renew", "--deliverer", "mod", "--session", "S"]):
@@ -1218,6 +1235,16 @@ class Terminal(unittest.TestCase):
             os.kill(self.pid, 9)
             os.waitpid(self.pid, 0)
         return None
+
+    def test_the_console_process_reads_the_user_configuration_from_the_tests_home(self) -> None:
+        # Catches the console's process inheriting the real `HOME`, and with it the real `~/.projector.toml`.
+        self.prepare()
+        (self.home / ".projector.toml").write_text('[panel]\nbackground = "#123456"\n')
+
+        done = subprocess.run([sys.executable, "-m", "projector", "config", "get", "panel.background"], env=self.env,
+                              cwd=self.state, capture_output=True, text=True, timeout=60)
+
+        self.assertEqual(("#123456\n", 0), (done.stdout, done.returncode))
 
     @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
     def test_either_down_arrow_encoding_moves_to_the_second_option_and_one_ctrl_c_quits_from_home(self) -> None:
