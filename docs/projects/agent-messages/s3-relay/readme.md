@@ -472,11 +472,11 @@ failed with its fault introduced:
 | An interrupted probe and its sweep | `S3RelayTests.test_a_probe_interrupted_by_a_restart_leaves_no_object_after_the_next_full_pass` |
 | Stores that ignore a condition, and a public bucket | `S3RelayTests.test_a_store_that_ignores_a_condition_or_lets_anyone_list_turns_the_location_off` |
 | One bucket and prefix on two endpoints | `S3RelayTests.test_one_bucket_and_prefix_on_two_endpoints_are_two_locations` |
-| A committed endpoint and profile | `S3RelayTests.test_an_endpoint_and_a_profile_a_repository_commits_wait_until_you_allow_each` |
+| A committed endpoint and profile | `S3RelayTests.test_an_endpoint_and_a_profile_a_repository_commits_wait_until_you_allow_each`, `test_a_registration_written_while_admission_checks_another_waits_for_its_own_values` |
 | Credentials from the environment, a profile, and a process, refreshed early, never leaked | `tests.test_s3.CredentialTests`, `S3RelayTests.test_no_output_log_status_or_process_argument_holds_the_secret_key_or_the_token` |
 | The credential notice | `LapseNoticeTests.test_a_lapse_shows_one_notice_in_every_session_replaced_as_its_reason_changes_until_a_request_succeeds`, `test_a_dismissed_notice_stays_hidden_while_the_relay_is_off_and_shows_again_when_it_next_turns_off`, `test_a_notice_a_busy_inbox_kept_out_shows_on_the_next_job` |
-| A hung process or store | `tests.test_s3.CredentialTests.test_a_credential_process_that_hangs_is_killed_at_its_timeout`, `OperationTests.test_a_request_that_hangs_or_trickles_is_stopped_at_its_timeout`, `S3RelayTests.test_a_hung_credential_process_or_store_is_stopped_and_stalls_no_codex_event` |
-| A `<!DOCTYPE` listing and one over 1 MiB | `OperationTests.test_a_listing_that_declares_a_document_type_or_holds_more_than_1_mib_is_not_parsed`, and the last part of the hung-store test |
+| A hung process or store | `tests.test_s3.CredentialTests.test_a_credential_process_that_hangs_is_killed_at_its_timeout`, `OperationTests.test_a_request_that_hangs_or_trickles_is_stopped_at_its_timeout`, `test_a_name_lookup_that_never_returns_is_stopped_at_the_timeout`, `S3RelayTests.test_a_hung_credential_process_or_store_is_stopped_and_stalls_no_codex_event` |
+| A `<!DOCTYPE` listing and one over 1 MiB | `OperationTests.test_a_response_that_declares_a_document_type_is_refused_in_any_encoding`, `test_a_listing_that_holds_more_than_1_mib_is_not_parsed`, and the last part of the hung-store test |
 | The Git relay tests unchanged | `tests.test_relay` before the S3 layers, which passed with no change to a test |
 | No plaintext in the bucket | `S3RelayTests.test_no_object_in_the_bucket_holds_a_name_summary_or_text_in_plain_form` |
 
