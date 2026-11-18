@@ -1,0 +1,161 @@
+{
+ "version": 1,
+ "name": "Repository inbox between peers",
+ "project": "agent-messages/peers",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 551,
+  "title": "Carry a repository inbox between peers through the relay",
+  "head": "573fca13926ecff1e6f9c0a92c121655fad888b6",
+  "headRef": "repo-inbox/relay",
+  "base": "93a093bef798be7989052b4e3995d89f2f0918e0",
+  "baseRef": "repo-inbox/peers",
+  "basePr": 550
+ },
+ "overview": {
+  "summary": [
+   "Projector’s inbox normally lets an agent ask its own user for a decision or report an outcome. This change extends it to people who exchange public keys: an agent posts an item to a peer, the peer or their agents respond, and the asking agent receives each reply through the encrypted relay.",
+   "This middle stack layer adds the repository-wide inbox, transport, command handlers, and reply delivery. The preceding layer manages trusted peers; the following layer adds the panel, console, and skill integration. Incoming items, your sent copies, and replies remain separate entries so a peer’s response does not decide whether your agent needs more replies."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "What travels and what stays local",
+    "html": "<ul class=\"tight\"><li><b>Peer:</b> another person whose public key you explicitly configured.</li><li><b>Relay:</b> encrypted records carried by hidden Git refs in a shared repository.</li><li><b>Mirror:</b> the local repository inbox, with stable references such as <code>r1</code>.</li><li><b>State record:</b> closes, snoozes, and replied sessions encrypted to your own key and merged across your machines.</li></ul>"
+   },
+   {
+    "id": "result",
+    "title": "Review result",
+    "html": "<p>The earlier malformed-record and concurrent-reply findings are fixed. One P2 remains: a reply refused by the encrypted size check already consumes the session’s reply claim, so a corrected retry cannot send. Exact-head CI, the configured local gate, and all 357 focused Python tests passed.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "records",
+   "title": "Store repository inbox entries and state",
+   "kicker": "The item contract and its local representation",
+   "intro": [
+    "Each inbox item identifies its repository and sender. A sent copy records the intended peer, and a reply names the item it answers. The new store gives each local entry a stable <code>r</code> reference and merges state separately, so state arriving before an item can still apply when the item opens.",
+    "Agent replies should stay open and be limited to one reply per session. Closing and reopening belong to the asking side’s state; a peer can withdraw their own incoming item without silently closing the asker’s sent copy."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/repo_inbox.py",
+     "note": "Defines the record validators, local mirror, state merge, posting and response operations, and reply wake lines.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 254,
+       "text": "Replayed the original malformed-record fixture: the surrogate record was rejected as field-shape and deleted, subsequent passes stayed healthy, and the later legitimate item opened."
+      },
+      {
+       "kind": "verify",
+       "line": 549,
+       "text": "Replayed the original synchronized same-session race: one call queued a reply and the other was refused, with one replied marker."
+      },
+      {
+       "kind": "flag",
+       "line": 523,
+       "text": "The durable claim is made before the reply is sealed and size-checked. A 13,000-byte string of quotes passed the raw text limit but failed the encrypted size limit; zero messages were queued, yet the saved replied marker blocked a corrected short retry. Prepare and size-check the response before consuming its claim."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Parses repository references alongside session item references and resolves the repository used by inbox commands."
+    }
+   ]
+  },
+  {
+   "id": "transport",
+   "title": "Carry encrypted records between peers",
+   "kicker": "Validation, limits, and synchronization through the relay",
+   "intro": [
+    "The relay fetches the recipient’s encrypted inbox refs, opens records only from the local key or configured peers, and checks repository identity and reply ownership before mirroring them. Per-peer limits keep a reply stream from consuming the allowance for new items.",
+    "Your machines exchange their own state records and merge concurrent updates. A reply wakes the original asking session only on its originating machine, while the item remains open; the event names its peer origin and authority limit."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/relay.py",
+     "note": "Adds user and state namespaces, sender-aware opening, reply pairing, state merging, and mirror pruning. Malformed strings and timestamps are rejected before use; a record-level error backstop rejects one bad record and preserves progress."
+    },
+    {
+     "path": "src/projector/agents.py",
+     "note": "Sets the default per-peer hourly limit."
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds the positive user-level agent.peer_limit setting."
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Includes configured peer relays in collection status even without a current key."
+    },
+    {
+     "path": "src/projector/codex_watch.py",
+     "note": "Allows queued peer reply events only while their mirrored reply still exists."
+    },
+    {
+     "path": "tests/test_peers.py",
+     "note": "Exercises peer exchange, state conflicts, sender and location checks, limits, expiry, wake delivery, malformed Unicode and timestamps, and concurrent reply claims.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Ran the peer tests with the focused relay, inbox, watch, config, and permission tests: all 357 tests passed, including the four added regression tests."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_relay.py",
+     "note": "Extends the relay fixture to three machines and adapts assertions to sender-aware opening and last-opened peer status."
+    }
+   ]
+  },
+  {
+   "id": "commands",
+   "title": "Post to peers and respond from the CLI",
+   "kicker": "Repository items join the existing inbox commands",
+   "intro": [
+    "The CLI routes <code>--to</code> posts to configured peers and repository references such as <code>r1</code> to the new store. Agent responses identify the registered session, while user actions remain explicit through <code>--as</code>. Showing peer content prints its authority notice before the body.",
+    "The permission rules allow agent replies and closes under standing instructions. Answers and other actions that decide an outcome retain their existing confirmation boundary."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Wires peer posting, reply and close commands, repository item routing, listing, and readable peer provenance."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Allows inbox reply and close while preserving confirmation for decisions."
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Checks that reply and close are allowed and answer still asks."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Document the inbox workflow and stack boundary",
+   "kicker": "Commands and decisions for people using the feature",
+   "intro": [
+    "The CLI guide describes sending, answering, replying, snoozing, closing, and reopening peer items. The project plan records the implementation decisions that connect the three stack layers, including the need to land the panel and console integration before the whole flow ships."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents peer status, repository inbox commands, sender identity, and reply behavior."
+    },
+    {
+     "path": "docs/projects/agent-messages/peers/readme.md",
+     "note": "Section 7 records stack decisions, record validation limits, per-record rejection behavior, and atomic response claims."
+    }
+   ]
+  }
+ ]
+}
