@@ -1,0 +1,709 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 11e8e6c9..eb3f9023 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -103,6 +103,7 @@ what it did to each:
+     "Bash(project upgrade *)",
+     "Bash(project config set *)",
+     "Bash(project config unset *)",
++    "Bash(project config allow *)",
+     "Bash(project site *prepare*)",
+     "Bash(project inbox answer *)",
+     "Bash(project inbox dismiss *)",
+@@ -121,6 +122,9 @@ what it did to each:
+   `project upgrade` runs an installer it downloads, `project init` writes
+   these rules, and `project config set` and `unset` can change a setting that
+   widens an agent's authority, such as `review.allow_approve`.
++  `project config allow` records your consent to send your data where a
++  repository's committed file chooses, and it refuses to run without a
++  terminal.
+   `project site build` and `serve` run the shell command `--prepare` names, or
+   the checkout's own `site.prepare` once `--allow-prepare` allows it, so
+   `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
+@@ -853,6 +857,59 @@ review.gate_checks = ci, e2e  # /Users/you/work/acme/web-team/.projector.toml (o
+ `get --json` gives the priority as `override`, which is `null` for an
+ ordinary value, and `list --json` gives it under `overrides`, by key.
+ 
++### Allow a destination a repository chooses
++
++A few settings, the destinations, say where your data goes, such as the relay
++that carries your agents' messages. The owner of a repository you cloned
++chooses what its default branch commits, and may not be you. So when a
++destination's value comes from a file the repository commits, Projector uses
++it only once you allow that value, in a terminal:
++
++```console
++$ project config allow agent.relay github:acme/agents
++origin/main:.projector.toml sets agent.relay = github:acme/agents.
++Send your data to github:acme/agents wherever a committed file sets agent.relay to it? [y/N] y
++allowed agent.relay = github:acme/agents
++```
++
++Until you do, the command that reads the setting treats it as unset and
++names the file and the command to run. The command refuses to run without a
++terminal on standard input and output, with exit code 69, because it records
++your consent and no agent should give it. Answering anything but `y`
++allows nothing and exits 1.
++
++An approval covers one key and one value on this machine, wherever a
++committed file sets it. A repository that changes the value asks again, and
++returning to a value you allowed asks nothing. A destination from a file the
++repository does not track, or from `~/.projector.toml`, needs no approval,
++because you wrote it. Approvals live in
++`$XDG_STATE_HOME/projector/allowed.json`. List them, with the file each was
++granted for, or remove one, after which the next read waits for a new
++approval:
++
++```sh
++project config allow --list
++project config allow --remove agent.relay github:acme/agents
++```
++
++`--list --json` prints the approvals as `allowed`. `--remove` exits 1 when
++there was no such approval. Projector names no destination yet; the relay
++settings will be the first. `allow` refuses a key that is not one with exit
++code 2.
++
++### Keep paths inside the repository
++
++`projects.dir` must lead inside the repository's working tree, whichever file
++sets it, `~/.projector.toml` included, because a project's plans live in its
++repository. A value outside it, such as `../elsewhere` or `/tmp/plans`, makes
++every command that reads it exit 78 and name the value and the file.
++`--projects-dir` on the command line is yours and is not checked.
++
++`ios.output` from a repository's file, or any file but `~/.projector.toml`,
++must lead inside the checkout or Projector's state directory, and
++`project ios crashes` and `logs` refuse another value the same way. In
++`~/.projector.toml` it may name any directory, such as your desktop.
++
+ Tables merge key by key, so a nearer file overrides one setting without
+ discarding the rest:
+ 
+@@ -922,7 +979,7 @@ reads, which are these:
+ 
+ | Key | Type | Default | Read by |
+ | --- | --- | --- | --- |
+-| `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given |
++| `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given, as a directory inside the repository |
+ | `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and `CLAUDE.md` |
+ | `instructions.ios` | boolean | whether the repository has an Xcode project that builds for iOS, or sets `ios.project` | `init` and `check`, to put the rules for `project ios` in the Projector section |
+ | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
+@@ -948,7 +1005,7 @@ reads, which are these:
+ | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or, with `--inline`, the key itself, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key join`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
+ | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
+ | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
+-| `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to |
++| `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, inside the checkout or the state directory unless `~/.projector.toml` sets it |
+ 
+ `review.allow_approve` is off unless it is exactly `true`; an unset key means
+ `false` rather than a question to ask. It never applies to a review of your own
+diff --git a/docs/projects/config-trust/readme.md b/docs/projects/config-trust/readme.md
+index 12ed5d70..775855fa 100644
+--- a/docs/projects/config-trust/readme.md
++++ b/docs/projects/config-trust/readme.md
+@@ -392,3 +392,33 @@ full pass, which transfers only commits this clone lacks.
+ - **The user layer alone.** `config.user_value`, which reads
+   `~/.projector.toml` by itself for `agent.key`, applies that file's own
+   overrides, through the same merge.
++
++### 8.3 Destinations and paths
++
++- **Which values need allowing.** `Config.setting` raises `NotAllowed` for a
++  destination whose effective value comes from a default-branch blob,
++  ordinary or override. `NotAllowed` is a `ConfigError`, so a caller that does
++  not yet treat it as unset still stops with its message, which names the
++  source and the exact `project config allow` command.
++- **The prompt.** `config allow` needs a terminal on standard input and
++  output and exits 69 without one, as `project agent key join` does. It
++  prints the source that sets the value here, or says no file here sets it,
++  and still lets you allow the value ahead of time. Anything but `y` or `yes`
++  exits 1. A key outside `DESTINATIONS` exits 2.
++- **What an approval records.** `source` is the walked file the value came
++  from, as an absolute path, or `null` for an approval granted where no file
++  set it.
++- **Listing and removing need no terminal.** Both only read or narrow your
++  approvals. `--remove` takes any key, so an approval outlives its key's
++  place in `DESTINATIONS` only until you remove it, and exits 1 when there was
++  no such approval.
++- **The ask rule.** `Bash(project config allow *)` joins the ask rules `init`
++  writes, and Codex's rules leave `config allow` to its usual approval, so an
++  agent's attempt reaches you as a prompt before it reaches the terminal
++  check.
++- **Where the path checks sit.** The checks run where the CLI reads each
++  setting, in `cli.py`'s `configured_projects_dir` and `ios_output`, through
++  `Config.confine`, because that is where the value's source is known, rather
++  than in `core.py` and `ios.py`. A path resolves with symbolic links
++  followed, so a link inside the repository that leads out is refused too.
++  `--projects-dir` on the command line is yours and is not checked.
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index fd6d6efa..be1b7b39 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -31,11 +31,18 @@
+ from .summary import WORKFLOW_PATH
+ from .config import (
+     CONFIG_NAME,
++    DESTINATIONS,
+     PRIORITY,
+     SECRETS,
++    SETTINGS,
+     Change,
+     ConfigError,
+     Config,
++    allow,
++    allowed_path,
++    approvals,
++    disallow,
++    is_destination,
+     parse_value,
+     redact,
+     same_value,
+@@ -60,6 +67,7 @@
+     grouped_projects,
+     json_scalar,
+     json_text,
++    state_home,
+ )
+ 
+ 
+@@ -686,6 +694,17 @@ def parser() -> argparse.ArgumentParser:
+     )
+     add_output(config_paths)
+ 
++    config_allow = config_commands.add_parser(
++        "allow", help="allow a destination a committed file sets, in a terminal, or list or remove approvals",
++        parents=[root_option],
++    )
++    config_allow.add_argument("key", nargs="?", help="a destination setting, such as agent.relay")
++    config_allow.add_argument("value", nargs="?", help="the value to allow, as the committed file sets it")
++    allow_mode = config_allow.add_mutually_exclusive_group()
++    allow_mode.add_argument("--list", action="store_true", help="print your approvals and the file each was for")
++    allow_mode.add_argument("--remove", action="store_true", help="remove the approval of the key and value")
++    add_output(config_allow)
++
+     upgrade = subcommands.add_parser("upgrade", help="run the checkout's install.sh from anywhere")
+     upgrade.add_argument(
+         "target",
+@@ -1187,6 +1206,16 @@ def command(name: str, help_text: str, chooses: bool = True) -> argparse.Argumen
+     command("cleanup", "remove the worktree, DerivedData, and every kept build", chooses=False)
+ 
+ 
++def ios_output(config: Config, checkout: Path) -> Path:
++    """Where `project ios crashes` and `logs` write: `ios.output`, or `~/Desktop`. Only `~/.projector.toml`, which
++    you wrote yourself, may send them outside the checkout and Projector's state directory."""
++
++    output = Path(config.setting("ios.output") or "~/Desktop").expanduser()
++    if config.setting("ios.output") is not None and not config.from_user("ios.output"):
++        config.confine("ios.output", checkout / output, (checkout, state_home()))
++    return output
++
++
+ def run_ios(arguments: argparse.Namespace) -> int:
+     command = arguments.ios_command
+     if command == "devices":
+@@ -1207,7 +1236,7 @@ def run_ios(arguments: argparse.Namespace) -> int:
+     config = load_config(checkout)
+     app = arguments.app or config.setting("ios.app")
+     where = {"app": app, "wanted": arguments.device, "kind": arguments.kind, "mac": arguments.mac}
+-    output = Path(config.setting("ios.output") or "~/Desktop").expanduser()
++    output = ios_output(config, checkout)
+     if command == "build":
+         ios.build(checkout, arguments.target, project_setting=config.setting("ios.project"), install=arguments.install,
+                   verbose=arguments.verbose, allow_untrusted=arguments.allow_untrusted, **where)
+@@ -1901,9 +1930,54 @@ def change_config(arguments: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++def allow_destination(arguments: argparse.Namespace) -> int:
++    path = allowed_path()
++    if arguments.list:
++        if arguments.key is not None:
++            raise UsageError("config allow --list takes no key or value")
++        entries = approvals(path)
++        if arguments.json_output:
++            print(json_text({"allowed": entries}))
++            return 0
++        for entry in entries:
++            print(f"{entry.get('key')} = {format_value(entry.get('value'))}  # for {entry.get('source') or 'no file'}, "
++                  f"allowed {entry.get('allowed_at')}")
++        return 0
++    if arguments.key is None or arguments.value is None:
++        raise UsageError("config allow needs a key and a value, or --list")
++    key = arguments.key
++    value = parse_value(key, arguments.value) if key in SETTINGS else arguments.value
++    if arguments.remove:
++        removed = disallow(path, key, value)
++        print(f"{'removed' if removed else 'no approval of'} {key} = {format_value(value)}")
++        return 0 if removed else 1
++    if not is_destination(key):
++        raise UsageError(f"{key} is not a destination, so it needs no allowing; the destinations are "
++                         f"{', '.join(sorted(DESTINATIONS)) or 'none yet'}")
++    if not (sys.stdin.isatty() and sys.stdout.isatty()):
++        raise EnvironmentError("project config allow records your consent, so it runs only with a terminal on "
++                               "standard input and output, where no agent can run it; run it yourself in a terminal")
++    config = load_config(config_start(arguments))
++    source = config.source(key)
++    if source is not None and same_value(config.get(key), value):
++        print(f"{source} sets {key} = {format_value(value)}.")
++    else:
++        source = None
++        print(f"No file here sets {key} = {format_value(value)}.")
++    answer = input(f"Send your data to {format_value(value)} wherever a committed file sets {key} to it? [y/N] ")
++    if answer.strip().lower() not in ("y", "yes"):
++        print(f"{key} = {format_value(value)} is not allowed")
++        return 1
++    allow(path, key, value, str(source.path) if source else None, time.time())
++    print(f"allowed {key} = {format_value(value)}")
++    return 0
++
++
+ def run_config(arguments: argparse.Namespace) -> int:
+     if arguments.config_command in ("set", "unset"):
+         return change_config(arguments)
++    if arguments.config_command == "allow":
++        return allow_destination(arguments)
+     config = load_config(config_start(arguments))
+     warn_ignored(config)
+     command = arguments.config_command
+@@ -2010,10 +2084,15 @@ def instructions_ios(root: Path) -> Optional[bool]:
+ 
+ 
+ def configured_projects_dir(root: Path) -> Optional[Path]:
+-    """`projects.dir` from configuration, when the flag did not supply one."""
++    """`projects.dir` from configuration, when the flag did not supply one, refused when it leads outside the
++    repository, whichever file sets it, since a project's plans live in its repository."""
+ 
+-    configured = load_config(root).setting("projects.dir")
+-    return None if configured is None else Path(configured)
++    config = load_config(root)
++    configured = config.setting("projects.dir")
++    if configured is None:
++        return None
++    config.confine("projects.dir", root / configured, (root,))
++    return Path(configured)
+ 
+ 
+ def configured_prepare(root: Path) -> Optional[str]:
+diff --git a/src/projector/config.py b/src/projector/config.py
+index da5adf37..f3df9fc8 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -47,6 +47,10 @@
+ all, so a team can outrank a company by choosing a higher number and a person
+ can outrank everyone.
+ 
++A destination, a setting in `DESTINATIONS` that says where your data goes,
++applies from a file the repository commits only once you allow its value with
++`project config allow`, recorded in the state directory's `allowed.json`.
++
+ `project config set` and `unset` change one file, one line at a time, so the
+ comments and layout a person wrote survive every change.
+ """
+@@ -59,6 +63,7 @@
+ import json
+ import os
+ import re
++import shlex
+ import stat
+ import subprocess
+ import tempfile
+@@ -128,6 +133,11 @@
+ OVERRIDE = "override"
+ PRIORITY = re.compile(r"[1-9][0-9]?")
+ 
++# The settings that say where your data goes. The owner of a repository's
++# default branch may not be you, so a value read from it applies only once you
++# allow it with `project config allow`. The relay plans add their settings.
++DESTINATIONS: frozenset[str] = frozenset()
++
+ # Keys whose value can be a secret. A value under `keychain:` names an item in
+ # the OS keychain and holds no secret; any other value is the secret itself.
+ SECRETS = frozenset({"agent.key"})
+@@ -139,6 +149,68 @@ class ConfigError(ProjectorError):
+     exit_code = 78
+ 
+ 
++class NotAllowed(ConfigError):
++    """A destination that a file the repository commits sets, which you have not allowed. A caller treats the
++    setting as unset, with this as the reason."""
++
++    def __init__(self, key: str, value: Any, source: "Source") -> None:
++        self.key, self.value, self.source = key, value, source
++        super().__init__(f"{source} sets {key} = {value!r}, which sends your data where that file's owner chooses; "
++                         f"run `project config allow {key} {shlex.quote(str(value))}` in a terminal to use it")
++
++
++def is_destination(key: str) -> bool:
++    return key in DESTINATIONS
++
++
++def allowed_path(environ: Optional[dict[str, str]] = None) -> Path:
++    """Where the destinations you allowed are recorded: this machine's state, not a checkout or its config."""
++
++    return state_home(environ) / "allowed.json"
++
++
++def approvals(path: Path) -> list[dict[str, Any]]:
++    try:
++        found = json.loads(path.read_bytes())
++    except FileNotFoundError:
++        return []
++    except (OSError, ValueError) as error:
++        raise ConfigError(f"{path}: cannot read the destinations you allowed: {error}") from error
++    if not isinstance(found, dict) or found.get("schema_version") != 1 or not isinstance(found.get("allowed"), list):
++        raise ConfigError(f"{path}: not a record of allowed destinations")
++    return [entry for entry in found["allowed"] if isinstance(entry, dict)]
++
++
++def _write_approvals(path: Path, entries: list[dict[str, Any]]) -> None:
++    write_through(path, json.dumps({"schema_version": 1, "allowed": entries}, indent=2, sort_keys=True) + "\n")
++
++
++def is_allowed(path: Path, key: str, value: Any) -> bool:
++    return any(entry.get("key") == key and same_value(entry.get("value"), value) for entry in approvals(path))
++
++
++def allow(path: Path, key: str, value: Any, source: Optional[str], now: float) -> bool:
++    """Record that you allowed `key` to be `value`, answering False when you already had."""
++
++    entries = approvals(path)
++    if any(entry.get("key") == key and same_value(entry.get("value"), value) for entry in entries):
++        return False
++    allowed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
++    _write_approvals(path, [*entries, {"key": key, "value": value, "source": source, "allowed_at": allowed_at}])
++    return True
++
++
++def disallow(path: Path, key: str, value: Any) -> bool:
++    """Remove the approval of `key` as `value`, answering whether there was one."""
++
++    entries = approvals(path)
++    kept = [entry for entry in entries if not (entry.get("key") == key and same_value(entry.get("value"), value))]
++    if len(kept) == len(entries):
++        return False
++    _write_approvals(path, kept)
++    return True
++
++
+ def is_secret(key: str, value: Any) -> bool:
+     return key in SECRETS and isinstance(value, str) and not value.startswith(KEYCHAIN)
+ 
+@@ -575,18 +647,21 @@ def __str__(self) -> str:
+ 
+ class Config:
+     """A merged configuration, the sources it read lowest precedence first, where each value came from, the
+-    user-only keys a walked file set, a note for each walked file whose working copy does not apply, and the
+-    default branch each file in the repository waits on to change."""
++    user-only keys a walked file set, a note for each walked file whose working copy does not apply, the default
++    branch each file in the repository waits on to change, the user layer, and where your approvals live."""
+ 
+     def __init__(self, values: dict[str, Any], sources: dict[str, Source], paths: list[Source],
+                  ignored: Optional[list[tuple[Source, str]]] = None, notes: Optional[list[tuple[Path, str]]] = None,
+-                 committed: Optional[dict[Path, str]] = None) -> None:
++                 committed: Optional[dict[Path, str]] = None, user: Optional[Path] = None,
++                 approvals: Optional[Path] = None) -> None:
+         self.values = values
+         self.sources = sources
+         self.paths = paths
+         self.ignored = ignored or []
+         self.notes = notes or []
+         self.committed = committed or {}
++        self.user = user
++        self.approvals = approvals
+ 
+     def get(self, key: str, default: Any = None) -> Any:
+         """Look a value up by dotted key, so `review.username` reaches a table."""
+@@ -599,7 +674,8 @@ def get(self, key: str, default: Any = None) -> Any:
+         return current
+ 
+     def setting(self, key: str) -> Any:
+-        """A key from `SETTINGS`, or None when unset; a value of another type is an error naming the key."""
++        """A key from `SETTINGS`, or None when unset; a value of another type is an error naming the key, and a
++        destination a committed file sets that you have not allowed raises `NotAllowed`."""
+ 
+         value = self.get(key)
+         kind = SETTINGS[key]
+@@ -607,11 +683,29 @@ def setting(self, key: str) -> Any:
+         if value is not None and (not isinstance(value, kind) or (kind is int and isinstance(value, bool))):
+             expected = {bool: "true or false", int: "a whole number"}.get(kind, "a string")
+             raise ConfigError(f"{key} must be {expected}, not {type(value).__name__}")
++        source = self.sources.get(key)
++        if value is not None and is_destination(key) and source is not None and source.blob is not None and (
++                self.approvals is None or not is_allowed(self.approvals, key, value)):
++            raise NotAllowed(key, value, source)
+         return value
+ 
+     def source(self, key: str) -> Optional[Source]:
+         return self.sources.get(key)
+ 
++    def from_user(self, key: str) -> bool:
++        """Whether `key`'s value comes from the user layer, which you wrote yourself."""
++
++        source = self.sources.get(key)
++        return source is not None and source.blob is None and source.path == self.user
++
++    def confine(self, key: str, path: Path, places: tuple[Path, ...]) -> None:
++        """Refuse `path`, where `key`'s value leads, unless it resolves inside one of `places`."""
++
++        resolved = path.resolve()
++        if not any(_within(resolved, place.resolve()) for place in places):
++            raise ConfigError(f"{self.source(key)} sets {key} = {self.get(key)!r}, which resolves to {resolved}, "
++                              f"outside {' and '.join(str(place) for place in places)}")
++
+     def flat(self) -> dict[str, Any]:
+         return _flatten(self.values)
+ 
+@@ -695,7 +789,7 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
+     user = found.resolve() if found.is_file() else None
+     walked = _walk(start, home, user, env)
+     config = layered(walked.layers, user)
+-    config.notes, config.committed = walked.notes, walked.committed
++    config.notes, config.committed, config.approvals = walked.notes, walked.committed, allowed_path(env)
+     return config
+ 
+ 
+@@ -760,7 +854,7 @@ def layered(layers: list[tuple[Source, dict[str, Any]]], user: Optional[Path]) -
+     # key the merged result does not actually have.
+     final = _flatten(values)
+     sources = {key: source for key, source in sources.items() if key in final}
+-    return Config(values, sources, [source for source, _ in layers], ignored)
++    return Config(values, sources, [source for source, _ in layers], ignored, user=user)
+ 
+ 
+ @dataclass(frozen=True)
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 27bb9176..ead09425 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -20,7 +20,8 @@
+ rule, except the few that reach outside Projector's own state, which still
+ ask: `project upgrade` runs an installer it downloads, `project init` writes
+ these rules, `project config set` and `unset` can change a setting that
+-widens an agent's authority, such as `review.allow_approve`, and
++widens an agent's authority, such as `review.allow_approve`, `project config
++allow` records your consent to a destination a repository chose, and
+ `project site build` and `serve` run the shell command `--prepare` names, or
+ the checkout's own `site.prepare` once `--allow-prepare` allows it, and
+ `project ios build --allow-untrusted` runs the build scripts of a pull request
+@@ -116,7 +117,8 @@
+ 
+ ALLOW = ("Bash(project *)",)
+ ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config set *)",
+-       "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
++       "Bash(project config unset *)", "Bash(project config allow *)", "Bash(project site *prepare*)",
++       "Bash(project inbox answer *)",
+        "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
+        "Bash(project inbox decline *)", "Bash(project inbox start *)",
+        "Bash(project inbox unclear *)", "Bash(project inbox discuss *)", "Bash(project console)",
+@@ -129,7 +131,7 @@
+ # command, which `init` removes from `permissions.ask`.
+ RETIRED_ASK = ("Bash(project -*)",)
+ 
+-ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
++ASKED = ("`project init`, `project upgrade`, `project config set`, `unset`, and `allow`, `project site` with "
+          "`--prepare` or `--allow-prepare`, `project ios build --allow-untrusted`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
+          "`decline`, `start`, `unclear`, and `discuss`, and `project console`")
+ COMMANDS = "every `project` command but the few that reach outside Projector's own state"
+@@ -184,8 +186,8 @@
+ CODEX_RULES = (
+     "# Written by `project init`, which replaces this file. Put your own rules in another file.\n"
+     "# Codex's usual approval decides every command these rules leave out: `project init`, `project upgrade`,\n"
+-    "# `project config set` and `unset`, `project create` and `project edit`, which can open an editor,\n"
+-    "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
++    "# `project config set`, `unset`, and `allow`, `project create` and `project edit`, which can open an\n"
++    "# editor, `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
+     "# the command line names, `project ios build` and `logs`, which run the repository's build scripts or\n"
+     "# `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
+     "# `unclear`, and `discuss`, which record the person's choice or words, `project console`, which\n"
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 3a5e28c2..4f2d08ce 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -5,6 +5,7 @@
+ import re
+ import shutil
+ import subprocess
++import sys
+ import tempfile
+ import unittest
+ from contextlib import redirect_stderr, redirect_stdout
+@@ -774,17 +775,16 @@ def cloned_repository(directory: Path) -> None:
+     git(directory, "clone", "-q", str(directory / "origin.git"), str(directory / "home" / "work" / "repo"))
+ 
+ 
+-class DefaultBranchTests(unittest.TestCase):
+-    """A `.projector.toml` the repository tracks applies from `origin/HEAD`, never from the working copy."""
++class ClonedCase(unittest.TestCase):
++    """A copy of `cloned_repository`, with `HOME` and the state directory inside it."""
+ 
+     def setUp(self) -> None:
+         base, _ = copy_of(cloned_repository)
+         self.base = base.resolve()
+         self.home = self.base / "home"
+         self.repo = self.home / "work" / "repo"
+-        self.environ = {"HOME": str(self.home)}
+-        environment = mock.patch.dict(os.environ, {"HOME": str(self.home),
+-                                                   "XDG_STATE_HOME": str(self.base / "state")})
++        self.environ = {"HOME": str(self.home), "XDG_STATE_HOME": str(self.base / "state")}
++        environment = mock.patch.dict(os.environ, self.environ)
+         environment.start()
+         self.addCleanup(environment.stop)
+ 
+@@ -806,6 +806,10 @@ def push_to_origin(self, text: str) -> None:
+         git(self.base / "origin.git", "fetch", "-q", str(seed), "+main:main")
+         git(self.repo, "fetch", "-q", "origin")
+ 
++
++class DefaultBranchTests(ClonedCase):
++    """A `.projector.toml` the repository tracks applies from `origin/HEAD`, never from the working copy."""
++
+     def test_a_branch_cannot_rewrite_the_policy_the_default_branch_commits(self) -> None:
+         git(self.repo, "switch", "-q", "-c", "feature")
+         write(self.repo / ".projector.toml", '[review]\ngate_checks = ""\n')
+@@ -921,3 +925,123 @@ def runs() -> int:
+             after_index = runs() - before_index
+ 
+         self.assertEqual((0, 1, 1), (warm, after_commit, after_index))
++
++
++class Terminal(StringIO):
++    def isatty(self) -> bool:
++        return True
++
++
++class DestinationTests(ClonedCase):
++    """A destination a committed file sets applies only once you allow its value, in a terminal."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        destinations = mock.patch.object(config_module, "DESTINATIONS", frozenset({"review.username"}))
++        destinations.start()
++        self.addCleanup(destinations.stop)
++        self.push_to_origin('[review]\nusername = "stranger"\n')
++
++    def allow(self, *arguments: str, terminal: bool = True, answer: str = "y\n") -> tuple[int, str, str]:
++        stdout, stderr = (Terminal() if terminal else StringIO()), StringIO()
++        with redirect_stdout(stdout), redirect_stderr(stderr), \
++                mock.patch.object(sys, "stdin", Terminal(answer) if terminal else StringIO(answer)):
++            code = main(["config", "allow", *arguments, "--root", str(self.repo)])
++        return code, stdout.getvalue(), stderr.getvalue()
++
++    def username(self) -> object:
++        return self.merged().setting("review.username")
++
++    def test_a_committed_destination_waits_for_your_approval_of_its_value(self) -> None:
++        with self.assertRaises(config_module.NotAllowed) as refused:
++            self.username()
++        self.assertIn("origin/main:.projector.toml sets review.username = 'stranger'", str(refused.exception))
++        self.assertIn("run `project config allow review.username stranger` in a terminal", str(refused.exception))
++
++        self.assertEqual(69, self.allow("review.username", "stranger", terminal=False)[0])
++        self.assertRaises(config_module.NotAllowed, self.username)
++        self.assertEqual(1, self.allow("review.username", "stranger", answer="n\n")[0])
++        self.assertRaises(config_module.NotAllowed, self.username)
++
++        code, stdout, stderr = self.allow("review.username", "stranger")
++
++        self.assertEqual(0, code, stderr)
++        self.assertIn("origin/main:.projector.toml sets review.username = stranger.", stdout)
++        self.assertEqual("stranger", self.username())
++
++        self.push_to_origin('[review]\nusername = "another"\n')
++        self.assertRaises(config_module.NotAllowed, self.username)
++
++    def test_a_destination_you_wrote_needs_no_approval(self) -> None:
++        write(self.home / "work" / ".projector.toml", '[override.1]\nreview.username = "stranger"\n')
++
++        self.assertEqual("stranger", self.username())
++
++    def test_an_approval_is_listed_with_its_file_and_can_be_removed(self) -> None:
++        self.assertEqual(0, self.allow("review.username", "stranger")[0])
++
++        code, listing, _ = self.allow("--list", terminal=False)
++
++        self.assertEqual(0, code)
++        self.assertIn(f"review.username = stranger  # for {self.repo / '.projector.toml'}, allowed ", listing)
++        self.assertEqual((0, "removed review.username = stranger\n"),
++                         self.allow("--remove", "review.username", "stranger", terminal=False)[:2])
++        self.assertRaises(config_module.NotAllowed, self.username)
++        self.assertEqual(1, self.allow("--remove", "review.username", "stranger", terminal=False)[0])
++
++    def test_only_a_destination_can_be_allowed(self) -> None:
++        code, _, stderr = self.allow("review.gate_checks", "ci")
++
++        self.assertEqual(2, code)
++        self.assertIn("review.gate_checks is not a destination", stderr)
++
++
++class PathRuleTests(unittest.TestCase):
++    """`projects.dir` stays in the repository, and only you may send `ios.output` elsewhere."""
++
++    def setUp(self) -> None:
++        self.temporary = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temporary.cleanup)
++        self.home = Path(self.temporary.name).resolve() / "home"
++        self.repo = self.home / "work" / "repo"
++        self.repo.mkdir(parents=True)
++        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
++        environment = mock.patch.dict(os.environ, {"HOME": str(self.home),
++                                                   "XDG_STATE_HOME": str(self.home / "state")})
++        environment.start()
++        self.addCleanup(environment.stop)
++
++    def listing(self) -> tuple[int, str]:
++        stderr = StringIO()
++        with redirect_stdout(StringIO()), redirect_stderr(stderr):
++            code = main(["list", "--root", str(self.repo)])
++        return code, stderr.getvalue()
++
++    def test_projects_dir_outside_the_repository_is_refused_from_every_file(self) -> None:
++        outside = self.home / "elsewhere"
++        outside.mkdir()
++        for path, value in ((self.repo, "../../elsewhere"), (self.repo, str(outside)), (self.home, str(outside))):
++            written = write(path / ".projector.toml", f'[projects]\ndir = "{value}"\n')
++
++            code, stderr = self.listing()
++
++            self.assertEqual(78, code, written)
++            self.assertIn(f"{written} sets projects.dir = '{value}', which resolves to {outside}, outside {self.repo}",
++                          stderr)
++            written.unlink()
++
++    def test_ios_output_outside_the_checkout_comes_only_from_your_own_file(self) -> None:
++        from projector.cli import ios_output
++
++        outside = self.home / "Desktop" / "crashes"
++        repo_file = write(self.repo / ".projector.toml", f'[ios]\noutput = "{outside}"\n')
++        with self.assertRaises(ConfigError) as refused:
++            ios_output(load(self.repo), self.repo)
++        self.assertIn(f"{repo_file} sets ios.output = '{outside}'", str(refused.exception))
++
++        repo_file.write_text('[ios]\noutput = "build/crashes"\n')
++        self.assertEqual(Path("build/crashes"), ios_output(load(self.repo), self.repo))
++
++        repo_file.unlink()
++        write(self.home / ".projector.toml", f'[ios]\noutput = "{outside}"\n')
++        self.assertEqual(outside, ios_output(load(self.repo), self.repo))
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 287119db..70e5763b 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -68,6 +68,8 @@
+     ("project upgrade status", "ask", "none"),
+     ("project config set review.allow_approve true", "ask", "none"),
+     ("project config unset review.allow_approve", "ask", "none"),
++    ("project config allow agent.relay github:acme/agents", "ask", "none"),
++    ("project config allow --list", "ask", "none"),
+     ("project init --root .", "ask", "none"),
+     ("project config set review.allow_approve true --root=.", "ask", "none"),
+     ("project list --root=. --projects-dir=plans", "allow", "allow"),
+@@ -120,7 +122,7 @@
+ # What the Codex rules leave to Codex's usual approval: each command with the
+ # subcommands left out, or None where the whole command is.
+ CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None, "agent": {"key"},
+-                  "config": {"set", "unset"},
++                  "config": {"set", "unset", "allow"},
+                   "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},
+                   "review": {"gate"},
+                   "site": {"build", "serve"}, "ios": {"build", "logs"}}

@@ -1,0 +1,112 @@
+{
+ "version": 1,
+ "name": "Configuration trust",
+ "project": "config-trust",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 547,
+  "title": "Ask before using a destination a repository commits, and keep plan and log paths inside the checkout",
+  "head": "6e6ba5b06a4ff27e7d5206821e950c9faf30b2b5",
+  "headRef": "config-trust/destinations",
+  "base": "5b0a5945a279ed8c1e5902b2b87e5c0188d34482",
+  "baseRef": "config-trust/override",
+  "basePr": 546
+ },
+ "overview": {
+  "summary": [
+   "Projector reads repository configuration to choose where it stores plans and diagnostic files, and future integrations will use it to choose remote destinations. This layer adds consent for destinations committed by a repository, so checking out a repository cannot silently approve sending data to its chosen address.",
+   "Approvals belong to this machine and match one configuration key and value. Configuration you supply outside the committed repository can override that choice without approval. The destination registry is empty in this layer; later integrations will register their keys.",
+   "The change also rejects plan directories outside the checkout and restricts configured diagnostic output to the checkout or Projector state directory, except when the output comes from your personal configuration. One review finding remains: relative diagnostic output is checked against the checkout but written relative to the command’s working directory."
+  ],
+  "cards": [
+   {
+    "title": "Verification",
+    "html": "<ul class=\"tight\"><li>The exact-head CI check passed.</li><li>All 299 focused configuration, permissions, iOS, and project tests passed.</li><li>Both plugin validators, 268 hook tests, hook type-checking, and whitespace checks passed.</li><li>A temporary repository and synthetic crash report reproduced the diagnostic path escape without accessing a device.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "approval-policy",
+   "title": "Require consent for committed destinations",
+   "kicker": "Source-aware configuration and machine-local approvals",
+   "intro": [
+    "A destination is a configuration key that can send data somewhere outside the repository. The shared configuration reader now refuses a registered destination when its effective value comes from a committed file and this machine has not approved that key and value.",
+    "The approval record stores the value and source for inspection, while matching consent by key and value. Changing a committed value requires another approval. The same reader also provides the path check used by plan and diagnostic commands."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "No production destination key is registered yet. The tests temporarily register a key to exercise the consent boundary."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds the approval store, source checks, and resolved-path confinement helper."
+    },
+    {
+     "path": "tests/test_config.py",
+     "note": "Exercises terminal consent, value changes, overrides, approval removal, and path restrictions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused test run passed the committed-source refusal, interactive approval, changed-value refusal, and outer-file override cases."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "command-boundaries",
+   "title": "Expose approval and enforce local paths",
+   "kicker": "Terminal confirmation and output-path callers",
+   "intro": [
+    "The new config allow command lets you inspect or remove approvals without a prompt. Creating an approval requires a terminal and confirmation, so an unattended command cannot grant repository-selected destinations access.",
+    "Plan discovery checks projects.dir against the checkout. iOS diagnostic commands share a new output helper that checks repository-selected paths before writing. The helper must return the same resolved path it checked, including when you run the command from a subdirectory."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds approval commands and applies confinement to plan and diagnostic paths.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 1215,
+       "text": "Relative diagnostic output can escape the new restriction: from repo/sub, ios.output=reports is checked as repo/reports, but the writer follows sub/reports. A symlink there can redirect crash reports outside the checkout. Resolve and return the same absolute path that confinement checks."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "permissions-docs",
+   "title": "Document and protect the approval action",
+   "kicker": "Host permission policy and user guidance",
+   "intro": [
+    "Approving a destination authorizes future data transfer, so Claude Code asks for that command even though ordinary configuration inspection remains available. Codex does not add an automatic allowance for it.",
+    "The CLI documentation explains approval scope, terminal confirmation, revocation, and path limits. The implementation plan records the destination registry and confinement decisions while the wider configuration-trust project remains in progress."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds the approval command to the terminal confirmation policy."
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Checks that generated permissions preserve the approval boundary."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Explains consent commands and which configured paths may leave the checkout."
+    },
+    {
+     "path": "docs/projects/config-trust/readme.md",
+     "note": "Records the approval and local-path implementation decisions."
+    }
+   ]
+  }
+ ]
+}
