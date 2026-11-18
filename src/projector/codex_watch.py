@@ -564,7 +564,10 @@ def push_command(command: str) -> bool:
         if not group:
             continue
         name, rest = Path(group[0]).name, group[1:]
-        if name == "gh" and (rest[:1] == ["stack"] or rest[:2] == ["pr", "create"]):
+        if "--help" in rest or "-h" in rest:
+            continue
+        if name == "gh" and ((rest[:1] == ["stack"] and rest[1:2] in (["submit"], ["push"], ["sync"], ["link"]))
+                             or rest[:2] == ["pr", "create"]):
             return True
         if name == "git":
             while rest:
@@ -609,7 +612,7 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
     text = tool_output(event) if name == "PostToolUse" else None
     if text is not None:
         config = load_config(Path(cwd))
-        if config.setting("watch.auto_start") is not False and watch.add_from_output(root, session, text)[2]:
+        if config.setting("watch.auto_start") is not False and watch.add_from_output(root, session, text, Path(cwd))[2]:
             agents.register_subscriber(root, session, Path(cwd), now, config)
     consumed, lines = acknowledge(folder, session, event.get("prompt", ""), now) if name == "UserPromptSubmit" else (False, [])
     if record.get("enabled") and has_work(folder):

@@ -14,6 +14,7 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 
 const GIT_OPTIONS_WITH_VALUES = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env'])
 const WRAPPERS = new Set(['command', 'env', 'exec', 'nohup', 'time'])
+const STACK_PUSHES = new Set(['submit', 'push', 'sync', 'link'])
 
 /** The words of each simple command in a command line, as the shell would split and unquote them. */
 function commandsOf(command: string): string[][] {
@@ -80,8 +81,10 @@ function commandsOf(command: string): string[][] {
 
 /**
  * Whether a command line runs `git push`, `gh pr create`, or a `gh stack`
- * command, whose output can name a pull request the session opened or pushed
- * to. A command only mentioned, as in `echo git push`, does not count.
+ * command that pushes or opens pull requests, whose output can name a pull
+ * request the session opened or pushed to. A command only mentioned, as in
+ * `echo git push`, or asked for its help, as in `gh stack submit --help`,
+ * does not count.
  */
 export function isPushCommand(command: string): boolean {
   return commandsOf(command).some(words => {
@@ -89,7 +92,10 @@ export function isPushCommand(command: string): boolean {
     while (at < words.length && (ASSIGNMENT.test(words[at] ?? '') || WRAPPERS.has(words[at] ?? ''))) at += 1
     const name = (words[at] ?? '').split('/').pop()
     const rest = words.slice(at + 1)
-    if (name === 'gh') return rest[0] === 'stack' || (rest[0] === 'pr' && rest[1] === 'create')
+    if (rest.includes('--help') || rest.includes('-h')) return false
+    if (name === 'gh') {
+      return (rest[0] === 'stack' && STACK_PUSHES.has(rest[1] ?? '')) || (rest[0] === 'pr' && rest[1] === 'create')
+    }
     if (name !== 'git') return false
     for (let next = 0; next < rest.length; next += 1) {
       const word = rest[next] ?? ''

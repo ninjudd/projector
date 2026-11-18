@@ -1274,8 +1274,8 @@ def add_watch_parser(subcommands) -> None:
     add = command("add", "subscribe the session to fix or review a pull request, or to review a repository's")
     add.add_argument("target", nargs="?", help="owner/repo#number, a pull request URL, or, for review, owner/repo")
     add.add_argument("--from-output", metavar="FILE",
-                     help="subscribe to fix each pull request that a command's output shows it opened or pushed to; "
-                          "- reads standard input")
+                     help="subscribe to fix each open pull request that a command's output shows it opened or pushed "
+                          "to, in the checkout's origin or a repository the output pushed to; - reads standard input")
     roles(add)
     add.add_argument("--reviewer", help="for review, the login the reviews post as (default: review.username, then "
                                         "the account gh is signed in as)")
@@ -1723,7 +1723,7 @@ def run_watch(arguments: argparse.Namespace) -> int:
                 report_added(root, session, [], json_output,
                              "watch.auto_start is false, so the output subscribes the session to nothing")
                 return 0
-            added, problems, subscribed = watch.add_from_output(root, session, text)
+            added, problems, subscribed = watch.add_from_output(root, session, text, Path.cwd())
             if subscribed:
                 agents.register_subscriber(root, session, Path.cwd(), time.time(), here)
             for problem in problems:

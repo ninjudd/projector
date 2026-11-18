@@ -3449,8 +3449,21 @@ It finds each pull request URL, as `gh pr create` prints one, and each
 `<old>..<new>  <source> -> <branch>` lines. For each pushed branch, it asks
 GitHub for the open pull request whose head is that branch, one REST
 request, and subscribes to it. A branch with no open pull request adds
-nothing, and a pull request the session drops from `fix` is skipped. A
-lookup that fails is named on stderr, and the command still exits 0. When
+nothing, and a pull request the session drops from `fix` is skipped.
+
+A URL counts only when its repository is one the output shows a push to,
+in a `To <remote>` line, or a pull request opened in, in the
+`Creating pull request for <branch> into <base> in <owner>/<repo>` line
+that `gh pr create` prints, or when it is the origin of the current
+directory's checkout. A link to any other repository adds nothing, so
+output that quotes another project's pull request subscribes the session
+to none. For each URL left whose pull request the session does not
+already subscribe to, it asks GitHub for that pull request, one REST
+request, and subscribes only when it is open. An example URL in help text
+then adds nothing, rather than a subscription that the next pass removes
+with a `MISSING` line.
+
+A lookup that fails is named on stderr, and the command still exits 0. When
 `watch.auto_start` is `false`, it adds nothing and says so.
 
 ### End or exclude a subscription

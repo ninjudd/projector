@@ -69,8 +69,8 @@ the session to fix it, every layer of a stack included. `review-pr`
 subscribes the session to review the pull request it reviews, and
 `review-repo` subscribes it to review the repository. In Claude Code,
 Projector's mod also subscribes the session to fix each pull request that a
-`git push`, `gh pr create`, or `gh stack` command in the session opened or
-pushed to, inside a skill or not. A subagent's commands carry its session's
+`git push`, `gh pr create`, or `gh stack submit`, `push`, `sync`, or `link`
+command in the session opened or pushed to, inside a skill or not. A subagent's commands carry its session's
 id, so a pull request that a subagent opens subscribes the session it
 belongs to. One background process per machine, the watch daemon, polls
 every subscribed pull request and sends each finding, conflict, CI failure,
@@ -556,11 +556,13 @@ the daemon's events into the conversation, so no watcher runs in it:
   a new id, as `/clear` moves it, the mod renews the new id at the next
   check, so a skill that subscribes the session there finds the mod
   delivering its events.
-- **After a Bash command that runs `git push`, `gh pr create`, or a
-  `gh stack` command**, the mod passes the command's output to
-  `project watch add --from-output -`. The CLI subscribes the session to fix
-  each pull request that the output shows it opened or pushed to, and adds
-  nothing when `watch.auto_start` is `false`. The command's result does not
+- **After a Bash command that runs `git push`, `gh pr create`, or
+  `gh stack submit`, `push`, `sync`, or `link`**, other than a run that
+  asks for its help with `--help` or `-h`, the mod passes the command's
+  output to `project watch add --from-output -`. The CLI subscribes the
+  session to fix each open pull request that the output shows it opened or
+  pushed to, in the checkout's repository or one the output pushed to, and
+  adds nothing when `watch.auto_start` is `false`. The command's result does not
   wait for it.
 
 Each event line names what to do, such as

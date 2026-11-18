@@ -309,15 +309,17 @@ describe('isPushCommand', () => {
       'GIT_TRACE=1 git push',
       'env GH_TOKEN=x gh pr create --draft --title "Add a thing" --body-file b.md',
       '/usr/bin/git push --force-with-lease',
-      'gh stack submit',
+      'gh stack submit --auto',
       'npm test; gh stack push',
+      'gh stack sync',
+      'gh stack link 12 13',
       '(cd sub && git push)',
     ]) {
       expect([command, isPushCommand(command)]).toEqual([command, true])
     }
   })
 
-  test('leaves out a command that only mentions one, or runs another subcommand', () => {
+  test('leaves out a command that only mentions one, runs another subcommand, or asks for help', () => {
     for (const command of [
       'echo git push',
       "git commit -m 'git push later'",
@@ -329,6 +331,14 @@ describe('isPushCommand', () => {
       'grep -r "gh pr create" skills',
       'my-git push',
       '# git push',
+      'gh stack view',
+      'gh stack checkout 12',
+      'gh stack add next-layer',
+      'gh stack checkout --help',
+      'gh stack submit -h',
+      'gh stack help submit',
+      'git push --help',
+      'gh pr create --help',
     ]) {
       expect([command, isPushCommand(command)]).toEqual([command, false])
     }

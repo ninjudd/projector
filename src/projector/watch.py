@@ -80,6 +80,7 @@ LINE = re.compile(
 PULL_URL = re.compile(rf"^https?://github\.com/(?P<repo>{REPO})/pull/(?P<number>[1-9][0-9]*)(?:[/?#].*)?$")
 PULL_URL_IN_TEXT = re.compile(rf"https?://github\.com/({REPO})/pull/([1-9][0-9]*)")
 PUSH_REMOTE = re.compile(r"^To (\S+)$")
+CREATED_IN = re.compile(rf"^Creating (?:draft )?pull request for \S+ into \S+ in ({REPO})$")
 PUSH_UPDATE = re.compile(r"^\s*\+?\s*[0-9a-f]{4,}\.\.\.?[0-9a-f]{4,}\s+\S+\s+->\s+(\S+)")
 GITHUB_REMOTE = re.compile(rf"github\.com[:/]({REPO}?)(?:\.git)?/?$")
 STATUS_LINE = re.compile(r"^HTTP/\S+\s+([0-9]{3})\b")
@@ -488,11 +489,13 @@ def stream(root: Path, session: str, emit: Callable[[str], None], ensure: Callab
 
 # Subscriptions from a command's output
 
-def pushed(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, str]]]:
-    """The pull requests a command's output links, as `gh pr create` prints one, and each branch a
-    `git push` to GitHub updated, as `(owner/repo, branch)`."""
+def pushed(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, str]], set[str]]:
+    """The pull requests a command's output links, as `gh pr create` prints one, each branch a `git push`
+    to GitHub updated, as `(owner/repo, branch)`, and each repository, lowercased, that the output shows a
+    push to or a pull request opened in."""
     pulls = [(repo, int(number)) for repo, number in PULL_URL_IN_TEXT.findall(text)]
     branches = []
+    targets = set()
     remote: Optional[str] = None
     for line in text.splitlines():
         line = line.rstrip()
@@ -500,12 +503,17 @@ def pushed(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, str]]]:
         if to:
             found = GITHUB_REMOTE.search(to.group(1))
             remote = found.group(1) if found else None
+            if remote:
+                targets.add(remote.lower())
             continue
+        created = CREATED_IN.match(line)
+        if created:
+            targets.add(created.group(1).lower())
         update = PUSH_UPDATE.match(line)
         if update and remote:
             branch = update.group(1).removeprefix("refs/heads/")
             branches.append((remote, branch))
-    return pulls, branches
+    return pulls, branches, targets
 
 
 def unique(pairs: list[tuple[str, object]]) -> list[tuple[str, object]]:
@@ -518,13 +526,40 @@ def unique(pairs: list[tuple[str, object]]) -> list[tuple[str, object]]:
     return kept
 
 
-def add_from_output(root: Path, session: str, text: str) -> tuple[list[str], list[str], bool]:
+def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tuple[list[str], list[str], bool]:
     """Subscribe the session to `fix auto` on each pull request the output opened or pushed to, and answer
-    the lines added, a problem for each branch whose pull request could not be looked up, and whether the
-    session now subscribes to any of those pull requests, through a line added or one it already had."""
-    pulls, branches = pushed(text)
-    found: list[tuple[str, object]] = list(pulls)
+    the lines added, a problem for each pull request that could not be looked up, and whether the session
+    now subscribes to any of those pull requests, through a line added or one it already had.
+
+    A linked pull request counts only in a repository the output pushed to or opened a pull request in, or
+    the checkout's origin, so a link to another repository, or an example in help text, adds nothing. Each
+    one the session does not already hold must be open on GitHub, which one REST request confirms."""
+    pulls, branches, targets = pushed(text)
+    if any(repo.lower() not in targets for repo, _ in pulls):
+        with contextlib.suppress(review.ReviewError):
+            targets.add(review.origin_repo(checkout).lower())
+    lines = [line for line in subscriptions(session_folder(root, session)) if line.role == "fix"]
+    held = {(line.repo.lower(), line.number) for line in lines if not line.excluded}
+    dropped = {(line.repo.lower(), line.number) for line in lines if line.excluded}
+    found: list[tuple[str, object]] = []
     problems = []
+    for repo, number in unique([(repo, number) for repo, number in pulls if repo.lower() in targets]):
+        key = (repo.lower(), number)
+        if key in dropped:
+            continue
+        if key not in held:
+            result = run_gh(["api", f"repos/{repo}/pulls/{number}"])
+            try:
+                pull = json.loads(result.stdout) if result.returncode == 0 else None
+            except ValueError:
+                pull = None
+            if not isinstance(pull, dict):
+                problems.append(f"could not look up {repo}#{number}: "
+                                f"{(result.stderr or result.stdout).strip() or 'gh failed'}")
+                continue
+            if str(pull.get("state", "")).lower() != "open":
+                continue
+        found.append((repo, number))
     for repo, branch in unique(branches):
         owner = repo.split("/")[0]
         result = run_gh(["api", f"repos/{repo}/pulls?head={quote(f'{owner}:{branch}', safe=':')}&state=open"])
