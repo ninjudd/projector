@@ -1,6 +1,6 @@
 ---
-status: ready
-priority: next
+status: in-progress
+priority: now
 ---
 
 # Relay through an S3 bucket
@@ -346,3 +346,17 @@ observed delivery time in this plan.
   (§ 2.1 step 2). When credentials stop working, the daemon posts one local
   notice to the location's inbox naming the fix, and withdraws it once
   requests succeed again (§ 2.1 step 8).
+
+## 8. What building settled
+
+- **The transport has four operations.** `Transport` in `relay.py` has
+  `snapshot(prefixes)`, `check(ref, version)`, `read(handle)`, and
+  `apply(items)`. `check` is the examine step's question before a read: Git
+  answers it from the commit's tree and S3 from the listing's size, and a
+  record it refuses never counts toward `OPEN_LIMIT`, as a refused tree
+  never did. `apply` answers each item's outcome: whether it landed, what
+  the store said, whether its lease failed, and the version it left.
+- **`GitTransport` moves the tracking refs itself.** It runs the
+  `update-ref` that follows a push inside `apply`, so the job's bookkeeping
+  after a push names no Git command. `Job.open` still reads a Git blob, for
+  the tests that open a record on the bare repository.
