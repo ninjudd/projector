@@ -5,17 +5,22 @@ import {
   ASK_DESCRIPTION,
   ASK_SCHEMA,
   askArguments,
+  entriesStoreOf,
+  entryArguments,
   forMainLoop,
+  isEntry,
   isShownAt,
   isSnoozedAt,
   liveAgent,
   needsDelivery,
   proposalOf,
   quoteOf,
+  quotesIn,
   readPrompt,
   relayNote,
   replyNote,
   reportArguments,
+  repoOf,
   REQUEST_DESCRIPTION,
   REQUEST_SCHEMA,
   requestArguments,
@@ -41,7 +46,7 @@ import {
   wokeBetween,
   type Proposal,
 } from './inbox'
-import type { Item, MessageItem, Notice, Question, Request } from './types'
+import type { Entry, Item, MessageItem, Notice, Question, Request } from './types'
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
 
@@ -172,6 +177,28 @@ test('a quote’s reference picks its item among those that share its subject, t
   // A reference to an item already resolved settles nothing, rather than falling through to the other.
   const resolved = question({ ...newer, answer: { letter: 'a', text: 'On track', answeredAt: NOW } })
   expect(readPrompt('[5] "What is your progress?"\n\nBlocked\n', [older, resolved])).toEqual(none)
+})
+
+test('a quote under a repository inbox reference speaks to no item of the session’s, even one with its subject', () => {
+  const parser = { subject: 'Keep the old parser?', choices: ['Yes', 'No'] }
+  const local = question(parser)
+  const other = request({ ref: '3', number: 3, subject: 'Keep the old parser?' })
+  const none = { answers: [], outcomes: [], replies: [], unclears: [] }
+  // What a peer entry's Discuss fills, with an option, a reply, or I don't understand typed under it.
+  expect(readPrompt('[r1] "Keep the old parser?"\n\nYes', [local])).toEqual(none)
+  expect(readPrompt('[r1] "Keep the old parser?"\n\nTell them to wait', [local])).toEqual(none)
+  expect(readPrompt('[r1] "Keep the old parser?"\n\nI don\'t understand', [local])).toEqual(none)
+  expect(readPrompt('[r12] "Keep the old parser?"\n\nDone', [other])).toEqual(none)
+  // A drawer that put the subject there for the session's item does not claim the entry's quote either.
+  const drawn: Proposal = { ref: '1', quote: '"Keep the old parser?"', answer: '' }
+  expect(readPrompt('[r1] "Keep the old parser?"\n\nYes', [local], [drawn])).toEqual(none)
+  // Beside the session's own quote, the entry's quote ends what the item's says, in either order.
+  const answered = { ...none, answers: [{ question: local, letter: 'b' }] }
+  expect(readPrompt('[1] "Keep the old parser?"\n\nNo\n\n[r1] "Keep the old parser?"\n\nYes', [local])).toEqual(answered)
+  expect(readPrompt('[r1] "Keep the old parser?"\n\nYes\n\n[1] "Keep the old parser?"\n\nNo', [local])).toEqual(answered)
+  expect(quotesIn('[r1] "Keep the old parser?"', [local])).toEqual([
+    { at: 0, end: 27, quote: '"Keep the old parser?"', ref: 'r1' },
+  ])
 })
 
 test('a quote whose reference was edited out, or names no item with its subject, speaks by its subject', () => {
@@ -1065,4 +1092,52 @@ test('a message you sent waits for a deliverer until DISCUSS is delivered, whate
   // A message item owes nothing but its messages: it has no answer to send.
   const delivered = { delivered: true as const, answeredAt: NOW }
   expect(needsDelivery({ ...about, answer: delivered, messages: [{ ...said, deliveredAt: NOW }] }, NOW)).toBe(false)
+})
+
+const entry = (fields: Partial<Entry> = {}): Entry => ({
+  scope: 'repo',
+  ref: 'r1',
+  id: 'u-11111111111111111111111111111111',
+  role: 'incoming',
+  kind: 'question',
+  subject: 'Keep the old parser?',
+  choices: ['Yes', 'No'],
+  line: "jason's agent lexer asks: Keep the old parser?",
+  state: 'open',
+  peer: 'jason',
+  opened_at: NOW,
+  ...fields,
+})
+
+test('a press on a peer’s entry records it as yours, with --as user, and a press on your own entry needs no --as', () => {
+  const tail = ['--session', 's1', '--json']
+  const yours = ['--as', 'user', ...tail]
+  expect(entryArguments(entry(), 's1', { kind: 'answer', letter: 'a' })).toEqual(['inbox', 'answer', 'r1.a', ...yours])
+  const request = entry({ kind: 'request', choices: undefined })
+  expect(entryArguments(request, 's1', { kind: 'done' })).toEqual(['inbox', 'done', 'r1', ...yours])
+  expect(entryArguments(request, 's1', { kind: 'done', choice: 'Shipped' })).toEqual([
+    'inbox',
+    'done',
+    'r1',
+    '--text=Shipped',
+    ...yours,
+  ])
+  expect(entryArguments(request, 's1', { kind: 'decline' })).toEqual(['inbox', 'decline', 'r1', ...yours])
+  expect(entryArguments(entry(), 's1', { kind: 'dismiss' })).toEqual(['inbox', 'dismiss', 'r1', ...yours])
+  // A snooze sends the peer nothing, and nor does anything done to your own entries.
+  expect(entryArguments(entry(), 's1', { kind: 'snooze', minutes: 60 })).toEqual(['inbox', 'snooze', 'r1', '--for', '60', ...tail])
+  const sent = entry({ role: 'sent', ref: 'r2' })
+  expect(entryArguments(sent, 's1', { kind: 'close' })).toEqual(['inbox', 'close', 'r2', ...tail])
+  expect(entryArguments(sent, 's1', { kind: 'dismiss' })).toEqual(['inbox', 'dismiss', 'r2', ...tail])
+})
+
+test('the repository inbox lives under the state directory, and a registration names its repository', () => {
+  const env = (name: string) => (name === 'HOME' ? '/home/ada' : undefined)
+  expect(entriesStoreOf(env, 'Acme/App')).toBe('/home/ada/.local/state/projector/repo-inbox/acme/app')
+  expect(repoOf('{"schema_version": 1, "repo": "acme/app"}')).toBe('acme/app')
+  expect(repoOf('{"schema_version": 1}')).toBeUndefined()
+  expect(repoOf('{"repo": "../../etc"}')).toBeUndefined()
+  expect(repoOf(undefined)).toBeUndefined()
+  expect(isEntry(entry())).toBe(true)
+  expect(isEntry(question())).toBe(false)
 })

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional
 from unittest import mock
 
-from projector import cli, console, inbox, watch
+from projector import cli, console, inbox, repo_inbox, watch
 from projector.inbox import write_json
 
 SOURCE = Path(cli.__file__).resolve().parents[1]
@@ -213,6 +213,56 @@ class Recording(ConsoleCase):
             self.press("1", "enter")
 
         self.assertEqual([("codex-session", "1")], self.woken)
+
+
+class RepositoryInbox(ConsoleCase):
+    """A session registered in `acme/app`, whose repository inbox holds a peer's question, an item its agent sent,
+    and the peer's reply to it."""
+
+    SENT = "u-" + "1" * 32
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.claude("s1")
+        write_json(self.folder("s1") / "agent.json", {"schema_version": 1, "name": "fixer", "repo": "acme/app"})
+        common = {"schema_version": 1, "location": "acme/app", "sent_at": int(self.clock.now * 1000)}
+        repo_inbox.mirror(self.root, "acme/app", {**common, "id": "u-" + "2" * 32, "kind": "question",
+                                                  "subject": "Keep the old parser?", "detail": "It is slower.",
+                                                  "choices": ["Yes", "No"], "from_name": "lexer",
+                                                  "from_host": "claude"},
+                          role="incoming", peer="jason", key_id="a" * 16, now=self.clock.now)
+        repo_inbox.mirror(self.root, "acme/app", {**common, "id": self.SENT, "kind": "request",
+                                                  "subject": "What is your progress?", "detail": "", "sent": True,
+                                                  "to": "a" * 16, "from": "s1", "from_host": "claude"},
+                          role="sent", peer="jason", key_id="b" * 16, now=self.clock.now)
+        repo_inbox.mirror(self.root, "acme/app", {**common, "id": "u-" + "3" * 32, "answers": self.SENT,
+                                                  "subject": "What is your progress?", "outcome": "reply",
+                                                  "text": "Half done", "by": "user", "closes": False},
+                          role="reply", peer="jason", key_id="a" * 16, now=self.clock.now)
+
+    def test_each_entry_shows_by_its_role_and_an_option_records_the_users_answer_with_no_line_to_the_session(
+            self) -> None:
+        responded = []
+        with mock.patch.object(repo_inbox, "sealing_key"), mock.patch.object(repo_inbox.config, "peers"), \
+                mock.patch.object(repo_inbox, "respond", side_effect=lambda *args, **options: responded.append(
+                    (args[5], args[6], options["by"], options["letter"])) or {}):
+            self.open_entry("s1", "repo:r1")
+            screen = self.screen()
+            self.press("1")
+
+        self.assertIn("- jason's agent lexer asks: Keep the old parser?", screen)
+        self.assertIn("It is slower.", screen)
+        self.assertIn("- you requested of jason: What is your progress?", screen)
+        self.assertIn("- jason replied: Half done", screen)
+        self.assertEqual([("r1", "answer", "user", "a")], responded)
+        self.assertEqual([], inbox.load_items(inbox.session_dir("s1")))
+        self.assertEqual([], self.woken)
+
+    def test_a_sent_items_drawer_lists_its_replies_and_offers_close(self) -> None:
+        self.open_entry("s1", "repo:r2")
+
+        self.assertIn("jason replied: Half done", self.screen().split("you requested of jason", 1)[1])
+        self.assertIn("6: Close", self.screen())
 
 
 class Messages(ConsoleCase):

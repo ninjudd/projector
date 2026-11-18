@@ -178,6 +178,40 @@ export type MessageItem = Posted & {
 
 export type Item = Question | Notice | Request | MessageItem
 
+/**
+ * An entry of the repository inbox, as `project inbox list --json` gives it
+ * with `scope: "repo"`: an item a peer's agent posted to you, the copy of one
+ * your agent sent a peer, or a peer's reply to it. Its `ref` is `r` and a
+ * number, such as `"r3"`, and `line` is how it reads.
+ */
+export type Entry = {
+  scope: 'repo'
+  ref: string
+  id: string
+  role: 'incoming' | 'sent' | 'reply'
+  /** An incoming or sent item's kind; a reply has none. */
+  kind?: 'question' | 'request' | 'notice'
+  subject: string
+  detail?: string
+  /** A question's answers, the recommendation first, or a request's options. */
+  choices?: string[]
+  follow_up?: string
+  /** A reply's text. */
+  text?: string
+  line: string
+  state: 'open' | 'snoozed' | 'closed' | 'replied'
+  /** Your name for the peer it is from or to. */
+  peer: string | null
+  /** A sent item's replies, by reference. */
+  replies?: string[]
+  /** The sent item a reply answers, by ID. */
+  answers?: string
+  /** When this machine opened it, in milliseconds. */
+  opened_at: number
+  /** When a snooze set on any of your machines ends, in milliseconds; `state` says `snoozed` until then. */
+  snoozed_until?: number
+}
+
 /** An item whose answer or outcome goes back to the agent that posted it. */
 export type Answerable = Question | Request
 
@@ -229,6 +263,8 @@ declare module 'claude-code' {
       panelOpenFiles: { drawer: string; paths: string[] } | null
       /** The session's inbox, as the panel last read it. */
       panelInbox: Item[]
+      /** The repository inbox of the repository the session is registered in, as the panel last read it. */
+      panelEntries: Entry[]
       /** The sections of pull requests and the kinds of item collapsed to one line, from the header's counts. */
       panelCollapsed: Section[]
       /** The answers the panel is delivering, by reference. */

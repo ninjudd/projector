@@ -720,6 +720,50 @@ def dismiss(root: Path, repo: str, cwd: Path, key: relay.Key, ref: str, now: flo
     return cleared
 
 
+# What a command acts on
+
+def repository(root: Path, session: Optional[str]) -> tuple[Optional[str], Path]:
+    """The repository whose inbox a command or the console reads, with the checkout its changes are queued from:
+    the one the session's registration names, or else the working directory's `origin`."""
+    found = agents.record(root, session) if session else None
+    if found and found.get("repo"):
+        cwd = Path(found["cwd"]) if found.get("cwd") and Path(found["cwd"]).is_dir() else Path.cwd()
+        return found["repo"], cwd
+    return agents.checkout(Path.cwd()).get("repo"), Path.cwd()
+
+
+def sealing_key() -> relay.Key:
+    key, off = relay.command_key()
+    if key is None:
+        raise RepoInboxError(f"the relay is off on this machine, so nothing can reach a peer: {off}")
+    return key
+
+
+def respond_for(root: Path, session: str, ref: str, outcome: str, *, letter: Optional[str] = None,
+                text: Optional[str] = None, now: float) -> dict:
+    """Respond to an incoming entry as the user, as the console and the panel do, in the session's repository."""
+    repo, cwd = repository(root, session)
+    if not repo:
+        raise RepoInboxError(f"session {session} works in no repository with a GitHub origin")
+    return respond(root, repo, cwd, sealing_key(), config.peers(), ref, outcome, by="user", letter=letter,
+                   text=text, session=session, registration=agents.record(root, session), now=now)
+
+
+def change_for(root: Path, session: str, ref: str, command: str, now: float, minutes: int = 0) -> dict:
+    """Dismiss, snooze, close, or reopen an entry of the session's repository, as the console does."""
+    repo, cwd = repository(root, session)
+    if not repo:
+        raise RepoInboxError(f"session {session} works in no repository with a GitHub origin")
+    key = sealing_key()
+    if command == "dismiss":
+        return dismiss(root, repo, cwd, key, ref, now)[0]
+    if command == "snooze":
+        return snooze(root, repo, cwd, key, ref, minutes, now)
+    if command == "close":
+        return close(root, repo, cwd, key, ref, now)
+    return reopen(root, repo, cwd, key, config.peers(), ref, None, now)
+
+
 # Waking the agent that asked
 
 def preview(text: str) -> str:

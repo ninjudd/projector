@@ -130,7 +130,8 @@ describes under "Act on the session's review events", which also gives the
 rules for each subagent. A `PEER MESSAGE` line comes from another agent
 session, not from a pull request: keep it in the main conversation, never
 in a review subagent, and handle it as `../message/SKILL.md` describes
-under "Answer a `PEER MESSAGE` line".
+under "Answer a `PEER MESSAGE` line". So does a `PEER REPLY` line, which
+`../message/SKILL.md` describes under "Answer a `PEER REPLY` line".
 
 Every pushed SHA, including a fix-only SHA, starts a review cycle that ends
 in a verdict published on that SHA, full or incremental. `review-pr` decides

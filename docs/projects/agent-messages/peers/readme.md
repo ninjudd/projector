@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -606,3 +606,93 @@ building:
   state record in either order, as `rebase` drops a state change whose ref
   was deleted, so a snooze that read the entry before a closing response
   cannot push a record for an entry that is gone.
+
+## 8. What the panel and the console settled
+
+The third layer shows the entries where you answer things. Building it
+settled these details:
+
+- **The panel reads the mirror only when it changes.** It reads the
+  session's `agent.json` for its repository, as a file read that starts no
+  process, and lists the repository's mirror beside the session's own
+  store, so `project inbox list` runs only when either changes. `list
+  --json` also names the repository it read. The panel keeps the entries
+  apart from the session's items, so nothing that delivers an item's line
+  ever sees an entry.
+- **An entry's drawer opens in place.** Unlike an open item, it does not
+  take the panel to itself, because an entry owes the session no line and
+  waits on nothing. Its presses are the plan's, with Decline on `6` for a
+  request and Close or Reopen on `6` for an item you sent. The panel's
+  Snooze snoozes for an hour; the console's asks how long, as it does for an
+  item.
+- **Discuss in the console sends a message about the session.** A peer's
+  entry has no item in the session's own inbox to carry a `DISCUSS` line,
+  so the console sends a message item that quotes the entry, as the panel's
+  Discuss puts the quote in the prompt.
+- **The console starts the daemon after a response.** A response is queued
+  for the relay, so the console runs `ensure_daemon` after it records one,
+  as `project inbox` does, rather than only for a Codex session.
+- **The skills route `PEER REPLY` as they route `PEER MESSAGE`.** `fix-pr`,
+  `review-pr`, and `review-repo` keep the line in the main conversation and
+  point to the `message` skill, which gains sections on reaching another
+  person's inbox and on answering a `PEER REPLY` line.
+- **An entry shows the panel as an item does.** The panel draws the
+  entries when they are all it has, with no open pull request and no item of
+  the session's, rather than its tagline. A new entry that waits on you, one
+  neither snoozed nor an item you sent and closed, brings a hidden panel
+  back, as a new item does.
+- **The panel ends an entry's snooze by its own clock.** A snooze ends
+  without a change to any file in the mirror, so the panel hides an entry
+  until its `snoozed_until` by its clock, not by the `state` it last listed.
+  Once it holds an entry listed as snoozed whose snooze has ended, it lists
+  the inbox again for the entry's state now, and the tick that sees the
+  snooze end brings a hidden panel back, as it does for an item. The console
+  needs neither, because it lists the entries every second.
+- **A peer entry's quote speaks to no item of the session's.** The panel's
+  Discuss quotes an entry as `[r1] "<subject>"`, as it quotes an item under
+  its number. The prompt reader takes an `r` reference as an entry's
+  whatever it names, so the quote under it answers, replies to, or marks
+  unclear none of the session's items, even one with the same subject, and
+  it still ends the text under the quote before it.
+
+## 9. Outcome
+
+Shipped, as the three layers § 7 names. Every acceptance criterion in § 4
+has a test. Each check the tests guard was broken by hand, 26 faults in the
+relay and the repository inbox and the `--as user` of the panel and the
+console, and a test failed for each:
+
+| Criterion | Test |
+| --- | --- |
+| You and Jason add each other, and your agent asks | `test_a_question_reaches_every_session_of_the_peer_and_its_sent_copy_both_of_your_machines` in `tests/test_peers.py` |
+| Jason answers `r1.a --as user` | `test_an_answer_from_the_panel_clears_the_peers_item_everywhere_and_reaches_both_of_your_machines` |
+| Jason answers with `--text` and `--as agent` | `test_an_agent_that_answers_for_its_person_is_named_with_its_host_and_model` |
+| A status request, two replies, one repeated | `test_a_status_request_gathers_one_reply_from_each_agent_and_stays_open` |
+| Replies past the limit beside a new item | `test_replies_past_the_limit_are_rejected_while_a_new_item_from_the_same_peer_still_shows` |
+| `--to jason --to amy` | `test_each_peer_named_with_to_gets_an_item_of_its_own` |
+| A Codex asker, two replies, `close`, a third | `test_each_reply_wakes_a_codex_asker_once_until_it_closes_the_item` |
+| A closing answer while the asker is not live | `test_a_closing_answer_clears_the_peers_side_at_once_and_wakes_the_asker_when_it_is_live_again` |
+| `--keep-open` and `--close` | `test_a_peer_can_keep_an_item_open_with_an_answer_or_close_it_with_a_reply` |
+| `close`, then `reopen --text`, and a reopen past the limit | `test_close_withdraws_the_item_and_reopen_shows_it_again_with_its_follow_up_and_wakes_on_the_reply` and `test_a_reopen_past_the_peers_limit_is_rejected` |
+| A snooze on one machine | `test_a_snooze_on_one_machine_hides_the_entry_on_both_until_it_ends` |
+| Replies from sessions on two machines | `test_a_reply_from_a_session_on_one_machine_is_marked_on_the_other_and_not_repeated` |
+| State changed on two machines before either pushes | `test_state_changed_on_two_machines_before_either_pushes_is_merged_rather_than_lost`, with `test_merging_two_state_records_gives_one_record_in_either_order` |
+| A new item while three sessions are live | `test_a_new_item_wakes_none_of_your_sessions_and_shows_in_every_one` |
+| A lapsed asker, and another machine | `test_no_reply_wakes_a_lapsed_asker_or_one_on_another_machine` |
+| Dismissing a reply, and a sent item | `test_dismissing_a_reply_on_one_machine_clears_it_from_the_other` and `test_dismissing_a_sent_item_clears_it_its_replies_and_the_peers_copy` |
+| Only you add Jason | `test_a_person_who_did_not_list_you_rejects_your_item_and_peer_list_names_your_key` |
+| A peer's record out of shape | `test_a_record_that_names_its_own_peer_or_has_a_field_out_of_shape_is_rejected_and_not_shown` |
+| Refs replayed into another repository | `test_a_record_replayed_into_another_repository_is_rejected_there` |
+| A sender that skips its count | `test_a_peer_that_skips_its_own_count_is_held_to_the_limit_by_the_receiver` |
+| A stranger, and a peer posing in `agents/` | `test_a_stranger_reaches_no_inbox_and_no_peer_reaches_your_agents` |
+| Amy and a misdirected reply, and a reply that sorts first | `test_a_reply_is_opened_only_from_the_peer_the_item_went_to_even_when_it_sorts_first` |
+| `peer remove` | `test_a_removed_peers_new_item_is_rejected` |
+| Seven days later | `test_a_full_pass_a_week_later_deletes_every_entry_and_drops_a_deletion_the_peer_made` |
+| `peer add` refusals | `PeerCommandTests` in `tests/test_relay.py` |
+| A planted peer and `config set` | `test_a_peer_planted_in_a_checkout_is_ignored_and_config_set_refuses_to_add_one` |
+| Every object on `origin` | `test_no_object_on_origin_holds_an_items_reply_or_agents_words`, with the first test's check |
+| The panel and the console | `the repository inbox’s entries show by their roles…` in `hooks/panel.test.tsx`, the entry tests in `hooks/inbox.test.ts`, and `RepositoryInbox` in `tests/test_console.py` |
+
+The check by hand that § 4 describes, two people pairing in a disposable
+repository after the merge, is the user's to run, on two people's machines.
+Record its result here once it runs.

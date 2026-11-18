@@ -2575,31 +2575,16 @@ def run_console() -> int:
         raise EnvironmentError("project console needs Python's curses module, which this Python lacks; run "
                                "`project inbox list` and `project watch list` instead") from error
     from . import console
-    return console.main(wake=wake_codex_delivery)
+    return console.main(wake=wake_codex_delivery,
+                        ensure=lambda: watch.ensure_daemon(watch.state_root(), distribution_version(), newer_release))
 
 
-def entry_repository(root: Path, session: Optional[str]) -> tuple[Optional[str], Path]:
-    """The repository whose inbox a command reads, with the checkout it queues from: the one the session's
-    registration names, or else the working directory's `origin`."""
-    found = agents.record(root, session) if session else None
-    if found and found.get("repo"):
-        cwd = Path(found["cwd"]) if found.get("cwd") and Path(found["cwd"]).is_dir() else Path.cwd()
-        return found["repo"], cwd
-    return agents.checkout(Path.cwd()).get("repo"), Path.cwd()
-
-
-def listed_entries(session: Optional[str]) -> list[dict]:
+def listed_entries(session: Optional[str]) -> tuple[Optional[str], list[dict]]:
+    """The repository whose inbox `list` reads, and its entries."""
     root = watch.state_root()
     session = watch.session_id(session, required=False)
-    repo, _ = entry_repository(root, session)
-    return repo_inbox.repo_items(root, session, repo)
-
-
-def sealing_key() -> relay.Key:
-    key, off = relay.command_key()
-    if key is None:
-        raise repo_inbox.RepoInboxError(f"the relay is off on this machine, so nothing can reach a peer: {off}")
-    return key
+    repo, _ = repo_inbox.repository(root, session)
+    return repo, repo_inbox.repo_items(root, session, repo)
 
 
 def post_to_peers(arguments: argparse.Namespace, root: Path, now: float) -> int:
@@ -2614,7 +2599,7 @@ def post_to_peers(arguments: argparse.Namespace, root: Path, now: float) -> int:
     repo = agents.checkout(Path.cwd()).get("repo")
     if not repo:
         raise repo_inbox.RepoInboxError(relay.NO_ORIGIN)
-    key = sealing_key()
+    key = repo_inbox.sealing_key()
     detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
     if command == "ask":
         inbox.check(arguments.question, arguments.recommend, arguments.option, arguments.pr)
@@ -2653,7 +2638,7 @@ def run_repo_inbox(arguments: argparse.Namespace, ref: Optional[str], letter: Op
     if command in ("ask", "tell", "request"):
         return post_to_peers(arguments, root, now)
     session = watch.session_id(arguments.session, required=False)
-    repo, cwd = entry_repository(root, session)
+    repo, cwd = repo_inbox.repository(root, session)
     if not repo:
         raise repo_inbox.RepoInboxError(f"{ref} names a repository inbox entry, and this checkout has no GitHub "
                                         "origin; run it in the repository's checkout, or pass a registered --session")
@@ -2668,7 +2653,7 @@ def run_repo_inbox(arguments: argparse.Namespace, ref: Optional[str], letter: Op
         raise inbox.InboxError(f"`{command}` takes a session's item, not a repository inbox entry such as {ref}")
     if getattr(arguments, "note", None):
         raise UsageError("--note goes with a session's item; put what the peer should read in --text")
-    key = sealing_key()
+    key = repo_inbox.sealing_key()
     if command in RESPONSES and (entry["role"] == "incoming" or command != "dismiss"):
         if arguments.responder is None:
             raise UsageError(f"say who responds to {ref}, a peer's entry: --as user from the panel or console, or "
@@ -2738,9 +2723,9 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         rows = [{**item, "session": name} for name in names
                 for item in inbox.load_items(inbox.session_dir(name))
                 if arguments.all or not item.get("deliveredAt")]
-        entries = listed_entries(session)
+        repo, entries = listed_entries(session)
         if json_output:
-            print(json_text({"items": [*rows, *entries]}))
+            print(json_text({"items": [*rows, *entries], "repo": repo}))
         for row in [] if json_output else rows:
             columns = [row["ref"], row["kind"], item_state(row), row["subject"]]
             print("\t".join(columns if session else [row["session"], *columns]))
