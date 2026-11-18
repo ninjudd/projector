@@ -118,6 +118,17 @@ repository says so to its sender and its reader.
    - The peers inbox becomes the location's inbox. Each entry shows in every
      one of your sessions whose location matches, labeled with its work
      repository when that differs from the session's.
+   - An agent can narrow one item to a repository. `inbox ask`, `request`,
+     and `tell` with `--to` take `--repo <owner>/<repo>`, which may name the
+     sender's own repository or another one. The sealed item carries it as
+     `scope_repo`, and the recipient's machines enforce it. A scoped item shows
+     only in the recipient's sessions whose work repository is `scope_repo`.
+     So the panel there lists it, and agents there see it with
+     `project inbox list`. Elsewhere, it still appears in
+     `project inbox list --relay` and in `project console`, marked `for
+     acme/web`, so an item for a repository the recipient is not working in
+     never disappears. Replies to a scoped item are not scoped: they come back
+     to the asker's sent copy, wherever that shows.
 
    Review coordination is about one repository, so `remote_reviews` still
    matches presence by `repo`.
@@ -134,6 +145,7 @@ repository says so to its sender and its reader.
 | `<root>/visibility.json` | `schema_version: 1` and `repos`, a map from repository slug to `{visibility, read_at}`. |
 | `agent.json` | Adds `location` and `location_source`. `relay` gains the value `waiting`. |
 | Message and peers item | Add `repo` and `repo_visibility`. The receiver checks both against `review.repo_slug`'s shape and the four visibility values `PUBLIC`, `INTERNAL`, `PRIVATE`, and `unknown`. |
+| Peers item | Adds `scope_repo` (optional), the one repository whose sessions show it, in the same shape as `repo`. |
 | `relay/<owner>/<repo>.json` | Adds `permission`, beside `visibility`, for a location other than a work repository. |
 
 ### 2.3 Cross-repository controls
@@ -158,7 +170,8 @@ for a company, the company's repositories share one relay.
 | `src/projector/agents.py` | Resolve and record `location` and `location_source` in `register`, and write `relay: waiting`. List and resolve recipients by location. Add `repo` and `repo_visibility` to messages, the crossing notice to `event_line` and `read_text`, and the send reminder. Read and cache visibility in `<root>/visibility.json`. |
 | `src/projector/watch.py` | Report each location's state, permission, visibility, and the source file of a waiting location in `watch status`. |
 | `src/projector/cli.py` | Add `project agent relay allow <location>`, terminal only, and `project agent relay show [--json]`. `show` prints the location the current directory resolves to, the file that named it, whether it is allowed, and the location's last state. |
-| `src/projector/repo_inbox.py` (from `../peers/readme.md`) | Key the mirror by location. Add `repo` and `repo_visibility` to items, show the work repository on a crossing entry, and add the crossing notice and reminder. |
+| `src/projector/repo_inbox.py` (from `../peers/readme.md`) | Key the mirror by location. Add `repo`, `repo_visibility`, and `scope_repo` to items. Show the work repository on a crossing entry, and add the crossing notice and reminder. Filter a session's entries by `scope_repo`, and list every entry with `--relay`. |
+| `src/projector/inbox.py`, `src/projector/cli.py`, `src/projector/console.py` | Add `--repo` to `inbox ask`, `request`, and `tell` with `--to`, and `--relay` to `inbox list`. The console lists scoped items in every session, marked with their repository. |
 | `src/projector/permissions.py`, `tests/test_permissions.py` | Allow `project agent relay show` in the Codex rules. `relay allow` stays out. |
 | `skills/message/SKILL.md` | Explain that agents and inbox entries are shared by relay location, and add the crossing rule. Never copy a crossing record's private content into a repository that is not private, and never run `relay allow`. |
 | `docs/cli.md` | Document `agent.relay`, where to put it for a repository, a team, or a company, allowing a location, the bare clone, and the controls. |
@@ -213,6 +226,7 @@ temporary checkouts.
 | Relay a message whose `repo_visibility` is `PUBLIC` but whose sender's cache says `PRIVATE`. | The reader uses the record's value, and `read` shows no private notice. Catches a reader that consults a cache it may not have. |
 | Register sessions in the relay's own repository and elsewhere on one machine. | One job runs for the location, from the checkout, and both sessions list each other. Catches two jobs racing on one location. |
 | With existing caches and outboxes from a build without `agent.relay`, upgrade and pass. | Queued changes push, and no file moves. Catches a migration the design said was not needed. |
+| On a team relay, post a peers item to a peer with `--repo acme/web` while the peer has live sessions in `acme/api` and `acme/web`. Then post one with `--repo acme/docs`, where the peer has no session. | The first shows only in the `web` session's list and panel, and `inbox list --relay` in the `api` session shows it marked `for acme/web`. The second shows in no session's list but appears in `--relay` and the console. A reply to either reaches the asker. Catches a scope ignored by the recipient, and a scoped item that vanishes. |
 
 Each test must fail when the fault it names is introduced, as
 `skills/testing.md` asks. After merge, set a team relay over two real
@@ -241,9 +255,6 @@ recommendation the plan is written to.
   Recommended: yes, as § 2.3 explains.
 - **Are the controls in § 2.3 enough?** Recommended: yes for this version,
   with no per-peer or per-repository lists until a team needs one.
-</content>
-</invoke>
-
 ## 7. Decisions
 
 - **The peers inbox is scoped by location.** Decided by the user on
@@ -252,3 +263,7 @@ recommendation the plan is written to.
   differs from the session's (§ 2.1 step 8). With a team relay, the inbox is
   team-wide, which is what a team relay is for. With the default relay, it is
   still one repository's inbox.
+- **An agent can scope one item to a repository.** Decided by the user on
+  2026-11-17. The relay-wide inbox is the default, and `--repo` narrows one
+  item to the sessions of one repository (§ 2.1 step 8), for a question that
+  only makes sense where its subject lives.
