@@ -1,0 +1,73 @@
+{
+ "version": 1,
+ "name": "Reviews in GitHub Actions",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 561,
+  "title": "Plan reviewing pull requests in GitHub Actions",
+  "head": "c38422bec9ecb7929926d282b097c19aa74e61f6",
+  "headRef": "plan-ci-review",
+  "base": "12625138ef55bba429d1e9e24026500049f57501",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector currently needs a live agent session to review a pull request. This plan moves the same review method into GitHub Actions, so ready pull requests can receive a labeled verdict and a review page while no session is running.",
+   "The first version adds a headless command, a composite action, repository setup, and review-account configuration. A separate job publishes summaries with the writing token; the agent receives only a token that can read repository contents and write review results."
+  ],
+  "cards": [
+   {
+    "id": "scope",
+    "title": "Implementation boundary",
+    "html": "<ul><li>The plan is <code>ready</code> with priority <code>now</code>; this pull request adds no runner or workflow implementation.</li><li>Fork pull requests remain excluded, and the existing approval setting stays in force.</li><li>Hosted-runner authentication and API behavior are explicitly deferred to rollout checks.</li><li>App credentials, context repositories, and a self-hosted reviewer follow the initial rollout.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "ci-contract",
+   "title": "Run and publish a review in CI",
+   "kicker": "The execution, identity, persistence, and trust contract for unattended reviews",
+   "intro": [
+    "The new <code>project review run</code> command launches Claude or Codex without interactive prompts, then verifies that the agent published a verdict for the selected head. A composite action restores the prior review record so small pushes can use incremental review, which builds on the last full review.",
+    "A second job receives the agent’s summary as an artifact and publishes it with its own token. Repository setup writes the workflow and reviewer settings, and asks GitHub’s CLI to collect the model credential. Read the eligibility and visibility rules closely: this review found three contradictions that need correction before implementation."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "collapsed": false,
+     "note": "Defines the ready CI-review plan, its runner presets, two-job publication flow, setup command, acceptance tests, and rollout decisions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2,
+       "text": "Project discovery reports this plan as ready/now, and project check passes. Section 7 explicitly decides or defers each listed question."
+      },
+      {
+       "kind": "flag",
+       "line": 161,
+       "text": "The presets deny all gh repo commands, including the visibility read AGENTS.md requires before posting. Narrow the deny rules to repository mutations and allow gh repo view."
+      },
+      {
+       "kind": "flag",
+       "line": 377,
+       "text": "Manual dispatch satisfies the job condition even for a fork or draft pull request. Add a runner or action preflight that enforces the eligibility checks for both triggers before an agent starts."
+      },
+      {
+       "kind": "flag",
+       "line": 444,
+       "text": "Treating an unknown target visibility as nonpublic can admit private context into an actually public review. Require confirmed nonpublic visibility for both repositories before allowing private context."
+      },
+      {
+       "kind": "verify",
+       "line": 600,
+       "text": "The exact-head gate passed plugin validation, 247 hook tests, hook type checking, whitespace checks, and the configured GitHub Actions check. The proposed runner itself remains unimplemented."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
