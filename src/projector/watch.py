@@ -2036,7 +2036,7 @@ def status(root: Path, now: float) -> dict:
             "targets": report.get("targets") or [], "repositories": report.get("repositories") or [],
             "last_pass": report.get("last_pass"), "graphql_points_last_hour": points,
             "relay": report.get("relay") or {"key": {"state": "off", "id": None, "store": None, "error": ""},
-                                              "repositories": {}},
+                                              "peers": {"count": 0, "error": ""}, "repositories": {}},
             "default_branches": report.get("default_branches") or {},
             "deliveries": {name: found for name in session_names(root)
                            if (found := codex_watch.report(session_folder(root, name), now))}}

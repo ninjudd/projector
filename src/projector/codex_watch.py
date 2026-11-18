@@ -242,6 +242,9 @@ def eligible(folder: Path, item: dict) -> bool:
         from .agents import message_file
         path = message_file(folder, key[1]) if len(key) == 2 and isinstance(key[1], str) else None
         return path is not None and path.is_file()
+    if key[:1] == ["reply"]:
+        from .repo_inbox import holds_reply
+        return len(key) == 2 and isinstance(key[1], str) and holds_reply(folder.parent.parent, key[1])
     if len(key) < 3 or not isinstance(key[1], int):
         return False
     repo, number, role = key[:3]

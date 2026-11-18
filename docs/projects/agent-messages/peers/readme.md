@@ -488,3 +488,70 @@ sessions. Record the result in this plan.
 - **A peer's key changes.** Deferred until key rotation exists
   (`../readme.md` § 6). Until then, the peer gives you a new key, and you run
   `peer add <name> <key> --replace`.
+
+## 7. What building settled
+
+The project ships as a three-layer stack: the peers table and
+`project agent peer`, then the repository inbox in the relay and the CLI,
+then the panel, `project console`, and the `message` skill. The repository
+inbox's transport and its commands stay in one layer, because the commands
+are the transport's only callers and neither half is worth shipping alone.
+Building settled these details, which § 2 left open or which changed in the
+building:
+
+- **`--to` needs a registered session.** The sent copy names the asking
+  session, an item carries that session's name, host, model, and branch,
+  and the daemon polls a repository only for its registered sessions, so a
+  session that is not registered could never hear a reply. `--to` refuses
+  one, and refuses `--start`, whose action would be the peer's to run.
+- **Times in records are milliseconds.** `sent_at`, `reopened_at`, and every
+  time in a state record are whole milliseconds, as the inbox's own times
+  are, so a close and a reopen within one second still order.
+- **An ID that is not its ref's reuses `message-id-mismatch`.** The relay
+  has no second reason for the same fault in another namespace.
+- **The mirror keeps states apart from entries.** Each repository's store
+  keeps every state record in `states.json`, by entry ID, rather than in each
+  `r<number>.json`, so a state record that arrives before its entry is kept.
+  The store reads each entry with its state's fields, as § 2.3 describes.
+- **The mirror follows origin.** A job removes an entry whose ref is gone
+  from `origin` and that no outbox item would create, and deletes the
+  entry's state record with it. A sent copy the command mirrored at once is
+  therefore kept until its push lands.
+- **A reply that sorts first waits for the job's end.** A reply whose sent
+  copy the fetch found but no job has opened is examined again once the
+  job's other refs are, and left unopened for a later job when the sent copy
+  lies past the job's limits.
+- **A reopen takes no lease.** Only your machines write an item you sent,
+  and the peer may have deleted it since this machine last pushed it, so
+  `reopen` pushes it with `+` and no `--force-with-lease`. A stale deletion
+  of any repository inbox entry is dropped, and a ref in a peer's namespace,
+  which this machine does not fetch, leaves the cache with it.
+- **A record too large for the relay is refused by its command.** A record
+  that would pass 32 KiB once sealed, such as a reopen whose detail and
+  follow-up each approach 16 KiB, is refused before anything is queued.
+- **Unknown senders keep their public key.** An `other-key` rejection
+  records `key_id`, and the relay cache's `senders` keeps the public key and
+  time of the last 20 keys that are no peer of yours, so `peer list` can
+  print the `peer add` command whole. A public key is not secret.
+- **`peers.json` also keeps `last_opened`.** `peer list` prints when an
+  entry from each peer last opened, which the hourly counts cannot say once
+  they are pruned. The file's lock is `<root>/peers/.lock`.
+- **The daemon reads the peers when the file changes.** `Relay` rereads
+  `agent.peers` and `agent.peer_limit` from `~/.projector.toml` when the
+  file's signature changes, rather than parsing it on every tick.
+  `agent.peer_limit`, like `watch.interval`, is read only from that file.
+- **`reopen` keeps both meanings.** On a session's item it still clears a
+  claimed answer and takes `--claim`; on an entry such as `r5` it takes
+  `--text`.
+- **`list` finds the repository.** With a session, `inbox list` lists the
+  entries of the repository its registration names; without one, those of
+  the working directory's `origin`.
+- **Only a response to an incoming item takes `--as`.** `dismiss` on a sent
+  copy or a reply sends nothing, so it needs no `--as`. `--note` goes only
+  with a session's item.
+- **`show` warns before any peer's words.** It prints the authority notice
+  before an incoming item's detail as well as before a reply's text, since
+  an agent reads both under a standing instruction.
+- **The Codex rules allow `reply` and `close`.** An agent replies and closes
+  under the user's instructions. `answer`, `done`, `decline`, `dismiss`, and
+  `snooze` still ask, even with `--as agent`, as they do on a session's item.

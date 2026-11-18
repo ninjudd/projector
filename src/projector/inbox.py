@@ -56,7 +56,8 @@ HELD_LINES = (*OPEN_LINES, "discuss")
 SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 PULL = re.compile(r"^(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>[1-9][0-9]*)$")
 NUMBER = re.compile(r"^[1-9][0-9]*$")
-REFERENCE = re.compile(r"^(?P<ref>[1-9][0-9]*)(?:\.(?P<letter>[a-z]))?$")
+# A session's item is numbered, such as 3, and a repository inbox entry is numbered after an `r`, such as r3.
+REFERENCE = re.compile(r"^(?P<ref>r?[1-9][0-9]*)(?:\.(?P<letter>[a-z]))?$")
 
 
 class InboxError(ProjectorError):
@@ -371,8 +372,14 @@ def parse_reference(text: str) -> tuple[str, Optional[str]]:
     match = REFERENCE.match(text.strip())
     if not match:
         raise InboxError(f"{text!r} is not an inbox reference: name an item by its number, such as 3, "
-                         "and an answer by the number and its letter, such as 3.a")
+                         "and an answer by the number and its letter, such as 3.a, and a repository inbox entry "
+                         "by its number after an r, such as r3")
     return match["ref"], match["letter"]
+
+
+def in_repository(ref: str) -> bool:
+    """Whether a reference names a repository inbox entry, such as r3, rather than a session's item."""
+    return ref.startswith("r")
 
 
 def is_open(item: Optional[dict]) -> bool:

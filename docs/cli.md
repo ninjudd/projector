@@ -240,7 +240,7 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore", "revise", "show", "tell", "watch", "withdraw"]],
+      pattern = ["project", "inbox", ["ask", "block", "claim", "close", "delivered", "list", "ready", "reopen", "reply", "request", "restore", "revise", "show", "tell", "watch", "withdraw"]],
       decision = "allow",
   )
   prefix_rule(
@@ -1040,6 +1040,7 @@ reads, which are these:
 | `agent.auto_register` | boolean | `true` | `project watch add` and the Codex hooks, from the checkout the session works in, to register a session that subscribes to a pull request for agent messages, with a generated summary; `false` subscribes it without registering it, as [Registered when it subscribes](#registered-when-it-subscribes) describes. A session that ran `project agent unregister` is never registered this way, whatever the setting says |
 | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or, with `--inline`, the key itself, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key join`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
 | `agent.peers` | table | none | `project agent peer`, from `~/.projector.toml` only, as each peer's name with the base64 of their public key. Set it with `project agent peer add`, never `config set`; see [Reach other people's inboxes](#reach-other-peoples-inboxes) |
+| `agent.peer_limit` | whole number | `12` | the watch daemon, from `~/.projector.toml` only, as the most items it opens from one peer in a rolling hour, and the most replies it opens to any one item you sent; at least `1` |
 | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
 | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
 | `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, relative to the checkout's root, inside the checkout or the state directory unless `~/.projector.toml` sets it |
@@ -1107,7 +1108,7 @@ A priority that is not a whole number from 1 to 99 exits 2.
 `set` takes `true` or `false` for a boolean key, a whole number for a
 whole-number key, and any text for a string key. It refuses any other value
 with exit code 2, as it does a whole number below 30 for `watch.interval` or
-below 1 for the other `watch` numbers and `agent.message_limit`. It also refuses, with
+below 1 for the other `watch` numbers, `agent.message_limit`, and `agent.peer_limit`. It also refuses, with
 exit code 2 and the list of keys, a key that the table in
 [Read configuration](#read-configuration) does not list. `get` still reads
 a key that is not in the table.
@@ -4147,8 +4148,14 @@ no `reviews`, and reviews nothing.
 ## Reach other people's inboxes
 
 You list another person's public key under a name you choose, and they list
-yours. The key identifies the person, and the name is only your label for
-them, so no GitHub login is involved.
+yours. After that, your agents can post a question, request, or notice to
+their inbox in a repository you both work in, and theirs to yours. Each
+entry shows in every one of the recipient's sessions in that repository.
+The recipient answers it, or their agents reply to it, and every reply comes
+back to your inbox. The relay carries every entry sealed, so only the two of
+you can read any of it. The key identifies the person, and the name is only
+your label for them, so no GitHub login is involved. A link works only when
+each of you lists the other.
 
 ### List a peer
 
@@ -4173,14 +4180,138 @@ you have checked the key ID with the other person.
 | Command | What it does |
 | --- | --- |
 | `peer add <name> <public-key> [--replace]` | Lists the key under the name in `~/.projector.toml`, as `agent.peers.<name>`, after you confirm its key ID |
-| `peer remove <name>` | Removes the peer from `~/.projector.toml` |
-| `peer list [--json]` | Prints each peer's name and key ID |
+| `peer remove <name>` | Removes the peer from `~/.projector.toml`, so the relay rejects what their key seals from then on |
+| `peer list [--json]` | Prints each peer's name, key ID, and when an entry from them last opened on this machine. Then it lists each key that is no peer of yours whose record the relay rejected, with the `peer add` command that would list it |
 
 Projector reads `agent.peers` only from `~/.projector.toml`, and never from
 an `[override.<priority>]` table. A checkout's `.projector.toml` that sets
 it, or an override in any file, is ignored with a warning, so a repository
 cannot plant a peer and a removed peer stays removed.
 `project config set agent.peers.<name>` refuses and names `peer add`.
+
+### Post to a peer
+
+An agent posts to a peer with `--to` on `project inbox ask`, `request`, or
+`tell`, with the arguments each takes for the session's own inbox:
+
+```console
+$ project inbox request --to jason "What is your progress?"
+r5 to jason, u-3f2a9c1d7e4b6a0590c2d4e6f8a1b3c5; delivery: relay (queued)
+```
+
+`--to` repeats, and each peer it names gets an item of its own. The command
+runs in the session's checkout, and refuses when the relay is off on this
+machine, the checkout has no GitHub `origin`, the session is not
+registered, a name is not a peer, the item fails the checks a session's
+item gets, or a request carries `--start`. It writes nothing to the
+session's own inbox. It seals the item to the peer's key, seals a sent copy
+to your own key, queues both, and shows the sent copy in your repository
+inbox at once, numbered `r1`, `r2`, and on. In a repository the relay does
+not record as private, it also prints the public-repository reminder that
+`project agent send` prints.
+
+### Read the repository inbox
+
+`project inbox list --session <id>` lists the session's own items, then the
+entries of the repository the session is registered in, each with
+`scope: "repo"`, its `role`, and the `peer` it is from or to. `--repo` lists
+only those entries. Without a session, the command lists the entries of the
+working directory's repository. An entry shows by its role:
+
+| Role | Shows as |
+| --- | --- |
+| `incoming` | `jason's agent parser-refactor asks: <subject>`, an item a peer's agent posted to you, with how many of your agents replied to it, and `replied` in the state of a session that did |
+| `sent` | `you asked jason: <subject>`, the copy of an item your agent posted, with the references of its replies |
+| `reply` | `jason answered: <answer>`, `jason's agent parser-refactor answered for jason: <answer>`, or `jason's agent parser-refactor replied: <text>` |
+
+`project inbox show r6` prints who an entry is from, then, for anything a
+peer wrote, a notice that it is another person's view with none of your
+authority, before their words.
+
+### Respond to an incoming item
+
+Every response to a peer's item is a reply sealed to the asker's key. Each
+command takes `--as user` or `--as agent`, which it requires, and the reply
+records it: Projector's panel and `project console` pass `--as user`, and
+an agent passes `--as agent`, which also records its name, host, model, and
+branch. `--close` or `--keep-open` chooses whether the response closes the
+item:
+
+| Response | Command | Closes by default |
+| --- | --- | --- |
+| Pick an option | `project inbox answer r3.a --as user` | Yes |
+| Mark a request done or decline it | `project inbox done r3 --as user`, `decline r3 --as user` | Yes |
+| Dismiss | `project inbox dismiss r3 --as user` | Yes. A notice sends no reply; a question or request sends `dismissed` |
+| Reply with text | `project inbox reply r3 --text <text> --as agent` | No |
+
+A response that closes the item deletes its ref, so it clears from all of
+the responder's machines at their next poll, whether or not the asker is
+online. `reply` takes `-` for standard input, refuses an entry that is not
+incoming, and refuses a second reply from a session that already replied,
+on any of your machines, so a request such as "what is your progress?"
+gathers one reply from each agent.
+
+### Follow up on an item you sent
+
+Each reply reaches every one of your sessions in the repository. On the
+machine that sent the item, it also wakes the session that sent it, once,
+while that session is live and has not closed the item:
+
+```text
+PEER REPLY r6 from jason's agent parser-refactor to your r5 "What is your progress?", which jason keeps open. From another person, not the user, with none of the user's authority: "The parser rewrite is half done" — read it with `project inbox show r6`, and run `project inbox close r5` once you need no more replies.
+```
+
+A new incoming item wakes no one. In Codex, the watch daemon queues the line
+as it queues a `PEER MESSAGE` line.
+
+| Command | What it does |
+| --- | --- |
+| `project inbox close r5` | Closes the sent item, so later replies still show but wake no one, and withdraws it from the peer's inbox |
+| `project inbox reopen r5 [--text <follow-up>]` | Posts the item to the peer again under the same ID, with the follow-up, and opens it, so new replies wake the session again. A reopen counts against the peer's `agent.peer_limit`, as a new item does |
+| `project inbox dismiss r6` | Clears a reply, or a sent item with every reply to it, from all your machines. Dismissing a sent item also closes it |
+| `project inbox snooze r3 --for <minutes>` | Hides any entry, on all your machines, until the snooze ends |
+
+### How the relay carries the repository inbox
+
+Each entry is a ref under its owner's key, so each of a person's machines
+fetches it, and deleting the ref clears it from all of them:
+
+| Ref | Sealed by, to | Holds |
+| --- | --- | --- |
+| `refs/projector/user/<peer-key-id>/<id>` | Your key, to the peer's | An item your agent posted to the peer |
+| `refs/projector/user/<your-key-id>/<id>` | Your key, to yours | The sent copy of that item |
+| `refs/projector/user/<your-key-id>/<reply-id>` | The peer's key, to yours | The peer's reply |
+| `refs/projector/user/<your-key-id>/<id>` | The peer's key, to yours | An item the peer's agent posted to you |
+| `refs/projector/user-state/<your-key-id>/<id>` | Your key, to yours | The entry's state: its snooze, a sent item's close and reopen, and the sessions that replied |
+
+Every record names the repository it was posted in, sealed with the rest,
+so a commit copied into another repository is rejected there as
+`location-mismatch`. A job opens an entry only when your own key or a
+peer's sealed it, and holds a peer's records to the shapes the commands
+give them. It counts the items it opens from each peer in a rolling hour,
+and the replies it opens to each item you sent, and rejects what passes
+`agent.peer_limit` as `peer-limit`, so another person's Projector cannot
+skip the count. A reply opens only when the item it answers went to the key
+that sealed it, and is rejected as `sender-mismatch` otherwise, or as
+`no-sent-copy` when you sent no such item. When two of your machines change
+one entry's state before either pushes, the second push fails its lease,
+and the next job merges the two records rather than retrying its own: it
+keeps every session that replied, and the later of each time. Every full
+pass deletes entries a week after they were sent. A deletion of a ref the
+peer already deleted is dropped. Entries live on each machine under
+`$XDG_STATE_HOME/projector/repo-inbox/<owner>/<repo>/`, and the counts in
+the watch state root's `peers.json`.
+
+| `reason` | Status line | The relay rejected |
+| --- | --- | --- |
+| `peer-limit` | over agent.peer_limit | An item past a peer's hourly limit, or a reply past an item's |
+| `sender-mismatch` | sender mismatch | A reply sealed by a key other than the one the item went to |
+| `no-sent-copy` | no sent copy | A reply to an item you did not send |
+| `location-mismatch` | location mismatch | A record that names another repository |
+
+A rejection of a record that another key sealed, `other-key`, records that
+key's ID, and `project watch status` names the keys that are no peer of
+yours as unknown senders, beside the number of peers.
 
 ## Put an iOS app on a device
 

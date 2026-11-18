@@ -25,7 +25,8 @@ from typing import NamedTuple, Optional
 from urllib.parse import urlparse
 from urllib.request import Request, url2pathname, urlopen
 
-from . import agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, review, site, summary, watch
+from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
+               summary, watch)
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
@@ -43,6 +44,7 @@ from .config import (
     disallow,
     is_destination,
     parse_value,
+    peers as configured_peers,
     redact,
     same_value,
     unset_value,
@@ -1036,6 +1038,7 @@ def add_inbox_parser(subcommands) -> None:
     detail.add_argument("--detail-file", type=Path, help="read the detail from this file")
     ask.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
     ask.add_argument("--agent", help="the asking subagent's id, when a subagent asks")
+    add_to(ask)
 
     tell = command("tell", "check, number, and record a notice, and print its number, such as 3")
     tell.add_argument("notice", help="the notice, in one line of at most 120 characters")
@@ -1044,6 +1047,7 @@ def add_inbox_parser(subcommands) -> None:
     detail.add_argument("--detail-file", type=Path, help="read the detail from this file")
     tell.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
     tell.add_argument("--agent", help="the posting subagent's id, when a subagent posts")
+    add_to(tell)
 
     request = command("request", "check, number, and record a request for work only the person can do, and print "
                                  "its number, such as 3")
@@ -1058,27 +1062,42 @@ def add_inbox_parser(subcommands) -> None:
                                          "there is nothing to prepare")
     request.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
     request.add_argument("--agent", help="the posting subagent's id, when a subagent posts")
+    add_to(request)
 
-    listing = command("list", "list open items: the session's, or every session's without one")
+    listing = command("list", "list open items: the session's, or every session's without one, then the repository "
+                              "inbox's entries")
     listing.add_argument("--all", action="store_true", help="include delivered items")
+    listing.add_argument("--repo", action="store_true", help="list only the repository inbox's entries")
 
-    show = command("show", "print one item with its detail and lettered answers")
-    show.add_argument("reference", help="the item's number, such as 3")
+    show = command("show", "print one item with its detail and lettered answers, or a repository inbox entry")
+    show.add_argument("reference", help="the item's number, such as 3, or an entry's, such as r3")
 
-    answer = command("answer", "record an answer, such as 3.a")
-    answer.add_argument("reference", help="the question's number and the answer's letter, such as 3.a")
+    answer = command("answer", "record an answer, such as 3.a, or answer a peer's question, such as r3.a")
+    answer.add_argument("reference", help="the question's number and the answer's letter, such as 3.a or r3.a")
     answer.add_argument("--text", help="the typed answer, for the question's last letter")
     answer.add_argument("--note", help="more context for the agent, one paragraph of at most 4 KiB")
+    add_responder(answer)
 
     dismiss = command("dismiss", "record that you dismissed a question, read a notice, or declined a request")
     dismiss.add_argument("reference")
+    add_responder(dismiss)
 
     for name, help_text in (("done", "record that you did a request"),
                             ("decline", "record that you declined a request")):
         outcome = command(name, help_text)
-        outcome.add_argument("reference", help="the request's number, such as 3")
+        outcome.add_argument("reference", help="the request's number, such as 3, or an entry's, such as r3")
         outcome.add_argument("--text", help="what you tell the agent, in one line")
         outcome.add_argument("--note", help="more context for the agent, one paragraph of at most 4 KiB")
+        add_responder(outcome)
+
+    reply = command("reply", "reply with text to an item a peer's agent posted to the repository inbox")
+    reply.add_argument("reference", help="the entry's number, such as r3")
+    reply.add_argument("--text", required=True, help="the reply, at most 16 KiB; - reads standard input")
+    add_responder(reply)
+
+    closing = command("close", "close an item your agent sent a peer, so its replies wake no one, and withdraw it "
+                               "from the peer's inbox")
+    closing.add_argument("reference", help="the entry's number, such as r3")
 
     start = command("start", "record that you pressed start on a request, for the start action you read")
     start.add_argument("reference", help="the request's number, such as 3")
@@ -1138,15 +1157,34 @@ def add_inbox_parser(subcommands) -> None:
     claim.add_argument("reference")
     claim.add_argument("--renew", metavar="TOKEN", help="keep this claim live while its delivery is pending")
 
-    for name, help_text in (("delivered", "mark a claimed answer delivered"),
-                            ("reopen", "clear a claimed answer whose delivery failed")):
-        settled = command(name, help_text)
-        settled.add_argument("reference")
-        settled.add_argument("--claim", required=True, metavar="TOKEN", help="the token `claim` printed")
+    delivered = command("delivered", "mark a claimed answer delivered")
+    delivered.add_argument("reference")
+    delivered.add_argument("--claim", required=True, metavar="TOKEN", help="the token `claim` printed")
+    reopen = command("reopen", "clear a claimed answer whose delivery failed, or publish an item your agent sent a "
+                               "peer again, such as r3")
+    reopen.add_argument("reference")
+    reopen.add_argument("--claim", metavar="TOKEN", help="the token `claim` printed, for a session's own item")
+    reopen.add_argument("--text", help="a follow-up for the peer, at most 16 KiB, for an entry such as r3")
 
     watch = command("watch", "claim, print, and mark delivered each answer, one line an answer")
     watch.add_argument("--interval", type=seconds, default=5.0, help="seconds between passes (default: 5)")
     watch.add_argument("--once", action="store_true", help="make one pass and exit")
+
+
+def add_to(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--to", action="append", default=[], metavar="PEER",
+                         help="post it to this peer's inbox in the repository instead; repeat for each peer")
+
+
+def add_responder(command: argparse.ArgumentParser) -> None:
+    """The options of a command that responds to a repository inbox entry, such as r3."""
+    command.add_argument("--as", dest="responder", choices=("user", "agent"),
+                         help="who responds to a peer's entry: user, from the panel or the console, or agent")
+    closes = command.add_mutually_exclusive_group()
+    closes.add_argument("--close", dest="close", action="store_const", const=True,
+                        help="close the peer's item with this response")
+    closes.add_argument("--keep-open", dest="close", action="store_const", const=False,
+                        help="keep the peer's item open after this response")
 
 
 def add_ios_parser(subcommands) -> None:
@@ -1493,14 +1531,19 @@ def run_agent_key(arguments: argparse.Namespace) -> int:
 def run_agent_peer(arguments: argparse.Namespace) -> int:
     command = arguments.peer_command
     if command == "list":
-        rows = relay.peer_rows()
+        rows, unknown = relay.peer_rows(watch.state_root())
         if arguments.json_output:
-            print(json_text({"peers": rows}))
+            print(json_text({"peers": rows, "unknown": unknown}))
             return 0
         for row in rows:
-            print(f"{row['name']}\tkey {row['key_id']}")
+            opened = row["last_opened"]
+            when = watch.stamp(opened / 1000) if isinstance(opened, int) else "nothing opened yet"
+            print(f"{row['name']}\tkey {row['key_id']}\t{when}")
         if not rows:
             print("no peers; run `project agent peer add <name> <public-key>` in a terminal to add one")
+        for sender in unknown:
+            print(f"unknown key {sender['key_id']} sealed a record to you in {sender['repo']} at {sender['at']}; if "
+                  f"you know whose it is, run `project agent peer add <name> {sender['public_key']}` in a terminal")
         return 0
     if command == "remove":
         key_id = relay.remove_peer(arguments.name)
@@ -1723,7 +1766,11 @@ def run_watch(arguments: argparse.Namespace) -> int:
             print(f"last pass: {report['last_pass'] or 'none yet'}")
             print(f"GraphQL points in the last hour: {report['graphql_points_last_hour']}")
             key = report["relay"]["key"]
-            print(f"relay: on, key {key['id']} ({key['store']})" if key["state"] == "on" else
+            peers = report["relay"].get("peers") or {}
+            count = peers.get("count") or 0
+            listed = (f", {count} peer{'' if count == 1 else 's'}" if count else "") + \
+                (f" (agent.peers: {peers['error']})" if peers.get("error") else "")
+            print(f"relay: on, key {key['id']} ({key['store']}){listed}" if key["state"] == "on" else
                   f"relay: reading key {key['id']}" if key["state"] == "reading" else
                   f"relay: off ({key['error'] or 'no agent.key'})")
             for repo, found in report["relay"]["repositories"].items():
@@ -1731,8 +1778,9 @@ def run_watch(arguments: argparse.Namespace) -> int:
                 latest = (found.get("rejections") or [None])[-1]
                 why = (f" (latest: {relay.REASONS.get(latest['reason'], latest['reason'])}, {latest['at'][11:16]})"
                        if latest else "")
+                unknown = f", unknown senders: {', '.join(found['senders'])}" if found.get("senders") else ""
                 print(f"relay {repo}: {found.get('state')}, {found.get('queued', 0)} queued, "
-                      f"{found.get('rejected', 0)} rejected{why}" + (f"; {problems}" if problems else ""))
+                      f"{found.get('rejected', 0)} rejected{why}{unknown}" + (f"; {problems}" if problems else ""))
             for checkout, found in report["default_branches"].items():
                 print(f"default branch {checkout}: {found.get('state')} at {found.get('at')}"
                       + (f"; {found['error']}" if found.get("error") else ""))
@@ -2525,6 +2573,135 @@ def run_console() -> int:
     return console.main(wake=wake_codex_delivery)
 
 
+def entry_repository(root: Path, session: Optional[str]) -> tuple[Optional[str], Path]:
+    """The repository whose inbox a command reads, with the checkout it queues from: the one the session's
+    registration names, or else the working directory's `origin`."""
+    found = agents.record(root, session) if session else None
+    if found and found.get("repo"):
+        cwd = Path(found["cwd"]) if found.get("cwd") and Path(found["cwd"]).is_dir() else Path.cwd()
+        return found["repo"], cwd
+    return agents.checkout(Path.cwd()).get("repo"), Path.cwd()
+
+
+def listed_entries(session: Optional[str]) -> list[dict]:
+    root = watch.state_root()
+    session = watch.session_id(session, required=False)
+    repo, _ = entry_repository(root, session)
+    return repo_inbox.repo_items(root, session, repo)
+
+
+def sealing_key() -> relay.Key:
+    key, off = relay.command_key()
+    if key is None:
+        raise repo_inbox.RepoInboxError(f"the relay is off on this machine, so nothing can reach a peer: {off}")
+    return key
+
+
+def post_to_peers(arguments: argparse.Namespace, root: Path, now: float) -> int:
+    command = arguments.inbox_command
+    if getattr(arguments, "start", None) is not None:
+        raise UsageError("a request to a peer takes no --start: its start action would be theirs to run")
+    session = watch.session_id(arguments.session)
+    registration = agents.record(root, session)
+    if registration is None:
+        raise repo_inbox.RepoInboxError("this session is not registered, so a peer's reply could not reach it; run "
+                                        "`project agent register` first")
+    repo = agents.checkout(Path.cwd()).get("repo")
+    if not repo:
+        raise repo_inbox.RepoInboxError(relay.NO_ORIGIN)
+    key = sealing_key()
+    detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+    if command == "ask":
+        inbox.check(arguments.question, arguments.recommend, arguments.option, arguments.pr)
+        subject = arguments.question
+        choices: Optional[list[str]] = [arguments.recommend.strip(), *(option.strip() for option in arguments.option)]
+    elif command == "tell":
+        inbox.check_subject("notice", arguments.notice, arguments.pr)
+        subject, choices = arguments.notice, None
+    else:
+        inbox.check_subject("request", arguments.request, arguments.pr)
+        inbox.check_request_options(arguments.option)
+        subject, choices = arguments.request, [option.strip() for option in arguments.option] or None
+    kind = {"ask": "question", "tell": "notice", "request": "request"}[command]
+    posted = repo_inbox.post(root, repo, Path.cwd(), key, configured_peers(), arguments.to, session, registration,
+                             kind, subject, detail=detail, choices=choices, pr=arguments.pr, now=now)
+    watch.ensure_daemon(root, distribution_version(), newer_release)
+    public = relay.visibility(root, repo) != "PRIVATE"
+    if arguments.json_output:
+        print(json_text({"items": posted, "delivery": "relay (queued)",
+                         **({"reminder": relay.PUBLIC_REMINDER} if public else {})}))
+        return 0
+    for entry in posted:
+        print(f"{entry['ref']} to {entry['peer']}, {entry['id']}; delivery: relay (queued)")
+    if public:
+        print(relay.PUBLIC_REMINDER)
+    return 0
+
+
+RESPONSES = {"answer": "answer", "done": "done", "decline": "declined", "dismiss": "dismissed", "reply": "reply"}
+
+
+def run_repo_inbox(arguments: argparse.Namespace, ref: Optional[str], letter: Optional[str]) -> int:
+    """A command on the repository inbox: one posting to a peer with --to, or one on an entry such as r3."""
+    root, now = watch.state_root(), time.time()
+    command = arguments.inbox_command
+    if command in ("ask", "tell", "request"):
+        return post_to_peers(arguments, root, now)
+    session = watch.session_id(arguments.session, required=False)
+    repo, cwd = entry_repository(root, session)
+    if not repo:
+        raise repo_inbox.RepoInboxError(f"{ref} names a repository inbox entry, and this checkout has no GitHub "
+                                        "origin; run it in the repository's checkout, or pass a registered --session")
+    entry = repo_inbox.by_ref(root, repo, ref)
+    if command == "show":
+        if arguments.json_output:
+            print(json_text({"item": {**entry, "line": repo_inbox.describe(entry)}, "notice": repo_inbox.NOTICE}))
+        else:
+            print(repo_inbox.show_text(entry, repo_inbox.entries(root, repo)))
+        return 0
+    if command not in (*RESPONSES, "snooze", "close", "reopen"):
+        raise inbox.InboxError(f"`{command}` takes a session's item, not a repository inbox entry such as {ref}")
+    if getattr(arguments, "note", None):
+        raise UsageError("--note goes with a session's item; put what the peer should read in --text")
+    key = sealing_key()
+    if command in RESPONSES and (entry["role"] == "incoming" or command != "dismiss"):
+        if arguments.responder is None:
+            raise UsageError(f"say who responds to {ref}, a peer's entry: --as user from the panel or console, or "
+                             "--as agent when the user told you to")
+        text = getattr(arguments, "text", None)
+        if command == "reply" and text == "-":
+            text = sys.stdin.read()
+        found = repo_inbox.respond(root, repo, cwd, key, configured_peers(), ref, RESPONSES[command],
+                                   by=arguments.responder, letter=letter, text=text, close=arguments.close,
+                                   session=session, registration=agents.record(root, session) if session else None,
+                                   now=now)
+        watch.ensure_daemon(root, distribution_version(), newer_release)
+        if arguments.json_output:
+            print(json_text({"item": found}))
+        else:
+            sent = f"sent {found['peer']} your {RESPONSES[command]}" if found["reply"] else "nothing sent"
+            print(f"{ref}: {sent}; {'closed' if found['closes'] else 'kept open'}")
+        return 0
+    if command == "dismiss":
+        cleared = repo_inbox.dismiss(root, repo, cwd, key, ref, now)
+        result: dict = {"items": cleared}
+        said = f"dismissed {', '.join(found['ref'] for found in cleared)} on all your machines"
+    elif command == "snooze":
+        result = {"item": repo_inbox.snooze(root, repo, cwd, key, ref, arguments.minutes, now)}
+        said = f"{ref} snoozed for {arguments.minutes} minutes on all your machines"
+    elif command == "close":
+        result = {"item": repo_inbox.close(root, repo, cwd, key, ref, now)}
+        said = f"closed {ref}; its replies wake no one, and it leaves {entry.get('peer') or 'the peer'}'s inbox"
+    else:
+        if arguments.claim is not None:
+            raise UsageError("--claim goes with a session's item; `reopen` on an entry such as r3 takes --text")
+        result = {"item": repo_inbox.reopen(root, repo, cwd, key, configured_peers(), ref, arguments.text, now)}
+        said = f"reopened {ref}; {entry.get('peer') or 'the peer'} sees it again, and their replies wake you"
+    watch.ensure_daemon(root, distribution_version(), newer_release)
+    print(json_text(result) if arguments.json_output else said)
+    return 0
+
+
 def run_inbox(arguments: argparse.Namespace) -> int:
     command = arguments.inbox_command
     json_output = arguments.json_output
@@ -2532,6 +2709,12 @@ def run_inbox(arguments: argparse.Namespace) -> int:
     ref, letter = inbox.parse_reference(written) if written is not None else (None, None)
     if letter is not None and command != "answer":
         raise inbox.InboxError(f"`{command}` takes the item's reference, {ref}, without an answer letter")
+    if (ref is not None and inbox.in_repository(ref)) or getattr(arguments, "to", None):
+        return run_repo_inbox(arguments, ref, letter)
+    if command in ("reply", "close"):
+        raise inbox.InboxError(f"`{command}` takes a repository inbox entry, such as r3, not a session's item")
+    if command == "reopen" and arguments.claim is None:
+        raise UsageError("`reopen` on a session's item takes the --claim token `claim` printed")
     if command in ("ask", "tell", "request"):
         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
         session = inbox_session(arguments, True)
@@ -2546,15 +2729,20 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         print(json_text({"item": item}) if json_output else item["ref"])
     elif command == "list":
         session = inbox_session(arguments, False)
-        names = [session] if session else inbox.sessions()
+        names = [] if arguments.repo else [session] if session else inbox.sessions()
         rows = [{**item, "session": name} for name in names
                 for item in inbox.load_items(inbox.session_dir(name))
                 if arguments.all or not item.get("deliveredAt")]
+        entries = listed_entries(session)
         if json_output:
-            print(json_text({"items": rows}))
+            print(json_text({"items": [*rows, *entries]}))
         for row in [] if json_output else rows:
             columns = [row["ref"], row["kind"], item_state(row), row["subject"]]
             print("\t".join(columns if session else [row["session"], *columns]))
+        for row in [] if json_output else entries:
+            columns = [row["ref"], f"{row['role']} {row['kind']}" if row["role"] != "reply" else "reply",
+                       row["state"], row["line"]]
+            print("\t".join(columns if session else [row["repo"], *columns]))
     elif command == "show":
         item = inbox.find(inbox_session(arguments, False), ref)
         if json_output:

@@ -24,6 +24,12 @@ Refs in the repository, each a parentless commit whose tree holds one `sealed.js
 
     refs/projector/agents/<key-id>/<relay-id>          a session's presence, with when its lease expires
     refs/projector/inbox/<key-id>/<relay-id>/<id>      a message to the session with that relay ID
+    refs/projector/user/<key-id>/<id>                  an entry in the repository inbox of the person whose key it
+                                                       is, sealed by their key or a peer's (`repo_inbox.py`)
+    refs/projector/user-state/<key-id>/<id>            the state of that person's entry, sealed by their own key
+
+The agents and inbox namespaces open only records this machine's own key sealed. The repository inbox also opens
+a peer's, whose public key `agent.peers` lists.
 """
 
 from __future__ import annotations
@@ -40,7 +46,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import agents, config, crypto, keychain, review, summary, watch
+from . import agents, config, crypto, keychain, repo_inbox, review, summary, watch
 from .config import INLINE_KEY, KEYCHAIN, ConfigError, inline_key, unset_value, user_config_path, write_value
 from .core import ProjectorError, run_bounded
 from .inbox import SESSION, locked, read_json, write_json
@@ -49,9 +55,13 @@ from .keychain import KeychainError
 REMOTE = "origin"
 AGENTS = "refs/projector/agents/"
 INBOX = "refs/projector/inbox/"
+USER = "refs/projector/user/"
+USER_STATE = "refs/projector/user-state/"
 KEY_ID = re.compile(r"^[0-9a-f]{16}$")
 PRESENCE_REF = re.compile(r"^refs/projector/agents/([0-9a-f]{16})/([0-9a-f]{16})$")
 INBOX_REF = re.compile(r"^refs/projector/inbox/([0-9a-f]{16})/([0-9a-f]{16})/(m-[0-9a-f]{32})$")
+USER_REF = re.compile(r"^refs/projector/user/([0-9a-f]{16})/(u-[0-9a-f]{32})$")
+STATE_REF = re.compile(r"^refs/projector/user-state/([0-9a-f]{16})/(u-[0-9a-f]{32})$")
 TREE = re.compile(r"^100644 blob ([0-9a-f]{40,64}) +([0-9]+)\tsealed\.json$")
 LEASE = 3600.0
 RENEW = 1800.0
@@ -89,9 +99,11 @@ REASONS = {
     "too-deep": "JSON too deep", "not-json": "not JSON", "not-sealed": "not a sealed record",
     "tag-mismatch": "tag mismatch", "other-key": "sealed by another key", "relay-id-mismatch": "relay ID mismatch",
     "recipient-mismatch": "recipient mismatch", "message-id-mismatch": "message ID mismatch", "expired": "expired",
-    "field-shape": "field shape", "collision": "ID collision",
+    "field-shape": "field shape", "collision": "ID collision", "peer-limit": "over agent.peer_limit",
+    "sender-mismatch": "sender mismatch", "no-sent-copy": "no sent copy", "location-mismatch": "location mismatch",
 }
 KEEP_REJECTIONS = 20
+KEEP_SENDERS = 20
 
 
 class RelayError(ProjectorError):
@@ -101,9 +113,11 @@ class RelayError(ProjectorError):
 class Rejected(ValueError):
     """A record the relay refuses, and the code in `REASONS` that says why."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, sender: Optional[bytes] = None) -> None:
         super().__init__(REASONS[reason])
         self.reason = reason
+        # The public key that sealed an `other-key` record, which its tag proved.
+        self.sender = sender
 
 
 # The key
@@ -381,10 +395,22 @@ def remove_peer(name: str, environ: Optional[dict] = None) -> str:
     return crypto.key_id(found[name])
 
 
-def peer_rows(environ: Optional[dict] = None) -> list[dict]:
-    """Each peer, by name, with its key's ID and public key."""
-    return [{"name": name, "key_id": crypto.key_id(public), "public_key": crypto.encode(public)}
-            for name, public in sorted(config.peers(environ).items())]
+def peer_rows(root: Path, environ: Optional[dict] = None) -> tuple[list[dict], list[dict]]:
+    """Each peer, by name, with its key's ID and public key and when an entry from them last opened here, and
+    each key that is no peer of yours whose records the relay rejected, newest first."""
+    found = config.peers(environ)
+    last = repo_inbox.read_counts(root)["last_opened"]
+    rows = [{"name": name, "key_id": crypto.key_id(public), "public_key": crypto.encode(public),
+             "last_opened": last.get(crypto.key_id(public))} for name, public in sorted(found.items())]
+    known = {row["key_id"] for row in rows}
+    unknown: dict[str, dict] = {}
+    for path in (root / "relay").glob("*/*.json"):
+        cache = read_json(path) or {}
+        for key_id, sender in (cache.get("senders") or {}).items():
+            if key_id not in known and (key_id not in unknown or sender["at"] > unknown[key_id]["at"]):
+                unknown[key_id] = {"key_id": key_id, "public_key": sender["public_key"], "at": sender["at"],
+                                   "repo": cache.get("repo")}
+    return rows, sorted(unknown.values(), key=lambda sender: sender["at"], reverse=True)
 
 
 def remove_key(root: Path, environ: Optional[dict] = None) -> tuple[str, str]:
@@ -443,12 +469,20 @@ def inbox_ref(key_id: str, relay_id: str, message_id: str) -> str:
     return f"{INBOX}{key_id}/{relay_id}/{message_id}"
 
 
+def user_ref(key_id: str, entry_id: str) -> str:
+    return f"{USER}{key_id}/{entry_id}"
+
+
+def state_ref(key_id: str, entry_id: str) -> str:
+    return f"{USER_STATE}{key_id}/{entry_id}"
+
+
 def parse_ref(ref: str) -> Optional[tuple[str, str, str]]:
-    """A relay ref's kind, `agent` or `message`, its key ID, and the relay ID it is for."""
-    if found := PRESENCE_REF.fullmatch(ref):
-        return "agent", found[1], found[2]
-    if found := INBOX_REF.fullmatch(ref):
-        return "message", found[1], found[2]
+    """A relay ref's kind, its key ID, and what it names: an `agent`'s presence or a `message` to it, by the
+    agent's relay ID, or a repository inbox entry, `user`, or its `state`, by the entry's ID."""
+    for kind, pattern in (("agent", PRESENCE_REF), ("message", INBOX_REF), ("user", USER_REF), ("state", STATE_REF)):
+        if found := pattern.fullmatch(ref):
+            return kind, found[1], found[2]
     return None
 
 
@@ -465,7 +499,8 @@ def read_cache(root: Path, repo: str) -> dict:
     found = read_json(repo_file(root, "relay", repo)) or {}
     return {"schema_version": 1, "repo": found.get("repo") or repo, "polled_at": found.get("polled_at"),
             "visibility": found.get("visibility") or "unknown", "rejected": found.get("rejected") or 0,
-            "rejections": found.get("rejections") or [], "agents": found.get("agents") or {}, "remote": found.get("remote") or {}, "seen": found.get("seen") or {}}
+            "rejections": found.get("rejections") or [], "senders": found.get("senders") or {},
+            "agents": found.get("agents") or {}, "remote": found.get("remote") or {}, "seen": found.get("seen") or {}}
 
 
 def visibility(root: Path, repo: str) -> str:
@@ -569,8 +604,18 @@ def presence(root: Path, session: str, found: dict, now: float) -> dict:
     return {**record, "reviews": reviews, "session": session, "expires_at": now + LEASE}
 
 
+def seal_to(key: Key, recipient: bytes, record: dict) -> dict:
+    """`record` sealed by `key` to the public key `recipient`."""
+    return crypto.seal(key.private, recipient, json.dumps(record, ensure_ascii=False, sort_keys=True).encode())
+
+
 def seal(key: Key, record: dict) -> dict:
-    return crypto.seal(key.private, key.public, json.dumps(record, ensure_ascii=False, sort_keys=True).encode())
+    return seal_to(key, key.public, record)
+
+
+def sealed_text(sealed: dict) -> str:
+    """A sealed record as the `sealed.json` the relay commits."""
+    return json.dumps(sealed, sort_keys=True)
 
 
 def publish(root: Path, session: str, found: dict, key: Key, now: float) -> None:
@@ -686,7 +731,7 @@ def checked(cwd: Path, *args: str, **options) -> str:
 def write_commit(cwd: Path, sealed: dict) -> str:
     """A parentless commit holding `sealed.json`, with a fixed identity, date, and message and no signature, so
     nothing about the checkout or the session goes into the repository outside the sealed blob."""
-    blob = checked(cwd, "hash-object", "-w", "--stdin", input=json.dumps(sealed, sort_keys=True).encode())
+    blob = checked(cwd, "hash-object", "-w", "--stdin", input=sealed_text(sealed).encode())
     tree = checked(cwd, "mktree", input=f"100644 blob {blob}\tsealed.json\n".encode())
     return checked(cwd, "commit-tree", "--no-gpg-sign", "-m", COMMIT_MESSAGE, tree, env=IDENTITY)
 
@@ -715,10 +760,14 @@ class Job:
     and push."""
 
     def __init__(self, root: Path, repo: str, key: Optional[Key], live: set[str], now: float, *, poll: bool,
-                 full: bool, gh: Callable[[list[str]], watch.GhResult], held: Optional[str] = None) -> None:
+                 full: bool, gh: Callable[[list[str]], watch.GhResult], held: Optional[str] = None,
+                 peers: Optional[dict[str, bytes]] = None, peer_limit: Optional[int] = None) -> None:
         self.root = root
         self.repo = repo
         self.key = key
+        # Each peer's key, by its ID, with your name for them.
+        self.peers = {crypto.key_id(public): (name, public) for name, public in (peers or {}).items()}
+        self.peer_limit = agents.PEER_LIMIT if peer_limit is None else peer_limit
         # The key agent.key names, which a locked keychain can keep the daemon from reading.
         self.held = key.id if key else held
         found, gone = agents.relayed(root)
@@ -748,7 +797,7 @@ class Job:
         try:
             if self.poll and cwd is not None and self.key_ids():
                 self.fetch(cwd, self.key_ids())
-                self.rebase()
+                self.rebase(cwd)
                 if self.key is not None:
                     self.examine(cwd)
                     if self.full:
@@ -773,7 +822,8 @@ class Job:
     def result(self, state: str, error: str) -> dict:
         items = outbox_items(self.root, self.repo)
         return {"state": state, "error": error, "queued": len(items), "rejected": self.cache["rejected"],
-                "rejections": self.cache["rejections"], "visibility": self.cache["visibility"], "polled_at": self.cache["polled_at"],
+                "rejections": self.cache["rejections"], "visibility": self.cache["visibility"],
+                "polled_at": self.cache["polled_at"], "senders": sorted(self.cache["senders"]),
                 "errors": sorted({item["last_error"] for item in items if item.get("last_error")})}
 
     def checkout(self) -> Optional[Path]:
@@ -803,7 +853,11 @@ class Job:
         if key_ids is None:
             assert self.key is not None
             key_ids = [self.key.id]
-        return tuple(prefix for key_id in key_ids for prefix in (f"{AGENTS}{key_id}/", f"{INBOX}{key_id}/"))
+        found = tuple(prefix for key_id in key_ids for prefix in (f"{AGENTS}{key_id}/", f"{INBOX}{key_id}/"))
+        # The repository inbox is fetched only for the key agent.key names: a key given up has no inbox to show.
+        if self.held in key_ids:
+            found += (f"{USER}{self.held}/", f"{USER_STATE}{self.held}/")
+        return found
 
     def fetch(self, cwd: Path, key_ids: list[str]) -> None:
         prefixes = self.prefixes(key_ids)
@@ -825,11 +879,14 @@ class Job:
                                     if presence_ref(self.key.id, relay_id) in fetched}
         self.cache["polled_at"] = watch.stamp(self.now)
 
-    def rebase(self) -> None:
+    def rebase(self, cwd: Path) -> None:
         """Give each change whose lease failed the commit the fetch found, so it lands on a later push. A deletion
-        of a ref another machine owns is dropped instead: the ref moved, so that machine renewed it."""
+        of a ref another machine owns is dropped instead: the ref moved, so that machine renewed it. A repository
+        inbox entry's deletion is dropped too, since another machine or the peer already deleted or replaced it.
+        A state record is merged with the record the fetch found, so neither machine's change is lost."""
         path = repo_file(self.root, "outbox", self.repo)
         remote = self.cache["remote"]
+        fetched = self.prefixes(self.key_ids())
         with locked(path.parent):
             box = read_outbox(path)
             items = []
@@ -837,6 +894,19 @@ class Job:
                 if item.get("stale"):
                     parsed = parse_ref(item["ref"])
                     if item["sealed"] is None and (parsed is None or parsed[2] not in self.relays):
+                        if not item["ref"].startswith(fetched):
+                            # A ref in a peer's namespace, which this machine does not fetch, is gone or not ours.
+                            self.cache["remote"].pop(item["ref"], None)
+                            self.cache["seen"].pop(item["ref"], None)
+                        continue
+                    if parsed and parsed[0] == "state" and item["sealed"] is not None:
+                        if self.key is None:
+                            items.append(item)
+                        elif remote.get(item["ref"]) is not None:
+                            found = remote[item["ref"]]
+                            item.update(sealed=self.merged_state(cwd, found, item["sealed"]), old=found, stale=False)
+                            items.append(item)
+                        # With no record at the ref, the entry was deleted, and its state goes with it.
                         continue
                     item.update(old=remote.get(item["ref"]), stale=False)
                     if item["sealed"] is None and item["old"] is None:
@@ -844,6 +914,20 @@ class Job:
                 items.append(item)
             box["items"] = items
             write_json(path, box)
+
+    def merged_state(self, cwd: Path, sha: str, queued: dict) -> dict:
+        """The state record queued, merged with the one origin holds at `sha`, sealed again."""
+        assert self.key is not None
+        _, plaintext = crypto.unseal(self.key.private, queued)
+        mine = json.loads(plaintext)
+        try:
+            _, found = self.open(cwd, self.sealed_blob(cwd, sha))
+        except Rejected:
+            found = None
+        if found is not None and found.get("id") == mine["id"] and repo_inbox.well_formed_state(found):
+            mine = repo_inbox.merge(found, mine)
+            repo_inbox.take_state(self.root, self.repo, mine)
+        return seal(self.key, mine)
 
     def examine(self, cwd: Path) -> None:
         """Open at most `OPEN_LIMIT` new records, checking each ref's name and tree before reading its blob, so a
@@ -853,6 +937,8 @@ class Job:
         new = sorted(ref for ref, sha in self.cache["remote"].items()
                      if ref.startswith(prefixes) and (seen.get(ref) or {}).get("sha") != sha)
         opened = 0
+        # Replies whose sent copy this pass has yet to open, examined again once the others are.
+        waiting: list[tuple[str, str, str, bytes, dict]] = []
         for ref in new[:EXAMINE_LIMIT]:
             if opened >= OPEN_LIMIT:
                 break
@@ -866,14 +952,103 @@ class Job:
             try:
                 blob = self.sealed_blob(cwd, sha)
                 opened += 1
-                record = self.open(cwd, blob)
-                kind, _, relay_id = parsed
+                kind, _, name = parsed
+                if kind == "user":
+                    sender, record = self.open(cwd, blob, self.user_senders())
+                    if not self.take_user(ref, sha, name, sender, record):
+                        waiting.append((ref, sha, name, sender, record))
+                    continue
+                _, record = self.open(cwd, blob)
                 if kind == "agent":
-                    self.take_presence(ref, sha, relay_id, record)
+                    self.take_presence(ref, sha, name, record)
+                elif kind == "message":
+                    self.take_message(ref, sha, name, record)
                 else:
-                    self.take_message(ref, sha, relay_id, record)
+                    self.take_state(ref, sha, name, record)
             except Rejected as rejected:
-                self.reject(ref, sha, rejected.reason)
+                self.reject(ref, sha, rejected)
+        for ref, sha, name, sender, record in waiting:
+            try:
+                # A reply whose sent copy is still unopened, past this job's limits, waits for a later job.
+                self.take_user(ref, sha, name, sender, record)
+            except Rejected as rejected:
+                self.reject(ref, sha, rejected)
+        self.prune_mirror()
+        repo_inbox.wake(self.root, self.repo, self.live, self.machine, self.now)
+
+    def user_senders(self) -> set[bytes]:
+        assert self.key is not None
+        return {self.key.public, *(public for _, public in self.peers.values())}
+
+    def take_user(self, ref: str, sha: str, entry_id: str, sender: bytes, record: dict) -> bool:
+        """Mirror a repository inbox entry: a sent copy of your own, or a peer's item or reply. Answers False for a
+        reply whose sent copy the fetch found but no job has opened yet, which is examined again later."""
+        assert self.key is not None
+        if record.get("id") != entry_id:
+            raise Rejected("message-id-mismatch")
+        location = record.get("location")
+        if not isinstance(location, str) or location.lower() != self.repo.lower():
+            raise Rejected("location-mismatch")
+        key_id = crypto.key_id(sender)
+        if sender == self.key.public:
+            if not repo_inbox.well_formed_sent(record, self.repo):
+                raise Rejected("field-shape")
+            role, peer = "sent", (self.peers.get(record["to"]) or (None,))[0]
+        elif "answers" in record:
+            if not repo_inbox.well_formed_reply(record):
+                raise Rejected("field-shape")
+            asked = repo_inbox.by_id(self.root, self.repo, record["answers"], "sent")
+            if asked is None:
+                answered = user_ref(self.key.id, record["answers"])
+                if (answered in self.cache["remote"]
+                        and (self.cache["seen"].get(answered) or {}).get("sha") != self.cache["remote"][answered]):
+                    return False
+                raise Rejected("no-sent-copy")
+            if asked["to"] != key_id:
+                raise Rejected("sender-mismatch")
+            kept = {entry["id"] for entry in repo_inbox.entries(self.root, self.repo) if entry["role"] == "sent"}
+            if not repo_inbox.count_reply(self.root, record["answers"], key_id, self.peer_limit, kept, self.now):
+                raise Rejected("peer-limit")
+            role, peer = "reply", self.peers[key_id][0]
+        else:
+            if not repo_inbox.well_formed_item(record, self.repo):
+                raise Rejected("field-shape")
+            if not repo_inbox.count_item(self.root, key_id, self.peer_limit, self.now):
+                raise Rejected("peer-limit")
+            role, peer = "incoming", self.peers[key_id][0]
+        if repo_inbox.mirror(self.root, self.repo, record, role=role, peer=peer, key_id=key_id, now=self.now) is None:
+            raise Rejected("collision")
+        sent = max(record["sent_at"], record.get("reopened_at") or 0) / 1000
+        self.cache["seen"][ref] = {"sha": sha, "kind": "user", "at": min(sent, self.now)}
+        return True
+
+    def take_state(self, ref: str, sha: str, entry_id: str, record: dict) -> None:
+        if record.get("id") != entry_id:
+            raise Rejected("message-id-mismatch")
+        location = record.get("location")
+        if not isinstance(location, str) or location.lower() != self.repo.lower():
+            raise Rejected("location-mismatch")
+        if not repo_inbox.well_formed_state(record):
+            raise Rejected("field-shape")
+        repo_inbox.take_state(self.root, self.repo, record)
+        self.cache["seen"][ref] = {"sha": sha, "kind": "state"}
+
+    def prune_mirror(self) -> None:
+        """Remove each mirrored entry whose ref is gone from origin and is not waiting to be pushed, as when another
+        of your machines dismissed it or the peer closed it."""
+        assert self.key is not None
+        prefix = f"{USER}{self.key.id}/"
+        queued = [item["ref"] for item in outbox_items(self.root, self.repo) if item["sealed"] is not None]
+        present = {ref[len(prefix):] for ref in [*self.cache["remote"], *queued] if ref.startswith(prefix)}
+        self.forget_entries([entry["id"] for entry in repo_inbox.entries(self.root, self.repo)
+                             if entry["id"] not in present])
+
+    def forget_entries(self, ids: list[str]) -> None:
+        """Remove entries from the mirror, and delete their state records with them."""
+        assert self.key is not None
+        for entry_id in ids:
+            self.delete(state_ref(self.key.id, entry_id))
+        repo_inbox.forget(self.root, self.repo, ids)
 
     def sealed_blob(self, cwd: Path, sha: str) -> str:
         """The blob of a commit whose tree is exactly one `sealed.json` of at most 32 KiB."""
@@ -886,8 +1061,9 @@ class Job:
             raise Rejected("too-large")
         return found[1]
 
-    def open(self, cwd: Path, blob: str) -> dict:
-        """The record a blob holds when it opens with this machine's key and was sealed by the same key."""
+    def open(self, cwd: Path, blob: str, senders: Optional[set[bytes]] = None) -> tuple[bytes, dict]:
+        """The key that sealed a blob, and the record the blob holds, when it opens with this machine's key and was
+        sealed by one of `senders`, by default this machine's own key."""
         assert self.key is not None
         done = git(cwd, "cat-file", "blob", blob)
         if done.returncode != 0:
@@ -898,21 +1074,31 @@ class Job:
             raise Rejected("tag-mismatch") from None
         except crypto.CryptoError:
             raise Rejected("not-sealed") from None
-        if sender != self.key.public:
-            raise Rejected("other-key")
+        if sender not in (senders or {self.key.public}):
+            raise Rejected("other-key", sender)
         record = parse(plaintext)
         if not isinstance(record, dict):
             raise Rejected("field-shape")
-        return record
+        return sender, record
 
-    def reject(self, ref: str, sha: str, reason: str) -> None:
+    def reject(self, ref: str, sha: str, rejected: Rejected) -> None:
         self.cache["seen"][ref] = {"sha": sha, "kind": "rejected"}
-        self.note_rejection(ref, reason)
+        self.note_rejection(ref, rejected.reason, rejected.sender)
         self.delete(ref)
 
-    def note_rejection(self, ref: str, reason: str) -> None:
-        """Count a rejection, and keep its ref, reason, and time, but nothing the record holds."""
+    def note_rejection(self, ref: str, reason: str, sender: Optional[bytes] = None) -> None:
+        """Count a rejection, and keep its ref, reason, and time, but nothing the record holds. A record sealed by
+        another key keeps that key's ID, and a key that is no peer of yours is kept among the unknown senders, so
+        `project agent peer list` can name it."""
         rejection = {"ref": ref, "reason": reason, "at": watch.stamp(self.now)}
+        if sender is not None:
+            key_id = crypto.key_id(sender)
+            rejection["key_id"] = key_id
+            if key_id not in self.peers:
+                senders = {**self.cache["senders"], key_id: {"public_key": crypto.encode(sender),
+                                                             "at": watch.stamp(self.now)}}
+                newest = sorted(senders.items(), key=lambda pair: pair[1]["at"])[-KEEP_SENDERS:]
+                self.cache["senders"] = dict(newest)
         self.cache["rejected"] += 1
         self.cache["rejections"] = [*self.cache["rejections"], rejection][-KEEP_REJECTIONS:]
         self.rejections.append(rejection)
@@ -954,12 +1140,28 @@ class Job:
         expired = {parse_ref(ref)[2] for ref, found in seen.items()
                    if found.get("kind") == "agent" and found["expires_at"] <= self.now}
         present = {parse_ref(ref)[2] for ref in self.cache["remote"] if ref.startswith(AGENTS)}
+        stale: list[str] = []
         for ref, found in seen.items():
             if found.get("kind") == "agent" and found["expires_at"] <= self.now:
                 self.delete(ref)
             elif found.get("kind") == "message" and (self.now - found["sent_at"] >= agents.KEEP
                                                      or found["to"] in expired or found["to"] not in present):
                 self.delete(ref)
+            elif found.get("kind") == "user" and self.now - found.get("at", self.now) >= agents.KEEP:
+                # An entry in your inbox, or one you sent to a peer's, a week after it was sent.
+                self.delete(ref)
+                if ref.startswith(f"{USER}{self.held}/"):
+                    stale.append(ref.rsplit("/", 1)[1])
+        self.forget_entries(stale)
+        # A state record outlives its entry only when the entry's deletion landed without it.
+        queued = {item["ref"] for item in outbox_items(self.root, self.repo) if item["sealed"] is not None}
+        for ref in self.cache["remote"]:
+            parsed = parse_ref(ref)
+            if parsed and parsed[0] == "state" and parsed[1] == self.held:
+                entry = user_ref(parsed[1], parsed[2])
+                if (entry not in self.cache["remote"] and entry not in queued) or \
+                        (self.now - (seen.get(entry) or {}).get("at", self.now) >= agents.KEEP):
+                    self.delete(ref)
 
     def read_visibility(self) -> None:
         result = self.gh(["repo", "view", self.repo, "--json", "visibility"])
@@ -1022,9 +1224,14 @@ class Job:
             for item in snapshot:
                 if item["sealed"] is not None:
                     commits[item["ref"]] = write_commit(cwd, item["sealed"])
-            leases = [f"--force-with-lease={item['ref']}:{item['old']}" for item in snapshot if item["old"]]
-            specs = [f"{commits[item['ref']]}:{item['ref']}" if item["sealed"] is not None else f":{item['ref']}"
-                     for item in snapshot]
+            # An item you sent to a peer is published again with no lease: only your machines write it, and the
+            # peer may have deleted it since this machine last pushed it.
+            forced = {item["ref"] for item in snapshot
+                      if item["sealed"] is not None and (item.get("meta") or {}).get("force")}
+            leases = [f"--force-with-lease={item['ref']}:{item['old']}" for item in snapshot
+                      if item["old"] and item["ref"] not in forced]
+            specs = [f"{'+' if item['ref'] in forced else ''}{commits[item['ref']]}:{item['ref']}"
+                     if item["sealed"] is not None else f":{item['ref']}" for item in snapshot]
             done = git(cwd, "push", "--porcelain", *leases, REMOTE, *specs, timeout=PUSH_TIMEOUT)
             results = push_results(text(done.stdout))
             failed = f"git push failed: {last_line(done)}"
@@ -1122,6 +1329,11 @@ class Relay:
         # then gets it as soon as that job ends, so a registration waiting for the key need not wait for a pass.
         self.owed: dict[str, str] = {}
         self.was_live: set[str] = set()
+        # The peers and agent.peer_limit, read from ~/.projector.toml again whenever the file changes.
+        self.peers: dict[str, bytes] = {}
+        self.peer_limit = agents.PEER_LIMIT
+        self.peers_error = ""
+        self.peers_signature: object = ()
 
     def start(self) -> None:
         """Forget the push each outbox records as running: only this daemon pushes, and it has not started."""
@@ -1144,6 +1356,7 @@ class Relay:
             self.last_full = now
         self.collect()
         self.check_key(full)
+        self.check_peers()
         records, gone = agents.relayed(self.root)
         live = live - gone
         lapsed = self.was_live - live
@@ -1162,7 +1375,7 @@ class Relay:
                                          or any((parsed := parse_ref(ref)) and parsed[2] in lingering
                                                 for ref in remote))
             job = Job(self.root, repo, self.key, set(live), now, poll=poll, full=full, gh=self.gh,
-                      held=self.held())
+                      held=self.held(), peers=self.peers, peer_limit=self.peer_limit)
             self.jobs[name] = (job, self.pool.submit(job.run))
         return self.status() != before
 
@@ -1232,10 +1445,24 @@ class Relay:
         assert self.value is not None
         self.reading = (self.value, self.pool.submit(read_key, self.value, keychain.TIMEOUT))
 
+    def check_peers(self) -> None:
+        """Read the peers and their limit when `~/.projector.toml` changed, which reads no keychain. A table that
+        does not read leaves the relay with no peers, and says why in `watch status`."""
+        signature = watch.file_signature(user_config_path(self.environ))
+        if signature == self.peers_signature:
+            return
+        self.peers_signature = signature
+        try:
+            self.peers, self.peer_limit, self.peers_error = (config.peers(self.environ),
+                                                             repo_inbox.peer_limit(self.environ), "")
+        except ConfigError as error:
+            self.peers, self.peer_limit, self.peers_error = {}, agents.PEER_LIMIT, str(error)
+
     def status(self) -> dict:
         state = "on" if self.key else ("reading" if self.reading else "off")
         return {"key": {"state": state, "id": self.held(), "store": self.key.store if self.key else None,
                         "error": self.key_error if not self.key and not self.reading else ""},
+                "peers": {"count": len(self.peers), "error": self.peers_error},
                 "repositories": dict(sorted(self.results.items()))}
 
     def wait(self, timeout: Optional[float] = None) -> None:
