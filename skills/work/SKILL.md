@@ -149,11 +149,21 @@ which files each changes and which depend on which, so that pieces that
 overlap go in one stack from the start.
 
 Stop only when every piece of the work is done or waits on something only
-the user can give, such as an answer, a test, or a sign-in. Post each such
-block to the inbox before you stop, as
-[Post what the user must see](#post-what-the-user-must-see) describes, so a
-user who is away finds it above their prompt. Then report, as a list, with
-what waits on the user first:
+the user can give, such as an answer, a test, or a sign-in. Never stop
+without posting to the inbox, because a user who is away sees only what is
+above their prompt. Post at least one item, chosen by why you stop, as
+[Post what the user must see](#post-what-the-user-must-see) describes:
+
+- **The work is done.** Post a notice with `tell` that says so, naming in
+  its detail each pull request that is ready for the user to merge. Post it
+  even though the panel lists their state, because only the notice says the
+  session has nothing left to do.
+- **A decision only the user can make blocks the rest.** Post a question
+  with `ask`, with the answer you recommend.
+- **Something only the user can do blocks the rest.** Post a request with
+  `request`, with numbered steps.
+
+Then report, as a list, with what waits on the user first:
 
 - **Each item waiting in the inbox**, named by what it asks, tells, or
   requests, and what it holds up.
