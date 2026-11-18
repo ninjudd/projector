@@ -1,0 +1,183 @@
+{
+ "version": 1,
+ "name": "S3 relay",
+ "project": "agent-messages/s3-relay",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 569,
+  "title": "Relay through an S3 bucket that agent.relay names",
+  "head": "727a26b72441a8d79b569a1aeb33c55d9b6855bc",
+  "headRef": "s3-relay/relay",
+  "base": "be61f903746be5a5847d60870c851f62b39bcebb",
+  "baseRef": "s3-relay/client",
+  "basePr": 568
+ },
+ "overview": {
+  "summary": [
+   "The relay carries encrypted messages and inbox entries between machines. This layer lets a registered session use an S3 bucket and prefix instead of a Git repository, while keeping the existing sealing, delivery, and queued-write behavior.",
+   "The transport and signed S3 client are the layers below this one. Here, configuration chooses the store, registration records the settings, and a worker probes the store before listing or applying records. S3 polls can run between the watch daemon’s normal passes.",
+   "The current head fixes both findings from the first review. Approval checks and admission now share the registration lock, and an old location’s outbox retains the settings needed to finish cleanup after its last session moves. The full review is clean; the local notice for expired credentials remains for a later layer."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used here",
+    "html": "<ul class=\"tight\"><li><b>Location:</b> one endpoint, bucket, and prefix, written as a canonical HTTPS URL.</li><li><b>Outbox:</b> records waiting to be written or deleted by a worker.</li><li><b>ETag:</b> an object’s version, used as the expected value for a conditional update or deletion.</li><li><b>Probe:</b> temporary requests that check whether the store rejects public listing and honors write conditions.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Review evidence",
+    "html": "<ul class=\"tight\"><li>The configured gate passed, including 255 hook tests, type-checking, validation, and exact-head CI.</li><li>Eighty-nine focused S3 relay, configuration, and agent tests passed against local fixtures.</li><li>Both earlier findings are verified fixed. Regression tests cover concurrent registration and cleanup across refusal and restart.</li><li>No real cloud operations ran.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "location-contract",
+   "title": "Choose and identify an S3 location",
+   "kicker": "Configuration adds the bucket, endpoint, profile, region, and poll interval.",
+   "intro": [
+    "A location is the store through which sessions share records. For S3, its identity includes the endpoint as well as the bucket and prefix, so matching names on different services remain separate.",
+    "An endpoint chooses where requests go, and a profile chooses the credentials source. Values committed by a repository therefore need the person’s approval before registration can use them. The region and poll interval follow the ordinary layered settings."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Parse S3 relay values, canonicalize endpoint identities, and derive storage keys for caches and mirrors.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Bucket names and prefixes are restricted to lowercase because the existing relay compares location identities without case."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_config.py",
+     "note": "Exercise accepted and rejected S3 location and endpoint forms, plus the documented setting names.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused configuration test class passed as part of the 40-test run."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "registration",
+   "title": "Keep the settings with each registration",
+   "kicker": "Agent records carry S3 settings and every value still waiting for approval.",
+   "intro": [
+    "A registration is the local record that makes an agent reachable. It now records the resolved S3 settings and a mirror-storage key, and keeps a list of approvals it still needs.",
+    "The daemon admits a waiting registration once its required values are allowed. Reading that registration, checking its values, and changing its state now happen under the same lock as registration writes, so a replacement registration is judged on its own settings."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/agents.py",
+     "note": "Resolve S3 settings during registration, print approval commands, and retain settings when unregistering.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 383,
+       "text": "Admission checks the current registration’s approvals under its session lock. The new concurrent-registration regression passed and leaves a replacement with an unapproved profile waiting for its own approval."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "relay-worker",
+   "title": "Carry records through conditional S3 requests",
+   "kicker": "The relay maps refs to objects, probes the store, and schedules faster polls.",
+   "intro": [
+    "The shared relay still names records by refs. The S3 transport maps those names to objects under the recipient’s key ID, and an ETag replaces the Git commit as the version expected by each write.",
+    "Before using a store, a worker checks that an unsigned listing fails and that conflicting conditional writes and deletions are refused. Listings bound individual record reads, and a changed object waits for the next poll. The daemon keeps a client per location to reuse and refresh credentials.",
+    "A location can outlive its last current registration while queued cleanup remains. The outbox now keeps the old S3 connection settings with that work, allowing the daemon to drain it after the session moves and after restart. A refused store still holds every change back."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/relay.py",
+     "note": "Implement the S3 transport, store probes, refusal reporting, per-location client reuse, and poll scheduling.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The local S3 relay tests passed checks for oversized records, changed leases, deletion of already-gone objects, and stores that ignore conditional requests."
+      },
+      {
+       "kind": "verify",
+       "line": 1959,
+       "text": "When no registration names a location, pending work can recover its S3 settings from the outbox. The new regression passed across daemon restarts: public-store refusal keeps cleanup queued, then a private store permits deletion without polling the abandoned location."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_relay.py",
+     "note": "Use two fixture machines and a signature-checking local S3 server to exercise delivery, leases, probes, approval, failure behavior, concurrent registration, and cleanup after moving.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused run passed 89 tests across S3 relay, configuration, and agent behavior, including both new regression tests for the earlier findings."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "callers",
+   "title": "Show S3 state in the CLI and panel",
+   "kicker": "Consumers use the canonical location and its hashed mirror-storage name.",
+   "intro": [
+    "The repository inbox is a local mirror of records fetched from the relay. S3 locations use a hash in their disk path rather than an endpoint URL, and registration supplies that storage name to the panel.",
+    "CLI output adds approval commands, region, credentials source, and probe state. These consumers keep work repositories separate from the location carrying their messages."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/repo_inbox.py",
+     "note": "Resolve inbox mirror paths through the shared location key and adapt to the richer registration result."
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Read a validated S3 mirror-storage name from registration instead of treating its HTTPS identity as a GitHub slug."
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Reject unsafe or missing S3 storage names while accepting the registration format.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The configured gate passed all 255 hook tests, including these mirror-path cases."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Print S3 relay settings, source and probe state, and list each approval command a waiting registration needs."
+    }
+   ]
+  },
+  {
+   "id": "documentation",
+   "title": "Document setup and the decisions made while building",
+   "kicker": "The CLI reference explains credentials, permissions, probes, and object layout.",
+   "intro": [
+    "The user-facing instructions explain how to configure a bucket, supply credentials, and grant the required object operations. They also describe lifecycle cleanup and versioning, which determine whether deleted ciphertext remains stored.",
+    "The project stays in progress: this layer records implementation decisions while the credential-lapse notice remains to be built."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Document S3 settings, approvals, credentials, IAM permissions, probes, storage layout, and retained cleanup settings."
+    },
+    {
+     "path": "docs/projects/agent-messages/s3-relay/readme.md",
+     "note": "Record the resolved location identity, registration format, client reuse, probe behavior, and cleanup after the last registration moves."
+    }
+   ]
+  }
+ ]
+}

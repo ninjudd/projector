@@ -1,0 +1,1954 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 98fa9b1c..9e9c8e80 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -930,9 +930,11 @@ project config allow --remove agent.relay github:acme/agents
+ ```
+ 
+ `--list --json` prints the approvals as `allowed`. `--remove` exits 1 when
+-there was no such approval. The one destination is `agent.relay`, as
++there was no such approval. The destinations are `agent.relay`, as
+ [Relay through a repository you choose](#relay-through-a-repository-you-choose)
+-describes. `allow` refuses a key that is not one with exit code 2.
++describes, and `agent.s3_endpoint` and `agent.s3_profile`, as
++[Relay through an S3 bucket](#relay-through-an-s3-bucket) describes.
++`allow` refuses a key that is not one with exit code 2.
+ 
+ ### Keep paths inside the repository
+ 
+@@ -1045,7 +1047,11 @@ reads, which are these:
+ | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or, with `--inline`, the key itself, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key join`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
+ | `agent.peers` | table | none | `project agent peer`, from `~/.projector.toml` only, as each peer's name with the base64 of their public key. Set it with `project agent peer add`, never `config set`; see [Reach other people's inboxes](#reach-other-peoples-inboxes) |
+ | `agent.peer_limit` | whole number | `12` | the watch daemon, from `~/.projector.toml` only, as the most items it opens from one peer in a rolling hour, and the most replies it opens to any one item you sent; at least `1` |
+-| `agent.relay` | string | `origin` | `project agent register`, from the checkout the session works in, as the repository its relay records travel through: `origin`, the checkout's own repository, or `github:<owner>/<repo>`. A destination, so a committed file's value applies only once you allow it; see [Relay through a repository you choose](#relay-through-a-repository-you-choose) |
++| `agent.relay` | string | `origin` | `project agent register`, from the checkout the session works in, as where its relay records travel through: `origin`, the checkout's own repository, `github:<owner>/<repo>`, or `s3://<bucket>/<prefix>`. A destination, so a committed file's value applies only once you allow it; see [Relay through a repository you choose](#relay-through-a-repository-you-choose) and [Relay through an S3 bucket](#relay-through-an-s3-bucket) |
++| `agent.s3_region` | string | `AWS_REGION`, `AWS_DEFAULT_REGION`, the profile's `region`, then `us-east-1` | `project agent register`, from the checkout the session works in, as the region of the bucket an S3 `agent.relay` names |
++| `agent.s3_endpoint` | string | AWS | `project agent register`, from the checkout the session works in, as the `https://` URL, with no path, query, or user info, of a store that speaks S3, such as Cloudflare R2 or MinIO, which requests reach path-style. A destination, so a committed file's value applies only once you allow it |
++| `agent.s3_profile` | string | `AWS_PROFILE`, then `default` | `project agent register`, from the checkout the session works in, as the AWS profile whose credentials sign an S3 location's requests. A destination, so a committed file's value applies only once you allow it |
++| `agent.s3_poll` | whole number | `10` | the watch daemon, from each registration's checkout, as the seconds between polls of its S3 location; at least `2` |
+ | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
+ | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
+ | `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, relative to the checkout's root, inside the checkout or the state directory unless `~/.projector.toml` sets it |
+@@ -3920,6 +3926,7 @@ files, and the daemon's cleanup of a session lapsed for 7 days removes them:
+ | `outbox/<owner>/<repo>.json` | The relay's ref changes waiting for the daemon's next push, and the checkouts that queued them |
+ | `relay/<owner>/<repo>.json` | What the relay last found in the relay location: its visibility, your permission there, the rejected count and the last 20 rejections, the key's refs, and your other machines' agents |
+ | `relays/<owner>/<repo>.git` | The bare clone of a location that `agent.relay` names, which holds only relay refs |
++| `outbox/s3/<digest>.json`, `relay/s3/<digest>.json` | An S3 location's outbox and cache, named by the first 16 hex digits of the SHA-256 of its identity, which each file records. The cache also holds the probe's last result. An outbox that holds a moved session's deletions also keeps the store settings its registration named, so the deletions still reach the store once no registration names the location |
+ | `visibility.json` | Each work repository's visibility, which its messages carry, as `gh` last reported it |
+ 
+ ## Message agents on other machines
+@@ -4227,9 +4234,10 @@ state: ok, polled 2026-11-18T09:12:03Z, PRIVATE, permission ADMIN
+ ```
+ 
+ With `--json`, it prints the `location`, the work `repo`, the `source`
+-file, whether it is `waiting`, the `allow` command, and the location's
+-last `state`, `polled_at`, `visibility`, `permission`, `refused` reason,
+-and `error`.
++file, whether it is `waiting`, the `allow` commands it waits for, and the
++location's last `state`, `polled_at`, `visibility`, `permission`, `refused`
++reason, and `error`. An S3 location adds its `s3` settings, its `region`,
++where its `credentials` come from, and its `probe` result.
+ 
+ ### Allow a location a repository chose
+ 
+@@ -4301,6 +4309,132 @@ neither field, came through its reader's repository, and crosses nothing.
+ Nothing else limits which repositories may message each other within one
+ location: the file you put `agent.relay` in is the boundary.
+ 
++## Relay through an S3 bucket
++
++Set `agent.relay` to an S3 bucket and prefix to carry the relay's sealed
++records as objects in the bucket instead of refs in a repository. An S3
++location answers in seconds: the daemon polls it every `agent.s3_poll`
++seconds, 10 by default, rather than once a pass, and a deleted record is
++gone rather than left in a repository's object store.
++
++```toml
++[agent]
++relay = "s3://acme-agents/relay"
++s3_region = "us-east-2"
++s3_profile = "acme-relay"
++```
++
++The bucket name and the prefix take lowercase letters, digits, dots, and
++hyphens, and the prefix also underscores, in segments separated by `/`,
++with no trailing `/`. The prefix may be empty. Any store that speaks S3
++and honors conditional writes works: set `agent.s3_endpoint` to its
++`https://` URL, such as `https://<account>.r2.cloudflarestorage.com`, and
++requests go to it path-style. Without an endpoint, requests go to
++`https://<bucket>.s3.<region>.amazonaws.com`.
++
++A location's identity is its endpoint, bucket, and prefix together, written
++as the path-style URL of the prefix, such as
++`https://s3.amazonaws.com/acme-agents/relay` on AWS. Every rule that names a
++location uses it: `project agent list`, the agents and inbox a location
++shares, and `project agent relay show`, which adds the region, where the
++credentials come from, such as `profile acme-relay`, and the probe's
++result:
++
++```console
++$ project agent relay show
++location: https://s3.amazonaws.com/acme-agents/relay, for work in acme/api
++set by: /Users/you/work/acme/.projector.toml
++region: us-east-2; credentials: profile acme-relay (credential_process); probe: passed, 2026-11-18T09:12:03Z
++state: ok, polled 2026-11-18T09:12:13Z
++```
++
++`agent.s3_endpoint` and `agent.s3_profile` are destinations, as
++`agent.relay` is: an endpoint can name a server that accepts every write,
++and a profile picks which of your AWS identities signs. When a file the
++repository commits sets any of the three, the session waits until you run
++`project config allow` for each value it set, and `project agent list`
++names each command.
++
++### Give the daemon credentials
++
++The daemon signs each request with AWS Signature Version 4, from the first
++of these that holds credentials. It never prints, logs, or passes a secret
++as a process argument:
++
++1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`
++   in the daemon's environment.
++2. The profile `agent.s3_profile` names, else `AWS_PROFILE`, else
++   `default`, in `~/.aws/credentials` and `~/.aws/config`, or the files
++   `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE` name.
++3. That profile's `credential_process`, run with a 30-second timeout. For
++   IAM Identity Center, use the AWS CLI's own export:
++
++   ```ini
++   [profile acme-relay]
++   credential_process = aws configure export-credentials --profile acme-sso --format process
++   ```
++
++Credentials with an expiry are refreshed 5 minutes before it, so no request
++goes out with credentials about to lapse. Session credentials in the
++environment cannot be refreshed, so `relay show` says so and recommends a
++profile with a `credential_process`. With no credentials, or when they
++expire or S3 refuses them, the location is `off`, with the reason in
++`project agent list` and `project watch status`. Outgoing records wait in
++the outbox and incoming ones in the bucket meanwhile.
++
++Each person needs this IAM policy, with your bucket and prefix:
++
++```json
++{
++  "Version": "2012-10-17",
++  "Statement": [
++    {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::acme-agents",
++     "Condition": {"StringLike": {"s3:prefix": ["relay/*"]}}},
++    {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
++     "Resource": "arn:aws:s3:::acme-agents/relay/*"}
++  ]
++}
++```
++
++Add a lifecycle rule that expires objects under the prefix after 8 days,
++as a backstop for the relay's own 7-day sweep. A bucket with versioning
++keeps every deleted record as a noncurrent version, so leave versioning off
++for the relay's bucket, or expire noncurrent versions too.
++
++### What the relay checks in a bucket
++
++On first use and on each full pass, the daemon probes the store. An
++unsigned listing of the prefix must fail, or the location is `off` with
++`the bucket lets anyone list s3://acme-agents/relay`. Then, on a fresh
++object under `<prefix>/<key-id>/probe/`, it sends each conditional request
++the relay's leases rely on, with a condition that must fail: a second
++`PutObject` with `If-None-Match: *`, and a `PutObject` and a
++`DeleteObject` with `If-Match` on a wrong ETag. A store that honors any of
++them otherwise would let two machines overwrite each other's records, so
++the location is `off` with a reason that names the request, such as `this
++store does not honor If-Match on DeleteObject`. The probe always deletes
++its object, and each full pass deletes any probe object over an hour old
++that an interrupted probe left.
++
++### How the relay lays out a bucket
++
++Each object holds one sealed record, as a ref's tree does in a repository,
++named by its recipient's key ID first, so one listing per poll finds
++everything addressed to you:
++
++| Ref | Object |
++| --- | --- |
++| `refs/projector/agents/<key-id>/<relay-id>` | `<prefix>/<key-id>/agents/<relay-id>` |
++| `refs/projector/inbox/<key-id>/<relay-id>/<id>` | `<prefix>/<key-id>/inbox/<relay-id>/<id>` |
++| `refs/projector/user/<key-id>/<id>` | `<prefix>/<key-id>/user/<id>` |
++| `refs/projector/user-state/<key-id>/<id>` | `<prefix>/<key-id>/user-state/<id>` |
++
++An object's ETag is its version: a new record is written with
++`If-None-Match: *`, and a renewal or a deletion with `If-Match` on the ETag
++the last listing found, so a `412` is a stale lease that the next poll
++settles. The relay rejects an object over 32 KiB from the listing, without
++reading it, and reads the rest with `If-Match` on the listed ETag.
++
+ ## Reach other people's inboxes
+ 
+ You list another person's public key under a name you choose, and they list
+diff --git a/docs/projects/agent-messages/s3-relay/readme.md b/docs/projects/agent-messages/s3-relay/readme.md
+index f8253748..068d21d1 100644
+--- a/docs/projects/agent-messages/s3-relay/readme.md
++++ b/docs/projects/agent-messages/s3-relay/readme.md
+@@ -397,3 +397,46 @@ observed delivery time in this plan.
+   or that expire within the 5-minute refresh margin, are an `expired`
+   error rather than signing anything: the source has no fresher keys, so
+   each request would only run it again.
++- **Bucket names and prefixes are lowercase.** The prefix takes lowercase
++  letters, digits, `.`, `_`, and `-` in `/`-separated segments, so every
++  rule that compares locations without case, as the daemon's jobs and the
++  outbox files do, compares S3 identities exactly.
++- **A registration records what an S3 location needs.** `agent.json` holds
++  the location's settings as `s3`, with `bucket`, `prefix`, `endpoint`,
++  `region`, `profile`, and `poll`, and the `store` its files are named by,
++  `s3/<digest>`, which the panel reads to find the location's inbox
++  mirror, since it cannot compute a SHA-256. A waiting registration
++  records each setting and value it waits for as `allow`, and the daemon
++  admits it once every one is allowed. A registration from before records
++  none, and waits for `agent.relay` alone, as it did.
++- **The daemon keeps one client per S3 location,** made from the settings
++  of the location's newest live registration, so its credentials are read
++  once and refreshed in place. An unregistered session's mark keeps its
++  `s3` settings, so its deletions still reach the bucket. So does the
++  outbox of a location a session moves away from: the deletions it queues
++  keep the old registration's `s3`, and while they wait and no
++  registration names the location, the daemon makes its client from them.
++  That job polls nothing, and while the store is off it holds every
++  change back, as any S3 location's job does.
++- **An S3 location that is off sends nothing but its probe.** While the
++  probe refuses the store or the credentials lapse, the job lists nothing
++  and applies nothing, and the outbox keeps every change, deletions
++  included. It turns `off` with the reason, which `list`, `watch status`,
++  and `relay show` print. A lapse is tried again on every job, and a
++  refused store on the next full pass.
++- **A store that answers a probe request with another `4xx` is refused,**
++  with the status in the reason, such as `this store answers 400 to
++  If-Match on PutObject rather than 412`, and one that refuses the last
++  deletion under the object's own ETag is refused too. A `403` there is a
++  lapse of the credentials, not a property of the store.
++- **A record that changed between the listing and its read waits.** A
++  `GetObject` that answers `412` or `404` leaves the record unexamined, and
++  the next poll lists its new version, rather than rejecting a record a
++  peer replaced.
++- **`send` reminds no agent about a public relay on an S3 location,** since
++  the probe refuses a bucket that anyone can list.
++- **`relay show --json` gives `allow` as a list of commands,** one for each
++  value the location waits for.
++- **The lease test changes the object between the listing and the
++  renewal,** as a second job's renewal would, since the daemon never runs
++  two jobs for one location at once.
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index 46e68fcf..fc499e9b 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -1140,6 +1140,10 @@ test('the repository inbox lives under the state directory, and a registration n
+   expect(locationOf('{"repo": "acme/api", "location": "acme/agents", "relay": "waiting"}')).toBeUndefined()
+   expect(locationOf('{"schema_version": 1}')).toBeUndefined()
+   expect(locationOf('{"repo": "../../etc"}')).toBeUndefined()
++  const s3 = '"location": "https://s3.amazonaws.com/team/relay", "relay": "published"'
++  expect(locationOf(`{"repo": "acme/api", ${s3}, "store": "s3/0123456789abcdef"}`)).toBe('s3/0123456789abcdef')
++  expect(locationOf(`{"repo": "acme/api", ${s3}, "store": "s3/../../etc"}`)).toBeUndefined()
++  expect(locationOf(`{"repo": "acme/api", ${s3}}`)).toBeUndefined()
+   expect(locationOf(undefined)).toBeUndefined()
+   expect(isEntry(entry())).toBe(true)
+   expect(isEntry(question())).toBe(false)
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index bc1861e2..a16a329d 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -399,14 +399,24 @@ export function entriesStoreOf(env: Env, repo: string): string | undefined {
+ 
+ /**
+  * The relay location whose repository inbox a session shows, from its
+- * `agent.json`: the `location` it registered with, or its `repo` for a
+- * registration from before shared relays, or undefined when it names neither
+- * or waits for `project config allow`.
++ * `agent.json`, as the mirror's folder names it: the `location` it registered
++ * with, or its `repo` for a registration from before shared relays, or for an
++ * S3 location the `store` the CLI files it under, `s3/` and a digest of its
++ * identity. Undefined when it names none or waits for `project config allow`.
+  */
+ export function locationOf(registration: string | undefined): string | undefined {
+   try {
+-    const found = JSON.parse(registration ?? '') as { location?: unknown; repo?: unknown; relay?: unknown }
+-    const location = found.relay === 'waiting' ? undefined : (found.location ?? found.repo)
++    const found = JSON.parse(registration ?? '') as {
++      location?: unknown
++      repo?: unknown
++      relay?: unknown
++      store?: unknown
++    }
++    if (found.relay === 'waiting') return undefined
++    if (typeof found.location === 'string' && found.location.startsWith('https://')) {
++      return typeof found.store === 'string' && /^s3\/[0-9a-f]{16}$/.test(found.store) ? found.store : undefined
++    }
++    const location = found.location ?? found.repo
+     return typeof location === 'string' && /^[\w.-]+\/[\w.-]+$/.test(location) ? location : undefined
+   } catch {
+     return undefined
+diff --git a/src/projector/agents.py b/src/projector/agents.py
+index c89dfdbc..78acb1e3 100644
+--- a/src/projector/agents.py
++++ b/src/projector/agents.py
+@@ -28,13 +28,15 @@
+ import os
+ import re
+ import secrets
++import shlex
+ import socket
+ import uuid
+ from pathlib import Path
+-from typing import Callable, Iterable, Optional
++from typing import Callable, Iterable, NamedTuple, Optional
+ 
+ from . import codex_watch, relay, review, watch
+-from .config import MINIMUMS, Config, ConfigError, NotAllowed, is_allowed, load as load_config, relay_location
++from .config import (MAX_LOCATION, MINIMUMS, Config, ConfigError, NotAllowed, S3Relay, is_allowed, is_s3,
++                     load as load_config, location_key, relay_location, s3_endpoint, s3_identity)
+ from .core import ProjectorError, UsageError
+ from .inbox import SESSION, is_one_line, locked, read_json, write_json
+ 
+@@ -172,37 +174,71 @@ def checkout(cwd: Path) -> dict:
+ 
+ 
+ def location_of(found: dict) -> Optional[str]:
+-    """The relay location a registration's records travel through, `owner/repo`, or None while it waits for
+-    `project config allow` or has none. A registration from before shared relays names no location, and its records
+-    travel through its work repository."""
++    """The relay location a registration's records travel through, `owner/repo` or an S3 location's identity, or
++    None while it waits for `project config allow` or has none. A registration from before shared relays names no
++    location, and its records travel through its work repository."""
+     if found.get("relay") == "waiting":
+         return None
+     return found.get("location") or found.get("repo")
+ 
+ 
+-def waiting_text(location: str, source: str) -> str:
+-    return (f"github:{location}, set by {source}, waits for "
+-            f"`project config allow agent.relay github:{location}`")
++def allow_commands(location: str, allow: Iterable[Iterable[str]] = ()) -> list[str]:
++    """The `project config allow` commands that let a waiting location relay: one for each value in `allow`, or,
++    for a registration from before S3 locations, which records none, the one for `agent.relay`."""
++    pairs = [tuple(pair) for pair in allow] or [("agent.relay", f"github:{location}")]
++    return [f"project config allow {key} {shlex.quote(value)}" for key, value in pairs]
+ 
+ 
+-def relay_place(cwd: Path, repo: Optional[str], environ: Optional[dict] = None) -> tuple[Optional[str], str, str]:
++def waiting_text(location: str, source: str, allow: Iterable[Iterable[str]] = ()) -> str:
++    shown = location if is_s3(location) else f"github:{location}"
++    return f"{shown}, set by {source}, waits for " + " and ".join(f"`{command}`"
++                                                                 for command in allow_commands(location, allow))
++
++
++class Place(NamedTuple):
++    """Where a session's records relay: the location, the file that chose it, or `origin`, and why it waits for
++    `project config allow`, with each setting and value that waits. An S3 location has its settings in `s3`."""
++
++    location: Optional[str]
++    source: str
++    waits: str
++    s3: Optional[dict] = None
++    allow: tuple[tuple[str, str], ...] = ()
++
++
++def relay_place(cwd: Path, repo: Optional[str], environ: Optional[dict] = None) -> Place:
+     """The relay location of a session at `cwd` whose work repository is `repo`, from `agent.relay` in the
+-    configuration there, the file that chose it, or `origin`, and why it waits when a file the repository commits
+-    chose it and you have not allowed it. A location equal to the work repository needs no allowing, since the
+-    relay pushes there already. Raises `ConfigError` for a value that is no location."""
++    configuration there, and for an S3 location from `agent.s3_endpoint`, `agent.s3_profile`, `agent.s3_region`,
++    and `agent.s3_poll`. It waits while a file the repository commits sets `agent.relay`, `agent.s3_endpoint`, or
++    `agent.s3_profile` to a value you have not allowed. A location equal to the work repository needs no
++    allowing, since the relay pushes there already. Raises `ConfigError` for a value that is no location."""
+     loaded = load_config(cwd, environ=environ)
+-    waits = False
+-    try:
+-        value = loaded.setting("agent.relay")
+-    except NotAllowed as refused:
+-        value, waits = refused.value, True
++    allow: list[tuple[str, str]] = []
++
++    def read(key: str) -> Optional[str]:
++        try:
++            return loaded.setting(key)
++        except NotAllowed as refused:
++            allow.append((key, refused.value))
++            return refused.value
++
++    value = read("agent.relay")
+     configured = relay_location(value) if value is not None else None
+     if configured is None:
+-        return repo, "origin", ""
++        return Place(repo, "origin", "")
+     source = str(loaded.source("agent.relay"))
++    if isinstance(configured, S3Relay):
++        endpoint, profile = read("agent.s3_endpoint"), read("agent.s3_profile")
++        location = s3_identity(endpoint, configured.bucket, configured.prefix)
++        if len(location) > MAX_LOCATION:
++            raise ConfigError(f"the S3 location {location} is longer than {MAX_LOCATION} characters")
++        s3 = {"bucket": configured.bucket, "prefix": configured.prefix,
++              "endpoint": s3_endpoint(endpoint) if endpoint else None, "region": loaded.setting("agent.s3_region"),
++              "profile": profile, "poll": loaded.setting("agent.s3_poll")}
++        return Place(location, source, waiting_text(location, source, allow) if allow else "", s3, tuple(allow))
+     if repo and configured.lower() == repo.lower():
+-        return repo, source, ""
+-    return configured, source, waiting_text(configured, source) if waits else ""
++        return Place(repo, source, "")
++    return Place(configured, source, waiting_text(configured, source, allow) if allow else "", None, tuple(allow))
+ 
+ 
+ def host_of(root: Path, session: str, now: float, environ: dict) -> str:
+@@ -254,7 +290,8 @@ def write_registration(root: Path, session: str, login: str, place: dict, cwd: P
+     relay does not run. With no fields given, write only a first registration, with no name and a summary made
+     from the session's subscriptions, and answer no record when the session is registered already or
+     subscribes to nothing."""
+-    location, source, waits = relay_place(cwd, place.get("repo"), environ)
++    relaying = relay_place(cwd, place.get("repo"), environ)
++    location, source, waits = relaying.location, relaying.source, relaying.waits
+     if waits:
+         key, off = None, waits
+     else:
+@@ -291,6 +328,8 @@ def write_registration(root: Path, session: str, login: str, place: dict, cwd: P
+                 "registered_at": old.get("registered_at") or watch.stamp(now), "updated_at": watch.stamp(now),
+                 "relay": "waiting" if waits else "pending" if key else ("off" if location else "none"),
+                 **({"location": location, "location_source": source} if location else {}),
++                **({"allow": [list(pair) for pair in relaying.allow]} if waits else {}),
++                **({"s3": relaying.s3, "store": location_key(location)} if relaying.s3 and location else {}),
+             }
+             write_json(folder / "agent.json", new)
+             (folder / UNREGISTERED).unlink(missing_ok=True)
+@@ -324,25 +363,32 @@ def publish_waiting(root: Path, key: relay.Key, now: float) -> list[str]:
+ def admit(root: Path, approvals: Path, keyed: bool, now: float) -> list[str]:
+     """Let each registration that waits for `project config allow` relay once you have allowed its location, as
+     `approvals` records them: it becomes pending, or off on a machine with no key. Answers the sessions it let
+-    through."""
++    through.
++
++    It judges each registration by the values that registration records, read under the lock `write_registration`
++    writes it under, so a session that registers again with another value meanwhile is never admitted on the
++    approvals of the registration it replaced."""
+     admitted = []
+     for session in watch.session_names(root):
+-        found = record(root, session)
+-        if not found or found.get("relay") != "waiting" or not found.get("location"):
+-            continue
+-        try:
+-            allowed = is_allowed(approvals, "agent.relay", f"github:{found['location']}")
+-        except ConfigError:
+-            return admitted
+-        if not allowed:
++        if (record(root, session) or {}).get("relay") != "waiting":
+             continue
+         folder = watch.session_folder(root, session)
+         with locked(folder):
+             current = record(root, session)
+-            if current and current.get("relay") == "waiting" and current.get("location") == found["location"]:
+-                write_json(folder / "agent.json", {**current, "relay": "pending" if keyed else "off",
+-                                                   "updated_at": watch.stamp(now)})
+-                admitted.append(session)
++            if not current or current.get("relay") != "waiting" or not current.get("location"):
++                continue
++            try:
++                pairs = [tuple(pair) for pair in
++                         current.get("allow") or [("agent.relay", f"github:{current['location']}")]]
++                allowed = all(is_allowed(approvals, key, value) for key, value in pairs)
++            except ConfigError:
++                return admitted
++            if not allowed:
++                continue
++            kept = {key: value for key, value in current.items() if key != "allow"}
++            write_json(folder / "agent.json", {**kept, "relay": "pending" if keyed else "off",
++                                               "updated_at": watch.stamp(now)})
++            admitted.append(session)
+     return admitted
+ 
+ 
+@@ -375,7 +421,8 @@ def unregister(root: Path, session: str, now: float) -> tuple[Optional[dict], in
+     with locked(folder):
+         found = record(root, session)
+         if found is not None or departure(root, session) is None:
+-            kept = {key: found[key] for key in ("relay_id", "repo", "location", "cwd") if key in found} if found else {}
++            kept = {key: found[key] for key in ("relay_id", "repo", "location", "cwd", "s3")
++                    if key in found} if found else {}
+             write_json(folder / UNREGISTERED, {"schema_version": 1, **kept, "unregistered_at": watch.stamp(now)})
+         (folder / "agent.json").unlink(missing_ok=True)
+     return found, relay.forget(root, found, now) if found else 0
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 0816eb42..a0649cdb 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -43,6 +43,7 @@
+     approvals,
+     disallow,
+     is_destination,
++    is_s3,
+     parse_value,
+     peers as configured_peers,
+     redact,
+@@ -1602,11 +1603,12 @@ def run_agent(arguments: argparse.Namespace) -> int:
+         caller = agents.record(root, session) if session else None
+         if caller:
+             repo, location = caller.get("repo"), caller.get("location") or caller.get("repo")
+-            waits = agents.waiting_text(location, caller.get("location_source") or "") \
++            waits = agents.waiting_text(location, caller.get("location_source") or "", caller.get("allow") or ()) \
+                 if caller.get("relay") == "waiting" else ""
+         else:
+             repo = agents.checkout(Path.cwd()).get("repo")
+-            location, _, waits = agents.relay_place(Path.cwd(), repo)
++            relaying = agents.relay_place(Path.cwd(), repo)
++            location, waits = relaying.location, relaying.waits
+         running, line = relay.header(root, location, repo, waits)
+         if arguments.json_output:
+             print(json_text({"local_only": not running, "relay": line, "agents": rows}))
+@@ -1664,7 +1666,8 @@ def run_agent(arguments: argparse.Namespace) -> int:
+     else:
+         message, found, way = agents.reply(root, session, arguments.id, text, now, limit=limit)
+     ensure()
+-    public = way.startswith("relay") and relay.visibility(root, found["location"]) != "PRIVATE"
++    public = (way.startswith("relay") and not is_s3(found["location"])
++              and relay.visibility(root, found["location"]) != "PRIVATE")
+     if arguments.json_output:
+         print(json_text({"message": message, "to": found, "delivery": way,
+                          **({"reminder": relay.PUBLIC_REMINDER} if public else {})}))
+@@ -1680,15 +1683,19 @@ def show_relay(arguments: argparse.Namespace) -> int:
+     whether it waits for `project config allow`, and what the location's last job found."""
+     root = watch.state_root()
+     repo = agents.checkout(Path.cwd()).get("repo")
+-    location, source, waits = agents.relay_place(Path.cwd(), repo)
+-    found = (watch.status(root, time.time())["relay"]["repositories"] or {}).get((location or "").lower())
++    relaying = agents.relay_place(Path.cwd(), repo)
++    location, source, waits = relaying.location, relaying.source, relaying.waits
++    found = (watch.status(root, time.time())["relay"]["repositories"] or {}).get((location or "").lower()) or {}
+     cache = relay.read_cache(root, location) if location else {}
+     refused = relay.location_refusal(root, location, repo) if location else ""
+     report = {"location": location, "repo": repo, "source": source if location else None, "waiting": bool(waits),
+-              "allow": f"project config allow agent.relay github:{location}" if waits else None,
+-              "state": (found or {}).get("state"), "polled_at": cache.get("polled_at"),
++              "allow": agents.allow_commands(location, relaying.allow) if waits and location else [],
++              "state": found.get("state"), "polled_at": cache.get("polled_at"),
+               "visibility": cache.get("visibility"), "permission": cache.get("permission"), "refused": refused,
+-              "error": (found or {}).get("error") or ""}
++              "error": found.get("error") or ""}
++    if relaying.s3:
++        report.update(s3=relaying.s3, region=found.get("region"), credentials=found.get("source"),
++                      probe=cache.get("probe"), visibility=None)
+     if arguments.json_output:
+         print(json_text(report))
+         return 0
+@@ -1698,7 +1705,16 @@ def show_relay(arguments: argparse.Namespace) -> int:
+     print(f"location: {location}" + ("" if location == repo else f", for work in {repo or 'this checkout'}"))
+     print(f"set by: {source}")
+     if waits:
+-        print(f"waits for: `{report['allow']}`, run in a terminal")
++        print(f"waits for: {' and '.join(f'`{command}`' for command in report['allow'])}, run in a terminal")
++    if relaying.s3:
++        probe = report["probe"] or {}
++        print(f"region: {report['region'] or relaying.s3.get('region') or 'not read yet'}; credentials: "
++              f"{report['credentials'] or 'not read yet'}; probe: "
++              + ("passed" if probe.get("result") == "ok" else probe.get("result") or "not run yet")
++              + (f", {probe['at']}" if probe.get("at") else ""))
++        if found.get("refreshable") is False:
++            print("note: session credentials in the environment cannot be refreshed; set agent.s3_profile to a "
++                  "profile with a credential_process instead")
+     state = report["state"] or "not run yet"
+     print(f"state: {state}" + (f", polled {report['polled_at']}" if report["polled_at"] else "")
+           + (f", {report['visibility']}" if report["visibility"] not in (None, "unknown") else "")
+@@ -1832,8 +1848,10 @@ def run_watch(arguments: argparse.Namespace) -> int:
+                   f"relay: reading key {key['id']}" if key["state"] == "reading" else
+                   f"relay: off ({key['error'] or 'no agent.key'})")
+             for waiting in report["relay"].get("waiting") or []:
+-                print(f"relay {waiting['location']}: waiting, set by {waiting['source']}; run `project config allow "
+-                      f"agent.relay github:{waiting['location']}` in a terminal to relay through it")
++                commands = " and ".join(f"`{command}`" for command in waiting.get("allow")
++                                        or agents.allow_commands(waiting["location"]))
++                print(f"relay {waiting['location']}: waiting, set by {waiting['source']}; run {commands} in a "
++                      "terminal to relay through it")
+             for repo, found in report["relay"]["repositories"].items():
+                 problems = "; ".join(part for part in (found.get("error"), *found.get("errors", [])) if part)
+                 if found.get("refused") and found.get("refused") != found.get("error"):
+@@ -1845,6 +1863,10 @@ def run_watch(arguments: argparse.Namespace) -> int:
+                 unknown = f", unknown senders: {', '.join(found['senders'])}" if found.get("senders") else ""
+                 seen = ", ".join(part.lower() for part in (found.get("visibility"), found.get("permission"))
+                                  if part and part != "unknown")
++                if found.get("source"):
++                    probe = (found.get("probe") or {}).get("result")
++                    checked = "probe passed" if probe == "ok" else "probe not run" if not probe else "probe off"
++                    seen = ", ".join([found.get("region") or "", f"credentials from {found['source']}", checked])
+                 print(f"relay {repo}: {found.get('state')}" + (f" ({seen})" if seen else "")
+                       + (", bare clone" if found.get("clone") else "")
+                       + f", {found.get('queued', 0)} queued, {found.get('rejected', 0)} rejected{why}{unknown}"
+@@ -2662,8 +2684,9 @@ def post_to_peers(arguments: argparse.Namespace, root: Path, now: float) -> int:
+     location = agents.location_of(registration)
+     if not location:
+         waits = registration.get("relay") == "waiting"
+-        raise repo_inbox.RepoInboxError(agents.waiting_text(registration["location"], registration.get(
+-            "location_source") or "") if waits and registration.get("location") else relay.NO_ORIGIN)
++        raise repo_inbox.RepoInboxError(agents.waiting_text(
++            registration["location"], registration.get("location_source") or "", registration.get("allow") or ())
++            if waits and registration.get("location") else relay.NO_ORIGIN)
+     if refused := relay.location_refusal(root, location, registration.get("repo")):
+         raise repo_inbox.RepoInboxError(f"the relay is off for this session, so nothing can reach a peer: {refused}")
+     key = repo_inbox.sealing_key()
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 38a0d19b..b9dd74a4 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -69,6 +69,7 @@
+ import tempfile
+ import time
+ import tomllib
++import urllib.parse
+ from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any, Optional
+@@ -111,6 +112,10 @@
+     "agent.peers": dict,
+     "agent.peer_limit": int,
+     "agent.relay": str,
++    "agent.s3_region": str,
++    "agent.s3_endpoint": str,
++    "agent.s3_profile": str,
++    "agent.s3_poll": int,
+     "ios.app": str,
+     "ios.project": str,
+     "ios.output": str,
+@@ -126,6 +131,7 @@
+     "watch.review_stall": 1,
+     "agent.message_limit": 1,
+     "agent.peer_limit": 1,
++    "agent.s3_poll": 2,
+ }
+ 
+ 
+@@ -142,13 +148,25 @@
+ # The settings that say where your data goes. The owner of a repository's
+ # default branch may not be you, so a value read from it applies only once you
+ # allow it with `project config allow`.
+-DESTINATIONS: frozenset[str] = frozenset({"agent.relay"})
++DESTINATIONS: frozenset[str] = frozenset({"agent.relay", "agent.s3_endpoint", "agent.s3_profile"})
+ 
+-# The forms `agent.relay` takes: `origin`, the checkout's own repository, or a
+-# GitHub repository the relay carries records through.
++# The forms `agent.relay` takes: `origin`, the checkout's own repository, a
++# GitHub repository the relay carries records through, or an S3 bucket and
++# prefix that hold them as objects.
+ RELAY_ORIGIN = "origin"
+ RELAY_GITHUB = "github:"
++RELAY_S3 = "s3://"
+ RELAY_SLUG = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
++# An S3 bucket's name, and each `/`-separated segment of a relay's prefix, in
++# lowercase only, so every rule that compares locations without case compares
++# S3 locations exactly.
++S3_BUCKET = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
++S3_SEGMENT = re.compile(r"[a-z0-9._-]+")
++# Where an S3 location with no `agent.s3_endpoint` lives, in its identity.
++AWS_ENDPOINT = "https://s3.amazonaws.com"
++# The longest identity a location may have: the longest `location` a record
++# carries.
++MAX_LOCATION = 256
+ 
+ # Keys whose value can be a secret. A value under `keychain:` names an item in
+ # the OS keychain and holds no secret; any other value is the secret itself.
+@@ -171,18 +189,74 @@ def __init__(self, key: str, value: Any, source: "Source") -> None:
+                          f"run `project config allow {key} {shlex.quote(str(value))}` in a terminal to use it")
+ 
+ 
+-def relay_location(value: str) -> Optional[str]:
+-    """The repository an `agent.relay` value names, `owner/repo`, or None for `origin`, the checkout's own
+-    repository. Any other value is refused, naming the forms."""
++@dataclass(frozen=True)
++class S3Relay:
++    """An S3 bucket and the prefix under it that `agent.relay` names, which may be empty."""
++
++    bucket: str
++    prefix: str
++
++
++def relay_location(value: str) -> Optional[str | S3Relay]:
++    """The repository an `agent.relay` value names, `owner/repo`, its S3 bucket and prefix, or None for `origin`,
++    the checkout's own repository. Any other value is refused, naming the forms."""
+ 
+     if value == RELAY_ORIGIN:
+         return None
++    if value.startswith(RELAY_S3):
++        bucket, _, prefix = value[len(RELAY_S3):].partition("/")
++        segments = prefix.split("/") if prefix else []
++        if (S3_BUCKET.fullmatch(bucket) and ".." not in bucket and not value.endswith("/")
++                and all(S3_SEGMENT.fullmatch(segment) and segment not in (".", "..") for segment in segments)):
++            return S3Relay(bucket, prefix)
++        raise ConfigError(f"agent.relay is {value!r}, and an S3 location is s3://<bucket>/<prefix>: a bucket name of "
++                          "3 to 63 lowercase letters, digits, dots, and hyphens, then an optional prefix of "
++                          "lowercase letters, digits, dots, underscores, and hyphens in segments separated by /, "
++                          "with no empty, . or .. segment and no trailing /")
+     slug = value[len(RELAY_GITHUB):] if value.startswith(RELAY_GITHUB) else None
+     if slug is not None and RELAY_SLUG.fullmatch(slug) and slug.split("/")[1] not in (".", ".."):
+         return slug
+-    reserved = "; s3:// is not supported yet" if value.startswith("s3://") else ""
+-    raise ConfigError(f"agent.relay is {value!r}, and it takes origin or github:<owner>/<repo>, such as "
+-                      f"github:acme/agents{reserved}")
++    raise ConfigError(f"agent.relay is {value!r}, and it takes origin, github:<owner>/<repo>, such as "
++                      "github:acme/agents, or s3://<bucket>/<prefix>, such as s3://acme-agents/relay")
++
++
++def s3_endpoint(value: str) -> str:
++    """An `agent.s3_endpoint` value as a location's identity writes it: `https://`, the host in lowercase, and its
++    port unless it is 443. A value with a path, query, fragment, or user info is refused."""
++
++    try:
++        parts: Optional[urllib.parse.SplitResult] = urllib.parse.urlsplit(value)
++        port = parts.port if parts else None
++    except ValueError:
++        parts, port = None, None
++    if (parts is None or parts.scheme.lower() != "https" or not parts.hostname or parts.path not in ("", "/")
++            or parts.query or parts.fragment or "@" in parts.netloc or value.endswith(("?", "#"))):
++        raise ConfigError(f"agent.s3_endpoint is {value!r}, and it takes an https:// URL with no path, query, or "
++                          "user info, such as https://s3.example.com")
++    host = parts.hostname.lower()
++    host = f"[{host}]" if ":" in host else host
++    return f"https://{host}" + (f":{port}" if port not in (None, 443) else "")
++
++
++def s3_identity(endpoint: Optional[str], bucket: str, prefix: str) -> str:
++    """An S3 location's identity: the path-style URL of its prefix, on AWS when no endpoint names another store."""
++
++    return "/".join(part for part in (s3_endpoint(endpoint) if endpoint else AWS_ENDPOINT, bucket, prefix) if part)
++
++
++def is_s3(location: str) -> bool:
++    """Whether a relay location is an S3 location's identity rather than a repository slug."""
++
++    return location.startswith("https://")
++
++
++def location_key(location: str) -> str:
++    """The relative name a location's cache, outbox, and inbox mirror are filed under: a repository's slug in
++    lowercase, or `s3/` and the first 16 hex digits of the SHA-256 of an S3 location's identity."""
++
++    if is_s3(location):
++        return f"s3/{hashlib.sha256(location.encode()).hexdigest()[:16]}"
++    return location.lower()
+ 
+ 
+ def is_destination(key: str) -> bool:
+@@ -372,11 +446,13 @@ def parse_value(key: str, text: str) -> Any:
+         text.encode("utf-8")
+     except UnicodeEncodeError:
+         raise UsageError(f"{key} must be text that UTF-8 can encode") from None
+-    if key == "agent.relay":
+-        try:
++    try:
++        if key == "agent.relay":
+             relay_location(text)
+-        except ConfigError as error:
+-            raise UsageError(str(error)) from None
++        elif key == "agent.s3_endpoint":
++            s3_endpoint(text)
++    except ConfigError as error:
++        raise UsageError(str(error)) from None
+     return text
+ 
+ 
+diff --git a/src/projector/relay.py b/src/projector/relay.py
+index b2bde464..a9b7dff0 100644
+--- a/src/projector/relay.py
++++ b/src/projector/relay.py
+@@ -38,17 +38,20 @@
+ 
+ import base64
+ import binascii
++import contextlib
+ import hashlib
+ import json
+ import os
+ import re
++import secrets
+ import subprocess
+ from concurrent.futures import Future, ThreadPoolExecutor
+ from contextlib import AbstractContextManager
++from dataclasses import dataclass
+ from pathlib import Path
+ from typing import Callable, NamedTuple, Optional, Protocol
+ 
+-from . import agents, config, crypto, keychain, repo_inbox, review, summary, watch
++from . import agents, config, crypto, keychain, repo_inbox, review, s3, summary, watch
+ from .config import INLINE_KEY, KEYCHAIN, ConfigError, inline_key, unset_value, user_config_path, write_value
+ from .core import ProjectorError, run_bounded
+ from .inbox import SESSION, locked, read_json, write_json
+@@ -77,6 +80,14 @@
+ FETCH_TIMEOUT = 120.0
+ PUSH_TIMEOUT = 900.0
+ WORKERS = 2
++# Seconds between polls of an S3 location when `agent.s3_poll` is unset.
++S3_POLL = 10
++# Requests an S3 location's job sends at once when it applies its outbox.
++S3_REQUESTS = 8
++# An ETag no object has, which the probe's conditional requests must fail on.
++PROBE_ETAG = '"00000000000000000000000000000000"'
++# How old a probe object is before a full pass deletes it as one an interrupted probe left.
++PROBE_AGE = 3600.0
+ COMMIT_MESSAGE = "projector relay"
+ IDENTITY = {"GIT_AUTHOR_NAME": "projector", "GIT_AUTHOR_EMAIL": "projector@invalid", "GIT_AUTHOR_DATE": "@0 +0000",
+             "GIT_COMMITTER_NAME": "projector", "GIT_COMMITTER_EMAIL": "projector@invalid",
+@@ -509,8 +520,7 @@ def tracking(ref: str) -> str:
+ 
+ 
+ def repo_file(root: Path, folder: str, repo: str) -> Path:
+-    owner, name = repo.lower().split("/")
+-    return root / folder / owner / f"{name}.json"
++    return root / folder / f"{config.location_key(repo)}.json"
+ 
+ 
+ def read_cache(root: Path, repo: str) -> dict:
+@@ -519,7 +529,8 @@ def read_cache(root: Path, repo: str) -> dict:
+             "visibility": found.get("visibility") or "unknown", "permission": found.get("permission"),
+             "checked_at": found.get("checked_at"), "rejected": found.get("rejected") or 0,
+             "rejections": found.get("rejections") or [], "senders": found.get("senders") or {},
+-            "agents": found.get("agents") or {}, "remote": found.get("remote") or {}, "seen": found.get("seen") or {}}
++            "agents": found.get("agents") or {}, "remote": found.get("remote") or {}, "seen": found.get("seen") or {},
++            "probe": found.get("probe"), "refused": found.get("refused") or ""}
+ 
+ 
+ def visibility(root: Path, repo: str) -> str:
+@@ -545,6 +556,8 @@ def location_refusal(root: Path, location: str, repo: Optional[str]) -> str:
+     if repo and location.lower() == repo.lower():
+         return ""
+     cache = read_cache(root, location)
++    if config.is_s3(location):
++        return cache["refused"]
+     return refusal(location, cache["visibility"], cache["permission"]) if cache["checked_at"] else ""
+ 
+ 
+@@ -592,7 +605,8 @@ def remote_reviews(root: Path, repo: str, login: str, now: float) -> Optional[li
+ def read_outbox(path: Path) -> dict:
+     found = read_json(path) or {}
+     return {"schema_version": 1, "checkouts": found.get("checkouts") or [], "items": found.get("items") or [],
+-            "pushing": found.get("pushing") or []}
++            "pushing": found.get("pushing") or [], **({"location": found["location"]} if "location" in found else {}),
++            **({"s3": found["s3"]} if isinstance(found.get("s3"), dict) else {})}
+ 
+ 
+ def outbox_items(root: Path, repo: str) -> list[dict]:
+@@ -609,7 +623,8 @@ def pending(box: dict) -> frozenset[tuple[str, str]]:
+ 
+ 
+ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Optional[dict], dict]],
+-          now: float, remote: Optional[dict[str, str]] = None, *, key: Optional[Key] = None) -> None:
++          now: float, remote: Optional[dict[str, str]] = None, *, key: Optional[Key] = None,
++          s3_settings: Optional[dict] = None) -> None:
+     """Queue each `(ref, sealed, meta)` change, with `sealed` None for a deletion, keeping at most one item per ref,
+     because one push refuses two updates to one ref. A change to a queued ref keeps the item's `old`, the commit
+     on origin that the lease must expect. `remote` holds the refs on origin, as the cache last recorded them unless
+@@ -619,7 +634,10 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
+     merged with the record queued there, by `key`, which sealed both, rather than replacing it, so two commands
+     that change one entry's state at once both reach your other machines. A queued deletion of a state ref wins
+     over a state record, in either order, as `Job.rebase` drops a state change whose ref was deleted: the record
+-    goes with its entry."""
++    goes with its entry.
++
++    `s3_settings`, an S3 registration's `s3`, are kept with an S3 location's queued changes, so the daemon can
++    still reach the store once no registration names it, as `Relay.store_for` describes."""
+     path = repo_file(root, "outbox", repo)
+     remote = read_cache(root, repo)["remote"] if remote is None else remote
+     with locked(path.parent):
+@@ -646,6 +664,11 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
+         if cwd:
+             box["checkouts"] = [{"cwd": cwd, "queued_at": watch.stamp(now)},
+                                 *[found for found in box["checkouts"] if found.get("cwd") != cwd]]
++        if config.is_s3(repo):
++            # An S3 location's outbox is named by a digest, so it records the identity the daemon starts its job for.
++            box["location"] = repo
++            if s3_settings and items:
++                box["s3"] = s3_settings
+         box["items"] = list(items.values())
+         if box != before:
+             write_json(path, box)
+@@ -681,7 +704,7 @@ def presence(root: Path, session: str, found: dict, now: float) -> dict:
+     """The session's presence: its registration, what it reviews in the registration's repository as its
+     subscriptions and this machine's adoptions say when the presence is sealed, and its lease."""
+     record = {key: value for key, value in found.items()
+-              if key not in ("relay", "ended_at", "summary_auto", "location_source")}
++              if key not in ("relay", "ended_at", "summary_auto", "location_source", "allow", "s3", "store")}
+     repo = found.get("repo")
+     reviews = agents.review_targets(watch.subscriptions(watch.session_folder(root, session)), repo,
+                                     watch.read_adopted(root, repo)[0] if repo else ())
+@@ -724,14 +747,17 @@ def digest(record: dict) -> str:
+ def forget(root: Path, found: dict, now: float) -> int:
+     """Queue the deletion of every ref under the relay ID of the registration `found` that its location holds, as
+     the cache last recorded it, or that waits in the outbox. Answers how many refs on origin it queued for
+-    deletion."""
++    deletion. The deletions of an S3 location keep the registration's settings, which the daemon reaches the store
++    with once the registration names another location."""
+     repo, relay_id = found.get("location") or found.get("repo"), found.get("relay_id")
+     if not repo or not relay_id:
+         return 0
+     remote = read_cache(root, repo)["remote"]
+     refs = {ref for ref in [*remote, *(item["ref"] for item in outbox_items(root, repo))]
+             if (parsed := parse_ref(ref)) and parsed[2] == relay_id}
+-    queue(root, repo, found.get("cwd"), [(ref, None, {}) for ref in sorted(refs)], now, remote)
++    settings = found.get("s3") if isinstance(found.get("s3"), dict) else None
++    queue(root, repo, found.get("cwd"), [(ref, None, {}) for ref in sorted(refs)], now, remote,
++          s3_settings=settings)
+     return sum(1 for item in outbox_items(root, repo) if item["ref"] in refs and item["sealed"] is None)
+ 
+ 
+@@ -962,6 +988,196 @@ def apply(self, items: list[dict]) -> tuple[dict[str, Outcome], str]:
+         return outcomes, failed
+ 
+ 
++class Changed(Exception):
++    """A record that changed or went between the listing that found it and the read, which a later job examines
++    again."""
++
++
++class Lapsed(RelayError):
++    """Credentials for an S3 location that could not be found, read, refreshed, or used: why, as `cause`, with the
++    fix when one is known and where the credentials come from."""
++
++    def __init__(self, message: str, cause: str, source: str, fix: str = "") -> None:
++        super().__init__(message)
++        self.cause = cause
++        self.source = source
++        self.fix = fix
++
++
++@dataclass
++class S3Store:
++    """An S3 location's client, the prefix its objects live under, and how often it is polled."""
++
++    client: s3.Client
++    prefix: str
++    poll: float
++
++
++def store_error(error: s3.S3Error, source: str) -> RelayError:
++    """An S3 error as the relay reports it: a lapse when credentials failed or S3 refused them with a `403`,
++    otherwise an error for the job."""
++    if isinstance(error, s3.CredentialsError):
++        return Lapsed(str(error), error.cause, error.source, error.fix)
++    if error.status == 403:
++        return Lapsed(f"S3 refused the credentials from {source}: {error}", "forbidden", source)
++    return RelayError(str(error))
++
++
++class S3Transport:
++    """Records as objects in an S3 bucket, each one `sealed.json` named by its recipient's key ID first, as
++    `<prefix>/<key-id>/<namespace>/<rest>` for the ref `refs/projector/<namespace>/<key-id>/<rest>`. A version is
++    an ETag, and each lease is a conditional request."""
++
++    def __init__(self, store: S3Store) -> None:
++        self.client = store.client
++        self.base = f"{store.prefix}/" if store.prefix else ""
++        self.listed: dict[str, s3.Listed] = {}
++        # The probe objects each listing found, by key ID, which no ref names.
++        self.probes: dict[str, list[s3.Listed]] = {}
++        # The lapse a request in `apply` met, which turns the location off.
++        self.lapsed: Optional[Lapsed] = None
++
++    def name_of(self, ref: str) -> str:
++        namespace, key_id, rest = ref[len("refs/projector/"):].split("/", 2)
++        return f"{self.base}{key_id}/{namespace}/{rest}"
++
++    def ref_of(self, name: str) -> Optional[str]:
++        key_id, _, rest = name[len(self.base):].partition("/")
++        namespace, _, remainder = rest.partition("/")
++        return f"refs/projector/{namespace}/{key_id}/{remainder}" if namespace and remainder else None
++
++    def call(self, operation: Callable[[], object]) -> object:
++        try:
++            return operation()
++        except s3.S3Error as error:
++            raise store_error(error, self.client.source()) from None
++
++    def snapshot(self, prefixes: tuple[str, ...]) -> dict[str, str]:
++        """One listing for each key the prefixes name, keeping each object under a prefix by its ref."""
++        key_ids = sorted({prefix.rstrip("/").rsplit("/", 1)[1] for prefix in prefixes})
++        self.listed, self.probes = {}, {}
++        for key_id in key_ids:
++            listing = self.call(lambda: self.client.list_objects(f"{self.base}{key_id}/"))
++            assert isinstance(listing, list)
++            for found in listing:
++                if found.name.startswith(f"{self.base}{key_id}/probe/"):
++                    self.probes.setdefault(key_id, []).append(found)
++                elif (ref := self.ref_of(found.name)) is not None and ref.startswith(prefixes):
++                    self.listed[ref] = found
++        return {ref: found.etag for ref, found in self.listed.items()}
++
++    def check(self, ref: str, version: str) -> str:
++        """The ref itself, for an object the listing found at this version and sized at most 32 KiB."""
++        found = self.listed.get(ref)
++        if found is None or found.etag != version:
++            raise Changed(ref)
++        if found.size > MAX_SEALED:
++            raise Rejected("too-large")
++        return ref
++
++    def read(self, handle: str) -> bytes:
++        """The object at the version the listing found."""
++        try:
++            return self.client.get_object(self.name_of(handle), self.listed[handle].etag)
++        except (s3.PreconditionFailed, s3.NotFound):
++            raise Changed(handle) from None
++        except s3.S3Error as error:
++            raise store_error(error, self.client.source()) from None
++
++    def apply(self, items: list[dict]) -> tuple[dict[str, Outcome], str]:
++        """One request for each item, up to `S3_REQUESTS` at a time, once credentials are in hand: a creation
++        that expects no object, and an update or deletion that expects the object's ETag. A `412` is a stale
++        lease, and a `404` for a deletion counts as deleted."""
++        try:
++            self.client.credentials.get()
++        except s3.S3Error as error:
++            self.lapsed = store_error(error, self.client.source()) if isinstance(error, s3.CredentialsError) else None
++            return {item["ref"]: Outcome(False, str(error), False, None) for item in items}, str(error)
++        with ThreadPoolExecutor(max_workers=S3_REQUESTS, thread_name_prefix="relay-s3") as pool:
++            outcomes = dict(zip([item["ref"] for item in items], pool.map(self.apply_one, items)))
++        failed = next((outcome.said for outcome in outcomes.values() if not outcome.ok), "")
++        return outcomes, failed
++
++    def apply_one(self, item: dict) -> Outcome:
++        name = self.name_of(item["ref"])
++        forced = (item.get("meta") or {}).get("force")
++        try:
++            if item["sealed"] is None:
++                try:
++                    self.client.delete_object(name, item["old"])
++                except s3.NotFound:
++                    pass
++                return Outcome(True, "deleted", False, None)
++            body = sealed_text(item["sealed"]).encode()
++            if forced:
++                etag = self.client.put_object(name, body)
++            elif item["old"]:
++                etag = self.client.put_object(name, body, if_match=item["old"])
++            else:
++                etag = self.client.put_object(name, body, if_none_match=True)
++            return Outcome(True, "written", False, etag)
++        except (s3.PreconditionFailed, s3.NotFound) as error:
++            return Outcome(False, f"stale lease: {error}", True, None)
++        except s3.S3Error as error:
++            reported = store_error(error, self.client.source())
++            if isinstance(reported, Lapsed):
++                self.lapsed = reported
++            return Outcome(False, str(reported), False, None)
++
++    def probe(self, key_id: str) -> str:
++        """Why the store cannot hold the relay, or "" when it can: it must refuse an unsigned listing, and refuse
++        each conditional request a lease relies on, on a fresh object that the probe deletes whatever it finds."""
++        location = f"s3://{self.client.bucket}/{self.base}".rstrip("/")
++        try:
++            self.client.list_objects(self.base, signed=False, limit=1)
++            return f"the bucket lets anyone list {location}"
++        except s3.S3Error as error:
++            if error.status is None or error.status >= 500:
++                raise RelayError(f"the check that {location} is not public could not finish: {error}") from None
++        name = f"{self.base}{key_id}/probe/{secrets.token_hex(16)}"
++        body = b"{}"
++        etag = str(self.call(lambda: self.client.put_object(name, body, if_none_match=True)))
++        current = etag
++        checks: list[tuple[str, Callable[[], object]]] = [
++            ("If-None-Match on PutObject", lambda: self.client.put_object(name, body, if_none_match=True)),
++            ("If-Match on PutObject", lambda: self.client.put_object(name, body, if_match=PROBE_ETAG)),
++            ("If-Match on DeleteObject", lambda: self.client.delete_object(name, PROBE_ETAG)),
++        ]
++        try:
++            for request, send in checks:
++                try:
++                    answered = send()
++                except s3.PreconditionFailed:
++                    continue
++                except s3.S3Error as error:
++                    raised = store_error(error, self.client.source())
++                    if isinstance(raised, Lapsed) or error.status is None or error.status >= 500:
++                        raise raised from None
++                    return f"this store answers {error.status} to {request} rather than 412"
++                current = answered if isinstance(answered, str) else ""
++                return f"this store does not honor {request}"
++            try:
++                self.client.delete_object(name, etag)
++            except s3.PreconditionFailed:
++                return "this store refuses DeleteObject with If-Match on the object's own ETag"
++            except s3.S3Error as error:
++                raise store_error(error, self.client.source()) from None
++            current = ""
++            return ""
++        finally:
++            if current:
++                with contextlib.suppress(s3.S3Error):
++                    self.client.delete_object(name, current)
++
++    def sweep_probes(self, key_id: str, now: float) -> None:
++        """Delete each probe object the last listing found under the key that is more than an hour old, as an
++        interrupted probe leaves, each under `If-Match` on its listed ETag."""
++        for found in self.probes.get(key_id, []):
++            if now - found.modified > PROBE_AGE:
++                with contextlib.suppress(s3.S3Error):
++                    self.client.delete_object(found.name, found.etag)
++
++
+ # One repository's job
+ 
+ class Job:
+@@ -970,9 +1186,14 @@ class Job:
+ 
+     def __init__(self, root: Path, location: str, key: Optional[Key], live: set[str], now: float, *, poll: bool,
+                  full: bool, gh: Callable[[list[str]], watch.GhResult], held: Optional[str] = None,
+-                 peers: Optional[dict[str, bytes]] = None, peer_limit: Optional[int] = None) -> None:
++                 peers: Optional[dict[str, bytes]] = None, peer_limit: Optional[int] = None,
++                 store: Optional[S3Store] = None) -> None:
+         self.root = root
+         self.location = location
++        # The S3 store of an S3 location, which a Git location has none of.
++        self.store = store
++        # The lapse of an S3 location's credentials that turned it off in this job.
++        self.lapse: Optional[Lapsed] = None
+         self.key = key
+         # Each peer's key, by its ID, with your name for them.
+         self.peers = {crypto.key_id(public): (name, public) for name, public in (peers or {}).items()}
+@@ -1011,11 +1232,15 @@ def __init__(self, root: Path, location: str, key: Optional[Key], live: set[str]
+     def run(self) -> dict:
+         self.attempted = pending(read_outbox(repo_file(self.root, "outbox", self.location)))
+         try:
+-            self.check_location()
++            if self.store is not None:
++                self.transport = self.check_store()
++            else:
++                self.check_location()
+             if self.full:
+                 self.refresh_visibility()
+-            cwd = self.checkout()
+-            self.transport = GitTransport(cwd, self.options) if cwd is not None else None
++            if self.store is None:
++                cwd = self.checkout()
++                self.transport = GitTransport(cwd, self.options) if cwd is not None else None
+             if self.poll and self.transport is not None and self.key_ids():
+                 self.fetch(self.key_ids())
+                 self.rebase()
+@@ -1028,12 +1253,20 @@ def run(self) -> dict:
+             self.attempted |= {change(ref, sealed) for ref, sealed, _ in self.changes}
+             if self.transport is not None:
+                 self.push()
++            if isinstance(self.transport, S3Transport) and self.transport.lapsed is not None:
++                raise self.transport.lapsed
++        except Lapsed as lapse:
++            self.lapse, self.refused = lapse, str(lapse)
+         except RelayError as error:
+             self.error = str(error)
+         finally:
++            if self.store is not None:
++                self.cache["repo"], self.cache["refused"] = self.location, self.refused
+             path = repo_file(self.root, "relay", self.location)
+             path.parent.mkdir(parents=True, exist_ok=True)
+             write_json(path, self.cache)
++        if self.store is not None and self.refused:
++            return self.result("off", self.refused)
+         if self.transport is None and not self.error:
+             return self.result("waiting", NO_CHECKOUT)
+         if self.refused and all(self.chose(found) for found in self.sessions.values()):
+@@ -1042,12 +1275,35 @@ def run(self) -> dict:
+ 
+     def result(self, state: str, error: str) -> dict:
+         items = outbox_items(self.root, self.location)
+-        return {"state": state, "error": error, "queued": len(items), "rejected": self.cache["rejected"],
+-                "rejections": self.cache["rejections"], "visibility": self.cache["visibility"],
+-                "permission": self.cache["permission"], "refused": self.refused,
+-                "clone": bool(self.options), "polled_at": self.cache["polled_at"],
+-                "senders": sorted(self.cache["senders"]),
+-                "errors": sorted({item["last_error"] for item in items if item.get("last_error")})}
++        found = {"state": state, "error": error, "queued": len(items), "rejected": self.cache["rejected"],
++                 "rejections": self.cache["rejections"], "visibility": self.cache["visibility"],
++                 "permission": self.cache["permission"], "refused": self.refused,
++                 "clone": bool(self.options), "polled_at": self.cache["polled_at"],
++                 "senders": sorted(self.cache["senders"]),
++                 "errors": sorted({item["last_error"] for item in items if item.get("last_error")})}
++        if self.store is not None:
++            cached = self.store.client.credentials.cached
++            found.update(location=self.location, region=self.store.client.region,
++                         source=self.store.client.source(), probe=self.cache["probe"],
++                         refreshable=cached.refreshable if cached else True)
++        return found
++
++    def check_store(self) -> Optional[S3Transport]:
++        """The S3 location's transport, once its store has passed the probe: on a full pass, and whenever no probe
++        has finished since the last one, it must refuse an unsigned listing and honor each condition a lease
++        relies on. Answers None while the location is off, with why in `refused`."""
++        assert self.store is not None
++        transport = S3Transport(self.store)
++        if self.held is None:
++            self.refused = NO_KEY
++            return None
++        if self.full or not self.cache["probe"]:
++            self.cache["probe"] = None
++            reason = transport.probe(self.held)
++            self.cache["probe"] = {"result": reason or "ok", "at": watch.stamp(self.now)}
++        result = self.cache["probe"]["result"]
++        self.refused = "" if result == "ok" else result
++        return None if self.refused else transport
+ 
+     def chose(self, found: dict) -> bool:
+         """Whether `agent.relay` sent a registration here: its location is not its own repository."""
+@@ -1204,7 +1460,7 @@ def merged_state(self, ref: str, version: str, queued: dict) -> dict:
+         assert self.key is not None and self.transport is not None
+         try:
+             _, found = self.unseal(self.transport.read(self.transport.check(ref, version)))
+-        except Rejected:
++        except (Rejected, Changed):
+             found = None
+         sealed, merged = merged_seal(self.key, queued, found)
+         if merged is not None:
+@@ -1248,6 +1504,8 @@ def examine(self) -> None:
+                     self.take_message(ref, sha, name, record)
+                 else:
+                     self.take_state(ref, sha, name, record)
++            except Changed:
++                continue
+             except Rejected as rejected:
+                 self.reject(ref, sha, rejected)
+             except ProjectorError:
+@@ -1440,6 +1698,8 @@ def sweep(self) -> None:
+                 if ref.startswith(f"{USER}{self.held}/"):
+                     stale.append(ref.rsplit("/", 1)[1])
+         self.forget_entries(stale)
++        if isinstance(self.transport, S3Transport) and self.held:
++            self.transport.sweep_probes(self.held, self.now)
+         # A state record outlives its entry only when the entry's deletion landed without it.
+         queued = {item["ref"] for item in outbox_items(self.root, self.location) if item["sealed"] is not None}
+         for ref in self.cache["remote"]:
+@@ -1590,8 +1850,13 @@ def __init__(self, root: Path, *, gh: Callable[[list[str]], watch.GhResult], wal
+         self.peer_limit = agents.PEER_LIMIT
+         self.peers_error = ""
+         self.peers_signature: object = ()
+-        # Each location a live registration waits to relay through until you allow it, with the file that set it.
+-        self.waiting: list[tuple[str, str]] = []
++        # Each location a live registration waits to relay through until you allow it, with the file that set it and
++        # the commands that allow it.
++        self.waiting: list[tuple[str, str, tuple[str, ...]]] = []
++        # When each location's last poll started, by lowercased location, which paces an S3 location's polls.
++        self.polled_at: dict[str, float] = {}
++        # Each S3 location's client, by lowercased location, with the settings it was made from.
++        self.stores: dict[str, tuple[tuple, s3.Client]] = {}
+ 
+     def start(self) -> None:
+         """Forget the push each outbox records as running: only this daemon pushes, and it has not started."""
+@@ -1618,7 +1883,8 @@ def tick(self, live: set[str], polled: bool, full_every: float) -> bool:
+         if polled:
+             agents.admit(self.root, config.allowed_path(self.environ), self.value is not None, self.wall())
+         records, gone = agents.relayed(self.root)
+-        self.waiting = sorted({(found["location"], found.get("location_source") or "")
++        self.waiting = sorted({(found["location"], found.get("location_source") or "",
++                                tuple(agents.allow_commands(found["location"], found.get("allow") or ())))
+                                for name, found in records.items()
+                                if name in live and found.get("relay") == "waiting" and found.get("location")})
+         live = live - gone
+@@ -1627,19 +1893,25 @@ def tick(self, live: set[str], polled: bool, full_every: float) -> bool:
+         if self.fresh:
+             self.owed.update(self.locations(records, True, lapsed))
+             self.fresh = False
+-        for name, location in sorted({**self.locations(records, polled, lapsed), **self.owed}.items()):
++        due = self.due(records, live, now)
++        for name, location in sorted({**self.locations(records, polled, lapsed), **due, **self.owed}.items()):
+             if name in self.jobs:
+                 continue
+             owed = self.owed.pop(name, None) is not None
+             here = {session: found for session, found in records.items()
+                     if (agents.location_of(found) or "").lower() == name}
++            store = self.store_for(location, here, live) if config.is_s3(location) else None
++            if config.is_s3(location) and store is None:
++                continue
+             remote = read_cache(self.root, location)["remote"]
+             lingering = {found.get("relay_id") for session, found in here.items() if session not in live}
+-            poll = (polled or owed) and (any(session in live for session in here)
+-                                         or any((parsed := parse_ref(ref)) and parsed[2] in lingering
+-                                                for ref in remote))
++            poll = (polled or owed or name in due) and (any(session in live for session in here)
++                                                        or any((parsed := parse_ref(ref)) and parsed[2] in lingering
++                                                               for ref in remote))
++            if poll:
++                self.polled_at[name] = now
+             job = Job(self.root, location, self.key, set(live), now, poll=poll, full=full, gh=self.gh,
+-                      held=self.held(), peers=self.peers, peer_limit=self.peer_limit)
++                      held=self.held(), peers=self.peers, peer_limit=self.peer_limit, store=store)
+             self.jobs[name] = (job, self.pool.submit(job.run))
+         return self.status() != before
+ 
+@@ -1649,10 +1921,11 @@ def locations(self, records: dict[str, dict], polled: bool, lapsed: set[str]) ->
+         push, or with a session that just lapsed."""
+         found = {}
+         for path in (self.root / "outbox").glob("*/*.json"):
+-            name = f"{path.parent.name}/{path.stem}"
+             box = read_outbox(path)
+-            if box["items"] and (polled or name not in self.settled or pending(box) - self.settled[name]):
+-                found[name] = name
++            name = box.get("location") or f"{path.parent.name}/{path.stem}"
++            if box["items"] and (polled or name.lower() not in self.settled
++                                 or pending(box) - self.settled[name.lower()]):
++                found[name.lower()] = name
+         for name, record in records.items():
+             location = agents.location_of(record)
+             if location and (polled or name in lapsed) and (
+@@ -1660,6 +1933,43 @@ def locations(self, records: dict[str, dict], polled: bool, lapsed: set[str]) ->
+                 found[location.lower()] = location
+         return found
+ 
++    def due(self, records: dict[str, dict], live: set[str], now: float) -> dict[str, str]:
++        """Each S3 location a live session here uses whose last poll is `agent.s3_poll` seconds old, as its newest
++        registration sets it, or `S3_POLL` by default."""
++        found = {}
++        for session, record in records.items():
++            location = agents.location_of(record)
++            if session in live and location and config.is_s3(location) and self.key is not None:
++                every = max(config.MINIMUMS["agent.s3_poll"], (record.get("s3") or {}).get("poll") or S3_POLL)
++                if now - self.polled_at.get(location.lower(), float("-inf")) >= every:
++                    found[location.lower()] = location
++        return found
++
++    def store_for(self, location: str, here: dict[str, dict], live: set[str]) -> Optional[S3Store]:
++        """The S3 location's store, from the settings of its newest live registration, else of any that names
++        them, kept between jobs so its credentials are read once and refreshed before they expire. Once no
++        registration names the location, as after its last session moved to another one, the store comes from the
++        settings its outbox keeps while changes wait there, so their deletions still go; the job then polls
++        nothing, and holds every record back while the store is off. None when neither names its settings."""
++        named = [(session in live, found.get("updated_at") or "", found["s3"]) for session, found in here.items()
++                 if isinstance(found.get("s3"), dict)]
++        if named:
++            settings = max(named, key=lambda entry: entry[:2])[2]
++        else:
++            box = read_outbox(repo_file(self.root, "outbox", location))
++            if not box["items"] or "s3" not in box:
++                return None
++            settings = box["s3"]
++        wanted = tuple(settings.get(key) for key in ("bucket", "endpoint", "region", "profile"))
++        kept = self.stores.get(location.lower())
++        if kept is None or kept[0] != wanted:
++            client = s3.Client(settings["bucket"], endpoint=settings.get("endpoint"), region=settings.get("region"),
++                               profile=settings.get("profile"), environ=self.environ, clock=self.wall)
++            kept = (wanted, client)
++            self.stores[location.lower()] = kept
++        poll = max(config.MINIMUMS["agent.s3_poll"], settings.get("poll") or S3_POLL)
++        return S3Store(kept[1], settings.get("prefix") or "", poll)
++
+     def collect(self) -> None:
+         for repo, (job, future) in list(self.jobs.items()):
+             if future.done():
+@@ -1728,7 +2038,8 @@ def status(self) -> dict:
+         return {"key": {"state": state, "id": self.held(), "store": self.key.store if self.key else None,
+                         "error": self.key_error if not self.key and not self.reading else ""},
+                 "peers": {"count": len(self.peers), "error": self.peers_error},
+-                "waiting": [{"location": location, "source": source} for location, source in self.waiting],
++                "waiting": [{"location": location, "source": source, "allow": list(allow)}
++                            for location, source, allow in self.waiting],
+                 "repositories": dict(sorted(self.results.items()))}
+ 
+     def wait(self, timeout: Optional[float] = None) -> None:
+diff --git a/src/projector/repo_inbox.py b/src/projector/repo_inbox.py
+index 8cc7d133..ee4a9234 100644
+--- a/src/projector/repo_inbox.py
++++ b/src/projector/repo_inbox.py
+@@ -80,9 +80,8 @@ def now_ms(now: Optional[float] = None) -> int:
+ # The mirror
+ 
+ def folder(root: Path, repo: str) -> Path:
+-    """The repository's store, beside the watch state root `root`."""
+-    owner, name = repo.lower().split("/")
+-    return root.parent / "repo-inbox" / owner / name
++    """The location's store, beside the watch state root `root`."""
++    return root.parent / "repo-inbox" / config.location_key(repo)
+ 
+ 
+ def entry_file(store: Path, ref: str) -> Path:
+@@ -758,8 +757,8 @@ def place(root: Path, session: Optional[str]) -> tuple[Optional[str], Optional[s
+     if found:
+         return None, found.get("repo"), Path.cwd()
+     repo = agents.checkout(Path.cwd()).get("repo")
+-    location, _, waits = agents.relay_place(Path.cwd(), repo)
+-    return (None if waits else location), repo, Path.cwd()
++    relaying = agents.relay_place(Path.cwd(), repo)
++    return (None if relaying.waits else relaying.location), repo, Path.cwd()
+ 
+ 
+ def sealing_key() -> relay.Key:
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 41af5175..5b7e4589 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -326,21 +326,44 @@ def assert_set(self, key: str, value: str, *scope: str) -> str:
+         self.assertEqual(0, code, stderr)
+         return stdout
+ 
+-    def test_agent_relay_takes_origin_or_a_github_repository_and_nothing_else(self) -> None:
++    def test_agent_relay_takes_origin_a_github_repository_or_an_s3_prefix_and_nothing_else(self) -> None:
+         self.assert_set("agent.relay", "github:acme/agents", "--user")
+         self.assert_set("agent.relay", "origin")
+         refused = {value: self.invoke("config", "set", "agent.relay", value) for value in
+-                   ("acme/agents", "github:acme", "github:acme/agents/extra", "s3://bucket/agents", "github:")}
++                   ("acme/agents", "github:acme", "github:acme/agents/extra", "github:")}
++        malformed = {value: self.invoke("config", "set", "agent.relay", value) for value in
++                     ("s3://Acme/agents", "s3://acme/agents/", "s3://acme//agents", "s3://acme/../agents",
++                      "s3://acme/Agents", "s3://a")}
+ 
+         self.assertEqual("acme/agents", config_module.relay_location("github:acme/agents"))
+         self.assertIsNone(config_module.relay_location("origin"))
++        self.assertEqual(config_module.S3Relay("acme-agents", "relay/team"),
++                         config_module.relay_location("s3://acme-agents/relay/team"))
++        self.assertEqual(config_module.S3Relay("acme-agents", ""), config_module.relay_location("s3://acme-agents"))
+         self.assertEqual(('relay = "origin"', 'relay = "github:acme/agents"'),
+                          (self.repo_file.read_text().splitlines()[-1], self.user_file.read_text().splitlines()[-1]))
+         for value, (code, _, stderr) in refused.items():
+             self.assertNotEqual(0, code, value)
+-            self.assertIn("it takes origin or github:<owner>/<repo>", stderr, value)
+-        self.assertIn("s3:// is not supported yet", refused["s3://bucket/agents"][2])
+-        self.assertIn("agent.relay", config_module.DESTINATIONS)
++            self.assertIn("it takes origin, github:<owner>/<repo>", stderr, value)
++        for value, (code, _, stderr) in malformed.items():
++            self.assertNotEqual(0, code, value)
++            self.assertIn("an S3 location is s3://<bucket>/<prefix>", stderr, value)
++        self.assertTrue({"agent.relay", "agent.s3_endpoint", "agent.s3_profile"} <= config_module.DESTINATIONS)
++
++    def test_an_s3_endpoint_is_an_https_url_with_no_path_query_or_user_info(self) -> None:
++        refused = {value: self.invoke("config", "set", "agent.s3_endpoint", value) for value in
++                   ("http://s3.example.com", "https://user@s3.example.com", "https://s3.example.com/bucket",
++                    "https://s3.example.com?x=1", "https://", "s3.example.com")}
++
++        self.assert_set("agent.s3_endpoint", "https://S3.Example.com:9000/")
++        identities = [config_module.s3_identity(endpoint, "team", prefix) for endpoint, prefix in
++                      ((None, "relay"), ("HTTPS://S3.Example.com:443/", ""), ("https://[::1]:9000", "a/b"))]
++
++        for value, (code, _, stderr) in refused.items():
++            self.assertNotEqual(0, code, value)
++            self.assertIn("it takes an https:// URL with no path, query, or user info", stderr, value)
++        self.assertEqual(["https://s3.amazonaws.com/team/relay", "https://s3.example.com/team",
++                          "https://[::1]:9000/team/a/b"], identities)
+ 
+     def test_each_type_lands_in_its_table_in_a_new_file(self) -> None:
+         self.assert_set("watch.auto_start", "false")
+@@ -666,7 +689,7 @@ def test_a_symlinked_user_file_stays_a_link(self) -> None:
+ 
+     def test_the_documented_keys_are_the_known_keys(self) -> None:
+         documentation = (Path(__file__).resolve().parents[1] / "docs" / "cli.md").read_text()
+-        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string|whole number|table) \|", documentation, re.MULTILINE)
++        rows = re.findall(r"^\| `([a-z0-9_.]+)` \| (boolean|string|whole number|table) \|", documentation, re.MULTILINE)
+         names = {bool: "boolean", str: "string", int: "whole number", dict: "table"}
+ 
+         self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))
+diff --git a/tests/test_relay.py b/tests/test_relay.py
+index 1e4f9c70..06a84a64 100644
+--- a/tests/test_relay.py
++++ b/tests/test_relay.py
+@@ -30,8 +30,9 @@
+ from typing import Optional
+ from unittest import mock
+ 
+-from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, watch
++from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, s3, watch
+ from projector.inbox import read_json, try_lock, unlock, write_json
++from tests.fake_s3 import FakeS3, plain
+ from tests.scratch import copy_of
+ from tests.test_watch import FakeGitHub
+ 
+@@ -2179,6 +2180,509 @@ def test_a_message_queued_before_shared_relays_is_delivered_with_no_source(self)
+         self.assertIn("repository: acme/app main\n", read)
+ 
+ 
++S3_SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
++S3_TOKEN = "IQoJb3JpZ2luX2VjEXAMPLETOKEN"
++TEAM = "s3://team/relay"
++
++# A credential_process that logs its arguments and prints `credentials.json` beside it, or hangs while `mode` says
++# so.
++CREDENTIAL_PROCESS = '''import json, pathlib, sys, time
++here = pathlib.Path(__file__).parent
++with (here / "runs.jsonl").open("a") as log:
++    log.write(json.dumps(sys.argv[1:]) + "\\n")
++if (here / "mode").exists() and (here / "mode").read_text().strip() == "hang":
++    time.sleep(60)
++print((here / "credentials.json").read_text())
++'''
++
++
++class S3RelayCase(SharedRelayCase):
++    """The shared relay's two machines with `agent.relay = "s3://team/relay"` in the parent of their checkouts,
++    whose `agent.s3_endpoint` names a fake S3 server on a local port, reached over plain HTTP, on the test's
++    clock. Each machine's default AWS profile holds keys the server knows."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.server = self.fake_server()
++        patcher = mock.patch.object(s3, "connect", plain)
++        patcher.start()
++        self.addCleanup(patcher.stop)
++        environment = mock.patch.dict(os.environ)
++        environment.start()
++        self.addCleanup(environment.stop)
++        for name in [name for name in os.environ if name.startswith("AWS_")]:
++            del os.environ[name]
++        self.server.grant("AKIARELAY", S3_SECRET)
++        for machine in (self.one, self.two):
++            self.aws_file(machine, "credentials",
++                          f"[default]\naws_access_key_id = AKIARELAY\naws_secret_access_key = {S3_SECRET}\n")
++
++    def fake_server(self) -> FakeS3:
++        server = FakeS3()
++        server.clock = lambda: self.now
++        self.addCleanup(server.close)
++        return server
++
++    def aws_file(self, machine: Machine, name: str, text: str) -> None:
++        path = machine.home / ".aws" / name
++        path.parent.mkdir(exist_ok=True)
++        path.write_text(text)
++
++    def s3_team(self, machine: Machine, server: Optional[FakeS3] = None, folder: str = "acme",
++                extra: str = "") -> Path:
++        path = machine.home / folder / ".projector.toml"
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(f'[agent]\nrelay = "{TEAM}"\ns3_endpoint = "{(server or self.server).endpoint}"\n'
++                        f"s3_poll = 2\n{extra}")
++        return path
++
++    def identity(self, server: Optional[FakeS3] = None) -> str:
++        return f"{(server or self.server).endpoint}/team/relay"
++
++    def s3_teams(self) -> tuple[Path, Path]:
++        """A in `acme/api` on machine one and B in `acme/web` on machine two, relaying through the bucket."""
++        self.s3_team(self.one)
++        self.s3_team(self.two)
++        api, web = self.checkout(self.one, "acme/api"), self.checkout(self.two, "acme/web")
++        self.one.claude(A)
++        self.two.claude(B)
++        self.one.register(A, "--name", "parser-refactor", "--summary", "Refactoring the parser",
++                          "--model", "claude-opus-5-5", cwd=api)
++        self.two.register(B, "--name", "test-writer", "--model", "gpt-5.5", cwd=web)
++        for machine in (self.one, self.two, self.one):
++            machine.run_pass()
++        return api, web
++
++    def located(self, machine: Machine, server: Optional[FakeS3] = None) -> dict:
++        return machine.status()["repositories"][self.identity(server).lower()]
++
++    def presence_name(self, machine: Machine, session: str) -> str:
++        return f"relay/{self.key.id}/agents/{agents.record(machine.root, session)['relay_id']}"
++
++    def s3_outbox(self, machine: Machine) -> list[dict]:
++        return relay.outbox_items(machine.root, self.identity())
++
++    def sealed_message(self, message: dict) -> bytes:
++        return relay.sealed_text(relay.seal(self.key, message)).encode()
++
++    def credential_process(self, machine: Machine, expires: float) -> Path:
++        """Profile `acme-relay` on the machine, whose credential_process prints keys with a session token that
++        expire at `expires`, which the server knows."""
++        folder = machine.home / "process"
++        folder.mkdir(exist_ok=True)
++        (folder / "credentials.json").write_text(json.dumps(
++            {"Version": 1, "AccessKeyId": "AKIAPROCESS", "SecretAccessKey": S3_SECRET, "SessionToken": S3_TOKEN,
++             "Expiration": s3.stamp_of(expires)}))
++        (folder / "process.py").write_text(CREDENTIAL_PROCESS)
++        self.server.grant("AKIAPROCESS", S3_SECRET, S3_TOKEN, expires)
++        self.aws_file(machine, "config", f"[profile acme-relay]\ncredential_process = {sys.executable} "
++                                         f"{folder / 'process.py'} --profile acme-sso\n")
++        return folder
++
++
++class S3RelayTests(S3RelayCase):
++    def test_an_s3_location_carries_agents_and_messages_and_no_ref_reaches_git(self) -> None:
++        api, web = self.s3_teams()
++
++        listed_one = self.one.project("agent", "list", claude=A, cwd=api)[1]
++        listed_two = self.two.project("agent", "list", claude=B, cwd=web)[1]
++        code, out, err = self.one.project("agent", "send", "test-writer", "The parser raises ValueError.",
++                                          claude=A, cwd=api)
++        self.one.run_pass()
++        self.two.run_pass()
++        [line] = self.two.events(B)
++        message = re.search(r"PEER MESSAGE (m-[0-9a-f]{32})", line)[1]
++        replied = self.two.project("agent", "reply", message, "Then test for ValueError.", claude=B, cwd=web)
++        self.two.run_pass()
++        self.one.run_pass()
++
++        self.assertIn("test-writer\tclaude gpt-5.5\ttwo\tacme/web main", listed_one)
++        self.assertIn("parser-refactor\tclaude claude-opus-5-5\tone\tacme/api main", listed_two)
++        self.assertEqual((0, 0), (code, replied[0]), err + replied[2])
++        self.assertNotIn(relay.PUBLIC_REMINDER, out)
++        self.assertIn('It begins: "The parser raises ValueError."', line)
++        [answer] = self.one.events(A)
++        self.assertIn('"Then test for ValueError."', answer)
++        self.assertEqual({}, self.refs())
++        self.assertEqual([], self.relay_refs("acme/agents") + self.relay_refs("acme/api") + self.relay_refs("acme/web"))
++        self.assertEqual(2, len(self.server.names("team", f"relay/{self.key.id}/agents/")))
++        self.assertEqual(self.identity(), agents.record(self.one.root, A)["location"])
++        self.assertEqual("ok", self.located(self.one)["state"])
++
++    def test_no_object_in_the_bucket_holds_a_name_summary_or_text_in_plain_form(self) -> None:
++        api, _ = self.s3_teams()
++        self.one.project("agent", "send", "test-writer", "The parser raises ValueError.", claude=A, cwd=api)
++        self.one.run_pass()
++
++        bodies = b"".join(self.server.objects[("team", name)].body for name in self.server.names("team"))
++
++        self.assertTrue(any("/inbox/" in name for name in self.server.names("team")))
++        for plain_text in (b"parser-refactor", b"Refactoring the parser", b"The parser raises", LOGIN.encode(),
++                           EMAIL.encode(), A.encode(), b"acme/api"):
++            self.assertNotIn(plain_text, bodies)
++
++    def test_a_message_arrives_within_the_poll_interval_with_no_watch_pass(self) -> None:
++        api, _ = self.s3_teams()
++        self.one.project("agent", "send", "test-writer", "The parser raises ValueError.", claude=A, cwd=api)
++        self.one.run_pass()
++        sent = self.now
++
++        assert self.two.daemon is not None
++        for _ in range(4):
++            self.advance(1)
++            self.two.claude(B)
++            self.two.daemon.tick()
++            self.two.settle()
++            if self.two.events(B):
++                break
++
++        self.assertEqual(1, len(self.two.events(B)))
++        self.assertLessEqual(self.now - sent, 2 + 2)
++        self.assertGreater(self.two.daemon.next_pass, self.now, "a watch pass would have polled it anyway")
++
++    def test_a_renewal_whose_object_another_job_changed_gets_412_and_lands_on_the_next_listing(self) -> None:
++        self.s3_teams()
++        name = self.presence_name(self.one, A)
++        self.advance(relay.LEASE - relay.RENEW + 60)
++        self.one.claude(A)
++        self.two.claude(B)
++        real = relay.S3Transport.apply
++        raced: list[str] = []
++
++        def racing(transport: relay.S3Transport, items: list[dict]):
++            """Another job's renewal lands between this job's listing and its own."""
++            if not raced:
++                raced.append(self.server.put("team", name, self.server.objects[("team", name)].body))
++            return real(transport, items)
++
++        with mock.patch.object(relay.S3Transport, "apply", racing):
++            self.one.run_pass()
++        stale = [item for item in self.s3_outbox(self.one) if item["ref"].startswith(relay.AGENTS)]
++        self.one.run_pass()
++
++        puts = [found for found in self.server.seen("PUT") if found.name == name]
++        self.assertEqual([412, 200], [found.status for found in puts[-2:]])
++        self.assertEqual(raced[0], puts[-1].headers["if-match"])
++        self.assertEqual([True], [item.get("stale") for item in stale])
++        self.assertEqual([], self.s3_outbox(self.one))
++
++    def test_a_deletion_of_an_object_already_gone_counts_as_deleted(self) -> None:
++        api, _ = self.s3_teams()
++        name = self.presence_name(self.one, A)
++        self.one.project("agent", "unregister", claude=A, cwd=api)
++        del self.server.objects[("team", name)]
++
++        self.one.run_pass()
++
++        self.assertEqual([404], [found.status for found in self.server.seen("DELETE") if found.name == name])
++        self.assertEqual([], self.s3_outbox(self.one))
++
++    def test_a_large_or_misnamed_object_and_a_flood_are_bounded_before_any_read(self) -> None:
++        self.s3_teams()
++        b = self.b_relay_id()
++        inbox = f"relay/{self.key.id}/inbox/{b}"
++        big, misnamed = f"{inbox}/m-{'0' * 32}", f"{inbox}/a-misnamed"
++        self.server.put("team", big, self.sealed_message(self.message(f"m-{'0' * 32}", to=b)) + b" " * (33 * 1024))
++        self.server.put("team", misnamed, self.sealed_message(self.message(f"m-{'e' * 32}", to=b)))
++        for index in range(300):
++            message = f"m-{index + 1:032x}"
++            self.server.put("team", f"{inbox}/{message}", self.sealed_message(self.message(message, to=b)))
++
++        self.two.run_pass()
++
++        reads = [found.name for found in self.server.seen("GET") if found.name.startswith(inbox)]
++        reasons = [rejection["reason"] for rejection in self.located(self.two)["rejections"]]
++        self.assertEqual(64, len(self.two.events(B)))
++        self.assertEqual(64, len(reads))
++        self.assertNotIn(big, reads)
++        self.assertNotIn(misnamed, reads)
++        self.assertEqual(["ref-name", "too-large"], sorted(reasons))
++        self.assertIn(misnamed, self.server.names("team"))
++        self.assertNotIn(big, self.server.names("team"))
++
++    def test_a_probe_interrupted_by_a_restart_leaves_no_object_after_the_next_full_pass(self) -> None:
++        self.s3_team(self.one)
++        api = self.checkout(self.one, "acme/api")
++        self.one.claude(A)
++        self.one.register(A, "--name", "parser-refactor", cwd=api)
++        real = s3.Client.put_object
++        probes = f"relay/{self.key.id}/probe/"
++
++        def stopped(client: s3.Client, name: str, body: bytes, **options) -> str:
++            """The daemon stops once the probe's first PutObject lands: no later request of the probe is sent."""
++            if name.startswith(probes) and any(found.name == name for found in self.server.seen("PUT")):
++                raise RuntimeError("the daemon stopped")
++            return real(client, name, body, **options)
++
++        def no_cleanup(client: s3.Client, name: str, if_match: str) -> None:
++            raise RuntimeError("the daemon stopped")
++
++        with mock.patch.object(s3.Client, "put_object", stopped), \
++                mock.patch.object(s3.Client, "delete_object", no_cleanup):
++            self.one.run_pass()
++        left = self.server.names("team", probes)
++        assert self.one.daemon is not None
++        self.one.daemon.relay.close()
++        self.one.daemon = None
++        self.advance(relay.PROBE_AGE + 1)
++        self.one.claude(A)
++        self.one.run_pass()
++
++        names = {found.name for found in self.server.seen("PUT") if found.name.startswith(probes)}
++        self.assertEqual(1, len(left))
++        self.assertEqual(2, len(names), "the probe after the restart picked a new name")
++        self.assertEqual([], self.server.names("team", probes))
++        self.assertEqual(("ok", "ok"), (self.located(self.one)["state"], self.located(self.one)["probe"]["result"]))
++
++    def test_the_last_session_to_move_away_still_has_its_presence_deleted_at_the_old_s3_location(self) -> None:
++        """Its deletion waits while the old store is refused and goes once the store passes its probe, after the
++        daemon restarts, and no job polls the old location for the cleanup."""
++        self.s3_team(self.one)
++        api = self.checkout(self.one, "acme/api")
++        self.one.claude(A)
++        self.one.register(A, "--name", "parser-refactor", cwd=api)
++        self.one.run_pass()
++        old = self.presence_name(self.one, A)
++        published = self.server.names("team", old)
++        (self.one.home / "acme" / ".projector.toml").write_text(
++            f'[agent]\nrelay = "s3://team/moved"\ns3_endpoint = "{self.server.endpoint}"\ns3_poll = 2\n')
++        self.one.register(A, "--name", "parser-refactor", cwd=api)
++        queued = [(item["ref"], item["sealed"]) for item in self.s3_outbox(self.one)]
++
++        def restart() -> None:
++            assert self.one.daemon is not None
++            self.one.daemon.relay.close()
++            self.one.daemon = None
++            self.server.requests.clear()
++            self.advance(3)
++            self.one.claude(A)
++            self.one.run_pass()
++
++        self.server.public = True
++        restart()
++        refused = (self.server.names("team", old), len(self.s3_outbox(self.one)),
++                   self.one.status()["repositories"].get(self.identity().lower(), {}).get("state"))
++        self.server.public = False
++        restart()
++        polled = [found for found in self.server.seen("GET")
++                  if found.query.get("prefix", "").startswith("relay/") and found.signed_by]
++
++        self.assertEqual([old], published)
++        self.assertEqual(1, len(queued))
++        self.assertIsNone(queued[0][1])
++        self.assertEqual(([old], 1, "off"), refused)
++        self.assertEqual([], self.server.names("team", old))
++        self.assertEqual([], self.s3_outbox(self.one))
++        self.assertEqual([], polled)
++        self.assertTrue(self.server.names("team", "moved/"))
++
++    def test_a_store_that_ignores_a_condition_or_lets_anyone_list_turns_the_location_off(self) -> None:
++        self.s3_team(self.one)
++        api = self.checkout(self.one, "acme/api")
++        self.one.claude(A)
++        self.one.register(A, "--name", "parser-refactor", cwd=api)
++
++        for broken, reason in (("put-if-none-match", "this store does not honor If-None-Match on PutObject"),
++                               ("put-if-match", "this store does not honor If-Match on PutObject"),
++                               ("delete-if-match", "this store does not honor If-Match on DeleteObject"),
++                               ("public", "the bucket lets anyone list s3://team/relay")):
++            with self.subTest(broken=broken):
++                self.server.ignoring = {broken} - {"public"}
++                self.server.public = broken == "public"
++                if self.one.daemon is not None:
++                    self.one.daemon.relay.last_full = None
++                self.one.claude(A)
++                self.one.run_pass()
++                header = self.one.project("agent", "list", claude=A, cwd=api)[1].splitlines()[0]
++
++                self.assertEqual(("off", reason), (self.located(self.one)["state"], self.located(self.one)["error"]))
++                self.assertEqual(f"local only: {reason}", header)
++                self.assertEqual([], self.server.names("team"))
++
++    def test_one_bucket_and_prefix_on_two_endpoints_are_two_locations(self) -> None:
++        other = self.fake_server()
++        other.grant("AKIARELAY", S3_SECRET)
++        peer = relay.Key(bytes(range(40, 72)), "inline")
++        for machine, private, name, public in ((self.one, self.private, "jason", peer.public),
++                                                (self.two, peer.private, "ada", self.key.public)):
++            path = machine.home / ".projector.toml"
++            path.write_text(f'[agent]\nkey = "x25519:{crypto.encode(private)}"\n[agent.peers]\n'
++                            f'{name} = "{crypto.encode(public)}"\n')
++            self.s3_team(machine)
++            self.s3_team(machine, other, "beta")
++        api, docs = self.checkout(self.one, "acme/api"), self.checkout(self.one, "acme/docs", "beta")
++        web, site = self.checkout(self.two, "acme/web"), self.checkout(self.two, "acme/docs", "beta")
++        for machine, session, cwd in ((self.one, A, api), (self.one, C, docs), (self.two, B, web),
++                                      (self.two, D, site)):
++            machine.claude(session)
++            machine.register(session, "--name", f"agent-{session[0]}", cwd=cwd)
++        for machine in (self.one, self.two, self.one):
++            machine.run_pass()
++        posted = self.one.project("inbox", "tell", "--to", "jason", "The parser landed", claude=A, cwd=api)
++        self.one.run_pass()
++        self.two.run_pass()
++        [item] = [name for name in self.server.names("team", f"relay/{peer.id}/user/")]
++        other.put("team", item, self.server.objects[("team", item)].body)
++        self.two.run_pass()
++        listed = json.loads(self.two.project("inbox", "list", "--repo", "--json", claude=B, cwd=web)[1])["items"]
++        nowhere = self.checkout(self.one, "acme/docs", "gamma")
++        (self.one.home / "gamma" / ".projector.toml").write_text(f'[agent]\nrelay = "{TEAM}"\n')
++        with self.one.acting(nowhere):
++            resolved = agents.relay_place(nowhere, "acme/docs").location
++
++        relay_ids = {session: agents.record(machine.root, session)["relay_id"]
++                     for machine, session in ((self.one, A), (self.one, C), (self.two, B), (self.two, D))}
++        self.assertEqual(0, posted[0], posted[2])
++        for machine in (self.one, self.two):
++            self.assertEqual(2, len(list((machine.root / "relay" / "s3").glob("*.json"))))
++            self.assertEqual(2, len(list((machine.root / "outbox" / "s3").glob("*.json"))))
++        self.assertEqual({relay_ids[A], relay_ids[B]},
++                         {name.rsplit("/", 1)[1] for name in self.server.names("team") if "/agents/" in name})
++        self.assertEqual({relay_ids[C], relay_ids[D]},
++                         {name.rsplit("/", 1)[1] for name in other.names("team") if "/agents/" in name})
++        self.assertEqual(["The parser landed"], [entry["subject"] for entry in listed if entry["role"] == "incoming"])
++        self.assertEqual(["location-mismatch"],
++                         [found["reason"] for found in self.located(self.two, other)["rejections"]])
++        self.assertEqual("https://s3.amazonaws.com/team/relay", resolved)
++
++    def test_an_endpoint_and_a_profile_a_repository_commits_wait_until_you_allow_each(self) -> None:
++        api = self.checkout(self.one, "acme/api", "work")
++        SharedRelayTests.commit_policy(self, api, f'[agent]\nrelay = "{TEAM}"\ns3_endpoint = "{self.server.endpoint}"\n'
++                                's3_profile = "acme-relay"\n')
++        folder = self.credential_process(self.one, self.now + 3600)
++        self.one.claude(A)
++        self.one.register(A, "--name", "parser-refactor", cwd=api)
++        with mock.patch("builtins.input", return_value="y"):
++            allowed = self.one.project("config", "allow", "agent.relay", TEAM, cwd=api, terminal=True)
++        self.one.run_pass()
++        header = self.one.project("agent", "list", claude=A, cwd=api)[1].splitlines()[0]
++        before = (list(self.server.requests), (folder / "runs.jsonl").exists())
++        with mock.patch("builtins.input", return_value="y"):
++            for key, value in (("agent.s3_endpoint", self.server.endpoint), ("agent.s3_profile", "acme-relay")):
++                self.one.project("config", "allow", key, value, cwd=api, terminal=True)
++        self.one.run_pass()
++
++        self.assertEqual(0, allowed[0], allowed[2])
++        self.assertEqual(([], False), before)
++        self.assertIn(f"`project config allow agent.s3_endpoint {self.server.endpoint}`", header)
++        self.assertIn("`project config allow agent.s3_profile acme-relay`", header)
++        self.assertTrue(header.startswith(f"local only: {self.identity()}, set by origin/main:.projector.toml"))
++        self.assertEqual("published", agents.record(self.one.root, A)["relay"])
++        self.assertTrue(self.server.names("team", f"relay/{self.key.id}/agents/"))
++
++    def test_a_registration_written_while_admission_checks_another_waits_for_its_own_values(self) -> None:
++        """The session registers again with a profile you have not allowed while admission checks the approvals
++        of the registration it replaces. The new registration waits for its own profile rather than relaying on
++        the old one's approvals."""
++        api = self.checkout(self.one, "acme/api", "work")
++        policy = f'[agent]\nrelay = "{TEAM}"\ns3_endpoint = "{self.server.endpoint}"\ns3_profile = "{{}}"\n'
++        SharedRelayTests.commit_policy(self, api, policy.format("acme-relay"))
++        self.one.claude(A)
++        self.one.register(A, "--name", "parser-refactor", cwd=api)
++        with mock.patch("builtins.input", return_value="y"):
++            for key, value in (("agent.relay", TEAM), ("agent.s3_endpoint", self.server.endpoint),
++                               ("agent.s3_profile", "acme-relay")):
++                self.one.project("config", "allow", key, value, cwd=api, terminal=True)
++        SharedRelayTests.commit_policy(self, api, policy.format("other-relay"))
++        checking = agents.is_allowed
++        registered = threading.Event()
++        started: list[threading.Thread] = []
++
++        def register_again() -> None:
++            try:
++                self.one.register(A, "--name", "parser-refactor", cwd=api)
++            finally:
++                registered.set()
++
++        def interleaved(path: Path, key: str, value: object) -> bool:
++            # The first check admission makes lets the second registration run to its end, or to the lock that
++            # admission holds, before admission goes on.
++            if not started:
++                started.append(threading.Thread(target=register_again, daemon=True))
++                started[0].start()
++                registered.wait(0.5)
++            return checking(path, key, value)
++
++        with mock.patch.object(agents, "is_allowed", interleaved):
++            agents.admit(self.one.root, config.allowed_path(self.one.env), True, self.now)
++        started[0].join(10)
++        found = agents.record(self.one.root, A)
++
++        self.assertTrue(registered.is_set())
++        self.assertEqual("other-relay", found["s3"]["profile"])
++        self.assertEqual("waiting", found["relay"])
++        self.assertIn(["agent.s3_profile", "other-relay"], found["allow"])
++
++    def test_no_output_log_status_or_process_argument_holds_the_secret_key_or_the_token(self) -> None:
++        folder = self.credential_process(self.one, self.now + 3600)
++        self.credential_process(self.two, self.now + 3600)
++        for machine in (self.one, self.two):
++            self.aws_file(machine, "credentials", "")
++            self.s3_team(machine, extra='s3_profile = "acme-relay"\n')
++        api, web = self.checkout(self.one, "acme/api"), self.checkout(self.two, "acme/web")
++        self.one.claude(A)
++        self.two.claude(B)
++        said = [self.one.register(A, "--name", "parser-refactor", cwd=api),
++                self.two.register(B, "--name", "test-writer", cwd=web)]
++        for machine in (self.one, self.two, self.one):
++            machine.run_pass()
++        said.append(self.one.project("agent", "send", "test-writer", "Hello", claude=A, cwd=api)[1])
++        self.one.run_pass()
++        self.two.run_pass()
++        for args in (("watch", "status"), ("watch", "status", "--json"), ("agent", "relay", "show"),
++                     ("agent", "relay", "show", "--json"), ("agent", "list", "--json")):
++            code, out, err = self.one.project(*args, claude=A, cwd=api)
++            said += [out, err]
++
++        shown = "\n".join([*said, *self.one.logged, *self.two.logged, (folder / "runs.jsonl").read_text(),
++                           (self.one.root / "status.json").read_text()])
++        self.assertEqual(1, len(self.two.events(B)))
++        self.assertIn("credentials: profile acme-relay (credential_process)", shown)
++        self.assertNotIn(S3_SECRET, shown)
++        self.assertNotIn(S3_TOKEN, shown)
++        for path in self.one.root.rglob("*.json"):
++            self.assertNotIn(S3_TOKEN, path.read_text(), path)
++
++    def test_a_hung_credential_process_or_store_is_stopped_and_stalls_no_codex_event(self) -> None:
++        folder = self.credential_process(self.one, self.now + 3600)
++        self.s3_team(self.one, extra='s3_profile = "acme-relay"\n')
++        api = self.checkout(self.one, "acme/api")
++        self.one.claude(A)
++        self.one.register(A, "--name", "parser-refactor", cwd=api)
++        (folder / "mode").write_text("hang")
++        # The process outlasts the 2 seconds the Codex event may take, so a read on the daemon's loop delays it.
++        with mock.patch.object(s3, "PROCESS_TIMEOUT", 3.0):
++            started = time.monotonic()
++            self.one.start_pass()
++            PushTests.other_codex_event(self)
++            assert self.one.daemon is not None
++            self.one.daemon.tick()
++            reached = wait_for(lambda: (self.bin / "calls.jsonl").exists(), 2) and time.monotonic() - started < 2
++            self.one.settle()
++        lapsed = self.located(self.one)
++        (folder / "mode").write_text("")
++        self.server.hanging = {"list"}
++        with mock.patch.object(s3, "TIMEOUT", 1.0):
++            self.advance(3)
++            self.one.claude(A)
++            self.one.run_pass()
++        hung = self.located(self.one)
++        self.server.hanging = set()
++        self.server.listing_body = b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY y "z">]><ListBucketResult/>'
++        self.advance(3)
++        self.one.claude(A)
++        self.one.run_pass()
++        declared = self.located(self.one)
++
++        self.assertTrue(reached, "a Codex event waited for the credential process")
++        self.assertEqual("off", lapsed["state"])
++        self.assertIn("did not finish within 3 seconds, so it was stopped", lapsed["error"])
++        self.assertEqual("error", hung["state"])
++        self.assertIn("did not finish within 1 seconds", hung["error"])
++        self.assertEqual("error", declared["state"])
++        self.assertIn("declares a document type", declared["error"])
++
++
+ class LifecycleTests(RelayCase):
+     def a_refs(self) -> list[str]:
+         relay_id = agents.record(self.one.root, A)["relay_id"]
