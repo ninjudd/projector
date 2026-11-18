@@ -843,8 +843,10 @@ you can always choose a higher one.
 
 A key under `override` that is not a whole number from 1 to 99, such as
 `[override.0]` or `[override.x]`, makes every command that reads
-configuration exit 78 and name the file. `agent.key` under an override in a
-walked file is ignored, as it is anywhere outside `~/.projector.toml`.
+configuration exit 78 and name the file. `agent.key` under an override is
+ignored with a warning in every file, `~/.projector.toml` included, because
+Projector reads it only as an ordinary setting there, where
+`project agent key remove` and `key join --replace` change it.
 `config list` and `config get --json` name an override's source with its
 priority:
 
@@ -3889,9 +3891,10 @@ with `join` and whose fingerprint matches.
 | `key show` | Prints the key's ID, its public key, and where it is stored |
 | `key remove` | Deletes `agent.key` and the keychain item it names, which turns the relay off on this machine. The daemon then deletes this machine's agents' refs |
 
-Projector reads `agent.key` only from `~/.projector.toml`. A checkout's
-`.projector.toml` that sets it is ignored with a warning, so a repository
-cannot plant a key its author knows. Projector refuses an inline key in a
+Projector reads `agent.key` only from `~/.projector.toml`, and never from an
+`[override.<priority>]` table. A checkout's `.projector.toml` that sets it,
+or an override in any file, is ignored with a warning, so a repository
+cannot plant a key its author knows and a removed key stays removed. Projector refuses an inline key in a
 file other accounts can read or change, and names the `chmod` that fixes it.
 `project config set agent.key` refuses and names `key join`. Every other
 command shows an inline key as `<redacted, key ID <id>>`, including

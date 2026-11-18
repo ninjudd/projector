@@ -13,8 +13,9 @@ from pathlib import Path
 from unittest import mock
 
 from projector import config as config_module
+from projector import crypto, relay
 from projector.cli import main
-from projector.config import SETTINGS, ConfigError, Source, load, merge
+from projector.config import INLINE_KEY, SETTINGS, ConfigError, Source, load, merge
 from projector.core import json_scalar
 from tests.scratch import copy_of
 
@@ -725,6 +726,34 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual("keychain:mine", config.get("agent.key"))
         self.assertEqual([(Source(parent, None, 1), "agent.key")], config.ignored)
         self.assertIn(f"{parent} (override 1) sets agent.key", stderr)
+
+    def test_a_user_only_key_under_an_override_is_dropped_from_the_user_file_too(self) -> None:
+        # `key remove` and `join --replace` edit only the ordinary `agent.key`, so an override's copy, honored, would
+        # outlive both of them.
+        ordinary, planted = (INLINE_KEY + crypto.encode(crypto.new_private_key()) for _ in range(2))
+        user = write(self.home / ".projector.toml",
+                     f'[agent]\nkey = "{ordinary}"\n\n[override.1]\nagent.key = "{planted}"\n')
+        user.chmod(0o600)
+
+        config = self.merged()
+        _, listed, stderr = self.invoke("config", "list")
+
+        self.assertEqual(ordinary, config.get("agent.key"))
+        self.assertEqual(ordinary, relay.configured(self.environ))
+        self.assertEqual([(Source(user.resolve(), None, 1), "agent.key")], config.ignored)
+        self.assertIn(f"{user.resolve()} (override 1) sets agent.key, which Projector reads only outside an override "
+                      "in", stderr)
+        self.assertNotIn(planted, listed + stderr)
+
+        relay.remove_key(self.home / "state", self.environ)
+
+        self.assertIsNone(relay.configured(self.environ))
+        self.assertEqual((None, relay.NO_KEY), relay.command_key(self.environ))
+        code, unset, stderr = self.invoke("config", "unset", "agent.key", "--override", "1", "--user")
+        self.assertEqual(0, code)
+        self.assertIn("unset agent.key under [override.1]", unset)
+        self.assertNotIn(planted, unset + stderr)
+        self.assertEqual("[agent]\n\n[override.1]\n", user.read_text())
 
     def test_set_and_unset_write_under_the_override_table(self) -> None:
         team = self.parent / ".projector.toml"

@@ -1484,8 +1484,9 @@ def run_agent_key(arguments: argparse.Namespace) -> int:
 
 
 def warn_ignored(config: Config) -> None:
-    for path, key in config.ignored:
-        print(f"project: {path} sets {key}, which Projector reads only from {user_config_path()}; ignoring it",
+    for source, key in config.ignored:
+        where = "from" if source.override is None else "outside an override in"
+        print(f"project: {source} sets {key}, which Projector reads only {where} {user_config_path()}; ignoring it",
               file=sys.stderr)
 
 

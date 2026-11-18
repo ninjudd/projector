@@ -403,5 +403,14 @@ full pass, which transfers only commits this clone lacks.
   with the rest, so one priority has one spelling. `override = 1`, a value
   rather than tables, is refused too.
 - **The user layer alone.** `config.user_value`, which reads
-  `~/.projector.toml` by itself for `agent.key`, applies that file's own
-  overrides, through the same merge.
+  `~/.projector.toml` by itself for `agent.key`, reads that file through the
+  same merge, which drops a user-only key from its overrides, as the next
+  note says.
+- **No user-only key under an override.** Every key in `USER_ONLY`, which is
+  `agent.key`, is dropped from every `[override.<priority>]` table with a
+  warning, in `~/.projector.toml` as in every walked file. Overriding it gains
+  nothing, because only the user layer supplies it already, and
+  `agent key remove`, `key join --replace`, and `config unset` edit only the
+  ordinary key, so an override's copy would outlive a removal or
+  replacement. `config unset agent.key --override <priority>` still removes a
+  copy that is there.

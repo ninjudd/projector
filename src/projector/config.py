@@ -779,6 +779,9 @@ def layered(layers: list[tuple[Source, dict[str, Any]]], user: Optional[Path]) -
 
     Among overrides, the higher priority wins, and at equal priority the
     farther file wins, so `user`, the first layer, wins over every walked file.
+    A user-only key is read only as an ordinary setting of `user`, never from
+    an override in any file, so the commands that remove or replace it, which
+    edit only the ordinary key, leave no other copy in force.
     """
 
     values: dict[str, Any] = {}
@@ -788,8 +791,7 @@ def layered(layers: list[tuple[Source, dict[str, Any]]], user: Optional[Path]) -
     for nearness, (source, loaded) in enumerate(layers):
         for priority, table in _overrides(source, loaded):
             overriding = Source(source.path, source.blob, priority)
-            if source.path != user:
-                _drop_user_only(overriding, table, ignored)
+            _drop_user_only(overriding, table, ignored)
             overrides.append((priority, -nearness, overriding, table))
         if source.path != user:
             _drop_user_only(source, loaded, ignored)
