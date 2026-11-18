@@ -593,3 +593,16 @@ building:
   minutes, which a command that stopped before queuing left behind, no
   longer refuses the response. The lock is never held across the queue,
   because the relay's rebase takes the outbox's lock and then the mirror's.
+- **The outbox merges a state record into the one queued for its ref.**
+  Each command builds the whole state record outside the outbox's lock, and
+  the outbox keeps one item per ref, so of two commands that change one
+  entry's state at once on one machine, such as two sessions' replies or a
+  reply and a snooze, the record queued second replaced the first. The
+  mirror there stayed right, but your other machines lost one change until
+  the next. `relay.queue` now opens the queued record with your key, which
+  the queuing command holds, merges the two by the rules of § 2.1 step 12,
+  reseals the result, and keeps the item's lease. `queue` and `rebase`
+  share one merge function. A queued deletion of the state ref wins over a
+  state record in either order, as `rebase` drops a state change whose ref
+  was deleted, so a snooze that read the entry before a closing response
+  cannot push a record for an entry that is gone.

@@ -539,7 +539,7 @@ def respond(root: Path, repo: str, cwd: Path, key: relay.Key, peers: dict[str, b
                         deletion(relay.state_ref(key.id, entry["id"]))]
         elif state is not None:
             changes.append(state_change(key, state, now))
-        relay.queue(root, repo, str(cwd), changes, now)
+        relay.queue(root, repo, str(cwd), changes, now, key=key)
     except BaseException:
         release(root, repo, entry, token, now)
         raise
@@ -656,7 +656,7 @@ def snooze(root: Path, repo: str, cwd: Path, key: relay.Key, ref: str, minutes: 
     entry = by_ref(root, repo, ref)
     at = now_ms(now)
     state = update_state(root, repo, entry, now, snoozed_at=at, snoozed_until=at + minutes * 60_000)
-    relay.queue(root, repo, str(cwd), [state_change(key, state, now)], now)
+    relay.queue(root, repo, str(cwd), [state_change(key, state, now)], now, key=key)
     return {**entry, **state_fields(state)}
 
 
@@ -673,7 +673,7 @@ def close(root: Path, repo: str, cwd: Path, key: relay.Key, ref: str, now: float
     entry = own_sent(root, repo, ref, "close")
     state = update_state(root, repo, entry, now, closed_at=now_ms(now))
     relay.queue(root, repo, str(cwd), [state_change(key, state, now),
-                                       deletion(relay.user_ref(entry["to"], entry["id"]))], now)
+                                       deletion(relay.user_ref(entry["to"], entry["id"]))], now, key=key)
     return {**entry, **state_fields(state)}
 
 
@@ -696,7 +696,7 @@ def reopen(root: Path, repo: str, cwd: Path, key: relay.Key, peers: dict[str, by
     # Only your machines write an item you sent, and the peer may have deleted it, so its push takes no lease.
     publish = change_of(key, relay.user_ref(entry["to"], entry["id"]), public, item, "item", now, force=True)
     state = update_state(root, repo, entry, now, reopened_at=at)
-    relay.queue(root, repo, str(cwd), [publish, state_change(key, state, now)], now)
+    relay.queue(root, repo, str(cwd), [publish, state_change(key, state, now)], now, key=key)
     return {**entry, **state_fields(state)}
 
 

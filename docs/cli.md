@@ -4310,7 +4310,11 @@ that sealed it, and is rejected as `sender-mismatch` otherwise, or as
 `no-sent-copy` when you sent no such item. When two of your machines change
 one entry's state before either pushes, the second push fails its lease,
 and the next job merges the two records rather than retrying its own: it
-keeps every session that replied, and the later of each time. Every full
+keeps every session that replied, and the later of each time. Two commands
+that change one entry's state at once on one machine, such as a reply and a
+snooze, merge the same way when the second queues its record, so both
+changes reach your other machines. A state change queued after the entry's
+deletion is dropped, because the state goes with its entry. Every full
 pass deletes entries a week after they were sent. A deletion of a ref the
 peer already deleted is dropped. Entries live on each machine under
 `$XDG_STATE_HOME/projector/repo-inbox/<owner>/<repo>/`, and the counts in

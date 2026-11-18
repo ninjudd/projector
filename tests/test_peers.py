@@ -563,12 +563,12 @@ class StateTests(PeersCase):
         claimed, refuse = threading.Event(), threading.Event()
         queue = relay.queue
 
-        def paused(root, repo, cwd, changes, now, remote=None):
+        def paused(root, repo, cwd, changes, now, remote=None, **options):
             if any(ref.startswith(f"{relay.USER}{self.jason.id}/") for ref, _, _ in changes):
                 claimed.set()
                 refuse.wait(10)
                 raise relay.RelayError("the outbox could not be written")
-            return queue(root, repo, cwd, changes, now, remote)
+            return queue(root, repo, cwd, changes, now, remote, **options)
 
         refused: list[Exception] = []
 
@@ -603,6 +603,132 @@ class StateTests(PeersCase):
         self.assertEqual([[], []], held)
         self.assertEqual(0, again[0], again[2])
         self.assertEqual([A], [mark["session"] for mark in self.entries(self.one, A)[0]["replied"]])
+
+    def snooze_during_reply(self, paused: str) -> None:
+        """A reply from session A to r1 and a snooze of r1 on machine one, both queued before any push: the reply
+        pauses at `paused`, either `queue` before it queues or `settle` after, while the snooze runs whole."""
+        key, peers = relay.Key(self.private, "inline"), {"jason": crypto.public_key(JASON)}
+        reached, resume = threading.Event(), threading.Event()
+        queue, settle = relay.queue, repo_inbox.settle
+
+        def queue_later(root, repo, cwd, changes, now, remote=None, **options):
+            if paused == "queue" and threading.current_thread().name == "reply":
+                reached.set()
+                resume.wait(10)
+            return queue(root, repo, cwd, changes, now, remote, **options)
+
+        def settle_later(*args, **options):
+            reached.set()
+            resume.wait(10)
+            return settle(*args, **options)
+
+        def respond() -> None:
+            repo_inbox.respond(self.one.root, REPO, self.one.work, key, peers, "r1", "reply", by="agent",
+                               text="Parser half done", session=A, registration=agents.record(self.one.root, A),
+                               now=self.now)
+
+        with mock.patch.object(relay, "queue", queue_later), \
+                mock.patch.object(repo_inbox, "settle", settle_later if paused == "settle" else settle):
+            thread = threading.Thread(target=respond, name="reply")
+            thread.start()
+            self.assertTrue(reached.wait(10))
+            repo_inbox.snooze(self.one.root, REPO, self.one.work, key, "r1", 60, self.now)
+            resume.set()
+            thread.join()
+
+    def test_a_snooze_queued_while_a_reply_waits_to_queue_reaches_your_other_machine_with_the_reply(self) -> None:
+        # Catches a state record that replaces the one queued for its ref: the reply's record, computed before the
+        # snooze, queues after it, so your other machine gets the reply's mark but never the snooze.
+        self.incoming()
+
+        self.snooze_during_reply("queue")
+        self.one.run_pass()
+        self.three.run_pass()
+        found = self.entries(self.three, C)[0]
+
+        self.assertEqual([A], [mark["session"] for mark in found["replied"]])
+        self.assertEqual("snoozed", found["state"])
+
+    def test_a_snooze_queued_while_a_reply_settles_reaches_your_other_machine_with_the_reply(self) -> None:
+        # Catches the other order: the snooze's record, computed before the reply's mark reached the mirror, queues
+        # after the reply's and replaces it, so your other machine gets the snooze but never the reply's mark.
+        self.incoming()
+
+        self.snooze_during_reply("settle")
+        self.one.run_pass()
+        self.three.run_pass()
+        found = self.entries(self.three, C)[0]
+
+        self.assertEqual([A], [mark["session"] for mark in found["replied"]])
+        self.assertEqual("snoozed", found["state"])
+
+    def test_replies_from_two_sessions_on_one_machine_both_reach_your_other_machine(self) -> None:
+        # Catches the same replacement between two sessions' replies: each claims from the same mirror, so each
+        # reply's record holds only its own session, and the one queued second replaces the first.
+        self.incoming()
+        e = "e5f6a7b8-0000-4000-8000-00000000000e"
+        self.one.claude(e)
+        self.one.register(e, "--name", "agent-e", "--model", "claude-opus-5-5", "--summary", "Working on the lexer")
+        key, peers = relay.Key(self.private, "inline"), {"jason": crypto.public_key(JASON)}
+        both_claimed = threading.Barrier(2, timeout=10)
+        queue = relay.queue
+
+        def queue_after_both(root, repo, cwd, changes, now, remote=None, **options):
+            both_claimed.wait()
+            return queue(root, repo, cwd, changes, now, remote, **options)
+
+        def respond(session: str, text: str) -> None:
+            repo_inbox.respond(self.one.root, REPO, self.one.work, key, peers, "r1", "reply", by="agent", text=text,
+                               session=session, registration=agents.record(self.one.root, session), now=self.now)
+
+        with mock.patch.object(relay, "queue", queue_after_both):
+            threads = [threading.Thread(target=respond, args=(session, text))
+                       for session, text in ((A, "Parser half done"), (e, "Lexer done"))]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        queued = len(self.sent_to_jason())
+        self.one.run_pass()
+        self.three.run_pass()
+
+        self.assertEqual(2, queued)
+        self.assertEqual({A, e}, {mark["session"] for mark in self.entries(self.one, A)[0]["replied"]})
+        self.assertEqual({A, e}, {mark["session"] for mark in self.entries(self.three, C)[0]["replied"]})
+
+    def test_a_snooze_queued_after_a_closing_response_leaves_the_state_deleted(self) -> None:
+        # Catches a state record that replaces the deletion queued for its ref: a snooze that read the entry before
+        # `done` closed it queues after the close, and pushes a state record for an entry that is gone, which stays
+        # on origin until another of your machines notices the entry is gone.
+        self.incoming()
+        key = relay.Key(self.private, "inline")
+        self.ok(self.one, A, "snooze", "r1", "--for", "30")
+        self.one.run_pass()
+        entry_id = self.entries(self.one, A)[0]["id"]
+        self.assertIn(relay.state_ref(self.key.id, entry_id), self.refs())
+        reached, resume = threading.Event(), threading.Event()
+        queue = relay.queue
+
+        def queue_later(root, repo, cwd, changes, now, remote=None, **options):
+            if threading.current_thread().name == "snooze":
+                reached.set()
+                resume.wait(10)
+            return queue(root, repo, cwd, changes, now, remote, **options)
+
+        with mock.patch.object(relay, "queue", queue_later):
+            thread = threading.Thread(target=repo_inbox.snooze, name="snooze",
+                                      args=(self.one.root, REPO, self.one.work, key, "r1", 60, self.now))
+            thread.start()
+            self.assertTrue(reached.wait(10))
+            self.ok(self.one, A, "done", "r1", "--as", "user")
+            resume.set()
+            thread.join()
+        self.one.run_pass()
+        pushed = relay.state_ref(self.key.id, entry_id) in self.refs()
+        self.three.run_pass()
+
+        self.assertFalse(pushed)
+        self.assertEqual([], self.entries(self.three, C))
 
     def test_a_reply_a_stopped_command_reserved_holds_for_five_minutes_only(self) -> None:
         # Catches a reservation that never lapses: a command that stops between reserving a reply and queuing it,

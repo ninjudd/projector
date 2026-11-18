@@ -568,11 +568,17 @@ def pending(box: dict) -> frozenset[tuple[str, str]]:
 
 
 def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Optional[dict], dict]],
-          now: float, remote: Optional[dict[str, str]] = None) -> None:
+          now: float, remote: Optional[dict[str, str]] = None, *, key: Optional[Key] = None) -> None:
     """Queue each `(ref, sealed, meta)` change, with `sealed` None for a deletion, keeping at most one item per ref,
     because one push refuses two updates to one ref. A change to a queued ref keeps the item's `old`, the commit
     on origin that the lease must expect. `remote` holds the refs on origin, as the cache last recorded them unless
-    a running job knows better."""
+    a running job knows better.
+
+    Each command seals a whole state record it built outside this lock, so a state record for a queued ref is
+    merged with the record queued there, by `key`, which sealed both, rather than replacing it, so two commands
+    that change one entry's state at once both reach your other machines. A queued deletion of a state ref wins
+    over a state record, in either order, as `Job.rebase` drops a state change whose ref was deleted: the record
+    goes with its entry."""
     path = repo_file(root, "outbox", repo)
     remote = read_cache(root, repo)["remote"] if remote is None else remote
     with locked(path.parent):
@@ -589,7 +595,12 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
                               "queued_at": watch.stamp(now), "last_error": ""}
             elif sealed is None and item["old"] is None and ref not in pushing:
                 del items[ref]
+            elif sealed is not None and is_state(ref) and item["sealed"] is None:
+                continue
             else:
+                if sealed is not None and is_state(ref):
+                    assert key is not None, "a state record is queued with the key that sealed it"
+                    sealed = merged_seal(key, sealed, opened(key, item["sealed"]))[0]
                 item.update(sealed=sealed, meta=meta, queued_at=watch.stamp(now), cwd=cwd or item.get("cwd"))
         if cwd:
             box["checkouts"] = [{"cwd": cwd, "queued_at": watch.stamp(now)},
@@ -597,6 +608,32 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
         box["items"] = list(items.values())
         if box != before:
             write_json(path, box)
+
+
+def is_state(ref: str) -> bool:
+    return (parse_ref(ref) or ("",))[0] == "state"
+
+
+def opened(key: Key, sealed: dict) -> Optional[dict]:
+    """The record `sealed` holds when `key` sealed it to itself, or None."""
+    try:
+        sender, plaintext = crypto.unseal(key.private, sealed)
+        record = json.loads(plaintext)
+    except (crypto.CryptoError, ValueError):
+        return None
+    return record if sender == key.public and isinstance(record, dict) else None
+
+
+def merged_seal(key: Key, sealed: dict, found: Optional[dict]) -> tuple[dict, Optional[dict]]:
+    """A state record `sealed` to `key`, merged with `found`, another record of the same entry, by the rules of
+    `repo_inbox.merge`, and sealed again. Answers the sealed record and the merged one, or `sealed` as it was and
+    None when `found` is not a well-formed record of that entry. `queue` merges a state record with the one queued
+    for its ref, and `Job.rebase` a stale one with the record the fetch found."""
+    mine = json.loads(crypto.unseal(key.private, sealed)[1])
+    if found is None or found.get("id") != mine["id"] or not repo_inbox.well_formed_state(found):
+        return sealed, None
+    merged = repo_inbox.merge(found, mine)
+    return seal(key, merged), merged
 
 
 def presence(root: Path, session: str, found: dict, now: float) -> dict:
@@ -923,16 +960,14 @@ class Job:
     def merged_state(self, cwd: Path, sha: str, queued: dict) -> dict:
         """The state record queued, merged with the one origin holds at `sha`, sealed again."""
         assert self.key is not None
-        _, plaintext = crypto.unseal(self.key.private, queued)
-        mine = json.loads(plaintext)
         try:
             _, found = self.open(cwd, self.sealed_blob(cwd, sha))
         except Rejected:
             found = None
-        if found is not None and found.get("id") == mine["id"] and repo_inbox.well_formed_state(found):
-            mine = repo_inbox.merge(found, mine)
-            repo_inbox.take_state(self.root, self.repo, mine)
-        return seal(self.key, mine)
+        sealed, merged = merged_seal(self.key, queued, found)
+        if merged is not None:
+            repo_inbox.take_state(self.root, self.repo, merged)
+        return sealed
 
     def examine(self, cwd: Path) -> None:
         """Open at most `OPEN_LIMIT` new records, checking each ref's name and tree before reading its blob, so a
