@@ -1148,8 +1148,9 @@ class Daemon:
         contexts["pageInfo"] = page
 
     def stack(self, repo: str, number: int, now: float) -> Optional[int]:
-        """The bottom layer of the open GitHub stack of two or more that holds the pull request, or None, recorded
-        for each of the stack's layers. A stack lists a merged layer still, so its bottom stays the bottom."""
+        """The bottom layer of the open GitHub stack of two or more that holds the pull request, recorded for each
+        of the stack's layers, or None when GitHub lists no such stack or cannot answer. A stack lists a merged
+        layer still, so its bottom stays the bottom."""
         result = self.gh(["api", f"repos/{repo}/stacks?pull_request={number}"])
         try:
             found = json.loads(result.stdout) if result.returncode == 0 else None
@@ -1159,7 +1160,7 @@ class Daemon:
         layers = [layer["number"] for layer in stack.get("pull_requests") or []
                   if isinstance(layer, dict) and isinstance(layer.get("number"), int)]
         bottom = layers[0] if stack.get("open", True) and len(layers) > 1 and number in layers else None
-        for layer in layers if bottom is not None else [number]:
+        for layer in layers if bottom is not None else []:
             self.stacks[repo.lower(), layer] = (now, bottom)
         return bottom
 
@@ -1768,8 +1769,10 @@ class Pass:
     def bottom(self, pull: tuple[str, int], repo: str, pr: dict) -> Optional[int]:
         """The bottom layer of the stack that holds the pull request, or None when it is in none. GitHub's
         stack answers, asked once each full pass for all its layers, and a chain of base branches answers where
-        GitHub records none. A pull request the open ones show in no chain costs no request, unless GitHub put
-        it in a stack before, which keeps its bottom while the layers below it merge."""
+        GitHub records none. A pull request the open ones show in no chain costs no request, unless it was in a
+        stack before. Once named, a bottom holds until GitHub names another or the chain reaches below it: a
+        merged bottom drops out of the chain, and a lookup that fails or finds no stack names no other, so
+        neither gives a layer a second fixer."""
         number = pull[1]
         pulls = self.open_pulls(repo)
         listed = [found for found in pulls if isinstance(found.get("number"), int)] if isinstance(pulls, list) else []
@@ -1780,19 +1783,25 @@ class Pass:
         head = own.get("head") if own else pr.get("headRefName")
         chained = base in heads or head is not None and head in bases.values()
         cached = self.daemon.stacks.get(pull)
-        if cached is not None and self.now - cached[0] < self.settings.full_every:
-            bottom = cached[1]
-        elif chained or not isinstance(pulls, list) or cached is not None and cached[1] is not None:
+        known = cached[1] if cached is not None else None
+        fresh = cached is not None and self.now - cached[0] < self.settings.full_every
+        if fresh and known is not None:
+            return known
+        asked = cached[0] if fresh else None
+        if not fresh and (chained or not isinstance(pulls, list) or known is not None):
+            asked = self.now
             bottom = self.daemon.stack(repo, number, self.now)
-        else:
-            bottom = None
-        if bottom is not None or not chained:
-            return bottom
-        bottom, seen = number, {number}
-        while base in heads and heads[base] not in seen:
+            if bottom is not None:
+                return bottom
+        bottom, seen = (number if chained else None), {number}
+        while chained and base in heads and heads[base] not in seen:
             bottom = heads[base]
             seen.add(bottom)
             base = bases[bottom]
+        if known is not None and (bottom is None or known not in seen):
+            bottom = known
+        if asked is not None:
+            self.daemon.stacks[pull] = (asked, bottom)
         return bottom
 
     def remote_reviews(self, repo: str) -> Optional[list[list[dict]]]:

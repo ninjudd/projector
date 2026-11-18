@@ -2186,6 +2186,39 @@ class StackFixerTests(WatchCase):
         self.assertEqual(["MERGED acme/app#5 into main — send subagent fix-stack-5 no more work for acme/app#5, and "
                           "finish it once no layer of its stack is open"], events)
 
+    def merge_the_bottom_and_refresh(self) -> list[str]:
+        """Merge layer 5, retarget layer 6 to main, and run the pass after the next full pass's lookup."""
+        self.github.pull_request(5, ref="layer-5", state="MERGED")
+        self.github.pull_request(6, ref="layer-6", base="main", draft=True, threads=[thread("T6")])
+        self.cycle()
+        self.advance(self.settings.renotify)
+        return self.cycle()["fixer"]
+
+    def test_a_failed_stack_refresh_keeps_the_fixer_after_the_bottom_merges(self) -> None:
+        self.github.stack(20, 5, 6)
+        self.layers(5, 6, fields={6: {"threads": [thread("T6")]}})
+        self.live("fixer", "acme/app#6 fix")
+        first = self.cycle()["fixer"]
+        self.github.failing["repos/acme/app/stacks"] = 500
+
+        events = self.merge_the_bottom_and_refresh()
+
+        self.assertTrue(first[0].endswith(" subagent fix-stack-5"), first)
+        self.assertEqual(["FINDING acme/app#6 (still open) src/x.py:3 [bugbot]: P1 nil deref — run fix-pr on "
+                          "acme/app#6 in subagent fix-stack-5"], events)
+
+    def test_a_chain_keeps_its_fixer_after_its_bottom_merges_out_of_view(self) -> None:
+        self.layers(5, 6, fields={6: {"threads": [thread("T6")]}})
+        self.live("fixer", "acme/app#6 fix")
+        first = self.cycle()["fixer"]
+
+        events = self.merge_the_bottom_and_refresh()
+
+        self.assertTrue(first[0].endswith(" subagent fix-stack-5"), first)
+        self.assertEqual(["FINDING acme/app#6 (still open) src/x.py:3 [bugbot]: P1 nil deref — run fix-pr on "
+                          "acme/app#6 in subagent fix-stack-5"], events)
+        self.assertEqual(["repos/acme/app/stacks?pull_request=6"], self.github.stack_lookups())
+
 
 class AdoptionTests(WatchCase):
     def repository_reviewer(self, *extra: str) -> None:
