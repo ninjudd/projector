@@ -1,0 +1,174 @@
+{
+ "version": 1,
+ "name": "Repository peer inbox",
+ "project": "agent-messages/peers",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 553,
+  "title": "Show the repository inbox in the panel and the console, and teach agents to use it",
+  "head": "1e77da049391ab5096650a7538db5c21fac74a84",
+  "headRef": "repo-inbox/panel",
+  "base": "1640edf0263329f7c9684ee76dca20360f12614e",
+  "baseRef": "repo-inbox/relay",
+  "basePr": 551
+ },
+ "overview": {
+  "summary": [
+   "Projector keeps questions and requests for a person in an inbox. Earlier layers add a second inbox shared by that person’s sessions in one repository: another person’s agent can post there, and encrypted relay records carry answers back. This layer puts those repository entries beside the session’s own items in the Claude Code panel and terminal console.",
+   "A button on a peer’s question or request records the person’s response immediately with <code>--as user</code>. It sends no answer notification to the local session’s agent. Discuss instead quotes the entry so the person can ask that agent what to say. The messaging skill explains when an agent may post or answer, and the project plan records completion while leaving the two-person manual exercise for after merge."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Two inboxes, separate delivery",
+    "html": "<ul class=\"tight\"><li><b>Session item:</b> a question, request, notice, or message belonging to one agent session, identified by a numeric reference such as <code>1</code>.</li><li><b>Repository entry:</b> an incoming peer item, a copy of an item sent to a peer, or a peer’s reply, identified by <code>r1</code>.</li><li><b>Mirror:</b> local files containing repository entries opened by the relay.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review at this head",
+    "html": "<ul class=\"tight\"><li>All three earlier panel findings are fixed: entries render when they are the panel’s only content, snoozed entries return when their deadline passes, and peer Discuss quotes cannot answer local session items.</li><li>The configured exact-head gate and the original regression sequences verify the fixes. The panel also reopens for a new entry or a snooze ending while it is hidden.</li><li>The relay layer is reviewed separately. The two-person end-to-end exercise remains deferred.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "contract",
+   "title": "Separate repository entries from session items",
+   "kicker": "Types and commands distinguish peer responses from local answer delivery.",
+   "intro": [
+    "Repository entries share an inbox listing with session items but have different ownership and delivery. The panel now recognizes their <code>scope: \"repo\"</code> tag and keeps them in a separate state list. Shared Python helpers let the CLI and console find the session’s registered repository and queue an encrypted response through the same core."
+   ],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Defines the repository entry shape and the panel state that holds it."
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Finds the repository mirror and builds commands for entry buttons.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The entry command tests passed: incoming responses include --as user, while sent-entry actions do not impersonate a peer response."
+      },
+      {
+       "kind": "verify",
+       "text": "The parser tests verify that r-reference quotes produce no local answer, request outcome, reply, or unclear mark, even with a prior drawer proposal or beside local quotes in either order."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/repo_inbox.py",
+     "note": "Moves repository lookup and key resolution into shared helpers and adds console response adapters."
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Uses those shared helpers, includes the listed repository in JSON, and supplies daemon startup to the console."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "Show peer entries in the Claude Code panel",
+   "kicker": "Mirror changes load entries, and each role gets its own drawer and buttons.",
+   "intro": [
+    "The panel reads the repository from the session registration and watches the mirror beside the session’s item directory. An entry drawer shows peer text and related replies. Answer, Done, and Decline run commands directly; Discuss fills the prompt instead of answering through the local agent.",
+    "This revision fixes three failures found in the first review. Repository entries count as panel content even when no pull request or local item is visible. The panel uses each entry’s snooze deadline and its own clock, and the quote parser keeps repository references in a separate namespace. New entries and expired snoozes also reopen a hidden panel."
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Loads and renders repository entries and dispatches their actions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The empty-panel condition now counts repository entries. The original peer-only panel probe and the new hidden-panel entry test verify that those entries render without local items or open pull requests."
+      },
+      {
+       "kind": "verify",
+       "text": "Snooze filtering evaluates snoozed_until against the panel clock. Expiry invalidates the cached list and the tick reopens a hidden panel; shown and hidden expiry tests cover both paths."
+      },
+      {
+       "kind": "verify",
+       "text": "Discuss still fills the peer quote, while the parser retains its r reference. The original same-subject panel probe confirms that sending Yes under it leaves the local question unanswered."
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Checks mirror paths, registration parsing, and the identity attached to entry commands."
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Adds a repository entry harness and checks role display, sent replies, and direct user responses.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The configured gate passes 276 hook tests, including the new empty-panel, hidden-panel, snooze-expiry, and mixed-reference cases. The original three temporary regression probes also pass; temporary edits were restored afterward."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "console",
+   "title": "Offer repository entry actions in the terminal console",
+   "kicker": "Each session’s panel reads the shared repository inbox.",
+   "intro": [
+    "The terminal console now appends repository entries after a session’s pull requests and local items. Its drawers show peer details, replies, and role-specific controls. Responses use the shared repository helpers and start the daemon afterward so queued records can leave the machine.",
+    "A console Discuss action creates a message for the viewed session that quotes the peer entry. It does not fabricate an answer event on a session item."
+   ],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Loads entries for each registered session, renders drawers, and handles response, snooze, close, reopen, and Discuss actions."
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "Covers entry display, user response identity, absence of local answer delivery, and replies on sent items.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The original full review passed 243 focused Python tests covering console, inbox, peers, packaging, and permissions. This head leaves the console implementation and its tests unchanged."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "workflow",
+   "title": "Explain peer authority and record the project outcome",
+   "kicker": "Skills route peer replies to the main conversation and require the user’s instruction.",
+   "intro": [
+    "A peer’s message is another person’s input, so it cannot authorize work for the user. The messaging skill now describes that boundary for repository inbox entries: the user chooses peers and directs posting and answering, while an agent reads a full reply before weighing it within the existing task.",
+    "The review and fix skills keep peer reply notifications in the main conversation. The CLI documentation describes the new controls, and the plan records how the three layers meet the acceptance criteria while deferring a two-person manual check."
+   ],
+   "files": [
+    {
+     "path": "skills/message/SKILL.md",
+     "note": "Adds instructions for posting to peers, responding only with user authority, and reading PEER REPLY notifications."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Keeps PEER REPLY messages out of pull request subagents."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Routes PEER REPLY messages to the messaging skill in the main conversation."
+    },
+    {
+     "path": "skills/review-repo/SKILL.md",
+     "note": "Applies the same routing during repository review."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents entry controls and how direct responses differ from Discuss."
+    },
+    {
+     "path": "docs/projects/agent-messages/peers/readme.md",
+     "note": "Sections 8 and 9 record panel decisions, completion, test coverage, and the deferred two-person check."
+    }
+   ]
+  }
+ ]
+}
