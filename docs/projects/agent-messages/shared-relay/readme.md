@@ -67,23 +67,29 @@ repository says so to its sender and its reader.
    work repository and the source is `origin`. A checkout with no GitHub
    `origin` and no `agent.relay` keeps today's `relay: none`. One with a
    configured location relays through it.
-3. **Allow.** A location named by any file other than `~/.projector.toml` is
-   used only once you allow it. You run `project agent relay allow
-   github:acme/agents` in a terminal. It refuses without one, as `key join`
-   does, prints the file that named the location, and asks for `y`. It
-   records the location in `<root>/relays.json`. Until then, the
-   registration records `relay: waiting`. `project agent list` says
-   `local only: github:acme/agents, named by ~/work/acme/.projector.toml,
-   waits for project agent relay allow github:acme/agents`. A location equal
-   to the work repository needs no allowing, because the relay already
-   pushes there today.
+3. **Allow a location a repository chose.** `agent.relay` is a destination
+   setting, in `config.DESTINATIONS` (`../../config-trust/readme.md` § 2.1
+   step 5). A tracked `.projector.toml` takes effect from the default branch,
+   so a branch cannot choose your relay. When the effective value comes from
+   such a file, it is used only once you run
+   `project config allow agent.relay github:acme/agents` in a terminal,
+   because the default branch's owner may not be you. A value from an
+   untracked file, such as `~/work/acme/.projector.toml`, or from
+   `~/.projector.toml` needs no allowing. Until a value is allowed, the
+   registration records `relay: waiting`, and `project agent list` says
+   `local only: github:acme/agents, set by origin/main:.projector.toml, waits
+   for project config allow agent.relay github:acme/agents`. A location equal
+   to the work repository needs no allowing, because the relay already pushes
+   there today.
 4. **Check the location.** For a location other than the work repository,
    the daemon reads `gh repo view <slug> --json visibility,viewerPermission`
    on first use and on each full pass, and records both in the location's
    cache. The relay is off for sessions using the location, with the reason
-   in `list` and `watch status`, unless the repository is `PRIVATE` and the
-   permission is `WRITE`, `MAINTAIN`, or `ADMIN`. The work repository keeps
-   today's rule, which allows any visibility.
+   in `list` and `watch status`, unless the repository is `PRIVATE` or
+   `INTERNAL` and the permission is `WRITE`, `MAINTAIN`, or `ADMIN`. An
+   `INTERNAL` repository is visible only within its GitHub enterprise, which
+   suits a company relay. The work repository keeps today's rule, which
+   allows any visibility.
 5. **Run each location's job.** `Relay.repositories` becomes
    `Relay.locations`, which groups live registrations by `location`. The
    cache and outbox keep their paths, `relay/<owner>/<repo>.json` and
@@ -141,7 +147,6 @@ repository says so to its sender and its reader.
 | Setting or file | Meaning |
 | --- | --- |
 | `agent.relay` | `str`: `origin`, the default, or `github:<owner>/<repo>`. Read from every layer, nearest first. |
-| `<root>/relays.json` | `schema_version: 1` and `allowed`, a map from location to `{source, allowed_at}`. Only `relay allow` writes it. |
 | `<root>/visibility.json` | `schema_version: 1` and `repos`, a map from repository slug to `{visibility, read_at}`. |
 | `agent.json` | Adds `location` and `location_source`. `relay` gains the value `waiting`. |
 | Message and peers item | Add `repo` and `repo_visibility`. The receiver checks both against `review.repo_slug`'s shape and the four visibility values `PUBLIC`, `INTERNAL`, `PRIVATE`, and `unknown`. |
@@ -152,8 +157,8 @@ repository says so to its sender and its reader.
 
 | Control | What it stops |
 | --- | --- |
-| **Allow a location named in a file other than `~/.projector.toml`.** | A committed `.projector.toml`, including one on a contributor's pull request branch that a review session has checked out, sending your sealed records somewhere you did not choose. Sealing hides the content, but the destination would learn your key ID, when your agents come and go, and how much they send, and your messages would never arrive. |
-| **Require a configured location to be private and writable.** | A shared relay leaving permanent ciphertext, and the metadata above, on a public repository, and a relay that fails on every push. |
+| **Read a repository's choice of relay from its default branch, and allow it once.** | A branch, such as a contributor's pull request branch you checked out, choosing your relay, which config-trust prevents for every setting. And the owner of a repository you cloned choosing it, which the one-time `project config allow` prevents. A relay you can write to, chosen by someone else, would show its other readers your key ID, when your agents come and go, and how much they send, and your messages would not reach the relay your team watches. |
+| **Require a configured location to be private or internal, and writable.** | A shared relay leaving permanent ciphertext, and the metadata above, on a public repository where anyone can fetch it, and a relay that fails on every push. |
 | **Name the source of a crossing record.** | An agent copying a private repository's content into another repository without knowing where it came from. The `PEER MESSAGE` line, `project agent read`, and `project inbox show` name the sender's repository whenever it differs from the reader's. When `repo_visibility` is not `PUBLIC`, they add: `It comes from private repository acme/api: keep its content out of anything you write in acme/site unless that repository is private too.` |
 | **Remind the sender.** | An agent sending private details to someone outside the repository without noticing. `send`, `reply`, and `inbox ask`, `request`, and `tell` with `--to` print `this leaves private repository acme/api: include only what the recipient may read` when the work repository is not `PUBLIC` and the record crosses. |
 
@@ -165,15 +170,15 @@ for a company, the company's repositories share one relay.
 
 | File | Change |
 | --- | --- |
-| `src/projector/config.py` | Add `agent.relay` to `SETTINGS`, readable from every layer, and `relay_location(value)`, which parses `origin` and `github:<owner>/<repo>` and refuses other forms, naming `s3://` as not yet supported. |
-| `src/projector/relay.py` | Key `Job` and the daemon's `Relay` by location (§ 2.1 step 5). Add the bare clone and its credential arguments (step 6), and the location check with its cache fields (step 4). Read `<root>/relays.json` for allowed locations. Pass the location, not the work repository, wherever a ref is queued. |
+| `src/projector/config.py` | Add `agent.relay` to `SETTINGS`, readable from every layer, and to `DESTINATIONS`, and `relay_location(value)`, which parses `origin` and `github:<owner>/<repo>` and refuses other forms, naming `s3://` as not yet supported. |
+| `src/projector/relay.py` | Key `Job` and the daemon's `Relay` by location (§ 2.1 step 5). Add the bare clone and its credential arguments (step 6), and the location check with its cache fields (step 4). Pass the location, not the work repository, wherever a ref is queued. |
 | `src/projector/agents.py` | Resolve and record `location` and `location_source` in `register`, and write `relay: waiting`. List and resolve recipients by location. Add `repo` and `repo_visibility` to messages, the crossing notice to `event_line` and `read_text`, and the send reminder. Read and cache visibility in `<root>/visibility.json`. |
 | `src/projector/watch.py` | Report each location's state, permission, visibility, and the source file of a waiting location in `watch status`. |
-| `src/projector/cli.py` | Add `project agent relay allow <location>`, terminal only, and `project agent relay show [--json]`. `show` prints the location the current directory resolves to, the file that named it, whether it is allowed, and the location's last state. |
+| `src/projector/cli.py` | Add `project agent relay show [--json]`, which prints the location the current directory resolves to, the file that set it, whether it waits for `project config allow`, and the location's last state. |
 | `src/projector/repo_inbox.py` (from `../peers/readme.md`) | Key the mirror by location. Add `repo`, `repo_visibility`, and `scope_repo` to items. Show the work repository on a crossing entry, and add the crossing notice and reminder. Filter a session's entries by `scope_repo`, and list every entry with `--relay`. |
 | `src/projector/inbox.py`, `src/projector/cli.py`, `src/projector/console.py` | Add `--repo` to `inbox ask`, `request`, and `tell` with `--to`, and `--relay` to `inbox list`. The console lists scoped items in every session, marked with their repository. |
-| `src/projector/permissions.py`, `tests/test_permissions.py` | Allow `project agent relay show` in the Codex rules. `relay allow` stays out. |
-| `skills/message/SKILL.md` | Explain that agents and inbox entries are shared by relay location, and add the crossing rule. Never copy a crossing record's private content into a repository that is not private, and never run `relay allow`. |
+| `src/projector/permissions.py`, `tests/test_permissions.py` | Allow `project agent relay show` in the Codex rules. |
+| `skills/message/SKILL.md` | Explain that agents and inbox entries are shared by relay location, and add the crossing rule. Never copy a crossing record's private content into a repository that is not private, and never run `project config allow`. |
 | `docs/cli.md` | Document `agent.relay`, where to put it for a repository, a team, or a company, allowing a location, the bare clone, and the controls. |
 | `tests/test_relay.py`, `tests/test_agents.py`, `tests/test_config.py` | The criteria in § 4. |
 
@@ -193,10 +198,12 @@ for a company, the company's repositories share one relay.
   The `gh` credential helper makes it push as the account Projector already
   uses, with no SSH keys or helpers to set up. It also skips the work
   repository's pre-push hooks, which are there for code, not relay refs.
-- **Allow once, as `direnv allow` does.** Reading `agent.relay` from walked
-  files is the point of the feature, but a walked file may be one you did not
-  write. Allowing a location once keeps the convenience and puts the choice
-  of destination with you.
+- **Leave trust in configuration to config-trust.** Reading `agent.relay`
+  from walked files is the point of the feature, but a walked file may be one
+  you did not write. Config-trust answers that for every setting at once: a
+  tracked file counts only from the default branch, and a destination from
+  one needs your consent. A relay-only allow list would solve half the
+  problem in a second place.
 - **Keep controls about information, not routing.** Sealing already limits
   who can read a record. The remaining risk is an agent carrying a private
   repository's content where it should not go, which only the agents writing
@@ -205,8 +212,10 @@ for a company, the company's repositories share one relay.
   private.
 - **Rejected: per-repository allow and deny lists.** They would repeat, in a
   second place, the boundary the configuration file already draws.
-- **Rejected: a relay that may be public.** No team needs a public relay
-  repository, and one would publish its metadata and ciphertext for good.
+- **Refuse a public relay, not an internal one.** No team needs a public
+  relay repository, and one would publish its metadata and ciphertext for
+  good. An `INTERNAL` repository shows them only within the enterprise, which
+  is the audience of a company relay.
 
 ## 4. Acceptance criteria
 
@@ -218,9 +227,8 @@ temporary checkouts.
 | --- | --- |
 | Put `agent.relay = "github:acme/agents"` in a parent directory of checkouts of `acme/api` and `acme/web`, allow it, and register A in `api` on machine 1 and B in `web` on machine 2. Pass on both, and send from A to B. | Both list each other with their repositories, the message arrives, and every relay ref is on the shared relay and none on `api` or `web`. Catches a location ignored by any rule that still compares work repositories. |
 | Put `agent.relay = "origin"` in `web`'s own `.projector.toml` under the same parent. | B relays through `web` again, and A can no longer reach it across machines. Catches a nearer file that cannot opt out. |
-| Name a location in a checkout's `.projector.toml` and do not allow it. | No ref is pushed anywhere, the registration says `waiting`, and `list` names the file and the `relay allow` command. A location set in `~/.projector.toml` needs no allowing. Catches a committed file choosing your relay. |
-| Run `relay allow` without a terminal, and answer its question `n`. | Both refuse and write nothing. Catches an agent allowing a location. |
-| Make the fake `gh` report the configured location `PUBLIC`, then `READ` permission. | The relay is off for its sessions with each reason in `list` and `watch status`. The default relay through a public work repository still runs. Catches a public or read-only shared relay. |
+| Commit a location to the default branch's `.projector.toml`, and do not allow it. Then set another location on a feature branch only. | No ref is pushed anywhere, the registration says `waiting`, and `list` names the file and the `project config allow` command. The feature branch's location never applies. A location set in an untracked parent file or `~/.projector.toml` needs no allowing. Catches a repository or a branch choosing your relay. |
+| Make the fake `gh` report the configured location `PUBLIC`, then `INTERNAL`, then `READ` permission. | The relay is off for `PUBLIC` and for `READ`, with each reason in `list` and `watch status`, and runs for `INTERNAL`. The default relay through a public work repository still runs. Catches a public or read-only shared relay, and a refused internal one. |
 | Run a pass with only the bare clone available, with a global `core.hooksPath` hook that logs its runs and a fake `gh auth git-credential`. | The fetch and push run in `<root>/relays/acme/agents.git`, the hook logs one run, the fake helper is called, and the fetch's refspecs name only `refs/projector/` prefixes. Catches a clone that fetches branches, skips global hooks, or uses other credentials. |
 | Send from a private `api` session to B in a public `web` session, and post a peers item from `api` to a peer. | `send` and `inbox ask --to` print the private-source reminder. B's line and `read` name `acme/api` and carry the private-source notice before the text. A message between two sessions in `api` carries neither. Catches a crossing that goes unmarked, and a notice on records that do not cross. |
 | Relay a message whose `repo_visibility` is `PUBLIC` but whose sender's cache says `PRIVATE`. | The reader uses the record's value, and `read` shows no private notice. Catches a reader that consults a cache it may not have. |
@@ -251,10 +259,11 @@ them. Record the result in this plan.
 These need the user's decision before the plan is `ready`. Each records the
 recommendation the plan is written to.
 
-- **Must a location named outside `~/.projector.toml` be allowed once?**
-  Recommended: yes, as § 2.3 explains.
 - **Are the controls in § 2.3 enough?** Recommended: yes for this version,
   with no per-peer or per-repository lists until a team needs one.
+- **A public relay on purpose.** Deferred. A setting could let you choose a
+  public relay repository explicitly, if a case for one appears.
+
 ## 7. Decisions
 
 - **The peers inbox is scoped by location.** Decided by the user on
@@ -267,3 +276,11 @@ recommendation the plan is written to.
   2026-11-17. The relay-wide inbox is the default, and `--repo` narrows one
   item to the sessions of one repository (§ 2.1 step 8), for a question that
   only makes sense where its subject lives.
+- **A relay may be an internal repository.** Decided by the user on
+  2026-11-17. A configured location must be `PRIVATE` or `INTERNAL`, and
+  writable (§ 2.1 step 4). An explicit opt-in for a public relay can follow
+  later (§ 6).
+- **Trust in a relay setting follows config-trust.** Changed on 2026-11-17.
+  The relay's own allow list is replaced by `../../config-trust/readme.md`: a
+  tracked file's `agent.relay` comes from the default branch, and needs
+  `project config allow` once (§ 2.1 step 3). Build config-trust first.
