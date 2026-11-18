@@ -1,0 +1,68 @@
+{
+ "version": 1,
+ "name": "Configuration trust plan",
+ "project": "config-trust",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 544,
+  "title": "Plan reading committed configuration from the default branch, with overrides",
+  "head": "3203305eff8b0197c9f4b1d6be668ee6d1628a8b",
+  "headRef": "plan-config-trust",
+  "base": "0c945a8321f9deaf6432c8c313fb913c0cb9a0ce",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector reads layered <code>.projector.toml</code> settings that control reviews, output paths, and relay destinations. This plan makes tracked settings come from the reviewed default branch rather than a contributor's working copy.",
+   "Priority overrides let outer configuration win deliberately. Destination approval, path containment, cached blob reads, and background default-branch refresh complete the proposed policy. The plan is <code>ready</code>/<code>now</code>; this pull request adds no implementation."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Earlier findings resolved",
+    "html": "<ul><li>The refresh command now supplies <code>--refmap=</code>, preserving the user's remote-tracking ref.</li><li>All sections now keep <code>projects.dir</code> inside the working tree, including values from the user file. Only user-level <code>ios.output</code> may name any directory.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "config-trust",
+   "title": "Make reviewed policy govern every checkout",
+   "kicker": "Default-branch sources, explicit overrides, and local consent",
+   "intro": [
+    "Tracked configuration is read from the default-branch commit shared by a repository's worktrees. Untracked and user configuration stays on disk. Overrides use priorities from 1 to 99, with farther files winning ties.",
+    "Destination values from tracked files require terminal approval. The daemon refreshes its private default-branch ref on full passes, while cached reads avoid processes on warm loads. The per-checkout local-file and superproject questions are explicitly deferred."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/config-trust/readme.md",
+     "collapsed": false,
+     "note": "Defines the configuration source, override precedence, destination approval, path rules, refresh command, and acceptance cases.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 103,
+       "text": "The priority and equal-priority distance rules agree across the runtime flow, rationale, decision record, and acceptance cases."
+      },
+      {
+       "kind": "verify",
+       "line": 172,
+       "text": "The fetch command read from this head was run in a temporary clone with Git's default mapping: --refmap= preserved the origin tracking ref and status, advanced Projector's ref, and wrote no FETCH_HEAD."
+      },
+      {
+       "kind": "verify",
+       "line": 147,
+       "text": "The overview, runtime rule, rationale, component change, and acceptance case now consistently require user-level projects.dir to remain inside the checkout; only user-level ios.output may leave it."
+      },
+      {
+       "kind": "verify",
+       "line": 2,
+       "text": "project check and project show confirm valid ready/now metadata. The two remaining scope questions are deliberately deferred."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
