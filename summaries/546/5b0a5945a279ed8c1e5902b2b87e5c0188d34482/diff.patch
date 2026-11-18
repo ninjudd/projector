@@ -1,0 +1,537 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 64fb7e12..11e8e6c9 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -813,6 +813,46 @@ merges` instead. `config list --json` gives the same notes under `notes`, and
+ `config paths` lists `origin/main:.projector.toml` for a file it reads from
+ the default branch.
+ 
++### Override a setting from an outer file
++
++The nearest file wins, so a repository's own value beats every file above it.
++To overrule a nearer file, put the setting in an `[override.<priority>]`
++table, where the priority is a whole number from 1 to 99. The table holds
++settings under their usual dotted names:
++
++```toml
++# ~/work/.projector.toml, for a company
++[override.1]
++review.gate_checks = "ci"
++
++# ~/work/acme/web-team/.projector.toml, for a team that needs its own checks
++[override.2]
++review.gate_checks = "ci, e2e"
++```
++
++Every override beats every ordinary value, wherever the ordinary value comes
++from. Among overrides of one setting, the higher priority wins. At equal
++priority, the farthest file wins, and `~/.projector.toml` counts as farther
++than every walked file. In the example, the team's checks win because the
++team chose 2. Had both chosen 1, the company's would win. An override in
++`~/.projector.toml` beats every other file's override at its priority, and
++you can always choose a higher one.
++
++A key under `override` that is not a whole number from 1 to 99, such as
++`[override.0]` or `[override.x]`, makes every command that reads
++configuration exit 78 and name the file. `agent.key` under an override in a
++walked file is ignored, as it is anywhere outside `~/.projector.toml`.
++`config list` and `config get --json` name an override's source with its
++priority:
++
++```console
++$ project config list
++review.gate_checks = ci, e2e  # /Users/you/work/acme/web-team/.projector.toml (override 2)
++```
++
++`get --json` gives the priority as `override`, which is `null` for an
++ordinary value, and `list --json` gives it under `overrides`, by key.
++
+ Tables merge key by key, so a nearer file overrides one setting without
+ discarding the rest:
+ 
+@@ -864,6 +904,7 @@ project config get review.summarize --json
+ ```json
+ {
+   "key": "review.summarize",
++  "override": null,
+   "schema_version": 2,
+   "source": "/Users/you/ninjudd/.projector.toml",
+   "value": false
+@@ -956,6 +997,19 @@ another file with one of these options:
+ Outside a Git repository, the default has no file to change, so `set` and
+ `unset` exit 69 unless you pass `--user` or `--file`.
+ 
++Add `--override <priority>` to set or remove the key under
++`[override.<priority>]` in the chosen file, as
++[Override a setting from an outer file](#override-a-setting-from-an-outer-file)
++describes. A new key joins the table's other settings under their dotted
++names, and a missing table is added at the end of the file:
++
++```console
++$ project config set review.gate_checks "ci, e2e" --override 2 --file ~/work/acme/web-team/.projector.toml
++set review.gate_checks = ci, e2e under [override.2] in /Users/you/work/acme/web-team/.projector.toml
++```
++
++A priority that is not a whole number from 1 to 99 exits 2.
++
+ `set` takes `true` or `false` for a boolean key, a whole number for a
+ whole-number key, and any text for a string key. It refuses any other value
+ with exit code 2, as it does a whole number below 30 for `watch.interval` or
+@@ -1025,8 +1079,8 @@ project: /Users/you/work/repo/.projector.toml sets watch.auto_start = true, whic
+ Setting a key to the value it already has changes nothing, and the command
+ reports it as `unchanged`. With `--json`, each command prints the `action`,
+ which is `set`, `unset`, or `unchanged`. It also prints the `key`, the
+-`old` value and the `new` value, each `null` when the file has none, and
+-the `file` it changed:
++`old` value and the `new` value, each `null` when the file has none, the
++`file` it changed, and the `override` priority, `null` without `--override`:
+ 
+ ```json
+ {
+@@ -1035,6 +1089,7 @@ the `file` it changed:
+   "key": "watch.auto_start",
+   "new": false,
+   "old": true,
++  "override": null,
+   "schema_version": 2
+ }
+ ```
+diff --git a/docs/projects/config-trust/readme.md b/docs/projects/config-trust/readme.md
+index 42d1971b..12ed5d70 100644
+--- a/docs/projects/config-trust/readme.md
++++ b/docs/projects/config-trust/readme.md
+@@ -372,3 +372,23 @@ full pass, which transfers only commits this clone lacks.
+ - **Measured cost.** On this repository a warm load takes about 1.1 ms,
+   against 0.4 ms before, almost all of it `pathlib`, and `project list --json`
+   shows no difference beyond run-to-run noise of about 0.4 s either way.
++
++### 8.2 Overrides
++
++- **Write shape.** `config set --override <priority>` writes the setting
++  under its dotted name in an existing `[override.<priority>]` table, after
++  that table's last setting, and adds the table at the end of the file when
++  it is missing, as the example in step 4 is written. Output names the table,
++  as `set review.gate = make under [override.2] in <file>`, and `--json`
++  gains `override`, `null` without the option.
++- **Source shape.** A value's source prints as `<file> (override 2)` in
++  `config list` and in the stderr reports of `set` and `unset`. The JSON keeps
++  `source` a file or blob, and gives the priority beside it: `override` in
++  `config get --json`, `null` for an ordinary value, and `overrides`, by key,
++  in `config list --json`.
++- **A whole number means its plain spelling.** `[override.01]` is refused
++  with the rest, so one priority has one spelling. `override = 1`, a value
++  rather than tables, is refused too.
++- **The user layer alone.** `config.user_value`, which reads
++  `~/.projector.toml` by itself for `agent.key`, applies that file's own
++  overrides, through the same merge.
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 3f78e4ee..fd6d6efa 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -31,6 +31,7 @@
+ from .summary import WORKFLOW_PATH
+ from .config import (
+     CONFIG_NAME,
++    PRIORITY,
+     SECRETS,
+     Change,
+     ConfigError,
+@@ -980,6 +981,15 @@ def add_config_file(command: argparse.ArgumentParser) -> None:
+     target.add_argument("--user", action="store_const", const="user", dest="scope",
+                         help=f"~/{CONFIG_NAME}, which applies in every repository")
+     target.add_argument("--file", type=Path, help="this configuration file, such as one in a parent directory")
++    command.add_argument("--override", type=override_priority, metavar="PRIORITY",
++                         help="the key under [override.PRIORITY], which beats every ordinary value; a whole number "
++                              "from 1 to 99, where the higher wins")
++
++
++def override_priority(text: str) -> int:
++    if not PRIORITY.fullmatch(text):
++        raise argparse.ArgumentTypeError(f"{text!r} is not a priority, a whole number from 1 to 99")
++    return int(text)
+ 
+ 
+ def seconds(text: str) -> float:
+@@ -1866,9 +1876,9 @@ def change_config(arguments: argparse.Namespace) -> int:
+                          "`project agent key init` to make one")
+     path = config_file(arguments)
+     if arguments.config_command == "set":
+-        change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value))
++        change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value), arguments.override)
+     else:
+-        change = unset_value(path, arguments.key)
++        change = unset_value(path, arguments.key, arguments.override)
+     try:
+         config: Optional[Config] = load_config(config_start(arguments))
+     except ConfigError:
+@@ -1879,11 +1889,13 @@ def change_config(arguments: argparse.Namespace) -> int:
+     if arguments.json_output:
+         print(json_text({"action": change.action, "key": change.key, "old": redact(change.key, change.old),
+                          "new": redact(change.key, change.new), "file": str(change.path),
+-                         **({"takes_effect_on_merge_to": waits} if waits else {})}), flush=True)
++                         "override": change.override, **({"takes_effect_on_merge_to": waits} if waits else {})}),
++              flush=True)
+     else:
+         shown = "" if change.new is None else f" = {format_value(redact(change.key, change.new))}"
++        table = "" if change.override is None else f" under [override.{change.override}]"
+         pending = f"; takes effect once this change merges to {waits}" if waits else ""
+-        print(f"{change.action} {change.key}{shown} in {change.path}{pending}", flush=True)
++        print(f"{change.action} {change.key}{shown}{table} in {change.path}{pending}", flush=True)
+     if not waits:
+         report_override(config, change)
+     return 0
+@@ -1910,7 +1922,8 @@ def run_config(arguments: argparse.Namespace) -> int:
+                     {
+                         "key": arguments.key,
+                         "value": value,
+-                        "source": str(source) if source else None,
++                        "source": source.location if source else None,
++                        "override": source.override if source else None,
+                     }
+                 )
+             )
+@@ -1927,7 +1940,9 @@ def run_config(arguments: argparse.Namespace) -> int:
+                 json_text(
+                     {
+                         "config": redact("", config.values),
+-                        "sources": {key: str(source) for key, source in config.sources.items()},
++                        "sources": {key: source.location for key, source in config.sources.items()},
++                        "overrides": {key: source.override for key, source in config.sources.items()
++                                      if source.override is not None},
+                         "notes": [{"file": str(path), "note": note} for path, note in config.notes],
+                     }
+                 )
+diff --git a/src/projector/config.py b/src/projector/config.py
+index be192fe8..da5adf37 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -40,6 +40,13 @@
+ commit and path, and whether each file is tracked by the index's signature,
+ so a load that finds what it needs there starts no process.
+ 
++Any file may also hold `[override.<priority>]` tables, where the priority is a
++whole number from 1 to 99. After the ordinary merge, every override beats
++every ordinary value. Among overrides of one setting the higher priority wins,
++and at equal priority the farthest file wins, with the user layer farthest of
++all, so a team can outrank a company by choosing a higher number and a person
++can outrank everyone.
++
+ `project config set` and `unset` change one file, one line at a time, so the
+ comments and layout a person wrote survive every change.
+ """
+@@ -116,6 +123,11 @@
+ # is ignored, so a repository cannot plant a key its author knows.
+ USER_ONLY = frozenset({"agent.key"})
+ 
++# The table that holds a file's overrides, `[override.<priority>]`, so no
++# setting's name may start with it.
++OVERRIDE = "override"
++PRIORITY = re.compile(r"[1-9][0-9]?")
++
+ # Keys whose value can be a secret. A value under `keychain:` names an item in
+ # the OS keychain and holds no secret; any other value is the secret itself.
+ SECRETS = frozenset({"agent.key"})
+@@ -173,7 +185,7 @@ def user_value(key: str, environ: Optional[dict[str, str]] = None) -> Any:
+     path = user_config_path(environ)
+     if not path.is_file():
+         return None
+-    value = Config(read_config_file(path), {}, []).setting(key)
++    value = layered([(Source(path), read_config_file(path))], path).setting(key)
+     if is_secret(key, value):
+         check_private(path)
+     return value
+@@ -551,10 +563,15 @@ class Source:
+ 
+     path: Path
+     blob: Optional[str] = None
++    override: Optional[int] = None
+ 
+-    def __str__(self) -> str:
++    @property
++    def location(self) -> str:
+         return self.blob or str(self.path)
+ 
++    def __str__(self) -> str:
++        return self.location if self.override is None else f"{self.location} (override {self.override})"
++
+ 
+ class Config:
+     """A merged configuration, the sources it read lowest precedence first, where each value came from, the
+@@ -677,31 +694,73 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
+     # both the user layer and the top of the walk, is read once.
+     user = found.resolve() if found.is_file() else None
+     walked = _walk(start, home, user, env)
++    config = layered(walked.layers, user)
++    config.notes, config.committed = walked.notes, walked.committed
++    return config
++
++
++def _overrides(source: Source, loaded: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
++    """Take the `[override.<priority>]` tables out of a file's values, refusing a priority outside 1 to 99."""
++
++    found = loaded.pop(OVERRIDE, None)
++    if found is None:
++        return []
++    if not isinstance(found, dict):
++        raise ConfigError(f"{source}: {OVERRIDE} must hold tables named by priority, such as [{OVERRIDE}.1]")
++    tables = []
++    for priority, table in found.items():
++        if not PRIORITY.fullmatch(priority) or not isinstance(table, dict):
++            raise ConfigError(f"{source}: [{OVERRIDE}.{priority}] needs a priority, a whole number from 1 to 99, "
++                              f"such as [{OVERRIDE}.1]")
++        tables.append((int(priority), table))
++    return tables
++
++
++def _drop_user_only(source: Source, loaded: dict[str, Any], ignored: list[tuple[Source, str]]) -> None:
++    for key in sorted(USER_ONLY & set(_flatten(loaded))):
++        *tables, name = key.split(".")
++        table = loaded
++        for part in tables:
++            table = table[part]
++        del table[name]
++        ignored.append((source, key))
++
++
++def layered(layers: list[tuple[Source, dict[str, Any]]], user: Optional[Path]) -> Config:
++    """Merge `layers`, lowest precedence first, then apply every override over them.
++
++    Among overrides, the higher priority wins, and at equal priority the
++    farther file wins, so `user`, the first layer, wins over every walked file.
++    """
++
+     values: dict[str, Any] = {}
+     sources: dict[str, Source] = {}
+     ignored: list[tuple[Source, str]] = []
+-    for source, loaded in walked.layers:
++    overrides: list[tuple[int, int, Source, dict[str, Any]]] = []
++    for nearness, (source, loaded) in enumerate(layers):
++        for priority, table in _overrides(source, loaded):
++            overriding = Source(source.path, source.blob, priority)
++            if source.path != user:
++                _drop_user_only(overriding, table, ignored)
++            overrides.append((priority, -nearness, overriding, table))
+         if source.path != user:
+-            for key in sorted(USER_ONLY & set(_flatten(loaded))):
+-                *tables, name = key.split(".")
+-                table = loaded
+-                for part in tables:
+-                    table = table[part]
+-                del table[name]
+-                ignored.append((source, key))
++            _drop_user_only(source, loaded, ignored)
+         values = merge(values, loaded)
+         # Recorded after merging so the last writer of each leaf wins, which is
+         # the file whose value actually survived.
+         for dotted in _flatten(loaded):
+             sources[dotted] = source
++    for _, _, source, table in sorted(overrides, key=lambda found: found[:2]):
++        values = merge(values, table)
++        for dotted in _flatten(table):
++            sources[dotted] = source
+ 
+     # A later file can replace a scalar with a table, which leaves the scalar's
+     # own dotted key attributed to a file that no longer supplies it. Drop any
+     # key the merged result does not actually have.
+     final = _flatten(values)
+     sources = {key: source for key, source in sources.items() if key in final}
+-    return Config(values, sources, [source for source, _ in walked.layers], ignored, walked.notes,
+-                  walked.committed)
++    return Config(values, sources, [source for source, _ in layers], ignored)
+ 
+ 
+ @dataclass(frozen=True)
+@@ -713,17 +772,24 @@ class Change:
+     old: Any
+     new: Any
+     path: Path
++    override: Optional[int] = None
+ 
+ 
+-def write_value(path: Path, key: str, value: Any) -> Change:
+-    """Set `key` to `value` in the file at `path`, or remove it when `value` is None.
++def write_value(path: Path, setting: str, value: Any, override: Optional[int] = None) -> Change:
++    """Set `setting` to `value` in the file at `path`, or remove it when `value` is None, under
++    `[override.<override>]` when `override` names a priority.
+ 
+-    Only the lines that set `key` change, so every comment, blank line, and
++    Only the lines that set the key change, so every comment, blank line, and
+     other setting stays byte for byte. The edit is checked twice: before
+     writing, by parsing the new text, and after, by reading the file back,
+     which restores the original when the two disagree.
+     """
+ 
++    change = _write_key(path, setting if override is None else f"{OVERRIDE}.{override}.{setting}", value)
++    return Change(change.action, setting, change.old, change.new, path, override)
++
++
++def _write_key(path: Path, key: str, value: Any) -> Change:
+     original = path.read_bytes().decode("utf-8") if path.exists() else None
+     try:
+         before = tomllib.loads(original or "")
+@@ -755,15 +821,15 @@ def write_value(path: Path, key: str, value: Any) -> Change:
+     return Change("unset" if value is None else "set", key, old, value, path)
+ 
+ 
+-def unset_value(path: Path, key: str) -> Change:
+-    """Remove `key` from the file at `path`.
++def unset_value(path: Path, key: str, override: Optional[int] = None) -> Change:
++    """Remove `key` from the file at `path`, or from its `[override.<override>]` table.
+ 
+     A key outside `SETTINGS` is removed when the file sets it, so a setting
+     Projector no longer reads can be cleaned up, and refused when the file
+     does not, so a misspelled key still gets the list of keys.
+     """
+ 
+-    change = write_value(path, key, None)
++    change = write_value(path, key, None, override)
+     if change.action == "unchanged" and key not in SETTINGS:
+         raise _unknown_key(key, f", which {path} does not set")
+     return change
+@@ -905,13 +971,21 @@ def _edited(text: str, key: str, value: Any) -> str:
+     if value is None:
+         return text
+ 
++    def table_header(table: tuple[str, ...]) -> Optional[_Header]:
++        return next((header for header in headers if header.table == table and not header.array), None)
++
+     parent = path[:-1]
+-    header = next((header for header in headers if header.table == parent and not header.array), None)
++    header = table_header(parent)
++    if header is None and path[0] == OVERRIDE and len(path) > 3:
++        # An override holds settings under their usual dotted names, as
++        # `[override.1]` and then `agent.relay = ...` do.
++        parent = path[:2]
++        header = table_header(parent)
+     if header is not None or not parent:
+         # After the section's last statement rather than at its end, so a
+         # comment that introduces the next table stays above that table.
+         siblings = [entry for entry in entries if entry.table == parent]
+-        written = path[-1:]
++        written = path[len(parent):]
+         after = siblings[-1] if siblings else None
+         at = after.end if after else (header.line + 1 if header else 0)
+     else:
+@@ -924,7 +998,7 @@ def _edited(text: str, key: str, value: Any) -> str:
+             separator = newline if text.strip() and not text.endswith(newline * 2) else ""
+             ending = newline if text and not text.endswith("\n") else ""
+             return (f"{text}{ending}{separator}[{'.'.join(parent)}]{newline}"
+-                    f"{path[-1]} = {_toml_value(value)}{newline}")
++                    f"{'.'.join(path[len(parent):])} = {_toml_value(value)}{newline}")
+         after = dotted[-1]
+         written = path[len(after.table):]
+         at = after.end
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 6f61936f..3a5e28c2 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -452,7 +452,7 @@ def test_json_names_the_action_both_values_and_the_file(self) -> None:
+         self.assertEqual(0, code)
+         self.assertEqual(
+             {"action": "set", "key": "watch.auto_start", "old": True, "new": False,
+-             "file": str(self.repo_file), "schema_version": 2},
++             "file": str(self.repo_file), "override": None, "schema_version": 2},
+             json.loads(stdout),
+         )
+ 
+@@ -654,6 +654,100 @@ def test_the_documented_keys_are_the_known_keys(self) -> None:
+         self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))
+ 
+ 
++class OverrideTests(unittest.TestCase):
++    """`[override.<priority>]` beats every ordinary value, by priority and then by distance."""
++
++    def setUp(self) -> None:
++        self.temporary = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temporary.cleanup)
++        self.home = Path(self.temporary.name).resolve() / "home"
++        self.grandparent = self.home / "company"
++        self.parent = self.grandparent / "team"
++        self.repo = self.parent / "repo"
++        self.repo.mkdir(parents=True)
++        self.environ = {"HOME": str(self.home)}
++        environment = mock.patch.dict(os.environ, {"HOME": str(self.home)})
++        environment.start()
++        self.addCleanup(environment.stop)
++
++    def merged(self):
++        return load(self.repo, self.home, self.environ)
++
++    def winner(self) -> tuple[object, str]:
++        config = self.merged()
++        return config.get("review.gate_checks"), str(config.source("review.gate_checks"))
++
++    def invoke(self, *arguments: str) -> tuple[int, str, str]:
++        stdout, stderr = StringIO(), StringIO()
++        with redirect_stdout(stdout), redirect_stderr(stderr):
++            code = main([*arguments, "--root", str(self.repo)])
++        return code, stdout.getvalue(), stderr.getvalue()
++
++    def test_the_highest_priority_wins_then_the_farthest_file(self) -> None:
++        repo = write(self.repo / ".projector.toml", '[review]\ngate_checks = "repo"\n')
++        grandparent = write(self.grandparent / ".projector.toml", '[override.1]\nreview.gate_checks = "company"\n')
++        parent = write(self.parent / ".projector.toml", '[override.1]\nreview.gate_checks = "team"\n')
++        user = write(self.home / ".projector.toml", '[override.1]\nreview.gate_checks = "mine"\n')
++
++        self.assertEqual(("mine", f"{user} (override 1)"), self.winner())
++
++        parent.write_text('[override.2]\nreview.gate_checks = "team"\n')
++        self.assertEqual(("team", f"{parent} (override 2)"), self.winner())
++
++        user.write_text("")
++        parent.write_text('[review]\ngate_checks = "team"\n')
++        self.assertEqual(("company", f"{grandparent} (override 1)"), self.winner())
++
++        grandparent.write_text("")
++        self.assertEqual(("repo", str(repo)), self.winner())
++
++    def test_a_priority_outside_one_to_ninety_nine_names_the_file(self) -> None:
++        for table in ("override.0", "override.100", "override.x", "override.01"):
++            broken = write(self.parent / ".projector.toml", f'[{table}]\nreview.gate_checks = "team"\n')
++
++            with self.assertRaises(ConfigError) as caught:
++                self.merged()
++
++            self.assertIn(f"{broken}: [{table}] needs a priority, a whole number from 1 to 99", str(caught.exception))
++
++        write(self.parent / ".projector.toml", "override = 1\n")
++        with self.assertRaises(ConfigError) as caught:
++            self.merged()
++        self.assertIn("override must hold tables named by priority", str(caught.exception))
++
++    def test_a_user_only_key_under_an_override_is_dropped_from_a_walked_file(self) -> None:
++        parent = write(self.parent / ".projector.toml", '[override.1]\nagent.key = "x25519:planted"\n')
++        write(self.home / ".projector.toml", '[agent]\nkey = "keychain:mine"\n')
++
++        config = self.merged()
++        _, _, stderr = self.invoke("config", "get", "agent.key")
++
++        self.assertEqual("keychain:mine", config.get("agent.key"))
++        self.assertEqual([(Source(parent, None, 1), "agent.key")], config.ignored)
++        self.assertIn(f"{parent} (override 1) sets agent.key", stderr)
++
++    def test_set_and_unset_write_under_the_override_table(self) -> None:
++        team = self.parent / ".projector.toml"
++        team.write_text('# The team\'s settings.\n[override.2]\nreview.gate_checks = "ci"\n')
++
++        def change(*arguments: str) -> tuple[int, str]:
++            code, stdout, stderr = self.invoke("config", *arguments, "--file", str(team))
++            return code, stdout + stderr
++
++        self.assertEqual((0, f"set review.gate = make under [override.2] in {team}\n"),
++                         change("set", "review.gate", "make", "--override", "2"))
++        self.assertEqual(0, change("set", "review.gate_checks", "lint", "--override", "3")[0])
++        self.assertEqual('# The team\'s settings.\n[override.2]\nreview.gate_checks = "ci"\nreview.gate = "make"\n'
++                         '\n[override.3]\nreview.gate_checks = "lint"\n', team.read_text())
++        self.assertEqual(("lint", f"{team} (override 3)"), self.winner())
++
++        self.assertEqual(0, change("unset", "review.gate_checks", "--override", "3")[0])
++        self.assertEqual(("ci", f"{team} (override 2)"), self.winner())
++        with self.assertRaises(SystemExit) as refused:
++            change("set", "review.gate", "x", "--override", "100")
++        self.assertEqual(2, refused.exception.code)
++
++
+ GIT_IDENTITY = {"GIT_AUTHOR_NAME": "Tester", "GIT_AUTHOR_EMAIL": "tester@example.invalid",
+                 "GIT_COMMITTER_NAME": "Tester", "GIT_COMMITTER_EMAIL": "tester@example.invalid"}
+ POLICY = '[review]\ngate_checks = "ci"\n'
