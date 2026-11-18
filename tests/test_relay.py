@@ -2434,6 +2434,48 @@ class S3RelayTests(S3RelayCase):
         self.assertEqual([], self.server.names("team", probes))
         self.assertEqual(("ok", "ok"), (self.located(self.one)["state"], self.located(self.one)["probe"]["result"]))
 
+    def test_the_last_session_to_move_away_still_has_its_presence_deleted_at_the_old_s3_location(self) -> None:
+        """Its deletion waits while the old store is refused and goes once the store passes its probe, after the
+        daemon restarts, and no job polls the old location for the cleanup."""
+        self.s3_team(self.one)
+        api = self.checkout(self.one, "acme/api")
+        self.one.claude(A)
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+        self.one.run_pass()
+        old = self.presence_name(self.one, A)
+        published = self.server.names("team", old)
+        (self.one.home / "acme" / ".projector.toml").write_text(
+            f'[agent]\nrelay = "s3://team/moved"\ns3_endpoint = "{self.server.endpoint}"\ns3_poll = 2\n')
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+        queued = [(item["ref"], item["sealed"]) for item in self.s3_outbox(self.one)]
+
+        def restart() -> None:
+            assert self.one.daemon is not None
+            self.one.daemon.relay.close()
+            self.one.daemon = None
+            self.server.requests.clear()
+            self.advance(3)
+            self.one.claude(A)
+            self.one.run_pass()
+
+        self.server.public = True
+        restart()
+        refused = (self.server.names("team", old), len(self.s3_outbox(self.one)),
+                   self.one.status()["repositories"].get(self.identity().lower(), {}).get("state"))
+        self.server.public = False
+        restart()
+        polled = [found for found in self.server.seen("GET")
+                  if found.query.get("prefix", "").startswith("relay/") and found.signed_by]
+
+        self.assertEqual([old], published)
+        self.assertEqual(1, len(queued))
+        self.assertIsNone(queued[0][1])
+        self.assertEqual(([old], 1, "off"), refused)
+        self.assertEqual([], self.server.names("team", old))
+        self.assertEqual([], self.s3_outbox(self.one))
+        self.assertEqual([], polled)
+        self.assertTrue(self.server.names("team", "moved/"))
+
     def test_a_store_that_ignores_a_condition_or_lets_anyone_list_turns_the_location_off(self) -> None:
         self.s3_team(self.one)
         api = self.checkout(self.one, "acme/api")

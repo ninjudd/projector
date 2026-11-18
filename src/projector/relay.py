@@ -605,7 +605,8 @@ def remote_reviews(root: Path, repo: str, login: str, now: float) -> Optional[li
 def read_outbox(path: Path) -> dict:
     found = read_json(path) or {}
     return {"schema_version": 1, "checkouts": found.get("checkouts") or [], "items": found.get("items") or [],
-            "pushing": found.get("pushing") or [], **({"location": found["location"]} if "location" in found else {})}
+            "pushing": found.get("pushing") or [], **({"location": found["location"]} if "location" in found else {}),
+            **({"s3": found["s3"]} if isinstance(found.get("s3"), dict) else {})}
 
 
 def outbox_items(root: Path, repo: str) -> list[dict]:
@@ -622,7 +623,8 @@ def pending(box: dict) -> frozenset[tuple[str, str]]:
 
 
 def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Optional[dict], dict]],
-          now: float, remote: Optional[dict[str, str]] = None, *, key: Optional[Key] = None) -> None:
+          now: float, remote: Optional[dict[str, str]] = None, *, key: Optional[Key] = None,
+          s3_settings: Optional[dict] = None) -> None:
     """Queue each `(ref, sealed, meta)` change, with `sealed` None for a deletion, keeping at most one item per ref,
     because one push refuses two updates to one ref. A change to a queued ref keeps the item's `old`, the commit
     on origin that the lease must expect. `remote` holds the refs on origin, as the cache last recorded them unless
@@ -632,7 +634,10 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
     merged with the record queued there, by `key`, which sealed both, rather than replacing it, so two commands
     that change one entry's state at once both reach your other machines. A queued deletion of a state ref wins
     over a state record, in either order, as `Job.rebase` drops a state change whose ref was deleted: the record
-    goes with its entry."""
+    goes with its entry.
+
+    `s3_settings`, an S3 registration's `s3`, are kept with an S3 location's queued changes, so the daemon can
+    still reach the store once no registration names it, as `Relay.store_for` describes."""
     path = repo_file(root, "outbox", repo)
     remote = read_cache(root, repo)["remote"] if remote is None else remote
     with locked(path.parent):
@@ -662,6 +667,8 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
         if config.is_s3(repo):
             # An S3 location's outbox is named by a digest, so it records the identity the daemon starts its job for.
             box["location"] = repo
+            if s3_settings and items:
+                box["s3"] = s3_settings
         box["items"] = list(items.values())
         if box != before:
             write_json(path, box)
@@ -740,14 +747,17 @@ def digest(record: dict) -> str:
 def forget(root: Path, found: dict, now: float) -> int:
     """Queue the deletion of every ref under the relay ID of the registration `found` that its location holds, as
     the cache last recorded it, or that waits in the outbox. Answers how many refs on origin it queued for
-    deletion."""
+    deletion. The deletions of an S3 location keep the registration's settings, which the daemon reaches the store
+    with once the registration names another location."""
     repo, relay_id = found.get("location") or found.get("repo"), found.get("relay_id")
     if not repo or not relay_id:
         return 0
     remote = read_cache(root, repo)["remote"]
     refs = {ref for ref in [*remote, *(item["ref"] for item in outbox_items(root, repo))]
             if (parsed := parse_ref(ref)) and parsed[2] == relay_id}
-    queue(root, repo, found.get("cwd"), [(ref, None, {}) for ref in sorted(refs)], now, remote)
+    settings = found.get("s3") if isinstance(found.get("s3"), dict) else None
+    queue(root, repo, found.get("cwd"), [(ref, None, {}) for ref in sorted(refs)], now, remote,
+          s3_settings=settings)
     return sum(1 for item in outbox_items(root, repo) if item["ref"] in refs and item["sealed"] is None)
 
 
@@ -1937,13 +1947,19 @@ class Relay:
 
     def store_for(self, location: str, here: dict[str, dict], live: set[str]) -> Optional[S3Store]:
         """The S3 location's store, from the settings of its newest live registration, else of any that names
-        them, kept between jobs so its credentials are read once and refreshed before they expire. None when no
-        registration names its settings."""
+        them, kept between jobs so its credentials are read once and refreshed before they expire. Once no
+        registration names the location, as after its last session moved to another one, the store comes from the
+        settings its outbox keeps while changes wait there, so their deletions still go; the job then polls
+        nothing, and holds every record back while the store is off. None when neither names its settings."""
         named = [(session in live, found.get("updated_at") or "", found["s3"]) for session, found in here.items()
                  if isinstance(found.get("s3"), dict)]
-        if not named:
-            return None
-        settings = max(named, key=lambda entry: entry[:2])[2]
+        if named:
+            settings = max(named, key=lambda entry: entry[:2])[2]
+        else:
+            box = read_outbox(repo_file(self.root, "outbox", location))
+            if not box["items"] or "s3" not in box:
+                return None
+            settings = box["s3"]
         wanted = tuple(settings.get(key) for key in ("bucket", "endpoint", "region", "profile"))
         kept = self.stores.get(location.lower())
         if kept is None or kept[0] != wanted:

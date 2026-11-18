@@ -412,7 +412,12 @@ observed delivery time in this plan.
 - **The daemon keeps one client per S3 location,** made from the settings
   of the location's newest live registration, so its credentials are read
   once and refreshed in place. An unregistered session's mark keeps its
-  `s3` settings, so its deletions still reach the bucket.
+  `s3` settings, so its deletions still reach the bucket. So does the
+  outbox of a location a session moves away from: the deletions it queues
+  keep the old registration's `s3`, and while they wait and no
+  registration names the location, the daemon makes its client from them.
+  That job polls nothing, and while the store is off it holds every
+  change back, as any S3 location's job does.
 - **An S3 location that is off sends nothing but its probe.** While the
   probe refuses the store or the credentials lapse, the job lists nothing
   and applies nothing, and the outbox keeps every change, deletions

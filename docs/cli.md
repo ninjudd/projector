@@ -3926,7 +3926,7 @@ files, and the daemon's cleanup of a session lapsed for 7 days removes them:
 | `outbox/<owner>/<repo>.json` | The relay's ref changes waiting for the daemon's next push, and the checkouts that queued them |
 | `relay/<owner>/<repo>.json` | What the relay last found in the relay location: its visibility, your permission there, the rejected count and the last 20 rejections, the key's refs, and your other machines' agents |
 | `relays/<owner>/<repo>.git` | The bare clone of a location that `agent.relay` names, which holds only relay refs |
-| `outbox/s3/<digest>.json`, `relay/s3/<digest>.json` | An S3 location's outbox and cache, named by the first 16 hex digits of the SHA-256 of its identity, which each file records. The cache also holds the probe's last result |
+| `outbox/s3/<digest>.json`, `relay/s3/<digest>.json` | An S3 location's outbox and cache, named by the first 16 hex digits of the SHA-256 of its identity, which each file records. The cache also holds the probe's last result. An outbox that holds a moved session's deletions also keeps the store settings its registration named, so the deletions still reach the store once no registration names the location |
 | `visibility.json` | Each work repository's visibility, which its messages carry, as `gh` last reported it |
 
 ## Message agents on other machines
