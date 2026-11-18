@@ -40,6 +40,7 @@ import {
   BLOCK_SCHEMA,
   choicesOf,
   entriesStoreOf,
+  entriesWokeBetween,
   entryArguments,
   type EntryAction,
   forMainLoop,
@@ -47,6 +48,7 @@ import {
   isAnswerable,
   isEntry,
   isEntryAwakeAt,
+  isEntrySnoozedAt,
   isShownAt,
   isSnoozedAt,
   letterAt,
@@ -702,7 +704,7 @@ async function closeLeftDrawer($: Engine, time: number): Promise<void> {
   const isListed = opened.startsWith('item:')
     ? (await read($, items)).some(item => `item:${item.ref}` === opened && isShownAt(item, time))
     : opened.startsWith('entry:')
-      ? (await read($, entries)).some(entry => `entry:${entry.ref}` === opened)
+      ? (await read($, entries)).some(entry => `entry:${entry.ref}` === opened && !isEntrySnoozedAt(entry, time))
       : current(await read($, snapshot)).rows.some(row => keyOf(row.pr) === opened)
   if (!isListed) await closeDrawer($, opened)
 }
@@ -762,6 +764,9 @@ async function setEntries($: Engine, list: Entry[]): Promise<void> {
  * last read that succeeded. Listing a directory starts no process, so an idle
  * session, panel shown or hidden, starts none. The signature is recorded only
  * once the read succeeds, so a read that fails runs again on the next tick.
+ * An entry's snooze ends without a change to any file, so the panel also
+ * reads the inbox again once it holds an entry listed as snoozed whose
+ * snooze has ended, for the state the entry has now.
  */
 async function readStore($: Engine, session: string): Promise<void> {
   const env = await envOf($)
@@ -777,7 +782,9 @@ async function readStore($: Engine, session: string): Promise<void> {
   const mirrored =
     mirror === undefined ? '' : signatureOf(await $.fs.list(mirror).catch(() => [] as FsEntry[]), new Set())
   const signature = `${session}\n${files}\n${mirrored}`
-  if (signature === listed) return
+  const time = await $.clock.now()
+  const isWoken = (await read($, entries)).some(entry => entry.state === 'snoozed' && !isEntrySnoozedAt(entry, time))
+  if (signature === listed && !isWoken) return
   if (files === '' && mirrored === '') {
     await setItems($, [])
     await setEntries($, [])
@@ -1161,7 +1168,8 @@ async function recordFromPrompt($: Engine, item: Item, record: readonly string[]
 /**
  * Reads the inbox and delivers the daemon's events whether or not the panel
  * is shown, closes the drawer of an item that left the panel, and brings a
- * hidden panel back for an item whose snooze ended since the last tick. A
+ * hidden panel back for an item or a repository inbox entry whose snooze
+ * ended since the last tick. A
  * shown panel moves its clock on, which returns that item to the list, reads
  * its pull requests again from the daemon's files, and polls GitHub once the
  * last poll is old enough.
@@ -1176,7 +1184,10 @@ async function tick($: Engine): Promise<void> {
   const since = tickedAt ?? time
   tickedAt = time
   if (!(await read($, isShown))) {
-    if (wokeBetween(await read($, items), since, time).length > 0) show($)
+    const isWoken =
+      wokeBetween(await read($, items), since, time).length > 0 ||
+      entriesWokeBetween(await read($, entries), since, time).length > 0
+    if (isWoken) show($)
     return
   }
   await update($, now, () => time)
@@ -1757,7 +1768,7 @@ export const register: Register = on => {
     const asking = await read($, asked)
     const opening = await read($, openFiles)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
-    const shownEntries = (await read($, entries)).filter(entry => entry.state !== 'snoozed')
+    const shownEntries = (await read($, entries)).filter(entry => !isEntrySnoozedAt(entry, time))
     // Each count in the header is a button that collapses your pull requests,
     // the review requests, or a kind of item to one line at the top of their
     // place in the list, and the line expands them again. A section stays

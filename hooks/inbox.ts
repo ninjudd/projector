@@ -396,8 +396,26 @@ export function repoOf(registration: string | undefined): string | undefined {
   }
 }
 
+/**
+ * Whether an entry is snoozed at a time: until its `snoozed_until`, which the
+ * panel reads against its own clock, since nothing in the mirror changes when
+ * a snooze ends to make the panel list the entries again.
+ */
+export const isEntrySnoozedAt = (entry: Entry, time: number) =>
+  entry.snoozed_until === undefined ? entry.state === 'snoozed' : time < entry.snoozed_until
+
 /** Whether an entry waits on you: one shown at a time and not an item you sent and closed. */
-export const isEntryAwakeAt = (entry: Entry, time: number) => entry.state !== 'closed' && entry.state !== 'snoozed'
+export const isEntryAwakeAt = (entry: Entry, time: number) => entry.state !== 'closed' && !isEntrySnoozedAt(entry, time)
+
+/** The entries whose snooze ended after `since` and by `time`, which a hidden panel comes back for. */
+export const entriesWokeBetween = (entries: readonly Entry[], since: number, time: number) =>
+  entries.filter(
+    entry =>
+      entry.state !== 'closed' &&
+      entry.snoozed_until !== undefined &&
+      since < entry.snoozed_until &&
+      entry.snoozed_until <= time,
+  )
 
 /** Whether a row `project inbox list --json` gives is a repository inbox entry rather than a session's item. */
 export const isEntry = (row: Item | Entry): row is Entry => (row as Partial<Entry>).scope === 'repo'

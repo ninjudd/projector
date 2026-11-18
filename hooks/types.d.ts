@@ -208,6 +208,8 @@ export type Entry = {
   answers?: string
   /** When this machine opened it, in milliseconds. */
   opened_at: number
+  /** When a snooze set on any of your machines ends, in milliseconds; `state` says `snoozed` until then. */
+  snoozed_until?: number
 }
 
 /** An item whose answer or outcome goes back to the agent that posted it. */

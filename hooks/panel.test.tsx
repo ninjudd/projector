@@ -1812,7 +1812,13 @@ function questionStore(clock: Clock, seed: readonly Held[], entries: readonly En
         return failed(1, 'the store could not be read')
       }
       const items = [...store.values()].map(one => ({ ...one, session: SESSION }))
-      const listed = ran(JSON.stringify({ schema_version: 2, items: [...items, ...entries] }))
+      // An entry snoozed until a time that has passed lists as open again, as the CLI works it out from the clock.
+      const awake = entries.map(entry =>
+        entry.state === 'snoozed' && entry.snoozed_until !== undefined && time >= entry.snoozed_until
+          ? { ...entry, state: 'open' as const }
+          : entry,
+      )
+      const listed = ran(JSON.stringify({ schema_version: 2, items: [...items, ...awake] }))
       const write = during.list
       if (write === undefined) return listed
       delete during.list
@@ -3599,18 +3605,20 @@ test('the tell tool refuses what the CLI refuses, and says when it hangs', async
 })
 
 const ENTRY = { scope: 'repo', id: 'u-11111111111111111111111111111111', peer: 'jason', opened_at: NOW } as const
+/** A peer's question, the first of the entries. */
+const INCOMING: Entry = {
+  ...ENTRY,
+  ref: 'r1',
+  role: 'incoming',
+  kind: 'question',
+  subject: 'Keep the old parser?',
+  detail: 'It is slower.',
+  choices: ['Yes', 'No'],
+  line: "jason's agent lexer asks: Keep the old parser?",
+  state: 'open',
+}
 const ENTRIES: Entry[] = [
-  {
-    ...ENTRY,
-    ref: 'r1',
-    role: 'incoming',
-    kind: 'question',
-    subject: 'Keep the old parser?',
-    detail: 'It is slower.',
-    choices: ['Yes', 'No'],
-    line: "jason's agent lexer asks: Keep the old parser?",
-    state: 'open',
-  },
+  INCOMING,
   {
     ...ENTRY,
     id: 'u-22222222222222222222222222222222',
@@ -3673,6 +3681,40 @@ test('the repository inbox’s entries are drawn when they are all the panel has
   for (const line of ENTRIES.map(entry => entry.line)) expect(await ui.find({ type: 'Text', text: line })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: ` ${TAGLINE}` })).toBeUndefined()
   await ui.unmount()
+})
+
+test('a snoozed entry comes back to a shown panel when its snooze ends', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const snoozed: Entry = { ...INCOMING, state: 'snoozed', snoozed_until: NOW + 3 * TICK }
+  questionWorld(on, clock, [], { entries: [snoozed, ...ENTRIES.slice(1)] })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: snoozed.line })).toBeUndefined()
+  await clock.advance(3 * TICK)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: snoozed.line })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an entry whose snooze ends while the panel is hidden brings the panel back', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const snoozed: Entry = { ...INCOMING, state: 'snoozed', snoozed_until: NOW + 3 * TICK }
+  questionWorld(on, clock, [], { entries: [snoozed], subscriptions: {} })
+  await startSession($, clock)
+  await clock.advance(TICK)
+  await clock.settle()
+  const hidden = await $.ui.mount(PANEL)
+  expect(await hidden.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
+  await hidden.unmount()
+
+  await clock.advance(3 * TICK)
+  await clock.settle()
+  const woken = await $.ui.mount(PANEL)
+  expect(await woken.find({ type: 'Text', text: snoozed.line })).toBeDefined()
+  await woken.unmount()
 })
 
 test('a notice’s drawer quotes it, and dismiss clears it without sending anything', async ($, on) => {

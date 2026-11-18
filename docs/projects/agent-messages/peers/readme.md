@@ -641,6 +641,13 @@ settled these details:
   the session's, rather than its tagline. A new entry that waits on you, one
   neither snoozed nor an item you sent and closed, brings a hidden panel
   back, as a new item does.
+- **The panel ends an entry's snooze by its own clock.** A snooze ends
+  without a change to any file in the mirror, so the panel hides an entry
+  until its `snoozed_until` by its clock, not by the `state` it last listed.
+  Once it holds an entry listed as snoozed whose snooze has ended, it lists
+  the inbox again for the entry's state now, and the tick that sees the
+  snooze end brings a hidden panel back, as it does for an item. The console
+  needs neither, because it lists the entries every second.
 
 ## 9. Outcome
 
