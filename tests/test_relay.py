@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Optional
 from unittest import mock
 
-from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, s3, watch
+from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, repo_inbox, s3, watch
 from projector.inbox import read_json, try_lock, unlock, write_json
 from tests.fake_s3 import FakeS3, plain
 from tests.scratch import copy_of
@@ -2743,6 +2743,24 @@ class LapseNoticeTests(S3RelayCase):
         self.assertEqual([], self.notices())
         self.assertEqual(2, len(self.server.names("team", f"relay/{self.key.id}/agents/")),
                          "the presences queued while the relay was off")
+
+    def test_a_notice_a_busy_inbox_kept_out_shows_on_the_next_job(self) -> None:
+        """Another command holds the location's inbox for longer than the job waits, so the job cannot post its
+        notice. The next job posts it."""
+        store = repo_inbox.folder(self.one.root, self.identity())
+        store.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(store / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, descriptor)
+        self.assertTrue(try_lock(descriptor))
+        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.1):
+            self.one.run_pass()
+        busy = self.notices()
+        unlock(descriptor)
+        self.next_pass()
+
+        self.assertEqual([], busy)
+        self.assertEqual([self.EXPIRED], [entry["line"] for entry in self.notices()])
+        self.assertEqual([self.EXPIRED], [entry["line"] for entry in self.notices(C)])
 
     def test_a_dismissed_notice_stays_hidden_while_the_relay_is_off_and_shows_again_when_it_next_turns_off(
             self) -> None:

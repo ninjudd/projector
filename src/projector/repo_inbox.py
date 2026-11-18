@@ -183,18 +183,21 @@ def forget(root: Path, repo: str, ids: Iterable[str]) -> list[dict]:
 def post_local(root: Path, location: str, text: str, now: float) -> None:
     """Show Projector's notice `text` about the location in its inbox, on this machine only: one at most, which a
     new text replaces under the same number. A notice you dismissed stays hidden, whatever its text becomes, until
-    `withdraw_local` withdraws it."""
+    `withdraw_local` withdraws it.
+
+    `notice.json` records the text only once the mirror holds it, so a mirror that stays busy past the lock's wait
+    leaves the text unrecorded, and the next job posts it again."""
     store = folder(root, location)
     with locked(store / "notice"):
         found = read_json(store / "notice.json") or {}
         if found.get("text") == text:
             return
         entry_id = found.get("id") or new_id()
-        write_json(store / "notice.json", {"id": entry_id, "text": text, "dismissed": bool(found.get("dismissed"))})
         if not found.get("dismissed"):
             mirror(root, location, {"schema_version": 1, "id": entry_id, "location": location, "kind": "notice",
                                     "subject": text, "sent_at": now_ms(now)},
                    role=LOCAL, peer=None, key_id="", now=now)
+        write_json(store / "notice.json", {"id": entry_id, "text": text, "dismissed": bool(found.get("dismissed"))})
 
 
 def withdraw_local(root: Path, location: str) -> None:

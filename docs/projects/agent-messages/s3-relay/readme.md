@@ -448,7 +448,9 @@ observed delivery time in this plan.
   and it takes a dismissal and nothing else: a response or a snooze is
   refused, so no state record of it is ever queued, and the panel offers no
   Snooze. The job posts and withdraws it on its worker thread, so a busy
-  mirror never holds up the daemon's loop.
+  mirror never holds up the daemon's loop. `notice.json` records a text
+  only once the mirror holds it, so a notice that a busy mirror kept out
+  posts on the next job.
 - **A notice is withdrawn on the first signed request that succeeds,** a
   listing, the probe's first write, or a change applied, even while the
   probe refuses the store, since the notice is about the credentials.
@@ -472,7 +474,7 @@ failed with its fault introduced:
 | One bucket and prefix on two endpoints | `S3RelayTests.test_one_bucket_and_prefix_on_two_endpoints_are_two_locations` |
 | A committed endpoint and profile | `S3RelayTests.test_an_endpoint_and_a_profile_a_repository_commits_wait_until_you_allow_each` |
 | Credentials from the environment, a profile, and a process, refreshed early, never leaked | `tests.test_s3.CredentialTests`, `S3RelayTests.test_no_output_log_status_or_process_argument_holds_the_secret_key_or_the_token` |
-| The credential notice | `LapseNoticeTests.test_a_lapse_shows_one_notice_in_every_session_replaced_as_its_reason_changes_until_a_request_succeeds`, `test_a_dismissed_notice_stays_hidden_while_the_relay_is_off_and_shows_again_when_it_next_turns_off` |
+| The credential notice | `LapseNoticeTests.test_a_lapse_shows_one_notice_in_every_session_replaced_as_its_reason_changes_until_a_request_succeeds`, `test_a_dismissed_notice_stays_hidden_while_the_relay_is_off_and_shows_again_when_it_next_turns_off`, `test_a_notice_a_busy_inbox_kept_out_shows_on_the_next_job` |
 | A hung process or store | `tests.test_s3.CredentialTests.test_a_credential_process_that_hangs_is_killed_at_its_timeout`, `OperationTests.test_a_request_that_hangs_or_trickles_is_stopped_at_its_timeout`, `S3RelayTests.test_a_hung_credential_process_or_store_is_stopped_and_stalls_no_codex_event` |
 | A `<!DOCTYPE` listing and one over 1 MiB | `OperationTests.test_a_listing_that_declares_a_document_type_or_holds_more_than_1_mib_is_not_parsed`, and the last part of the hung-store test |
 | The Git relay tests unchanged | `tests.test_relay` before the S3 layers, which passed with no change to a test |
