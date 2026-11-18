@@ -2585,17 +2585,17 @@ test('an option puts the question and its answer in the prompt, and sending it a
 
   // Choosing an option answers nothing yet: it fills the prompt, and the drawer stays open.
   await ui.press({ key: 'answer:1.b' })
-  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nAdd a budget\n'])
+  expect(session.filled).toEqual(['insert:[1] "Decline the finding?"\n\nAdd a budget\n'])
   expect(session.store.store.get('1')?.answer).toBeUndefined()
   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
 
-  const text = 'Thanks.\n"Decline the finding?"\n\nAdd a budget\n'
+  const text = 'Thanks.\n[1] "Decline the finding?"\n\nAdd a budget\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.submitted).toEqual([
     {
       text,
-      context: ['The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the answer this prompt gives.'],
+      context: ['The subagent Fix #7 (agent-1) asked [1] "Decline the finding?"; send it the answer this prompt gives.'],
     },
   ])
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
@@ -2640,7 +2640,7 @@ test('requests through the tool, and a request’s drawer offers the agent’s o
     options: ['Looks good', 'Some feedback'],
   })
   expect(String(called.text ?? called.result)).toBe(
-    `Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE 1; a decline arrives as a message that starts DECLINED 1. ${unclearSaid('request', '1')} Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+    `Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request after [1], with the option they chose, or as a message that starts DONE 1; a decline arrives as a message that starts DECLINED 1. ${unclearSaid('request', '1')} Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
   )
   expect(session.project()).toContain(
     'inbox request --session=s1 --option=Looks good --option=Some feedback --detail=1. Open Fyra. -- Test the gutters',
@@ -2694,8 +2694,8 @@ test('a request posted without options offers a single Done, which records done 
   const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
   expect(outcomes.map(button => [button.key, button.props.hotkey, button.text])).toEqual([['outcome:3.a', '1', 'Done']])
   await ui.press({ key: 'outcome:3.a' })
-  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nDone\n\n'])
-  await $.prompt.submit({ text: '"Test the gutters"\n\nDone\n', wait: false, origin: { kind: 'composer' } })
+  expect(session.filled).toEqual(['insert:[3] "Test the gutters"\n\nDone\n\n'])
+  await $.prompt.submit({ text: '[3] "Test the gutters"\n\nDone\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.project().filter(command => command.startsWith('inbox done'))).toEqual(['inbox done 3 --session s1 --json'])
 
@@ -2761,14 +2761,14 @@ test('Some feedback puts the request and its words in the prompt, and sending it
   await ui.press({ key: 'item:3' })
   // Choosing an outcome records nothing yet: it fills the prompt, with room for notes under it.
   await ui.press({ key: 'outcome:3.b' })
-  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nSome feedback\n\n'])
+  expect(session.filled).toEqual(['insert:[3] "Test the gutters"\n\nSome feedback\n\n'])
   expect(session.store.store.get('3')?.answer).toBeUndefined()
 
-  const text = '"Test the gutters"\n\nSome feedback\n\nStep 4 didn’t work.\n'
+  const text = '[3] "Test the gutters"\n\nSome feedback\n\nStep 4 didn’t work.\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.submitted).toEqual([
-    { text, context: ['The subagent Fix #7 (agent-1) requested "Test the gutters"; send it the outcome this prompt gives.'] },
+    { text, context: ['The subagent Fix #7 (agent-1) requested [3] "Test the gutters"; send it the outcome this prompt gives.'] },
   ])
   expect(session.project().filter(command => command.startsWith('inbox done'))).toEqual([
     "inbox done 3 --text=Some feedback --session s1 --json",
@@ -3013,7 +3013,7 @@ test('I don’t understand fills the prompt, and sending it marks a running suba
   await ui.press({ key: 'unclear:2' })
   await clock.advance(1)
   await clock.settle()
-  expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}"\n\nI don't understand `])
+  expect(session.filled).toEqual([`insert:[2] "${FORCE_PUSHED}"\n\nI don't understand `])
   expect(session.project().filter(command => command.startsWith('inbox unclear'))).toEqual([])
   expect(session.store.store.get('2')?.unclear).toBeUndefined()
   expect(session.sent).toEqual([])
@@ -3023,7 +3023,7 @@ test('I don’t understand fills the prompt, and sending it marks a running suba
   // Sending it carries your words to the main loop, beside the UNCLEAR line and the subagent to pass it to, and
   // marks the notice unclear with the subject and detail you read. The prompt delivered the line, so the panel sends
   // the subagent nothing itself, and the drawer closes.
-  const text = `"${FORCE_PUSHED}"\n\nI don't understand which file held the token`
+  const text = `[2] "${FORCE_PUSHED}"\n\nI don't understand which file held the token`
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   const relay =
@@ -3077,9 +3077,9 @@ test('I don’t understand sent as filled on the main loop’s own request gives
 
   await ui.press({ key: 'item:3' })
   await ui.press({ key: 'unclear:3' })
-  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nI don\'t understand '])
+  expect(session.filled).toEqual(['insert:[3] "Test the gutters"\n\nI don\'t understand '])
   // Sent with nothing added, it still says you don't understand the request, and names no subagent.
-  const text = '"Test the gutters"\n\nI don\'t understand '
+  const text = '[3] "Test the gutters"\n\nI don\'t understand '
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.sent).toEqual([])
@@ -3210,8 +3210,8 @@ test('a question another shares the text of takes only the answer its own drawer
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'answer:2.a' })
-  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nDecline it\n'])
-  await $.prompt.submit({ text: '"Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
+  expect(session.filled).toEqual(['insert:[2] "Decline the finding?"\n\nDecline it\n'])
+  await $.prompt.submit({ text: '[2] "Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
   expect(session.store.store.get('1')?.answer).toBeUndefined()
@@ -3232,7 +3232,7 @@ test('a proposal you cleared from the prompt does not take the answer you sent f
   await ui.press({ key: 'close:2' })
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'answer:1.b' })
-  await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
+  await $.prompt.submit({ text: '[1] "Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
   expect(session.store.store.get('2')?.answer).toBeUndefined()
@@ -3275,7 +3275,7 @@ test('discuss keeps the drawer open with the question above a blank line, a repl
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'discuss:1' })
-  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\n'])
+  expect(session.filled).toEqual(['insert:[1] "Decline the finding?"\n\n'])
   // The drawer stays open, so its options and detail stay in view while you type.
   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
 
@@ -3321,14 +3321,14 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   await ui.press({ key: 'item:1' })
   // You choose an option, then add to it before you send.
   await ui.press({ key: 'answer:1.b' })
-  const text = '"Decline the finding?"\n\nAdd a budget\n\nBut what does the cap cover?\n'
+  const text = '[1] "Decline the finding?"\n\nAdd a budget\n\nBut what does the cap cover?\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.submitted).toEqual([
     {
       text,
       context: [
-        'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
+        'The subagent Fix #7 (agent-1) asked [1] "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
       ],
     },
   ])
@@ -3363,12 +3363,12 @@ test('a prompt about one of two questions that share a subject leaves the other 
   // You discuss the second question: your reply goes to its subagent alone.
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'discuss:2' })
-  const reply = '"Merge it?"\n\nwhy now?'
+  const reply = '[2] "Merge it?"\n\nwhy now?'
   await $.prompt.submit({ text: reply, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.submitted.at(-1)).toEqual({
     text: reply,
-    context: ['The subagent Fix #8 (agent-b) asked "Merge it?"; send it the reply this prompt gives, which leaves the question open.'],
+    context: ['The subagent Fix #8 (agent-b) asked [2] "Merge it?"; send it the reply this prompt gives, which leaves the question open.'],
   })
   expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
 
@@ -3378,18 +3378,53 @@ test('a prompt about one of two questions that share a subject leaves the other 
   await ui.press({ key: 'answer:2.b' })
   await ui.press({ key: 'close:2' })
   await ui.press({ key: 'item:1' })
-  const answer = '"Merge it?"\n\nNo\n'
+  const answer = '[2] "Merge it?"\n\nNo\n'
   await $.prompt.submit({ text: answer, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.submitted.at(-1)).toEqual({
     text: answer,
-    context: ['The subagent Fix #8 (agent-b) asked "Merge it?"; send it the answer this prompt gives.'],
+    context: ['The subagent Fix #8 (agent-b) asked [2] "Merge it?"; send it the answer this prompt gives.'],
   })
   expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([
     'inbox answer 2.b --session s1 --json',
   ])
   expect(session.store.store.get('1')).toEqual(first)
   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a quote’s reference picks one of two questions that share a subject, over the drawer that last put it there', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const fixer = (id: string, description: string) =>
+    ({ id, description, type: 'general-purpose', status: 'running' }) as AgentInfo
+  const merge = { subject: 'Merge it?', choices: ['Yes', 'No'] }
+  const first = held({ ...merge, agentId: 'agent-a' })
+  const second = held({ ...merge, ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000, agentId: 'agent-b' })
+  const agents = [fixer('agent-a', 'Fix #7'), fixer('agent-b', 'Fix #8')]
+  const session = questionWorld(on, clock, [first, second], { agents })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  // You pick No in the second question's drawer, then write to the first question by its reference instead.
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.b' })
+  expect(session.filled).toEqual(['insert:[2] "Merge it?"\n\nNo\n'])
+  const reply = '[1] "Merge it?"\n\nwhy now?'
+  await $.prompt.submit({ text: reply, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.submitted.at(-1)).toEqual({
+    text: reply,
+    context: ['The subagent Fix #7 (agent-a) asked [1] "Merge it?"; send it the reply this prompt gives, which leaves the question open.'],
+  })
+
+  // The second question's pick still stands, so its quote with the reference edited out answers it.
+  await $.prompt.submit({ text: '"Merge it?"\n\nNo\n', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([
+    'inbox answer 2.b --session s1 --json',
+  ])
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
   await ui.unmount()
 })
 
@@ -3763,7 +3798,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   ])
 
   await ui.press({ key: 'discuss:2' })
-  expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}"\n\n`])
+  expect(session.filled).toEqual([`insert:[2] "${FORCE_PUSHED}"\n\n`])
 
   await ui.press({ key: 'dismiss:2' })
   await clock.settle()
@@ -4126,8 +4161,8 @@ test('the revise tool redraws the question with its new text at once, keeping it
 
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'answer:1.c' })
-  expect(session.filled.at(-1)).toBe('insert:"Decline the retry finding?"\n\nAsk the reviewer\n')
-  await $.prompt.submit({ text: '"Decline the retry finding?"\n\nAsk the reviewer\n', wait: false, origin: { kind: 'composer' } })
+  expect(session.filled.at(-1)).toBe('insert:[1] "Decline the retry finding?"\n\nAsk the reviewer\n')
+  await $.prompt.submit({ text: '[1] "Decline the retry finding?"\n\nAsk the reviewer\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'Ask the reviewer' }))
   expect(session.store.store.get('1')?.ref).toBe('1')
@@ -4158,7 +4193,7 @@ test('an answer chosen before a revise answers no question, and a pick from the 
   expect(session.submitted.at(-1)).toEqual({
     text: decline,
     context: [
-      'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
+      'The subagent Fix #7 (agent-1) asked [2] "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
     ],
   })
   expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
@@ -4218,7 +4253,7 @@ test('an option typed under a quote discussed before a revise answers no questio
   expect(session.submitted.at(-1)).toEqual({
     text: typed,
     context: [
-      'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
+      'The subagent Fix #7 (agent-1) asked [2] "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
     ],
   })
   expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
@@ -4735,8 +4770,8 @@ test('an open question’s options are Buttons on the digits 1 to 5, only while 
   expect((await ui.find({ type: 'Button', key: 'unclear:1' }))?.props.hotkey).toBe('6')
   // Pressing the fifth, by its digit or Enter, fills the prompt as clicking its number did, and sending it answers.
   await ui.press({ key: 'answer:1.e' })
-  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nSplit the change\n'])
-  await $.prompt.submit({ text: '"Decline the finding?"\n\nSplit the change\n', wait: false, origin: { kind: 'composer' } })
+  expect(session.filled).toEqual(['insert:[1] "Decline the finding?"\n\nSplit the change\n'])
+  await $.prompt.submit({ text: '[1] "Decline the finding?"\n\nSplit the change\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'e', text: 'Split the change' }))
 
@@ -4790,8 +4825,8 @@ test('a question stored with six choices, or a request with Start and five optio
   ])
   // A click or Enter still presses it, and what it puts in the prompt says so once sent.
   await ui.press({ key: 'unclear:3' })
-  expect(session.filled.at(-1)).toBe('insert:"Test the gutters"\n\nI don\'t understand ')
-  await $.prompt.submit({ text: '"Test the gutters"\n\nI don\'t understand ', wait: false, origin: { kind: 'composer' } })
+  expect(session.filled.at(-1)).toBe('insert:[3] "Test the gutters"\n\nI don\'t understand ')
+  await $.prompt.submit({ text: '[3] "Test the gutters"\n\nI don\'t understand ', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.project()).toContain('inbox unclear 3 --subject=Test the gutters --detail=1. Open Fyra. --session s1 --json')
   expect(session.store.store.get('3')?.unclear).toBeDefined()

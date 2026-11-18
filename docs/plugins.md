@@ -628,8 +628,9 @@ When a request's start action is done, the agent marks it ready with the
 When an item it posted no longer needs you, such as a question your reply
 settled, the agent takes it back with the `withdraw` tool,
 `mcp__projector__withdraw`, by the number `ask`, `tell`, or `request`
-returned. The panel never shows that number, so the agent names an item to
-you by what it asks, tells, or requests. When your reply shows that an item
+returned. The panel's list never shows that number, which appears only in
+the quote a drawer puts in your prompt, so the agent names an item to you by
+what it asks, tells, or requests. When your reply shows that an item
 was unclear, or you send **I don't understand** for it, the agent rewrites
 it in place with the `revise` tool, `mcp__projector__revise`, keeping its
 number. When you tell it you dismissed, declined, or snoozed an item by
@@ -728,10 +729,12 @@ the item's first letter:
 
 The first option is always the agent's recommendation. Press an option by
 clicking it, by Enter, or by its digit, and the panel puts the question and
-that answer in your prompt, for you to send as it stands or change first:
+that answer in your prompt, for you to send as it stands or change first.
+The quote starts with the question's number in brackets, so the panel and
+the agent can tell apart two questions that ask the same thing:
 
 ```text
-"Decline the finding about the retry budget?"
+[3] "Decline the finding about the retry budget?"
 
 Add a budget of two retries per host, and keep the total cap
 ```
@@ -757,8 +760,12 @@ type under a quote that **Discuss** put there before it: either one replies
 to the revised question. To answer, choose again in the revised question's
 drawer.
 
-Each quote speaks to one question. When two open questions ask the same
-thing, a quote that one's drawer put in your prompt, with an option or
+Each quote speaks to one question. A quote's number in brackets picks the
+question it speaks to, whatever another drawer put in your prompt. When you
+delete the number, or it names no question that asks that thing, the quote
+speaks by its question's text alone, as the rest of this paragraph
+describes. When two open questions ask the same thing, a quote that one's
+drawer put in your prompt, with an option or
 alone through **Discuss**, speaks to that question: one of its options
 answers it, and anything else replies to it. When both drawers put the
 quote there, the one you acted in last wins, unless it put a different
@@ -803,7 +810,7 @@ leaves the drawer open, so you can finish the sentence with what you don't
 follow before you send the prompt:
 
 ```text
-"Force-pushed #7 to drop a stray file"
+[2] "Force-pushed #7 to drop a stray file"
 
 I don't understand which file held the token
 ```
@@ -821,8 +828,8 @@ revised the item after you pressed, your prompt still carries your words,
 but it carries no `UNCLEAR` note and marks nothing, so press again to say
 it of the new text. A prompt that starts the text under an item's quote with
 `I don't understand` says the same when you type it yourself. When two items
-share a subject, it speaks to the one whose drawer put the quote in your
-prompt, through **Discuss** or an option, and otherwise to the older one.
+share a subject, it speaks to the one whose number the quote carries, else to
+the one whose drawer put the quote in your prompt, through **Discuss** or an option, and otherwise to the older one.
 When your prompt holds the quote once and both drawers put it there, the one
 you acted in last wins, unless it put an option there.
 

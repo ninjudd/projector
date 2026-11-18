@@ -43,6 +43,7 @@ import {
   BLOCK_SCHEMA,
   choicesOf,
   forMainLoop,
+  holdsQuote,
   isAnswerable,
   isShownAt,
   isSnoozedAt,
@@ -53,6 +54,7 @@ import {
   owesMessage,
   proposalOf,
   quoteOf,
+  quotesIn,
   READY_DESCRIPTION,
   READY_SCHEMA,
   readPrompt,
@@ -71,6 +73,7 @@ import {
   signatureOf,
   span,
   storeOf,
+  subjectQuoteOf,
   TELL_DESCRIPTION,
   TELL_SCHEMA,
   tellArguments,
@@ -423,7 +426,8 @@ let tickedAt: number | undefined
  * pressed that on, when another shares its text. A revision marks its item's
  * proposals stale, so an answer chosen from the old text answers nothing. A
  * proposal lasts until a prompt you send quotes its item or holds the quote
- * it was chosen under.
+ * it was chosen under, with its item's reference or with none that names
+ * another item.
  */
 let proposed: Proposal[] = []
 /**
@@ -443,7 +447,7 @@ let ring: { requestId: string; key: string | undefined } | undefined
  * prompt cannot tell the two apart.
  */
 function propose(item: Item, answer: string): void {
-  const quote = quoteOf(item)
+  const quote = subjectQuoteOf(item)
   const isKept = (one: Proposal) =>
     one.isStale === true ? one.quote !== quote || one.answer !== answer : one.ref !== item.ref
   const read = answer === UNCLEAR_WORDS ? { detail: item.detail } : {}
@@ -886,7 +890,7 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
     // so is word that you don't understand an item, so I don't understand
     // returns, and a message you sent about it, so you send it again.
     const item = (await read($, items)).find(one => one.ref === ref && one.session === session)
-    const quoted = item === undefined ? undefined : quoteOf(item)
+    const quoted = item === undefined ? undefined : subjectQuoteOf(item)
     const why = reason ? ` (${reason})` : ''
     void $.ui.toast(
       text.startsWith('RESTORED ')
@@ -1570,7 +1574,7 @@ export const register: Register = on => {
     void $.ui.notify(String(e.request), { title: 'Projector request' }).catch(() => undefined)
     const hasStart = typeof e.start === 'string' && e.start !== ''
     return {
-      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}.${whenUnclear('request', ref)} Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request after [${ref}], with the option they chose, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}.${whenUnclear('request', ref)} Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
 
@@ -1718,18 +1722,24 @@ export const register: Register = on => {
     // line for text the item no longer holds, which the CLI then refuses to mark.
     if (isYours && mayBeUnclear(e.text)) await readStore($, session).catch(() => undefined)
     const mine = isYours ? (await read($, items)).filter(item => item.session === session) : []
-    const { answers, outcomes, replies, unclears } = readPrompt(e.text, mine, isYours ? proposed : [])
+    const drawn = isYours ? proposed : []
+    const { answers, outcomes, replies, unclears } = readPrompt(e.text, mine, drawn)
+    const quoted = quotesIn(e.text, mine, drawn)
     // An open question or request is done only when the prompt resolves or
     // replies to it, so a quote two of them share closes one drawer, not both.
     const isOpenAnswerable = (item: Item) => isAnswerable(item) && item.answer === undefined
     const done = new Set([
-      ...mine.filter(item => !isOpenAnswerable(item) && e.text.includes(quoteOf(item))).map(item => item.ref),
+      ...mine
+        .filter(item => !isOpenAnswerable(item) && holdsQuote(quoted, item.ref, subjectQuoteOf(item)))
+        .map(item => item.ref),
       ...answers.map(one => one.question.ref),
       ...outcomes.map(one => one.request.ref),
       ...replies.map(item => item.ref),
       ...unclears.map(item => item.ref),
     ])
-    if (isYours) proposed = proposed.filter(proposal => !done.has(proposal.ref) && !e.text.includes(proposal.quote))
+    if (isYours) {
+      proposed = proposed.filter(proposal => !done.has(proposal.ref) && !holdsQuote(quoted, proposal.ref, proposal.quote))
+    }
     const answered = [...answers.map(one => one.question), ...outcomes.map(one => one.request)].filter(
       item => item.agentId !== undefined,
     )

@@ -151,7 +151,7 @@ because squash merges preserve that body as the commit message.
 For review findings, verify first, commit locally, reply with the commit, push,
 resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 31 -->
+<!-- projector:begin 32 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -256,8 +256,9 @@ should do first, such as unlocking the phone.
 
 When the person picks one of a question's options, the answer reaches you as
 a message that starts `ANSWER`. When they finish a request, its outcome
-reaches you as their prompt, quoting the request with the option they chose
-and any notes under it, or as a message that starts `DONE` and names the
+reaches you as their prompt, quoting the request after its number in
+brackets, such as `[3] "Test the build"`, with the option they chose and any
+notes under it, or as a message that starts `DONE` and names the
 option. When they decline it, a message that starts `DECLINED` arrives. Read
 the option and the notes, and act on what they say before you go on, even
 when the request is done. A declined request is the person's no, so do not

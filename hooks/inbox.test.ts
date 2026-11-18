@@ -28,6 +28,7 @@ import {
   signatureOf,
   span,
   storeOf,
+  subjectQuoteOf,
   TELL_DESCRIPTION,
   tellArguments,
   typedLetter,
@@ -103,7 +104,7 @@ test('the ask tool tells the agent that a pick arrives by number and a reply as 
   expect(ASK_DESCRIPTION).toContain(
     'The call returns the question’s number, such as 3. When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
   )
-  expect(ASK_DESCRIPTION).toContain('the reply arrives as their prompt, quoting the question, and the question stays open')
+  expect(ASK_DESCRIPTION).toContain('the reply arrives as their prompt, quoting the question after its number in brackets, such as `[3] "…"`, and the question stays open')
   expect(ASK_DESCRIPTION).toMatch(/withdraw the question if the reply settles it, revise it if it was unclear/)
   expect(ASK_DESCRIPTION).toContain(
     'When they restore a question after you heard `DISMISSED 3`, `RESTORED 3` arrives, and the question is open again.',
@@ -136,9 +137,72 @@ test('letters run from the recommendation to the typed answer', () => {
   expect(typedLetter(question())).toBe('c')
 })
 
-test('the prompt carries a question in quotes, and an answer on a line of its own', () => {
-  expect(quoteOf(question())).toBe('"Decline the finding?"')
-  expect(proposalOf(question(), 'Add a budget')).toBe('"Decline the finding?"\n\nAdd a budget')
+test('the prompt carries a question’s reference in brackets, its subject in quotes, and an answer on a line of its own', () => {
+  expect(quoteOf(question())).toBe('[1] "Decline the finding?"')
+  expect(quoteOf(question({ ref: '137', number: 137 }))).toBe('[137] "Decline the finding?"')
+  expect(proposalOf(question(), 'Add a budget')).toBe('[1] "Decline the finding?"\n\nAdd a budget')
+})
+
+test('a quote’s reference picks its item among those that share its subject, the newer one too', () => {
+  const progress = { subject: 'What is your progress?', choices: ['On track', 'Blocked'] }
+  const older = question({ ...progress, ref: '3', number: 3, postedAt: NOW - 120_000, agentId: 'agent-a' })
+  const newer = question({ ...progress, ref: '5', number: 5, agentId: 'agent-b' })
+  const both = [older, newer]
+  const none = { answers: [], outcomes: [], replies: [], unclears: [] }
+  expect(readPrompt('[5] "What is your progress?"\n\nBlocked\n', both)).toEqual({
+    ...none,
+    answers: [{ question: newer, letter: 'b' }],
+  })
+  expect(readPrompt('[5] "What is your progress?"\n\nwhy ask?', both)).toEqual({ ...none, replies: [newer] })
+  expect(readPrompt('[5] "What is your progress?"\n\nI don\'t understand', both)).toEqual({ ...none, unclears: [newer] })
+  // The reference outranks a drawer that put the same subject in the prompt for the other item.
+  const drawn: Proposal = { ref: '3', quote: '"What is your progress?"', answer: 'Blocked' }
+  expect(readPrompt('[5] "What is your progress?"\n\nBlocked\n', both, [drawn])).toEqual({
+    ...none,
+    answers: [{ question: newer, letter: 'b' }],
+  })
+  // Two quotes of one subject, each under its own reference, each speak to their own item, in either order.
+  expect(readPrompt('[5] "What is your progress?"\n\nOn track\n[3] "What is your progress?"\n\nBlocked', both)).toEqual({
+    ...none,
+    answers: [
+      { question: newer, letter: 'a' },
+      { question: older, letter: 'b' },
+    ],
+  })
+  // A reference to an item already resolved settles nothing, rather than falling through to the other.
+  const resolved = question({ ...newer, answer: { letter: 'a', text: 'On track', answeredAt: NOW } })
+  expect(readPrompt('[5] "What is your progress?"\n\nBlocked\n', [older, resolved])).toEqual(none)
+})
+
+test('a quote whose reference was edited out, or names no item with its subject, speaks by its subject', () => {
+  const progress = { subject: 'What is your progress?', choices: ['On track', 'Blocked'] }
+  const older = question({ ...progress, ref: '3', number: 3, postedAt: NOW - 120_000 })
+  const newer = question({ ...progress, ref: '5', number: 5 })
+  const other = question({ ref: '4', number: 4, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })
+  const items = [older, newer, other]
+  const oldest = [{ question: older, letter: 'b' }]
+  expect(answersIn('"What is your progress?"\n\nBlocked\n', items)).toEqual(oldest)
+  // A reference to an item with another subject, or to none, is left out of the answer as well.
+  expect(answersIn('[4] "What is your progress?"\n\nBlocked\n', items)).toEqual(oldest)
+  expect(answersIn('[9] "What is your progress?"\n\nBlocked\n', items)).toEqual(oldest)
+  expect(answersIn('[5] "Rebase first?"\n\nRebase\n[3] "What is your progress?"\n\nOn track', items)).toEqual([
+    { question: other, letter: 'b' },
+    { question: older, letter: 'a' },
+  ])
+})
+
+test('a reference of two digits or more picks its item, and the quote before it ends at the bracket', () => {
+  const progress = { subject: 'What is your progress?', choices: ['On track', 'Blocked'] }
+  const ninth = question({ ...progress, ref: '9', number: 9, postedAt: NOW - 120_000 })
+  const twelfth = question({ ...progress, ref: '12', number: 12 })
+  const other = question({ ref: '137', number: 137, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })
+  const items = [ninth, twelfth, other]
+  expect(answersIn('[12] "What is your progress?"\n\nBlocked', items)).toEqual([{ question: twelfth, letter: 'b' }])
+  // The bracket of the next quote is not part of the answer above it.
+  expect(answersIn('[137] "Rebase first?"\n\nRebase\n[12] "What is your progress?"\n\nOn track', items)).toEqual([
+    { question: other, letter: 'b' },
+    { question: twelfth, letter: 'a' },
+  ])
 })
 
 test('a sent prompt answers each question whose quote an option follows', () => {
@@ -178,7 +242,7 @@ test('anything after a quoted question but one of its options replies to it with
   ]
   for (const text of replies) {
     expect(answersIn(text, open)).toEqual([])
-    expect(repliesIn(text, open)).toEqual(open.filter(one => text.includes(quoteOf(one))))
+    expect(repliesIn(text, open)).toEqual(open.filter(one => text.includes(subjectQuoteOf(one))))
   }
   const text = '"Decline the finding?"\n\nDecline it\n"Rebase first?"\n\nwhy rebase?'
   expect(readPrompt(text, open)).toEqual({ answers: [{ question: open[0], letter: 'a' }], outcomes: [], replies: [open[1]], unclears: [] })
@@ -346,17 +410,17 @@ test('a quote a drawer put in the prompt for a question resolved before you send
 test('the note beside an answer or a reply names the subagent that asked', () => {
   const asked = question({ agentId: 'agent-1' })
   expect(relayNote(asked, [agent('completed')])).toBe(
-    'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the answer this prompt gives.',
+    'The subagent Fix #7 (agent-1) asked [1] "Decline the finding?"; send it the answer this prompt gives.',
   )
-  expect(relayNote(asked, [])).toBe('The subagent agent-1 asked "Decline the finding?"; send it the answer this prompt gives.')
+  expect(relayNote(asked, [])).toBe('The subagent agent-1 asked [1] "Decline the finding?"; send it the answer this prompt gives.')
   expect(replyNote(asked, [agent('running')])).toBe(
-    'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
+    'The subagent Fix #7 (agent-1) asked [1] "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
   )
 })
 
 test('I don’t understand puts the quoted item and the words in the prompt, for you to say what you don’t follow', () => {
-  expect(unclearOf(notice())).toBe(`"Force-pushed #7 to drop a stray file"\n\n${UNCLEAR_WORDS} `)
-  expect(unclearOf(question())).toBe('"Decline the finding?"\n\nI don\'t understand ')
+  expect(unclearOf(notice())).toBe(`[2] "Force-pushed #7 to drop a stray file"\n\n${UNCLEAR_WORDS} `)
+  expect(unclearOf(question())).toBe('[1] "Decline the finding?"\n\nI don\'t understand ')
 })
 
 test('a sent prompt says you don’t understand any open kind of item whose quote the words follow, and replies to none', () => {
@@ -840,10 +904,10 @@ test('a quoted request and a quoted question in one prompt each take their own',
 test('the notes beside a subagent’s request name it and say an outcome goes back', () => {
   const posted = request({ agentId: 'agent-1' })
   expect(relayNote(posted, [agent('completed')])).toBe(
-    'The subagent Fix #7 (agent-1) requested "Test the gutters"; send it the outcome this prompt gives.',
+    'The subagent Fix #7 (agent-1) requested [3] "Test the gutters"; send it the outcome this prompt gives.',
   )
   expect(replyNote(posted, [])).toBe(
-    'The subagent agent-1 requested "Test the gutters"; send it the reply this prompt gives, which leaves the request open.',
+    'The subagent agent-1 requested [3] "Test the gutters"; send it the reply this prompt gives, which leaves the request open.',
   )
   expect(forMainLoop('DONE 3 Test the gutters', posted, [])).toBe(
     'DONE 3 Test the gutters\n\nThe subagent agent-1 requested this, and the outcome could not reach it; send it this outcome, or act on it yourself.',
