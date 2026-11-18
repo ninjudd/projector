@@ -4232,6 +4232,38 @@ test('an answer chosen before a revise rewords its question does not answer anot
   await ui.unmount()
 })
 
+test('the same answer picked for another question that shares the subject leaves a pick from before a revise answering nothing', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const newer = held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })
+  const session = questionWorld(on, clock, [held(), newer])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'answer:1.a' })
+  await $.tool.call({ tool: 'mcp__projector__revise', number: 1, detail: 'The cap is three.' })
+  // You pick the same option in the other question's drawer, then send the first question's quote, chosen
+  // from the text it had before the revision.
+  await ui.press({ key: 'close:1' })
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.a' })
+  await $.prompt.submit({ text: '[1] "Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
+  expect(session.store.store.get('2')?.answer).toBeUndefined()
+
+  // The second question's pick still stands, so its own quote answers it.
+  await $.prompt.submit({ text: '[2] "Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([
+    'inbox answer 2.a --session s1 --json',
+  ])
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
+  await ui.unmount()
+})
+
 test('an option typed under a quote discussed before a revise answers no question, and replies to the revised one', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

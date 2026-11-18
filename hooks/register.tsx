@@ -443,13 +443,15 @@ let ring: { requestId: string; key: string | undefined } | undefined
  * Records what an item's drawer put in the prompt: an option or an outcome,
  * an empty answer for discuss, or `UNCLEAR_WORDS` for I don't understand,
  * with the detail you read. It takes the place of the item's last fresh pick,
- * and of any stale pick that put the same text in the prompt, since a sent
- * prompt cannot tell the two apart.
+ * and of any stale pick of the item that put the same text in the prompt,
+ * since a sent prompt cannot tell the two apart. Another item's stale pick
+ * stays, because its quote carries that item's reference, so sending it
+ * still answers nothing.
  */
 function propose(item: Item, answer: string): void {
   const quote = subjectQuoteOf(item)
   const isKept = (one: Proposal) =>
-    one.isStale === true ? one.quote !== quote || one.answer !== answer : one.ref !== item.ref
+    one.ref !== item.ref || (one.isStale === true && (one.quote !== quote || one.answer !== answer))
   const read = answer === UNCLEAR_WORDS ? { detail: item.detail } : {}
   proposed = [...proposed.filter(isKept), { ref: item.ref, quote, answer, ...read }]
 }
