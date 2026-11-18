@@ -237,13 +237,18 @@ them. Record the result in this plan.
 These need the user's decision before the plan is `ready`. Each records the
 recommendation the plan is written to.
 
-- **Is the peers inbox scoped by location?** Recommended: yes. Items
-  addressed to you show in every session that shares the relay. With a team
-  relay, that makes it a team-wide inbox, which is what a team relay is for.
-  With the default relay, it is still one repository's.
 - **Must a location named outside `~/.projector.toml` be allowed once?**
   Recommended: yes, as § 2.3 explains.
 - **Are the controls in § 2.3 enough?** Recommended: yes for this version,
   with no per-peer or per-repository lists until a team needs one.
 </content>
 </invoke>
+
+## 7. Decisions
+
+- **The peers inbox is scoped by location.** Decided by the user on
+  2026-11-17. An item addressed to you shows in every one of your sessions
+  that shares its relay location, labeled with its work repository when that
+  differs from the session's (§ 2.1 step 8). With a team relay, the inbox is
+  team-wide, which is what a team relay is for. With the default relay, it is
+  still one repository's inbox.
