@@ -747,6 +747,38 @@ class DefaultBranchTests(unittest.TestCase):
         self.assertEqual([(added, "not on origin/main yet, so it is ignored until it merges")], config.notes)
         self.assertIn(f"{added}: not on origin/main yet", notes)
 
+    def merge_to_main(self, files: dict[str, str], links: dict[str, str]) -> None:
+        """Commit `files` and the symbolic links in `links` on `main`, push them to `origin`, and branch off."""
+
+        for path, text in files.items():
+            write(self.repo / path, text)
+        for path, target in links.items():
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).symlink_to(target)
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "Add policy")
+        git(self.repo, "push", "-q", "origin", "main")
+        git(self.repo, "switch", "-q", "-c", "feature")
+
+    def test_a_committed_file_in_a_directory_with_a_newline_applies_from_the_default_branch(self) -> None:
+        folder = self.repo / "sub\nfolder"
+        self.merge_to_main({"sub\nfolder/.projector.toml": '[review]\ngate_checks = "nested"\n'}, {})
+        write(folder / ".projector.toml", '[review]\ngate_checks = "none"\n')
+
+        config = self.merged(folder)
+
+        self.assertEqual(("nested", "origin/main:sub\nfolder/.projector.toml"),
+                         (config.get("review.gate_checks"), str(config.source("review.gate_checks"))))
+        self.assertEqual([(folder / ".projector.toml", "working copy ignored until merged; "
+                                                       "origin/main:sub\nfolder/.projector.toml applies")],
+                         config.notes)
+
+    def test_git_finds_a_working_tree_whose_path_holds_a_newline(self) -> None:
+        top = self.base / "new\nline"
+        git(self.base, "init", "-q", str(top))
+
+        self.assertEqual(config_module._tree_at(top), config_module._rev_parse_tree(top))
+
     def test_untracked_files_apply_from_disk_at_once(self) -> None:
         parent = self.home / "work" / ".projector.toml"
         user = self.home / ".projector.toml"

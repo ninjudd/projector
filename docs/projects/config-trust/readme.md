@@ -355,6 +355,11 @@ full pass, which transfers only commits this clone lacks.
   `git ls-files` fails, as for a repository Git refuses as unsafe, loading
   configuration fails with a configuration error naming Git's message. Reading
   the working copy instead would reopen the route this project closes.
+- **Any path reads back exactly.** `git cat-file --batch` reads one name a
+  line, so a walked path with a newline in a directory name is looked up by
+  one `git ls-tree -z`, which takes the paths as arguments, and its object is
+  read in the same batch. `git rev-parse`, used for an unrecognized layout,
+  runs once for each path it reports, because it ends each with a newline.
 - **The cache's shape.** A blob is `<commit>-<digest>.toml`, and a path the
   commit lacks is an empty `<commit>-<digest>.absent`. Each cache miss removes
   blobs not written for 30 days, which are mostly those of commits the default

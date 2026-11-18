@@ -322,16 +322,15 @@ def _tree_at(top: Path) -> Optional[WorkingTree]:
 
 
 def _rev_parse_tree(top: Path) -> Optional[WorkingTree]:
-    try:
-        found = git_output(["rev-parse", "--path-format=absolute", "--show-toplevel", "--absolute-git-dir",
-                            "--git-common-dir"], cwd=top)
-    except ConfigError:
-        return None
-    lines = os.fsdecode(found).splitlines()
-    if len(lines) != 3:
-        return None
-    top_line, git_dir, common = (Path(line).resolve() for line in lines)
-    return WorkingTree(top_line, git_dir, common)
+    # One path a run, because `git rev-parse` ends each path with a newline that a path can also hold.
+    found = []
+    for option in ("--show-toplevel", "--absolute-git-dir", "--git-common-dir"):
+        try:
+            output = git_output(["rev-parse", "--path-format=absolute", option], cwd=top)
+        except ConfigError:
+            return None
+        found.append(Path(os.fsdecode(output.removesuffix(b"\n"))).resolve())
+    return WorkingTree(*found)
 
 
 def working_tree(directory: Path) -> Optional[WorkingTree]:
@@ -436,6 +435,22 @@ def _prune(cache: Path) -> None:
         pass
 
 
+def _listed_objects(common: Path, commit: str, paths: list[str]) -> dict[str, str]:
+    """The object each of `paths` names on the commit `commit`, for the paths it holds as files, from one
+    `git ls-tree` that takes the paths as arguments and separates its entries with NUL, so any byte in a path
+    reads back exactly."""
+
+    listed = git_output(["--git-dir", str(common), "--literal-pathspecs", "ls-tree", "-z", "--full-tree", commit,
+                         "--", *paths])
+    found = {}
+    for entry in listed.split(b"\0"):
+        info, _, name = entry.partition(b"\t")
+        fields = info.decode("ascii", "replace").split(" ")
+        if len(fields) == 3 and fields[1] == "blob":
+            found[os.fsdecode(name)] = fields[2]
+    return found
+
+
 def default_blobs(common: Path, commit: str, paths: list[str], cache: Path) -> dict[str, Optional[bytes]]:
     """Each of `paths` as the commit `commit` holds it, or None where it holds no file, asking one
     `git cat-file --batch` for the paths the cache lacks."""
@@ -447,17 +462,25 @@ def default_blobs(common: Path, commit: str, paths: list[str], cache: Path) -> d
         try:
             found[path] = (cache / f"{name}.toml").read_bytes()
         except OSError:
-            # Git's batch input is one name a line, so a path with a newline cannot be asked for.
-            if (cache / f"{name}.absent").exists() or "\n" in path:
+            if (cache / f"{name}.absent").exists():
                 found[path] = None
             else:
                 wanted.append(path)
     if not wanted:
         return found
+    # Git's batch input is one name a line, so a path with a newline is asked for by the object `git ls-tree`
+    # finds at it, and one that names no file there is absent.
+    names = {path: f"{commit}:{path}" for path in wanted if "\n" not in path}
+    lined = [path for path in wanted if "\n" in path]
+    if lined:
+        names.update(_listed_objects(common, commit, lined))
+    asked = [path for path in wanted if path in names]
     output = git_output(["--git-dir", str(common), "cat-file", "--batch"],
-                        input="".join(f"{commit}:{path}\n" for path in wanted).encode("utf-8", "surrogateescape"))
+                        input="".join(f"{names[path]}\n" for path in asked).encode("utf-8", "surrogateescape")
+                        ) if asked else b""
     at = 0
-    for path in wanted:
+    contents: dict[str, Optional[bytes]] = {}
+    for path in asked:
         end = output.index(b"\n", at)
         header = output[at:end].split(b" ")
         at = end + 1
@@ -467,6 +490,9 @@ def default_blobs(common: Path, commit: str, paths: list[str], cache: Path) -> d
             if header[1] == b"blob":
                 content = output[at:at + size]
             at += size + 1
+        contents[path] = content
+    for path in wanted:
+        content = contents.get(path)
         found[path] = content
         name = _blob_name(commit, path)
         _store(cache / (f"{name}.absent" if content is None else f"{name}.toml"), content or b"")
