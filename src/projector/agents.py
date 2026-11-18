@@ -363,27 +363,32 @@ def publish_waiting(root: Path, key: relay.Key, now: float) -> list[str]:
 def admit(root: Path, approvals: Path, keyed: bool, now: float) -> list[str]:
     """Let each registration that waits for `project config allow` relay once you have allowed its location, as
     `approvals` records them: it becomes pending, or off on a machine with no key. Answers the sessions it let
-    through."""
+    through.
+
+    It judges each registration by the values that registration records, read under the lock `write_registration`
+    writes it under, so a session that registers again with another value meanwhile is never admitted on the
+    approvals of the registration it replaced."""
     admitted = []
     for session in watch.session_names(root):
-        found = record(root, session)
-        if not found or found.get("relay") != "waiting" or not found.get("location"):
-            continue
-        try:
-            pairs = [tuple(pair) for pair in found.get("allow") or [("agent.relay", f"github:{found['location']}")]]
-            allowed = all(is_allowed(approvals, key, value) for key, value in pairs)
-        except ConfigError:
-            return admitted
-        if not allowed:
+        if (record(root, session) or {}).get("relay") != "waiting":
             continue
         folder = watch.session_folder(root, session)
         with locked(folder):
             current = record(root, session)
-            if current and current.get("relay") == "waiting" and current.get("location") == found["location"]:
-                kept = {key: value for key, value in current.items() if key != "allow"}
-                write_json(folder / "agent.json", {**kept, "relay": "pending" if keyed else "off",
-                                                   "updated_at": watch.stamp(now)})
-                admitted.append(session)
+            if not current or current.get("relay") != "waiting" or not current.get("location"):
+                continue
+            try:
+                pairs = [tuple(pair) for pair in
+                         current.get("allow") or [("agent.relay", f"github:{current['location']}")]]
+                allowed = all(is_allowed(approvals, key, value) for key, value in pairs)
+            except ConfigError:
+                return admitted
+            if not allowed:
+                continue
+            kept = {key: value for key, value in current.items() if key != "allow"}
+            write_json(folder / "agent.json", {**kept, "relay": "pending" if keyed else "off",
+                                               "updated_at": watch.stamp(now)})
+            admitted.append(session)
     return admitted
 
 

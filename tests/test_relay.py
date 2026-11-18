@@ -2528,6 +2528,49 @@ class S3RelayTests(S3RelayCase):
         self.assertEqual("published", agents.record(self.one.root, A)["relay"])
         self.assertTrue(self.server.names("team", f"relay/{self.key.id}/agents/"))
 
+    def test_a_registration_written_while_admission_checks_another_waits_for_its_own_values(self) -> None:
+        """The session registers again with a profile you have not allowed while admission checks the approvals
+        of the registration it replaces. The new registration waits for its own profile rather than relaying on
+        the old one's approvals."""
+        api = self.checkout(self.one, "acme/api", "work")
+        policy = f'[agent]\nrelay = "{TEAM}"\ns3_endpoint = "{self.server.endpoint}"\ns3_profile = "{{}}"\n'
+        SharedRelayTests.commit_policy(self, api, policy.format("acme-relay"))
+        self.one.claude(A)
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+        with mock.patch("builtins.input", return_value="y"):
+            for key, value in (("agent.relay", TEAM), ("agent.s3_endpoint", self.server.endpoint),
+                               ("agent.s3_profile", "acme-relay")):
+                self.one.project("config", "allow", key, value, cwd=api, terminal=True)
+        SharedRelayTests.commit_policy(self, api, policy.format("other-relay"))
+        checking = agents.is_allowed
+        registered = threading.Event()
+        started: list[threading.Thread] = []
+
+        def register_again() -> None:
+            try:
+                self.one.register(A, "--name", "parser-refactor", cwd=api)
+            finally:
+                registered.set()
+
+        def interleaved(path: Path, key: str, value: object) -> bool:
+            # The first check admission makes lets the second registration run to its end, or to the lock that
+            # admission holds, before admission goes on.
+            if not started:
+                started.append(threading.Thread(target=register_again, daemon=True))
+                started[0].start()
+                registered.wait(0.5)
+            return checking(path, key, value)
+
+        with mock.patch.object(agents, "is_allowed", interleaved):
+            agents.admit(self.one.root, config.allowed_path(self.one.env), True, self.now)
+        started[0].join(10)
+        found = agents.record(self.one.root, A)
+
+        self.assertTrue(registered.is_set())
+        self.assertEqual("other-relay", found["s3"]["profile"])
+        self.assertEqual("waiting", found["relay"])
+        self.assertIn(["agent.s3_profile", "other-relay"], found["allow"])
+
     def test_no_output_log_status_or_process_argument_holds_the_secret_key_or_the_token(self) -> None:
         folder = self.credential_process(self.one, self.now + 3600)
         self.credential_process(self.two, self.now + 3600)
