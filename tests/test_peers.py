@@ -493,6 +493,63 @@ class StateTests(PeersCase):
         self.assertEqual(1, sent)
         self.assertEqual([], self.entries(self.one, A))
 
+    def sent_to_jason(self) -> list[dict]:
+        return [item for item in self.one.outbox() if item["ref"].startswith(f"{relay.USER}{self.jason.id}/")]
+
+    def refused_queue(self, outcome: str, by: str, text: Optional[str]) -> Exception:
+        """A response to r1 from session A whose queuing fails after its claim, as a full disk or an outbox that
+        cannot be written would make it. Answers the error it raised."""
+        key, peers = relay.Key(self.private, "inline"), {"jason": crypto.public_key(JASON)}
+        with mock.patch.object(relay, "queue", side_effect=relay.RelayError("the outbox could not be written")):
+            with self.assertRaises(relay.RelayError) as raised:
+                repo_inbox.respond(self.one.root, REPO, self.one.work, key, peers, "r1", outcome, by=by, text=text,
+                                   session=A, registration=agents.record(self.one.root, A), now=self.now)
+        return raised.exception
+
+    def test_a_reply_too_large_to_seal_leaves_the_session_able_to_reply(self) -> None:
+        # Catches a claim recorded before the reply is sealed: the reply passes the text limit, fails the sealed
+        # one, and the session is marked as having replied though nothing was sent, so it can never reply.
+        self.incoming()
+
+        refused = self.inbox(self.one, A, "reply", "r1", "--text", '"' * 13_000, "--as", "agent")
+        state = self.entries(self.one, A)[0]["state"]
+        again = self.inbox(self.one, A, "reply", "r1", "--text", "Parser half done", "--as", "agent")
+
+        self.assertNotEqual(0, refused[0])
+        self.assertIn("too large for the relay", refused[2])
+        self.assertEqual("open", state)
+        self.assertEqual(0, again[0], again[2])
+        self.assertEqual(1, len(self.sent_to_jason()))
+        self.assertEqual(1, self.entries(self.one, A)[0]["reply_count"])
+
+    def test_a_reply_refused_after_its_claim_leaves_the_session_able_to_reply(self) -> None:
+        # Catches a claim kept when queuing the reply fails, which marks the session as having replied though
+        # nothing was queued.
+        self.incoming()
+
+        self.refused_queue("reply", "agent", "Parser half done")
+        state = self.entries(self.one, A)[0]["state"]
+        again = self.inbox(self.one, A, "reply", "r1", "--text", "Parser half done", "--as", "agent")
+
+        self.assertEqual("open", state)
+        self.assertEqual(0, again[0], again[2])
+        self.assertEqual(1, len(self.sent_to_jason()))
+
+    def test_a_closing_response_refused_after_its_claim_leaves_the_entry_and_its_state(self) -> None:
+        # Catches a claim kept when queuing a closing response fails, which removes the entry and its snooze
+        # though the peer was never told.
+        self.incoming()
+        self.ok(self.one, A, "snooze", "r1", "--for", "60")
+
+        self.refused_queue("done", "user", None)
+        kept = [(entry["ref"], entry["state"]) for entry in self.entries(self.one, A)]
+        again = self.inbox(self.one, A, "done", "r1", "--as", "user")
+
+        self.assertEqual([("r1", "snoozed")], kept)
+        self.assertEqual(0, again[0], again[2])
+        self.assertEqual(1, len(self.sent_to_jason()))
+        self.assertEqual([], self.entries(self.one, A))
+
     def test_state_changed_on_two_machines_before_either_pushes_is_merged_rather_than_lost(self) -> None:
         self.incoming()
         self.status_request()

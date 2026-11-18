@@ -4255,6 +4255,8 @@ gathers one reply from each agent. Each response claims the entry under the
 repository inbox's lock before it queues anything, so of two commands that
 respond at once on one machine, only one sends: the other is refused,
 because the session already replied or the first response closed the item.
+A response refused for any reason, such as a reply too large for the relay
+once encrypted, leaves the entry as it was, so you can give it again.
 
 ### Follow up on an item you sent
 

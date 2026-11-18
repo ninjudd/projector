@@ -519,26 +519,35 @@ def respond(root: Path, repo: str, cwd: Path, key: relay.Key, peers: dict[str, b
     record.update(by=by, closes=closes, sent_at=now_ms(now))
     once = outcome == "reply" and by == "agent"
     mark = {"session": session, "machine": agents.this_machine(root), "at": now_ms(now)} if once else None
-    # Claimed before anything is queued, so of two commands that respond at once, only one sends.
-    state = claim(root, repo, entry, now, closes=closes, mark=mark)
-    changes = []
     sends = not (outcome == "dismissed" and kind == "notice")
+    # Sealed before the claim, so a response too large for the relay is refused with the entry as it was.
+    changes = []
     if sends:
         changes.append(change_of(key, relay.user_ref(entry["key_id"], record["id"]), public, record, "reply", now))
-    if closes:
-        changes += [deletion(relay.user_ref(key.id, entry["id"])), deletion(relay.state_ref(key.id, entry["id"]))]
-    elif state is not None:
-        changes.append(state_change(key, state, now))
-    relay.queue(root, repo, str(cwd), changes, now)
+    # Claimed before anything is queued, so of two commands that respond at once, only one sends. A command
+    # that fails after its claim releases it, so a response never queued leaves the entry as it was.
+    state, undo = claim(root, repo, entry, now, closes=closes, mark=mark)
+    try:
+        if closes:
+            changes += [deletion(relay.user_ref(key.id, entry["id"])),
+                        deletion(relay.state_ref(key.id, entry["id"]))]
+        elif state is not None:
+            changes.append(state_change(key, state, now))
+        relay.queue(root, repo, str(cwd), changes, now)
+    except BaseException:
+        release(root, repo, entry, undo)
+        raise
     return {**entry, "reply": record if sends else None, "closes": closes, "peer": name}
 
 
-def claim(root: Path, repo: str, entry: dict, now: float, *, closes: bool, mark: Optional[dict]) -> Optional[dict]:
+def claim(root: Path, repo: str, entry: dict, now: float, *, closes: bool,
+          mark: Optional[dict]) -> tuple[Optional[dict], dict]:
     """Claim the response to an incoming entry under the mirror's lock, which every change to the entry and its
     state takes, so of two commands that respond to it at once only one sends. Refuses an entry that another
     command closed since `entry` was read, and, with `mark`, a reply from a session that already replied. A
     closing response removes the entry and its state; a reply that keeps it open records `mark` in its state.
-    Answers that state to queue, or None when the state did not change."""
+    Answers that state to queue, or None when the state did not change, and what `release` needs to undo the
+    claim."""
     store = folder(root, repo)
     with locked(store):
         found = entry_in(entry_file(store, entry["ref"]))
@@ -552,12 +561,35 @@ def claim(root: Path, repo: str, entry: dict, now: float, *, closes: bool, mark:
                                  "once")
         if closes:
             entry_file(store, entry["ref"]).unlink(missing_ok=True)
-            if states.pop(entry["id"], None) is not None:
+            removed = states.pop(entry["id"], None)
+            if removed is not None:
                 write_states(store, states)
-            return None
+            return None, {"entry": found, "state": removed}
         if mark is None:
-            return None
-        return changed_state(store, states, entry, repo, now, add_replied=mark)
+            return None, {}
+        return changed_state(store, states, entry, repo, now, add_replied=mark), {"mark": mark}
+
+
+def release(root: Path, repo: str, entry: dict, undo: dict) -> None:
+    """Undo a claim whose response was never queued, under the mirror's lock: put back the entry and state a
+    closing response removed, or take the session's mark out of `replied`, so the response can be given again.
+    Leaves what another command changed since the claim."""
+    store = folder(root, repo)
+    with locked(store):
+        states = read_states(store)
+        if "entry" in undo:
+            path = entry_file(store, undo["entry"]["ref"])
+            if entry_in(path) is None:
+                write_json(path, undo["entry"])
+            if undo["state"] is not None and entry["id"] not in states:
+                states[entry["id"]] = undo["state"]
+                write_states(store, states)
+        elif "mark" in undo:
+            state = states.get(entry["id"])
+            if state is not None and undo["mark"] in (state.get("replied") or []):
+                states[entry["id"]] = {**state, "replied": [found for found in state["replied"]
+                                                            if found != undo["mark"]]}
+                write_states(store, states)
 
 
 def changed_state(store: Path, states: dict[str, dict], entry: dict, repo: str, now: float, *,

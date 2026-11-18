@@ -573,3 +573,10 @@ building:
   command closed meanwhile, and records the session or removes the entry
   before it queues anything. So two commands that respond at once send one
   response between them, where checking an earlier read let both send.
+- **A refused response leaves its entry as it was.** `respond` seals the
+  response, the step that refuses one too large for the relay, before it
+  claims the entry, and releases the claim under the same lock when
+  queuing fails after it: it takes the session's mark out of `replied`, or
+  puts back the entry and state a closing response removed. A claim kept
+  for a response never sent would stop that session from ever replying, or
+  drop an entry the peer was never told was closed.
