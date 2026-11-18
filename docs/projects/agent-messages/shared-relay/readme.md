@@ -66,7 +66,8 @@ repository says so to its sender and its reader.
    `location_source`. With no value, or with `origin`, the location is the
    work repository and the source is `origin`. A checkout with no GitHub
    `origin` and no `agent.relay` keeps today's `relay: none`. One with a
-   configured location relays through it.
+   configured location relays through it, and its records name no work
+   repository (step 7).
 3. **Allow a location a repository chose.** `agent.relay` is a destination
    setting, in `config.DESTINATIONS` (`../../config-trust/readme.md` § 2.1
    step 5). A tracked `.projector.toml` takes effect from the default branch,
@@ -107,18 +108,21 @@ repository says so to its sender and its reader.
    protocol v2 advertises only refs under those prefixes, so neither branches
    nor other people's refs are transferred. The bare clone has no hooks of
    its own, and a global `core.hooksPath` still applies.
-7. **Carry the work repository.** Presence already holds `repo`. A message
-   gains `repo` and `repo_visibility`, the sender's work repository and its
-   visibility. A peers item gains the same two fields, and its `pr` may then
-   name a pull request in that repository. The sender reads visibility with
-   `gh repo view --json visibility`, cached for each repository in
-   `<root>/visibility.json` and refreshed on each full pass. It writes
-   `unknown` when `gh` cannot say. A sender on this version always writes
-   both fields when it can. The receiver still accepts a record with
-   neither, as every message the previous version queued is: such a record
-   predates shared relays, so it came through the relay's own repository,
-   and the reader treats it as not crossing, with no source label and no
-   private-source notice.
+7. **Carry the work repository.** Presence already holds `repo`, and leaves it
+   out for a checkout with no GitHub `origin`. A message gains `repo` and
+   `repo_visibility`, the sender's work repository and its visibility. A peers
+   item gains the same two fields, and its `pr` may then name a pull request
+   in that repository. The sender reads visibility with `gh repo view --json
+   visibility`, cached for each repository in `<root>/visibility.json` and
+   refreshed on each full pass. It writes `unknown` when `gh` cannot say. A
+   sender in a checkout with no GitHub `origin`, which relays only through a
+   configured location (step 2), leaves out `repo` and writes
+   `repo_visibility: unknown`. A sender on this version always writes both
+   fields when it can. The receiver still accepts a record with neither, as
+   every message the previous version queued is: such a record predates shared
+   relays, so it came through the relay's own repository, and the reader
+   treats it as not crossing, with no source label and no private-source
+   notice.
 8. **Share by location.** Every rule that compared work repositories now
    compares locations:
    - `project agent list` shows your live agents in every location this
@@ -144,7 +148,11 @@ repository says so to its sender and its reader.
    Review coordination is about one repository, so `remote_reviews` still
    matches presence by `repo`.
 9. **Guard crossings.** A record crosses when its work repository differs
-   from the recipient session's, or when it goes to a peer. A record with
+   from the recipient session's, or when it goes to a peer. A session in a
+   checkout with no GitHub `origin` has no work repository, and no
+   repository equals it, not even another such checkout's. So a record with
+   `repo_visibility` but no `repo` crosses to every reader, and every record
+   that names a `repo` crosses to a reader in such a checkout. A record with
    neither `repo` nor `repo_visibility` never crosses (step 7). § 2.3 says
    what happens then.
 
@@ -155,7 +163,7 @@ repository says so to its sender and its reader.
 | `agent.relay` | `str`: `origin`, the default, or `github:<owner>/<repo>`. Read from every layer, nearest first. |
 | `<root>/visibility.json` | `schema_version: 1` and `repos`, a map from repository slug to `{visibility, read_at}`. |
 | `agent.json` | Adds `location` and `location_source`. `relay` gains the value `waiting`. |
-| Message and peers item | Add `repo` and `repo_visibility`, both optional on receipt. A record with neither predates shared relays and does not cross (§ 2.1 step 7). A record with either has both, and the receiver checks them against `review.repo_slug`'s shape and the four visibility values `PUBLIC`, `INTERNAL`, `PRIVATE`, and `unknown`. |
+| Message and peers item | Add `repo` and `repo_visibility`, both optional on receipt. A record with neither predates shared relays and does not cross (§ 2.1 step 7). Otherwise `repo_visibility` is one of the four values `PUBLIC`, `INTERNAL`, `PRIVATE`, and `unknown`, and `repo` has `review.repo_slug`'s shape. `repo` may be absent only when `repo_visibility` is `unknown`, from a sender in a checkout with no GitHub `origin`. |
 | Peers item | Adds `scope_repo` (optional), the one repository whose sessions show it, in the same shape as `repo`. |
 | Peers records | Each record's `location` (`../peers/readme.md` § 2.3) names the relay location it is pushed to, not the work repository `repo` names, and the location's job rejects a record whose `location` is another. |
 | `relay/<owner>/<repo>.json` | Adds `permission`, beside `visibility`, for a location other than a work repository. |
@@ -166,8 +174,8 @@ repository says so to its sender and its reader.
 | --- | --- |
 | **Read a repository's choice of relay from its default branch, and allow it once.** | A branch, such as a contributor's pull request branch you checked out, choosing your relay, which config-trust prevents for every setting. And the owner of a repository you cloned choosing it, which the one-time `project config allow` prevents. A relay you can write to, chosen by someone else, would show its other readers your key ID, when your agents come and go, and how much they send, and your messages would not reach the relay your team watches. |
 | **Require a configured location to be private or internal, and writable.** | A shared relay leaving permanent ciphertext, and the metadata above, on a public repository where anyone can fetch it, and a relay that fails on every push. |
-| **Name the source of a crossing record.** | An agent copying a private repository's content into another repository without knowing where it came from. The `PEER MESSAGE` line, `project agent read`, and `project inbox show` name the sender's repository whenever it differs from the reader's. When `repo_visibility` is not `PUBLIC`, including `unknown`, they add, whatever the reader's repository's visibility: `It comes from private repository acme/api: keep its private details out of anything you write in acme/site, and describe them in general terms if you need to.` Two private repositories can have different readers, so the notice never assumes the reader's repository is a safe place for the source's content. A record with neither field does not cross, so it gets neither the source nor the notice. |
-| **Remind a sender writing to a peer.** | An agent sending a private repository's details to another person who cannot read that repository. Before it writes, the skill tells it to assume a peer cannot read the repository it works in, and to write in general terms. After it sends, `inbox ask`, `request`, `tell`, and `reply` to a peer print `this leaves private repository acme/api: include only what jason may read` when the work repository is not `PUBLIC`. Messages between your own agents get no reminder, because you can read your own repositories, and the reader's notice covers copying onward. |
+| **Name the source of a crossing record.** | An agent copying a private repository's content into another repository without knowing where it came from. The `PEER MESSAGE` line, `project agent read`, and `project inbox show` name the sender's repository whenever it differs from the reader's. When `repo_visibility` is not `PUBLIC`, including `unknown`, they add, whatever the reader's repository's visibility: `It comes from private repository acme/api: keep its private details out of anything you write in acme/site, and describe them in general terms if you need to.` Two private repositories can have different readers, so the notice never assumes the reader's repository is a safe place for the source's content. A record with no `repo` names its source as `a checkout with no GitHub repository`, and its visibility is `unknown`, so it carries the notice: `It comes from a checkout with no GitHub repository: keep its private details out of anything you write in acme/site, …`. A reader in such a checkout sees `this checkout` in place of its own repository. A record with neither field does not cross, so it gets neither the source nor the notice. |
+| **Remind a sender writing to a peer.** | An agent sending a private repository's details to another person who cannot read that repository. Before it writes, the skill tells it to assume a peer cannot read the repository it works in, and to write in general terms. After it sends, `inbox ask`, `request`, `tell`, and `reply` to a peer print `this leaves private repository acme/api: include only what jason may read` when the work repository is not `PUBLIC`, and `this leaves a checkout with no GitHub repository: include only what jason may read` from a checkout with no GitHub `origin`. Messages between your own agents get no reminder, because you can read your own repositories, and the reader's notice covers copying onward. |
 
 Nothing else limits which repositories may message each other within one
 location. The file you put `agent.relay` in is the boundary: if you set it
@@ -179,13 +187,13 @@ for a company, the company's repositories share one relay.
 | --- | --- |
 | `src/projector/config.py` | Add `agent.relay` to `SETTINGS`, readable from every layer, and to `DESTINATIONS`, and `relay_location(value)`, which parses `origin` and `github:<owner>/<repo>` and refuses other forms, naming `s3://` as not yet supported. |
 | `src/projector/relay.py` | Key `Job` and the daemon's `Relay` by location (§ 2.1 step 5). Add the bare clone and its credential arguments (step 6), and the location check with its cache fields (step 4). Pass the location, not the work repository, wherever a ref is queued. |
-| `src/projector/agents.py` | Resolve and record `location` and `location_source` in `register`, and write `relay: waiting`. List and resolve recipients by location. Add `repo` and `repo_visibility` to messages, and accept a message with neither as one that does not cross. Add the crossing notice to `event_line` and `read_text`, and the send reminder. Read and cache visibility in `<root>/visibility.json`. |
+| `src/projector/agents.py` | Resolve and record `location` and `location_source` in `register`, and write `relay: waiting`. List and resolve recipients by location. Add `repo` and `repo_visibility` to messages, leaving out `repo` and writing `unknown` in a checkout with no GitHub `origin`, and accept a message with neither as one that does not cross. Add the crossing notice to `event_line` and `read_text`, and the send reminder. Read and cache visibility in `<root>/visibility.json`. |
 | `src/projector/watch.py` | Report each location's state, permission, visibility, and the source file of a waiting location in `watch status`. |
 | `src/projector/cli.py` | Add `project agent relay show [--json]`, which prints the location the current directory resolves to, the file that set it, whether it waits for `project config allow`, and the location's last state. |
 | `src/projector/repo_inbox.py` (from `../peers/readme.md`) | Key the mirror by location. Add `repo`, `repo_visibility`, and `scope_repo` to items, accepting an item with neither of the first two as one that does not cross. Show the work repository on a crossing entry, and add the crossing notice and reminder. Filter a session's entries by `scope_repo`, and list every entry with `--relay`. |
 | `src/projector/inbox.py`, `src/projector/cli.py`, `src/projector/console.py` | Add `--repo` to `inbox ask`, `request`, and `tell` with `--to`, and `--relay` to `inbox list`. The console lists scoped items in every session, marked with their repository. |
 | `src/projector/permissions.py`, `tests/test_permissions.py` | Allow `project agent relay show` in the Codex rules. |
-| `skills/message/SKILL.md` | Explain that agents and inbox entries are shared by relay location, and add the crossing rules. Before writing to a peer from a repository that is not `PUBLIC`, assume the peer cannot read it, and write in general terms. Never copy a crossing record's private details into anything written in another repository, whatever that repository's visibility; describe them in general terms instead. Never run `project config allow`. |
+| `skills/message/SKILL.md` | Explain that agents and inbox entries are shared by relay location, and add the crossing rules. Before writing to a peer from a repository that is not `PUBLIC`, or from a checkout with no GitHub repository, assume the peer cannot read it, and write in general terms. Never copy a crossing record's private details into anything written in another repository, whatever that repository's visibility; describe them in general terms instead. Never run `project config allow`. |
 | `docs/cli.md` | Document `agent.relay`, where to put it for a repository, a team, or a company, allowing a location, the bare clone, and the controls. |
 | `tests/test_relay.py`, `tests/test_agents.py`, `tests/test_config.py` | The criteria in § 4. |
 
@@ -238,6 +246,7 @@ temporary checkouts.
 | Make the fake `gh` report the configured location `PUBLIC`, then `INTERNAL`, then `READ` permission. | The relay is off for `PUBLIC` and for `READ`, with each reason in `list` and `watch status`, and runs for `INTERNAL`. The default relay through a public work repository still runs. Catches a public or read-only shared relay, and a refused internal one. |
 | Run a pass with only the bare clone available, with a global `core.hooksPath` hook that logs its runs and a fake `gh auth git-credential`. | The fetch and push run in `<root>/relays/acme/agents.git`, the hook logs one run, the fake helper is called, and the fetch's refspecs name only `refs/projector/` prefixes. Catches a clone that fetches branches, skips global hooks, or uses other credentials. |
 | Send from a private `api` session to B in a public `web` session, and post a peers item from `api` to a peer. | `inbox ask --to` prints the private-source reminder, and `send` to B does not. B's line and `read` name `acme/api` and carry the private-source notice before the text. A message between two sessions in `api` carries neither. Send from `api` to a session in another private repository too: it carries the same notice. Catches a crossing that goes unmarked, a notice that spares a private destination, and a notice on records that do not cross. |
+| Under the parent that sets `acme/agents`, register C in a checkout with no GitHub `origin`. Send from C to B, post a peers item from C to a peer, and send from B to C. | C relays through `acme/agents`. Its message has no `repo` and has `repo_visibility: unknown`, and B's line and `read` name `a checkout with no GitHub repository` and carry the private-source notice. The peers item prints the reminder naming that checkout. C's line for B's message names `acme/web`, and any notice it carries says `this checkout`. Catches an originless sender with no valid record, a missing `repo` that matches another, and an unknown source spared the notice or the reminder. |
 | Relay a message whose `repo_visibility` is `PUBLIC` but whose sender's cache says `PRIVATE`. | The reader uses the record's value, and `read` shows no private notice. Catches a reader that consults a cache it may not have. |
 | Register sessions in the relay's own repository and elsewhere on one machine. | One job runs for the location, from the checkout, and both sessions list each other. Catches two jobs racing on one location. |
 | With existing caches and outboxes from a build without `agent.relay`, upgrade and pass. | Queued changes push, and no file moves. Catches a migration the design said was not needed. |
