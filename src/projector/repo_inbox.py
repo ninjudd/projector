@@ -80,9 +80,8 @@ def now_ms(now: Optional[float] = None) -> int:
 # The mirror
 
 def folder(root: Path, repo: str) -> Path:
-    """The repository's store, beside the watch state root `root`."""
-    owner, name = repo.lower().split("/")
-    return root.parent / "repo-inbox" / owner / name
+    """The location's store, beside the watch state root `root`."""
+    return root.parent / "repo-inbox" / config.location_key(repo)
 
 
 def entry_file(store: Path, ref: str) -> Path:
@@ -758,8 +757,8 @@ def place(root: Path, session: Optional[str]) -> tuple[Optional[str], Optional[s
     if found:
         return None, found.get("repo"), Path.cwd()
     repo = agents.checkout(Path.cwd()).get("repo")
-    location, _, waits = agents.relay_place(Path.cwd(), repo)
-    return (None if waits else location), repo, Path.cwd()
+    relaying = agents.relay_place(Path.cwd(), repo)
+    return (None if relaying.waits else relaying.location), repo, Path.cwd()
 
 
 def sealing_key() -> relay.Key:

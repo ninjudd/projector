@@ -1140,6 +1140,10 @@ test('the repository inbox lives under the state directory, and a registration n
   expect(locationOf('{"repo": "acme/api", "location": "acme/agents", "relay": "waiting"}')).toBeUndefined()
   expect(locationOf('{"schema_version": 1}')).toBeUndefined()
   expect(locationOf('{"repo": "../../etc"}')).toBeUndefined()
+  const s3 = '"location": "https://s3.amazonaws.com/team/relay", "relay": "published"'
+  expect(locationOf(`{"repo": "acme/api", ${s3}, "store": "s3/0123456789abcdef"}`)).toBe('s3/0123456789abcdef')
+  expect(locationOf(`{"repo": "acme/api", ${s3}, "store": "s3/../../etc"}`)).toBeUndefined()
+  expect(locationOf(`{"repo": "acme/api", ${s3}}`)).toBeUndefined()
   expect(locationOf(undefined)).toBeUndefined()
   expect(isEntry(entry())).toBe(true)
   expect(isEntry(question())).toBe(false)

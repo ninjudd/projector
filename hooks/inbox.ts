@@ -399,14 +399,24 @@ export function entriesStoreOf(env: Env, repo: string): string | undefined {
 
 /**
  * The relay location whose repository inbox a session shows, from its
- * `agent.json`: the `location` it registered with, or its `repo` for a
- * registration from before shared relays, or undefined when it names neither
- * or waits for `project config allow`.
+ * `agent.json`, as the mirror's folder names it: the `location` it registered
+ * with, or its `repo` for a registration from before shared relays, or for an
+ * S3 location the `store` the CLI files it under, `s3/` and a digest of its
+ * identity. Undefined when it names none or waits for `project config allow`.
  */
 export function locationOf(registration: string | undefined): string | undefined {
   try {
-    const found = JSON.parse(registration ?? '') as { location?: unknown; repo?: unknown; relay?: unknown }
-    const location = found.relay === 'waiting' ? undefined : (found.location ?? found.repo)
+    const found = JSON.parse(registration ?? '') as {
+      location?: unknown
+      repo?: unknown
+      relay?: unknown
+      store?: unknown
+    }
+    if (found.relay === 'waiting') return undefined
+    if (typeof found.location === 'string' && found.location.startsWith('https://')) {
+      return typeof found.store === 'string' && /^s3\/[0-9a-f]{16}$/.test(found.store) ? found.store : undefined
+    }
+    const location = found.location ?? found.repo
     return typeof location === 'string' && /^[\w.-]+\/[\w.-]+$/.test(location) ? location : undefined
   } catch {
     return undefined

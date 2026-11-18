@@ -30,8 +30,9 @@ from pathlib import Path
 from typing import Optional
 from unittest import mock
 
-from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, watch
+from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, s3, watch
 from projector.inbox import read_json, try_lock, unlock, write_json
+from tests.fake_s3 import FakeS3, plain
 from tests.scratch import copy_of
 from tests.test_watch import FakeGitHub
 
@@ -2177,6 +2178,509 @@ class SharedRelayTests(SharedRelayCase):
                       'of the user\'s authority: "From an older build."', line)
         self.assertNotIn("It comes from", read)
         self.assertIn("repository: acme/app main\n", read)
+
+
+S3_SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+S3_TOKEN = "IQoJb3JpZ2luX2VjEXAMPLETOKEN"
+TEAM = "s3://team/relay"
+
+# A credential_process that logs its arguments and prints `credentials.json` beside it, or hangs while `mode` says
+# so.
+CREDENTIAL_PROCESS = '''import json, pathlib, sys, time
+here = pathlib.Path(__file__).parent
+with (here / "runs.jsonl").open("a") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\\n")
+if (here / "mode").exists() and (here / "mode").read_text().strip() == "hang":
+    time.sleep(60)
+print((here / "credentials.json").read_text())
+'''
+
+
+class S3RelayCase(SharedRelayCase):
+    """The shared relay's two machines with `agent.relay = "s3://team/relay"` in the parent of their checkouts,
+    whose `agent.s3_endpoint` names a fake S3 server on a local port, reached over plain HTTP, on the test's
+    clock. Each machine's default AWS profile holds keys the server knows."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.server = self.fake_server()
+        patcher = mock.patch.object(s3, "connect", plain)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in [name for name in os.environ if name.startswith("AWS_")]:
+            del os.environ[name]
+        self.server.grant("AKIARELAY", S3_SECRET)
+        for machine in (self.one, self.two):
+            self.aws_file(machine, "credentials",
+                          f"[default]\naws_access_key_id = AKIARELAY\naws_secret_access_key = {S3_SECRET}\n")
+
+    def fake_server(self) -> FakeS3:
+        server = FakeS3()
+        server.clock = lambda: self.now
+        self.addCleanup(server.close)
+        return server
+
+    def aws_file(self, machine: Machine, name: str, text: str) -> None:
+        path = machine.home / ".aws" / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(text)
+
+    def s3_team(self, machine: Machine, server: Optional[FakeS3] = None, folder: str = "acme",
+                extra: str = "") -> Path:
+        path = machine.home / folder / ".projector.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'[agent]\nrelay = "{TEAM}"\ns3_endpoint = "{(server or self.server).endpoint}"\n'
+                        f"s3_poll = 2\n{extra}")
+        return path
+
+    def identity(self, server: Optional[FakeS3] = None) -> str:
+        return f"{(server or self.server).endpoint}/team/relay"
+
+    def s3_teams(self) -> tuple[Path, Path]:
+        """A in `acme/api` on machine one and B in `acme/web` on machine two, relaying through the bucket."""
+        self.s3_team(self.one)
+        self.s3_team(self.two)
+        api, web = self.checkout(self.one, "acme/api"), self.checkout(self.two, "acme/web")
+        self.one.claude(A)
+        self.two.claude(B)
+        self.one.register(A, "--name", "parser-refactor", "--summary", "Refactoring the parser",
+                          "--model", "claude-opus-5-5", cwd=api)
+        self.two.register(B, "--name", "test-writer", "--model", "gpt-5.5", cwd=web)
+        for machine in (self.one, self.two, self.one):
+            machine.run_pass()
+        return api, web
+
+    def located(self, machine: Machine, server: Optional[FakeS3] = None) -> dict:
+        return machine.status()["repositories"][self.identity(server).lower()]
+
+    def presence_name(self, machine: Machine, session: str) -> str:
+        return f"relay/{self.key.id}/agents/{agents.record(machine.root, session)['relay_id']}"
+
+    def s3_outbox(self, machine: Machine) -> list[dict]:
+        return relay.outbox_items(machine.root, self.identity())
+
+    def sealed_message(self, message: dict) -> bytes:
+        return relay.sealed_text(relay.seal(self.key, message)).encode()
+
+    def credential_process(self, machine: Machine, expires: float) -> Path:
+        """Profile `acme-relay` on the machine, whose credential_process prints keys with a session token that
+        expire at `expires`, which the server knows."""
+        folder = machine.home / "process"
+        folder.mkdir(exist_ok=True)
+        (folder / "credentials.json").write_text(json.dumps(
+            {"Version": 1, "AccessKeyId": "AKIAPROCESS", "SecretAccessKey": S3_SECRET, "SessionToken": S3_TOKEN,
+             "Expiration": s3.stamp_of(expires)}))
+        (folder / "process.py").write_text(CREDENTIAL_PROCESS)
+        self.server.grant("AKIAPROCESS", S3_SECRET, S3_TOKEN, expires)
+        self.aws_file(machine, "config", f"[profile acme-relay]\ncredential_process = {sys.executable} "
+                                         f"{folder / 'process.py'} --profile acme-sso\n")
+        return folder
+
+
+class S3RelayTests(S3RelayCase):
+    def test_an_s3_location_carries_agents_and_messages_and_no_ref_reaches_git(self) -> None:
+        api, web = self.s3_teams()
+
+        listed_one = self.one.project("agent", "list", claude=A, cwd=api)[1]
+        listed_two = self.two.project("agent", "list", claude=B, cwd=web)[1]
+        code, out, err = self.one.project("agent", "send", "test-writer", "The parser raises ValueError.",
+                                          claude=A, cwd=api)
+        self.one.run_pass()
+        self.two.run_pass()
+        [line] = self.two.events(B)
+        message = re.search(r"PEER MESSAGE (m-[0-9a-f]{32})", line)[1]
+        replied = self.two.project("agent", "reply", message, "Then test for ValueError.", claude=B, cwd=web)
+        self.two.run_pass()
+        self.one.run_pass()
+
+        self.assertIn("test-writer\tclaude gpt-5.5\ttwo\tacme/web main", listed_one)
+        self.assertIn("parser-refactor\tclaude claude-opus-5-5\tone\tacme/api main", listed_two)
+        self.assertEqual((0, 0), (code, replied[0]), err + replied[2])
+        self.assertNotIn(relay.PUBLIC_REMINDER, out)
+        self.assertIn('It begins: "The parser raises ValueError."', line)
+        [answer] = self.one.events(A)
+        self.assertIn('"Then test for ValueError."', answer)
+        self.assertEqual({}, self.refs())
+        self.assertEqual([], self.relay_refs("acme/agents") + self.relay_refs("acme/api") + self.relay_refs("acme/web"))
+        self.assertEqual(2, len(self.server.names("team", f"relay/{self.key.id}/agents/")))
+        self.assertEqual(self.identity(), agents.record(self.one.root, A)["location"])
+        self.assertEqual("ok", self.located(self.one)["state"])
+
+    def test_no_object_in_the_bucket_holds_a_name_summary_or_text_in_plain_form(self) -> None:
+        api, _ = self.s3_teams()
+        self.one.project("agent", "send", "test-writer", "The parser raises ValueError.", claude=A, cwd=api)
+        self.one.run_pass()
+
+        bodies = b"".join(self.server.objects[("team", name)].body for name in self.server.names("team"))
+
+        self.assertTrue(any("/inbox/" in name for name in self.server.names("team")))
+        for plain_text in (b"parser-refactor", b"Refactoring the parser", b"The parser raises", LOGIN.encode(),
+                           EMAIL.encode(), A.encode(), b"acme/api"):
+            self.assertNotIn(plain_text, bodies)
+
+    def test_a_message_arrives_within_the_poll_interval_with_no_watch_pass(self) -> None:
+        api, _ = self.s3_teams()
+        self.one.project("agent", "send", "test-writer", "The parser raises ValueError.", claude=A, cwd=api)
+        self.one.run_pass()
+        sent = self.now
+
+        assert self.two.daemon is not None
+        for _ in range(4):
+            self.advance(1)
+            self.two.claude(B)
+            self.two.daemon.tick()
+            self.two.settle()
+            if self.two.events(B):
+                break
+
+        self.assertEqual(1, len(self.two.events(B)))
+        self.assertLessEqual(self.now - sent, 2 + 2)
+        self.assertGreater(self.two.daemon.next_pass, self.now, "a watch pass would have polled it anyway")
+
+    def test_a_renewal_whose_object_another_job_changed_gets_412_and_lands_on_the_next_listing(self) -> None:
+        self.s3_teams()
+        name = self.presence_name(self.one, A)
+        self.advance(relay.LEASE - relay.RENEW + 60)
+        self.one.claude(A)
+        self.two.claude(B)
+        real = relay.S3Transport.apply
+        raced: list[str] = []
+
+        def racing(transport: relay.S3Transport, items: list[dict]):
+            """Another job's renewal lands between this job's listing and its own."""
+            if not raced:
+                raced.append(self.server.put("team", name, self.server.objects[("team", name)].body))
+            return real(transport, items)
+
+        with mock.patch.object(relay.S3Transport, "apply", racing):
+            self.one.run_pass()
+        stale = [item for item in self.s3_outbox(self.one) if item["ref"].startswith(relay.AGENTS)]
+        self.one.run_pass()
+
+        puts = [found for found in self.server.seen("PUT") if found.name == name]
+        self.assertEqual([412, 200], [found.status for found in puts[-2:]])
+        self.assertEqual(raced[0], puts[-1].headers["if-match"])
+        self.assertEqual([True], [item.get("stale") for item in stale])
+        self.assertEqual([], self.s3_outbox(self.one))
+
+    def test_a_deletion_of_an_object_already_gone_counts_as_deleted(self) -> None:
+        api, _ = self.s3_teams()
+        name = self.presence_name(self.one, A)
+        self.one.project("agent", "unregister", claude=A, cwd=api)
+        del self.server.objects[("team", name)]
+
+        self.one.run_pass()
+
+        self.assertEqual([404], [found.status for found in self.server.seen("DELETE") if found.name == name])
+        self.assertEqual([], self.s3_outbox(self.one))
+
+    def test_a_large_or_misnamed_object_and_a_flood_are_bounded_before_any_read(self) -> None:
+        self.s3_teams()
+        b = self.b_relay_id()
+        inbox = f"relay/{self.key.id}/inbox/{b}"
+        big, misnamed = f"{inbox}/m-{'0' * 32}", f"{inbox}/a-misnamed"
+        self.server.put("team", big, self.sealed_message(self.message(f"m-{'0' * 32}", to=b)) + b" " * (33 * 1024))
+        self.server.put("team", misnamed, self.sealed_message(self.message(f"m-{'e' * 32}", to=b)))
+        for index in range(300):
+            message = f"m-{index + 1:032x}"
+            self.server.put("team", f"{inbox}/{message}", self.sealed_message(self.message(message, to=b)))
+
+        self.two.run_pass()
+
+        reads = [found.name for found in self.server.seen("GET") if found.name.startswith(inbox)]
+        reasons = [rejection["reason"] for rejection in self.located(self.two)["rejections"]]
+        self.assertEqual(64, len(self.two.events(B)))
+        self.assertEqual(64, len(reads))
+        self.assertNotIn(big, reads)
+        self.assertNotIn(misnamed, reads)
+        self.assertEqual(["ref-name", "too-large"], sorted(reasons))
+        self.assertIn(misnamed, self.server.names("team"))
+        self.assertNotIn(big, self.server.names("team"))
+
+    def test_a_probe_interrupted_by_a_restart_leaves_no_object_after_the_next_full_pass(self) -> None:
+        self.s3_team(self.one)
+        api = self.checkout(self.one, "acme/api")
+        self.one.claude(A)
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+        real = s3.Client.put_object
+        probes = f"relay/{self.key.id}/probe/"
+
+        def stopped(client: s3.Client, name: str, body: bytes, **options) -> str:
+            """The daemon stops once the probe's first PutObject lands: no later request of the probe is sent."""
+            if name.startswith(probes) and any(found.name == name for found in self.server.seen("PUT")):
+                raise RuntimeError("the daemon stopped")
+            return real(client, name, body, **options)
+
+        def no_cleanup(client: s3.Client, name: str, if_match: str) -> None:
+            raise RuntimeError("the daemon stopped")
+
+        with mock.patch.object(s3.Client, "put_object", stopped), \
+                mock.patch.object(s3.Client, "delete_object", no_cleanup):
+            self.one.run_pass()
+        left = self.server.names("team", probes)
+        assert self.one.daemon is not None
+        self.one.daemon.relay.close()
+        self.one.daemon = None
+        self.advance(relay.PROBE_AGE + 1)
+        self.one.claude(A)
+        self.one.run_pass()
+
+        names = {found.name for found in self.server.seen("PUT") if found.name.startswith(probes)}
+        self.assertEqual(1, len(left))
+        self.assertEqual(2, len(names), "the probe after the restart picked a new name")
+        self.assertEqual([], self.server.names("team", probes))
+        self.assertEqual(("ok", "ok"), (self.located(self.one)["state"], self.located(self.one)["probe"]["result"]))
+
+    def test_the_last_session_to_move_away_still_has_its_presence_deleted_at_the_old_s3_location(self) -> None:
+        """Its deletion waits while the old store is refused and goes once the store passes its probe, after the
+        daemon restarts, and no job polls the old location for the cleanup."""
+        self.s3_team(self.one)
+        api = self.checkout(self.one, "acme/api")
+        self.one.claude(A)
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+        self.one.run_pass()
+        old = self.presence_name(self.one, A)
+        published = self.server.names("team", old)
+        (self.one.home / "acme" / ".projector.toml").write_text(
+            f'[agent]\nrelay = "s3://team/moved"\ns3_endpoint = "{self.server.endpoint}"\ns3_poll = 2\n')
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+        queued = [(item["ref"], item["sealed"]) for item in self.s3_outbox(self.one)]
+
+        def restart() -> None:
+            assert self.one.daemon is not None
+            self.one.daemon.relay.close()
+            self.one.daemon = None
+            self.server.requests.clear()
+            self.advance(3)
+            self.one.claude(A)
+            self.one.run_pass()
+
+        self.server.public = True
+        restart()
+        refused = (self.server.names("team", old), len(self.s3_outbox(self.one)),
+                   self.one.status()["repositories"].get(self.identity().lower(), {}).get("state"))
+        self.server.public = False
+        restart()
+        polled = [found for found in self.server.seen("GET")
+                  if found.query.get("prefix", "").startswith("relay/") and found.signed_by]
+
+        self.assertEqual([old], published)
+        self.assertEqual(1, len(queued))
+        self.assertIsNone(queued[0][1])
+        self.assertEqual(([old], 1, "off"), refused)
+        self.assertEqual([], self.server.names("team", old))
+        self.assertEqual([], self.s3_outbox(self.one))
+        self.assertEqual([], polled)
+        self.assertTrue(self.server.names("team", "moved/"))
+
+    def test_a_store_that_ignores_a_condition_or_lets_anyone_list_turns_the_location_off(self) -> None:
+        self.s3_team(self.one)
+        api = self.checkout(self.one, "acme/api")
+        self.one.claude(A)
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+
+        for broken, reason in (("put-if-none-match", "this store does not honor If-None-Match on PutObject"),
+                               ("put-if-match", "this store does not honor If-Match on PutObject"),
+                               ("delete-if-match", "this store does not honor If-Match on DeleteObject"),
+                               ("public", "the bucket lets anyone list s3://team/relay")):
+            with self.subTest(broken=broken):
+                self.server.ignoring = {broken} - {"public"}
+                self.server.public = broken == "public"
+                if self.one.daemon is not None:
+                    self.one.daemon.relay.last_full = None
+                self.one.claude(A)
+                self.one.run_pass()
+                header = self.one.project("agent", "list", claude=A, cwd=api)[1].splitlines()[0]
+
+                self.assertEqual(("off", reason), (self.located(self.one)["state"], self.located(self.one)["error"]))
+                self.assertEqual(f"local only: {reason}", header)
+                self.assertEqual([], self.server.names("team"))
+
+    def test_one_bucket_and_prefix_on_two_endpoints_are_two_locations(self) -> None:
+        other = self.fake_server()
+        other.grant("AKIARELAY", S3_SECRET)
+        peer = relay.Key(bytes(range(40, 72)), "inline")
+        for machine, private, name, public in ((self.one, self.private, "jason", peer.public),
+                                                (self.two, peer.private, "ada", self.key.public)):
+            path = machine.home / ".projector.toml"
+            path.write_text(f'[agent]\nkey = "x25519:{crypto.encode(private)}"\n[agent.peers]\n'
+                            f'{name} = "{crypto.encode(public)}"\n')
+            self.s3_team(machine)
+            self.s3_team(machine, other, "beta")
+        api, docs = self.checkout(self.one, "acme/api"), self.checkout(self.one, "acme/docs", "beta")
+        web, site = self.checkout(self.two, "acme/web"), self.checkout(self.two, "acme/docs", "beta")
+        for machine, session, cwd in ((self.one, A, api), (self.one, C, docs), (self.two, B, web),
+                                      (self.two, D, site)):
+            machine.claude(session)
+            machine.register(session, "--name", f"agent-{session[0]}", cwd=cwd)
+        for machine in (self.one, self.two, self.one):
+            machine.run_pass()
+        posted = self.one.project("inbox", "tell", "--to", "jason", "The parser landed", claude=A, cwd=api)
+        self.one.run_pass()
+        self.two.run_pass()
+        [item] = [name for name in self.server.names("team", f"relay/{peer.id}/user/")]
+        other.put("team", item, self.server.objects[("team", item)].body)
+        self.two.run_pass()
+        listed = json.loads(self.two.project("inbox", "list", "--repo", "--json", claude=B, cwd=web)[1])["items"]
+        nowhere = self.checkout(self.one, "acme/docs", "gamma")
+        (self.one.home / "gamma" / ".projector.toml").write_text(f'[agent]\nrelay = "{TEAM}"\n')
+        with self.one.acting(nowhere):
+            resolved = agents.relay_place(nowhere, "acme/docs").location
+
+        relay_ids = {session: agents.record(machine.root, session)["relay_id"]
+                     for machine, session in ((self.one, A), (self.one, C), (self.two, B), (self.two, D))}
+        self.assertEqual(0, posted[0], posted[2])
+        for machine in (self.one, self.two):
+            self.assertEqual(2, len(list((machine.root / "relay" / "s3").glob("*.json"))))
+            self.assertEqual(2, len(list((machine.root / "outbox" / "s3").glob("*.json"))))
+        self.assertEqual({relay_ids[A], relay_ids[B]},
+                         {name.rsplit("/", 1)[1] for name in self.server.names("team") if "/agents/" in name})
+        self.assertEqual({relay_ids[C], relay_ids[D]},
+                         {name.rsplit("/", 1)[1] for name in other.names("team") if "/agents/" in name})
+        self.assertEqual(["The parser landed"], [entry["subject"] for entry in listed if entry["role"] == "incoming"])
+        self.assertEqual(["location-mismatch"],
+                         [found["reason"] for found in self.located(self.two, other)["rejections"]])
+        self.assertEqual("https://s3.amazonaws.com/team/relay", resolved)
+
+    def test_an_endpoint_and_a_profile_a_repository_commits_wait_until_you_allow_each(self) -> None:
+        api = self.checkout(self.one, "acme/api", "work")
+        SharedRelayTests.commit_policy(self, api, f'[agent]\nrelay = "{TEAM}"\ns3_endpoint = "{self.server.endpoint}"\n'
+                                's3_profile = "acme-relay"\n')
+        folder = self.credential_process(self.one, self.now + 3600)
+        self.one.claude(A)
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+        with mock.patch("builtins.input", return_value="y"):
+            allowed = self.one.project("config", "allow", "agent.relay", TEAM, cwd=api, terminal=True)
+        self.one.run_pass()
+        header = self.one.project("agent", "list", claude=A, cwd=api)[1].splitlines()[0]
+        before = (list(self.server.requests), (folder / "runs.jsonl").exists())
+        with mock.patch("builtins.input", return_value="y"):
+            for key, value in (("agent.s3_endpoint", self.server.endpoint), ("agent.s3_profile", "acme-relay")):
+                self.one.project("config", "allow", key, value, cwd=api, terminal=True)
+        self.one.run_pass()
+
+        self.assertEqual(0, allowed[0], allowed[2])
+        self.assertEqual(([], False), before)
+        self.assertIn(f"`project config allow agent.s3_endpoint {self.server.endpoint}`", header)
+        self.assertIn("`project config allow agent.s3_profile acme-relay`", header)
+        self.assertTrue(header.startswith(f"local only: {self.identity()}, set by origin/main:.projector.toml"))
+        self.assertEqual("published", agents.record(self.one.root, A)["relay"])
+        self.assertTrue(self.server.names("team", f"relay/{self.key.id}/agents/"))
+
+    def test_a_registration_written_while_admission_checks_another_waits_for_its_own_values(self) -> None:
+        """The session registers again with a profile you have not allowed while admission checks the approvals
+        of the registration it replaces. The new registration waits for its own profile rather than relaying on
+        the old one's approvals."""
+        api = self.checkout(self.one, "acme/api", "work")
+        policy = f'[agent]\nrelay = "{TEAM}"\ns3_endpoint = "{self.server.endpoint}"\ns3_profile = "{{}}"\n'
+        SharedRelayTests.commit_policy(self, api, policy.format("acme-relay"))
+        self.one.claude(A)
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+        with mock.patch("builtins.input", return_value="y"):
+            for key, value in (("agent.relay", TEAM), ("agent.s3_endpoint", self.server.endpoint),
+                               ("agent.s3_profile", "acme-relay")):
+                self.one.project("config", "allow", key, value, cwd=api, terminal=True)
+        SharedRelayTests.commit_policy(self, api, policy.format("other-relay"))
+        checking = agents.is_allowed
+        registered = threading.Event()
+        started: list[threading.Thread] = []
+
+        def register_again() -> None:
+            try:
+                self.one.register(A, "--name", "parser-refactor", cwd=api)
+            finally:
+                registered.set()
+
+        def interleaved(path: Path, key: str, value: object) -> bool:
+            # The first check admission makes lets the second registration run to its end, or to the lock that
+            # admission holds, before admission goes on.
+            if not started:
+                started.append(threading.Thread(target=register_again, daemon=True))
+                started[0].start()
+                registered.wait(0.5)
+            return checking(path, key, value)
+
+        with mock.patch.object(agents, "is_allowed", interleaved):
+            agents.admit(self.one.root, config.allowed_path(self.one.env), True, self.now)
+        started[0].join(10)
+        found = agents.record(self.one.root, A)
+
+        self.assertTrue(registered.is_set())
+        self.assertEqual("other-relay", found["s3"]["profile"])
+        self.assertEqual("waiting", found["relay"])
+        self.assertIn(["agent.s3_profile", "other-relay"], found["allow"])
+
+    def test_no_output_log_status_or_process_argument_holds_the_secret_key_or_the_token(self) -> None:
+        folder = self.credential_process(self.one, self.now + 3600)
+        self.credential_process(self.two, self.now + 3600)
+        for machine in (self.one, self.two):
+            self.aws_file(machine, "credentials", "")
+            self.s3_team(machine, extra='s3_profile = "acme-relay"\n')
+        api, web = self.checkout(self.one, "acme/api"), self.checkout(self.two, "acme/web")
+        self.one.claude(A)
+        self.two.claude(B)
+        said = [self.one.register(A, "--name", "parser-refactor", cwd=api),
+                self.two.register(B, "--name", "test-writer", cwd=web)]
+        for machine in (self.one, self.two, self.one):
+            machine.run_pass()
+        said.append(self.one.project("agent", "send", "test-writer", "Hello", claude=A, cwd=api)[1])
+        self.one.run_pass()
+        self.two.run_pass()
+        for args in (("watch", "status"), ("watch", "status", "--json"), ("agent", "relay", "show"),
+                     ("agent", "relay", "show", "--json"), ("agent", "list", "--json")):
+            code, out, err = self.one.project(*args, claude=A, cwd=api)
+            said += [out, err]
+
+        shown = "\n".join([*said, *self.one.logged, *self.two.logged, (folder / "runs.jsonl").read_text(),
+                           (self.one.root / "status.json").read_text()])
+        self.assertEqual(1, len(self.two.events(B)))
+        self.assertIn("credentials: profile acme-relay (credential_process)", shown)
+        self.assertNotIn(S3_SECRET, shown)
+        self.assertNotIn(S3_TOKEN, shown)
+        for path in self.one.root.rglob("*.json"):
+            self.assertNotIn(S3_TOKEN, path.read_text(), path)
+
+    def test_a_hung_credential_process_or_store_is_stopped_and_stalls_no_codex_event(self) -> None:
+        folder = self.credential_process(self.one, self.now + 3600)
+        self.s3_team(self.one, extra='s3_profile = "acme-relay"\n')
+        api = self.checkout(self.one, "acme/api")
+        self.one.claude(A)
+        self.one.register(A, "--name", "parser-refactor", cwd=api)
+        (folder / "mode").write_text("hang")
+        # The process outlasts the 2 seconds the Codex event may take, so a read on the daemon's loop delays it.
+        with mock.patch.object(s3, "PROCESS_TIMEOUT", 3.0):
+            started = time.monotonic()
+            self.one.start_pass()
+            PushTests.other_codex_event(self)
+            assert self.one.daemon is not None
+            self.one.daemon.tick()
+            reached = wait_for(lambda: (self.bin / "calls.jsonl").exists(), 2) and time.monotonic() - started < 2
+            self.one.settle()
+        lapsed = self.located(self.one)
+        (folder / "mode").write_text("")
+        self.server.hanging = {"list"}
+        with mock.patch.object(s3, "TIMEOUT", 1.0):
+            self.advance(3)
+            self.one.claude(A)
+            self.one.run_pass()
+        hung = self.located(self.one)
+        self.server.hanging = set()
+        self.server.listing_body = b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY y "z">]><ListBucketResult/>'
+        self.advance(3)
+        self.one.claude(A)
+        self.one.run_pass()
+        declared = self.located(self.one)
+
+        self.assertTrue(reached, "a Codex event waited for the credential process")
+        self.assertEqual("off", lapsed["state"])
+        self.assertIn("did not finish within 3 seconds, so it was stopped", lapsed["error"])
+        self.assertEqual("error", hung["state"])
+        self.assertIn("did not finish within 1 seconds", hung["error"])
+        self.assertEqual("error", declared["state"])
+        self.assertIn("declares a document type", declared["error"])
 
 
 class LifecycleTests(RelayCase):

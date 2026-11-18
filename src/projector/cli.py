@@ -43,6 +43,7 @@ from .config import (
     approvals,
     disallow,
     is_destination,
+    is_s3,
     parse_value,
     peers as configured_peers,
     redact,
@@ -1602,11 +1603,12 @@ def run_agent(arguments: argparse.Namespace) -> int:
         caller = agents.record(root, session) if session else None
         if caller:
             repo, location = caller.get("repo"), caller.get("location") or caller.get("repo")
-            waits = agents.waiting_text(location, caller.get("location_source") or "") \
+            waits = agents.waiting_text(location, caller.get("location_source") or "", caller.get("allow") or ()) \
                 if caller.get("relay") == "waiting" else ""
         else:
             repo = agents.checkout(Path.cwd()).get("repo")
-            location, _, waits = agents.relay_place(Path.cwd(), repo)
+            relaying = agents.relay_place(Path.cwd(), repo)
+            location, waits = relaying.location, relaying.waits
         running, line = relay.header(root, location, repo, waits)
         if arguments.json_output:
             print(json_text({"local_only": not running, "relay": line, "agents": rows}))
@@ -1664,7 +1666,8 @@ def run_agent(arguments: argparse.Namespace) -> int:
     else:
         message, found, way = agents.reply(root, session, arguments.id, text, now, limit=limit)
     ensure()
-    public = way.startswith("relay") and relay.visibility(root, found["location"]) != "PRIVATE"
+    public = (way.startswith("relay") and not is_s3(found["location"])
+              and relay.visibility(root, found["location"]) != "PRIVATE")
     if arguments.json_output:
         print(json_text({"message": message, "to": found, "delivery": way,
                          **({"reminder": relay.PUBLIC_REMINDER} if public else {})}))
@@ -1680,15 +1683,19 @@ def show_relay(arguments: argparse.Namespace) -> int:
     whether it waits for `project config allow`, and what the location's last job found."""
     root = watch.state_root()
     repo = agents.checkout(Path.cwd()).get("repo")
-    location, source, waits = agents.relay_place(Path.cwd(), repo)
-    found = (watch.status(root, time.time())["relay"]["repositories"] or {}).get((location or "").lower())
+    relaying = agents.relay_place(Path.cwd(), repo)
+    location, source, waits = relaying.location, relaying.source, relaying.waits
+    found = (watch.status(root, time.time())["relay"]["repositories"] or {}).get((location or "").lower()) or {}
     cache = relay.read_cache(root, location) if location else {}
     refused = relay.location_refusal(root, location, repo) if location else ""
     report = {"location": location, "repo": repo, "source": source if location else None, "waiting": bool(waits),
-              "allow": f"project config allow agent.relay github:{location}" if waits else None,
-              "state": (found or {}).get("state"), "polled_at": cache.get("polled_at"),
+              "allow": agents.allow_commands(location, relaying.allow) if waits and location else [],
+              "state": found.get("state"), "polled_at": cache.get("polled_at"),
               "visibility": cache.get("visibility"), "permission": cache.get("permission"), "refused": refused,
-              "error": (found or {}).get("error") or ""}
+              "error": found.get("error") or ""}
+    if relaying.s3:
+        report.update(s3=relaying.s3, region=found.get("region"), credentials=found.get("source"),
+                      probe=cache.get("probe"), visibility=None)
     if arguments.json_output:
         print(json_text(report))
         return 0
@@ -1698,7 +1705,16 @@ def show_relay(arguments: argparse.Namespace) -> int:
     print(f"location: {location}" + ("" if location == repo else f", for work in {repo or 'this checkout'}"))
     print(f"set by: {source}")
     if waits:
-        print(f"waits for: `{report['allow']}`, run in a terminal")
+        print(f"waits for: {' and '.join(f'`{command}`' for command in report['allow'])}, run in a terminal")
+    if relaying.s3:
+        probe = report["probe"] or {}
+        print(f"region: {report['region'] or relaying.s3.get('region') or 'not read yet'}; credentials: "
+              f"{report['credentials'] or 'not read yet'}; probe: "
+              + ("passed" if probe.get("result") == "ok" else probe.get("result") or "not run yet")
+              + (f", {probe['at']}" if probe.get("at") else ""))
+        if found.get("refreshable") is False:
+            print("note: session credentials in the environment cannot be refreshed; set agent.s3_profile to a "
+                  "profile with a credential_process instead")
     state = report["state"] or "not run yet"
     print(f"state: {state}" + (f", polled {report['polled_at']}" if report["polled_at"] else "")
           + (f", {report['visibility']}" if report["visibility"] not in (None, "unknown") else "")
@@ -1832,8 +1848,10 @@ def run_watch(arguments: argparse.Namespace) -> int:
                   f"relay: reading key {key['id']}" if key["state"] == "reading" else
                   f"relay: off ({key['error'] or 'no agent.key'})")
             for waiting in report["relay"].get("waiting") or []:
-                print(f"relay {waiting['location']}: waiting, set by {waiting['source']}; run `project config allow "
-                      f"agent.relay github:{waiting['location']}` in a terminal to relay through it")
+                commands = " and ".join(f"`{command}`" for command in waiting.get("allow")
+                                        or agents.allow_commands(waiting["location"]))
+                print(f"relay {waiting['location']}: waiting, set by {waiting['source']}; run {commands} in a "
+                      "terminal to relay through it")
             for repo, found in report["relay"]["repositories"].items():
                 problems = "; ".join(part for part in (found.get("error"), *found.get("errors", [])) if part)
                 if found.get("refused") and found.get("refused") != found.get("error"):
@@ -1845,6 +1863,10 @@ def run_watch(arguments: argparse.Namespace) -> int:
                 unknown = f", unknown senders: {', '.join(found['senders'])}" if found.get("senders") else ""
                 seen = ", ".join(part.lower() for part in (found.get("visibility"), found.get("permission"))
                                  if part and part != "unknown")
+                if found.get("source"):
+                    probe = (found.get("probe") or {}).get("result")
+                    checked = "probe passed" if probe == "ok" else "probe not run" if not probe else "probe off"
+                    seen = ", ".join([found.get("region") or "", f"credentials from {found['source']}", checked])
                 print(f"relay {repo}: {found.get('state')}" + (f" ({seen})" if seen else "")
                       + (", bare clone" if found.get("clone") else "")
                       + f", {found.get('queued', 0)} queued, {found.get('rejected', 0)} rejected{why}{unknown}"
@@ -2667,8 +2689,9 @@ def post_to_peers(arguments: argparse.Namespace, root: Path, now: float) -> int:
     location = agents.location_of(registration)
     if not location:
         waits = registration.get("relay") == "waiting"
-        raise repo_inbox.RepoInboxError(agents.waiting_text(registration["location"], registration.get(
-            "location_source") or "") if waits and registration.get("location") else relay.NO_ORIGIN)
+        raise repo_inbox.RepoInboxError(agents.waiting_text(
+            registration["location"], registration.get("location_source") or "", registration.get("allow") or ())
+            if waits and registration.get("location") else relay.NO_ORIGIN)
     if refused := relay.location_refusal(root, location, registration.get("repo")):
         raise repo_inbox.RepoInboxError(f"the relay is off for this session, so nothing can reach a peer: {refused}")
     key = repo_inbox.sealing_key()

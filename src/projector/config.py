@@ -69,6 +69,7 @@ import subprocess
 import tempfile
 import time
 import tomllib
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -111,6 +112,10 @@ SETTINGS: dict[str, type] = {
     "agent.peers": dict,
     "agent.peer_limit": int,
     "agent.relay": str,
+    "agent.s3_region": str,
+    "agent.s3_endpoint": str,
+    "agent.s3_profile": str,
+    "agent.s3_poll": int,
     "ios.app": str,
     "ios.project": str,
     "ios.output": str,
@@ -126,6 +131,7 @@ MINIMUMS: dict[str, int] = {
     "watch.review_stall": 1,
     "agent.message_limit": 1,
     "agent.peer_limit": 1,
+    "agent.s3_poll": 2,
 }
 
 
@@ -142,13 +148,25 @@ PRIORITY = re.compile(r"[1-9][0-9]?")
 # The settings that say where your data goes. The owner of a repository's
 # default branch may not be you, so a value read from it applies only once you
 # allow it with `project config allow`.
-DESTINATIONS: frozenset[str] = frozenset({"agent.relay"})
+DESTINATIONS: frozenset[str] = frozenset({"agent.relay", "agent.s3_endpoint", "agent.s3_profile"})
 
-# The forms `agent.relay` takes: `origin`, the checkout's own repository, or a
-# GitHub repository the relay carries records through.
+# The forms `agent.relay` takes: `origin`, the checkout's own repository, a
+# GitHub repository the relay carries records through, or an S3 bucket and
+# prefix that hold them as objects.
 RELAY_ORIGIN = "origin"
 RELAY_GITHUB = "github:"
+RELAY_S3 = "s3://"
 RELAY_SLUG = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+# An S3 bucket's name, and each `/`-separated segment of a relay's prefix, in
+# lowercase only, so every rule that compares locations without case compares
+# S3 locations exactly.
+S3_BUCKET = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
+S3_SEGMENT = re.compile(r"[a-z0-9._-]+")
+# Where an S3 location with no `agent.s3_endpoint` lives, in its identity.
+AWS_ENDPOINT = "https://s3.amazonaws.com"
+# The longest identity a location may have: the longest `location` a record
+# carries.
+MAX_LOCATION = 256
 
 # Keys whose value can be a secret. A value under `keychain:` names an item in
 # the OS keychain and holds no secret; any other value is the secret itself.
@@ -171,18 +189,74 @@ class NotAllowed(ConfigError):
                          f"run `project config allow {key} {shlex.quote(str(value))}` in a terminal to use it")
 
 
-def relay_location(value: str) -> Optional[str]:
-    """The repository an `agent.relay` value names, `owner/repo`, or None for `origin`, the checkout's own
-    repository. Any other value is refused, naming the forms."""
+@dataclass(frozen=True)
+class S3Relay:
+    """An S3 bucket and the prefix under it that `agent.relay` names, which may be empty."""
+
+    bucket: str
+    prefix: str
+
+
+def relay_location(value: str) -> Optional[str | S3Relay]:
+    """The repository an `agent.relay` value names, `owner/repo`, its S3 bucket and prefix, or None for `origin`,
+    the checkout's own repository. Any other value is refused, naming the forms."""
 
     if value == RELAY_ORIGIN:
         return None
+    if value.startswith(RELAY_S3):
+        bucket, _, prefix = value[len(RELAY_S3):].partition("/")
+        segments = prefix.split("/") if prefix else []
+        if (S3_BUCKET.fullmatch(bucket) and ".." not in bucket and not value.endswith("/")
+                and all(S3_SEGMENT.fullmatch(segment) and segment not in (".", "..") for segment in segments)):
+            return S3Relay(bucket, prefix)
+        raise ConfigError(f"agent.relay is {value!r}, and an S3 location is s3://<bucket>/<prefix>: a bucket name of "
+                          "3 to 63 lowercase letters, digits, dots, and hyphens, then an optional prefix of "
+                          "lowercase letters, digits, dots, underscores, and hyphens in segments separated by /, "
+                          "with no empty, . or .. segment and no trailing /")
     slug = value[len(RELAY_GITHUB):] if value.startswith(RELAY_GITHUB) else None
     if slug is not None and RELAY_SLUG.fullmatch(slug) and slug.split("/")[1] not in (".", ".."):
         return slug
-    reserved = "; s3:// is not supported yet" if value.startswith("s3://") else ""
-    raise ConfigError(f"agent.relay is {value!r}, and it takes origin or github:<owner>/<repo>, such as "
-                      f"github:acme/agents{reserved}")
+    raise ConfigError(f"agent.relay is {value!r}, and it takes origin, github:<owner>/<repo>, such as "
+                      "github:acme/agents, or s3://<bucket>/<prefix>, such as s3://acme-agents/relay")
+
+
+def s3_endpoint(value: str) -> str:
+    """An `agent.s3_endpoint` value as a location's identity writes it: `https://`, the host in lowercase, and its
+    port unless it is 443. A value with a path, query, fragment, or user info is refused."""
+
+    try:
+        parts: Optional[urllib.parse.SplitResult] = urllib.parse.urlsplit(value)
+        port = parts.port if parts else None
+    except ValueError:
+        parts, port = None, None
+    if (parts is None or parts.scheme.lower() != "https" or not parts.hostname or parts.path not in ("", "/")
+            or parts.query or parts.fragment or "@" in parts.netloc or value.endswith(("?", "#"))):
+        raise ConfigError(f"agent.s3_endpoint is {value!r}, and it takes an https:// URL with no path, query, or "
+                          "user info, such as https://s3.example.com")
+    host = parts.hostname.lower()
+    host = f"[{host}]" if ":" in host else host
+    return f"https://{host}" + (f":{port}" if port not in (None, 443) else "")
+
+
+def s3_identity(endpoint: Optional[str], bucket: str, prefix: str) -> str:
+    """An S3 location's identity: the path-style URL of its prefix, on AWS when no endpoint names another store."""
+
+    return "/".join(part for part in (s3_endpoint(endpoint) if endpoint else AWS_ENDPOINT, bucket, prefix) if part)
+
+
+def is_s3(location: str) -> bool:
+    """Whether a relay location is an S3 location's identity rather than a repository slug."""
+
+    return location.startswith("https://")
+
+
+def location_key(location: str) -> str:
+    """The relative name a location's cache, outbox, and inbox mirror are filed under: a repository's slug in
+    lowercase, or `s3/` and the first 16 hex digits of the SHA-256 of an S3 location's identity."""
+
+    if is_s3(location):
+        return f"s3/{hashlib.sha256(location.encode()).hexdigest()[:16]}"
+    return location.lower()
 
 
 def is_destination(key: str) -> bool:
@@ -372,11 +446,13 @@ def parse_value(key: str, text: str) -> Any:
         text.encode("utf-8")
     except UnicodeEncodeError:
         raise UsageError(f"{key} must be text that UTF-8 can encode") from None
-    if key == "agent.relay":
-        try:
+    try:
+        if key == "agent.relay":
             relay_location(text)
-        except ConfigError as error:
-            raise UsageError(str(error)) from None
+        elif key == "agent.s3_endpoint":
+            s3_endpoint(text)
+    except ConfigError as error:
+        raise UsageError(str(error)) from None
     return text
 
 
