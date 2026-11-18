@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 priority: now
 ---
 
@@ -256,13 +256,25 @@ them. Record the result in this plan.
 
 ## 6. Open questions
 
-These need the user's decision before the plan is `ready`. Each records the
-recommendation the plan is written to.
-
-- **Are the controls in § 2.3 enough?** Recommended: yes for this version,
-  with no per-peer or per-repository lists until a team needs one.
 - **A public relay on purpose.** Deferred. A setting could let you choose a
   public relay repository explicitly, if a case for one appears.
+- **Checking a peer's access before sending.** Deferred to a follow-up,
+  because two of GitHub's behaviors need testing first. A peer could carry an
+  optional GitHub login beside the key, as
+  `[agent.peers.jason] key = "…"` and `github = "jbloggs"`, written by
+  `peer add --github`. The login would only label the key, never identify the
+  peer. Before a send to a peer from a repository that is not `PUBLIC`,
+  Projector would ask `gh api repos/<repo>/collaborators/<login>/permission`,
+  cached for each repository and login for one full pass. A peer with `read`
+  or more would get no reminder. A peer with `none` would be refused before
+  anything is queued, unless the agent passes `--general` to say the message
+  holds none of the repository's private details. An unknown answer would
+  fall back to the reminder in § 2.3. To verify first:
+  - **Who may call the endpoint.** Whether it needs the caller to have push
+    access, and what an agent with read-only access gets.
+  - **Internal repositories.** Whether an enterprise member who is not a
+    collaborator shows as `read` or `none` on an `INTERNAL` repository, which
+    would otherwise refuse sends to colleagues.
 
 ## 7. Decisions
 
@@ -294,3 +306,7 @@ recommendation the plan is written to.
   the reminder, and the skill tells the agent before it writes to assume the
   peer cannot read that repository (§ 2.3). Sends between your own agents get
   none.
+- **The controls in § 2.3 are enough for this version.** Decided by the user
+  on 2026-11-17, after going through each one. No per-peer or per-repository
+  list is added. Checking a peer's GitHub access before a send is a
+  follow-up (§ 6).
