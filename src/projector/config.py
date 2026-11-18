@@ -214,12 +214,6 @@ def disallow(path: Path, key: str, value: Any) -> bool:
     return True
 
 
-def user_only(key: str) -> bool:
-    """Whether a dotted key is one of `USER_ONLY` or lies under one, as `agent.peers.jason` does."""
-
-    return any(key == name or key.startswith(f"{name}.") for name in USER_ONLY)
-
-
 def is_secret(key: str, value: Any) -> bool:
     return key in SECRETS and isinstance(value, str) and not value.startswith(KEYCHAIN)
 
@@ -960,20 +954,32 @@ def _overrides(source: Source, loaded: dict[str, Any]) -> list[tuple[int, dict[s
     return tables
 
 
-def _drop_user_only(source: Source, loaded: dict[str, Any], ignored: list[tuple[Source, str]]) -> None:
-    for key in sorted(filter(user_only, _flatten(loaded))):
-        *tables, name = key.split(".")
+def drop_user_only(loaded: dict[str, Any]) -> list[str]:
+    """Remove each `USER_ONLY` key, and everything under it, from a walked file's values or an override table, and
+    answer the dotted keys removed. The subtree is found by walking the parsed tables, never by splitting a flattened key, since a
+    quoted key such as `"alice.work"` holds a dot of its own."""
+
+    removed: list[str] = []
+    for name in sorted(USER_ONLY):
+        *tables, last = name.split(".")
         chain = [loaded]
         for part in tables:
-            chain.append(chain[-1][part])
-        del chain[-1][name]
-        # A table left empty, as `[agent.peers]` is once its peers go, is dropped too, so `config get`
-        # finds no value the file was refused.
-        for parent, part in zip(reversed(chain[:-1]), reversed(tables)):
-            if parent[part]:
+            child = chain[-1].get(part)
+            if not isinstance(child, dict):
                 break
-            del parent[part]
-        ignored.append((source, key))
+            chain.append(child)
+        else:
+            if last not in chain[-1]:
+                continue
+            value = chain[-1].pop(last)
+            removed += sorted(_flatten(value, f"{name}.")) if isinstance(value, dict) and value else [name]
+            # A table left empty, as `[agent]` is once `agent.peers` goes from a file that set nothing else
+            # there, is dropped too, so `config get` finds no value the file was refused.
+            for parent, part in zip(reversed(chain[:-1]), reversed(tables)):
+                if parent[part]:
+                    break
+                del parent[part]
+    return removed
 
 
 def layered(layers: list[tuple[Source, dict[str, Any]]], user: Optional[Path]) -> Config:
@@ -993,10 +999,10 @@ def layered(layers: list[tuple[Source, dict[str, Any]]], user: Optional[Path]) -
     for nearness, (source, loaded) in enumerate(layers):
         for priority, table in _overrides(source, loaded):
             overriding = Source(source.path, source.blob, priority)
-            _drop_user_only(overriding, table, ignored)
+            ignored += [(overriding, key) for key in drop_user_only(table)]
             overrides.append((priority, -nearness, overriding, table))
         if source.path != user:
-            _drop_user_only(source, loaded, ignored)
+            ignored += [(source, key) for key in drop_user_only(loaded)]
         values = merge(values, loaded)
         # Recorded after merging so the last writer of each leaf wins, which is
         # the file whose value actually survived.
