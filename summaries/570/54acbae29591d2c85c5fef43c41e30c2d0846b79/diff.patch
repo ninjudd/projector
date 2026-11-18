@@ -1,0 +1,601 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 9e9c8e80..953f7c47 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -4382,6 +4382,20 @@ expire or S3 refuses them, the location is `off`, with the reason in
+ `project agent list` and `project watch status`. Outgoing records wait in
+ the outbox and incoming ones in the bucket meanwhile.
+ 
++The daemon also posts one notice to the location's repository inbox, which
++every one of your sessions on the location shows, naming the fix when it
++knows one:
++
++```text
++Projector: Relay off: the AWS sign-in for profile acme-relay expired. Run `aws sso login --profile acme-sso`.
++```
++
++The notice is local: no relay carries it, and it exists only on the
++machine whose credentials lapsed. A new reason replaces its text under the
++same number, and the daemon withdraws it once a signed request succeeds
++again. `project inbox dismiss` hides it until the next time the location
++turns `off`, and it takes no response or snooze.
++
+ Each person needs this IAM policy, with your bucket and prefix:
+ 
+ ```json
+diff --git a/docs/projects/agent-messages/s3-relay/readme.md b/docs/projects/agent-messages/s3-relay/readme.md
+index 068d21d1..2e8e3e93 100644
+--- a/docs/projects/agent-messages/s3-relay/readme.md
++++ b/docs/projects/agent-messages/s3-relay/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: in-progress
++status: completed
+ priority: now
+ ---
+ 
+@@ -440,3 +440,46 @@ observed delivery time in this plan.
+ - **The lease test changes the object between the listing and the
+   renewal,** as a second job's renewal would, since the daemon never runs
+   two jobs for one location at once.
++- **The credential notice is a mirror entry with the role `local`.** It
++  lives in the location's inbox mirror beside the relayed entries, with
++  `notice.json` holding its ID, its text, and whether you dismissed it. It
++  shows as `Projector: Relay off: …` in `project inbox list`, the panel,
++  and the console, `inbox show` names it as from Projector on this machine,
++  and it takes a dismissal and nothing else: a response or a snooze is
++  refused, so no state record of it is ever queued, and neither the panel
++  nor the console offers Snooze. The job posts and withdraws it on its worker thread, so a busy
++  mirror never holds up the daemon's loop. `notice.json` records a text
++  only once the mirror holds it, so a notice that a busy mirror kept out
++  posts on the next job.
++- **A notice is withdrawn on the first signed request that succeeds,** a
++  listing, the probe's first write, or a change applied, even while the
++  probe refuses the store, since the notice is about the credentials.
++
++## 9. Outcome
++
++Shipped as four layers: the transport, the S3 client, the S3 relay, and the
++credential notice. The criteria in § 4 have these tests, each of which
++failed with its fault introduced:
++
++| Criterion | Evidence |
++| --- | --- |
++| Signatures from AWS's test suite | `tests.test_s3.SignatureTests.test_each_signature_matches_the_aws_signature_version_4_test_suite` |
++| Agents and messages through a bucket, with no Git ref | `S3RelayTests.test_an_s3_location_carries_agents_and_messages_and_no_ref_reaches_git` |
++| Delivery within `agent.s3_poll` plus 2 seconds | `S3RelayTests.test_a_message_arrives_within_the_poll_interval_with_no_watch_pass` |
++| A renewal's lease | `S3RelayTests.test_a_renewal_whose_object_another_job_changed_gets_412_and_lands_on_the_next_listing` |
++| A deletion already done | `S3RelayTests.test_a_deletion_of_an_object_already_gone_counts_as_deleted` |
++| A large object, a malformed name, and a flood | `S3RelayTests.test_a_large_or_misnamed_object_and_a_flood_are_bounded_before_any_read` |
++| An interrupted probe and its sweep | `S3RelayTests.test_a_probe_interrupted_by_a_restart_leaves_no_object_after_the_next_full_pass` |
++| Stores that ignore a condition, and a public bucket | `S3RelayTests.test_a_store_that_ignores_a_condition_or_lets_anyone_list_turns_the_location_off` |
++| One bucket and prefix on two endpoints | `S3RelayTests.test_one_bucket_and_prefix_on_two_endpoints_are_two_locations` |
++| A committed endpoint and profile | `S3RelayTests.test_an_endpoint_and_a_profile_a_repository_commits_wait_until_you_allow_each`, `test_a_registration_written_while_admission_checks_another_waits_for_its_own_values` |
++| Credentials from the environment, a profile, and a process, refreshed early, never leaked | `tests.test_s3.CredentialTests`, `S3RelayTests.test_no_output_log_status_or_process_argument_holds_the_secret_key_or_the_token` |
++| The credential notice | `LapseNoticeTests.test_a_lapse_shows_one_notice_in_every_session_replaced_as_its_reason_changes_until_a_request_succeeds`, `test_a_dismissed_notice_stays_hidden_while_the_relay_is_off_and_shows_again_when_it_next_turns_off`, `test_a_notice_a_busy_inbox_kept_out_shows_on_the_next_job` |
++| A hung process or store | `tests.test_s3.CredentialTests.test_a_credential_process_that_hangs_is_killed_at_its_timeout`, `OperationTests.test_a_request_that_hangs_or_trickles_is_stopped_at_its_timeout`, `test_a_name_lookup_that_never_returns_is_stopped_at_the_timeout`, `S3RelayTests.test_a_hung_credential_process_or_store_is_stopped_and_stalls_no_codex_event` |
++| A `<!DOCTYPE` listing and one over 1 MiB | `OperationTests.test_a_response_that_declares_a_document_type_is_refused_in_any_encoding`, `test_a_listing_that_holds_more_than_1_mib_is_not_parsed`, and the last part of the hung-store test |
++| The Git relay tests unchanged | `tests.test_relay` before the S3 layers, which passed with no change to a test |
++| No plaintext in the bucket | `S3RelayTests.test_no_object_in_the_bucket_holds_a_name_summary_or_text_in_plain_form` |
++
++The relay between two real machines through an S3 bucket, with the IAM
++policy in `docs/cli.md`, waits until after the merge, for the user to run.
++Its observed delivery time goes here once it runs.
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 80e7f8ed..261a6701 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -3683,6 +3683,37 @@ test('the repository inbox’s entries are drawn when they are all the panel has
+   await ui.unmount()
+ })
+ 
++test('Projector’s local notice in the repository inbox dismisses and offers no snooze, which the CLI refuses', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const notice: Entry = {
++    scope: 'repo',
++    id: 'u-44444444444444444444444444444444',
++    ref: 'r4',
++    role: 'local',
++    kind: 'notice',
++    subject: 'Relay off: the AWS sign-in for profile acme-relay expired.',
++    line: 'Projector: Relay off: the AWS sign-in for profile acme-relay expired.',
++    state: 'open',
++    peer: null,
++    opened_at: NOW,
++  }
++  const session = questionWorld(on, clock, [], { entries: [notice] })
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(PANEL)
++  expect(await ui.find({ type: 'Text', text: notice.line })).toBeDefined()
++  await ui.press({ key: 'entry:r4' })
++  const snooze = await ui.find({ type: 'Button', key: 'snooze:r4' })
++  await ui.press({ key: 'dismiss:r4' })
++  await clock.settle()
++
++  expect(snooze).toBeUndefined()
++  expect(session.project().filter(command => /^inbox (dismiss|snooze)/.test(command))).toEqual([
++    'inbox dismiss r4 --session s1 --json',
++  ])
++})
++
+ test('a snoozed entry comes back to a shown panel when its snooze ends', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 5bc9de2c..6f86a97a 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -2598,7 +2598,9 @@ export const register: Register = on => {
+           onPress: () => fill(`[${ref}] "${entry.subject}"\n\n`),
+         },
+         { name: 'dismiss', label: 'Dismiss', hotkey: '8', onPress: press({ kind: 'dismiss' }) },
+-        { name: 'snooze', label: 'Snooze', hotkey: '9', onPress: press({ kind: 'snooze', minutes: SNOOZES[1].minutes }) },
++        ...(entry.role === 'local'
++          ? []
++          : [{ name: 'snooze', label: 'Snooze', hotkey: '9', onPress: press({ kind: 'snooze', minutes: SNOOZES[1].minutes }) }]),
+       ]
+       const said = [entry.role === 'reply' ? entry.text : entry.detail, entry.follow_up].filter(
+         (text): text is string => text !== undefined && text !== '',
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 65d48138..6db4c997 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -188,8 +188,9 @@ export type Entry = {
+   scope: 'repo'
+   ref: string
+   id: string
+-  role: 'incoming' | 'sent' | 'reply'
+-  /** An incoming or sent item's kind; a reply has none. */
++  /** `local` is Projector's own notice about the location, which no relay carries and which only dismisses. */
++  role: 'incoming' | 'sent' | 'reply' | 'local'
++  /** An incoming or sent item's kind, and `notice` for a local one; a reply has none. */
+   kind?: 'question' | 'request' | 'notice'
+   subject: string
+   detail?: string
+diff --git a/src/projector/console.py b/src/projector/console.py
+index 1cbbd242..99e42df3 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -738,7 +738,8 @@ def controls(self) -> list[Control]:
+     def entry_controls(self, entry: dict) -> list[Control]:
+         """A repository inbox entry's keys. A peer's question takes its answers, and a request Done or its options
+         and Decline, each recorded at once as the user's and sealed back to the peer; no line goes to the session,
+-        whose agent did not ask. An item you sent can be closed or reopened, and any entry dismissed or snoozed."""
++        whose agent did not ask. An item you sent can be closed or reopened, and any entry dismissed, and snoozed
++        unless it is Projector's own local notice, which takes a dismissal and nothing else."""
+         ref = entry["ref"]
+         if self.asking == "snooze":
+             return [*(Control(str(index), label, lambda minutes=minutes: self.change_entry(ref, "snooze", minutes),
+@@ -764,7 +765,8 @@ def entry_controls(self, entry: dict) -> list[Control]:
+                                 if repo_inbox.is_closed(entry) else
+                                 Control("6", "Close", lambda: self.change_entry(ref, "close")))
+             controls.append(Control("8", "Dismiss", lambda: self.change_entry(ref, "dismiss")))
+-        controls.append(Control("9", "Snooze", lambda: self.ask("snooze")))
++        if entry["role"] != repo_inbox.LOCAL:
++            controls.append(Control("9", "Snooze", lambda: self.ask("snooze")))
+         return controls
+ 
+     def respond(self, ref: str, outcome: str, *, letter: Optional[str] = None, text: Optional[str] = None) -> None:
+diff --git a/src/projector/relay.py b/src/projector/relay.py
+index a9b7dff0..e79acaa8 100644
+--- a/src/projector/relay.py
++++ b/src/projector/relay.py
+@@ -54,7 +54,7 @@
+ from . import agents, config, crypto, keychain, repo_inbox, review, s3, summary, watch
+ from .config import INLINE_KEY, KEYCHAIN, ConfigError, inline_key, unset_value, user_config_path, write_value
+ from .core import ProjectorError, run_bounded
+-from .inbox import SESSION, locked, read_json, write_json
++from .inbox import SESSION, InboxError, locked, read_json, write_json
+ from .keychain import KeychainError
+ 
+ REMOTE = "origin"
+@@ -1036,6 +1036,8 @@ def __init__(self, store: S3Store) -> None:
+         self.probes: dict[str, list[s3.Listed]] = {}
+         # The lapse a request in `apply` met, which turns the location off.
+         self.lapsed: Optional[Lapsed] = None
++        # Whether a signed request succeeded, which shows the credentials work.
++        self.answered = False
+ 
+     def name_of(self, ref: str) -> str:
+         namespace, key_id, rest = ref[len("refs/projector/"):].split("/", 2)
+@@ -1048,9 +1050,11 @@ def ref_of(self, name: str) -> Optional[str]:
+ 
+     def call(self, operation: Callable[[], object]) -> object:
+         try:
+-            return operation()
++            found = operation()
+         except s3.S3Error as error:
+             raise store_error(error, self.client.source()) from None
++        self.answered = True
++        return found
+ 
+     def snapshot(self, prefixes: tuple[str, ...]) -> dict[str, str]:
+         """One listing for each key the prefixes name, keeping each object under a prefix by its ref."""
+@@ -1107,6 +1111,7 @@ def apply_one(self, item: dict) -> Outcome:
+                     self.client.delete_object(name, item["old"])
+                 except s3.NotFound:
+                     pass
++                self.answered = True
+                 return Outcome(True, "deleted", False, None)
+             body = sealed_text(item["sealed"]).encode()
+             if forced:
+@@ -1115,6 +1120,7 @@ def apply_one(self, item: dict) -> Outcome:
+                 etag = self.client.put_object(name, body, if_match=item["old"])
+             else:
+                 etag = self.client.put_object(name, body, if_none_match=True)
++            self.answered = True
+             return Outcome(True, "written", False, etag)
+         except (s3.PreconditionFailed, s3.NotFound) as error:
+             return Outcome(False, f"stale lease: {error}", True, None)
+@@ -1194,6 +1200,9 @@ def __init__(self, root: Path, location: str, key: Optional[Key], live: set[str]
+         self.store = store
+         # The lapse of an S3 location's credentials that turned it off in this job.
+         self.lapse: Optional[Lapsed] = None
++        # The S3 location's transport, which says whether a signed request succeeded, even while the probe refuses
++        # the store.
++        self.reached: Optional[S3Transport] = None
+         self.key = key
+         # Each peer's key, by its ID, with your name for them.
+         self.peers = {crypto.key_id(public): (name, public) for name, public in (peers or {}).items()}
+@@ -1265,6 +1274,8 @@ def run(self) -> dict:
+             path = repo_file(self.root, "relay", self.location)
+             path.parent.mkdir(parents=True, exist_ok=True)
+             write_json(path, self.cache)
++        if self.store is not None:
++            self.tell_lapse()
+         if self.store is not None and self.refused:
+             return self.result("off", self.refused)
+         if self.transport is None and not self.error:
+@@ -1288,12 +1299,25 @@ def result(self, state: str, error: str) -> dict:
+                          refreshable=cached.refreshable if cached else True)
+         return found
+ 
++    def tell_lapse(self) -> None:
++        """Post the local notice of a lapse of the S3 location's credentials to its inbox, replacing one whose
++        reason changed, and withdraw it once a signed request succeeds. A busy mirror is tried again next job."""
++        try:
++            if self.lapse is not None:
++                fix = f" Run `{self.lapse.fix}`." if self.lapse.fix else ""
++                repo_inbox.post_local(self.root, self.location, f"Relay off: {str(self.lapse).rstrip('.')}.{fix}",
++                                      self.now)
++            elif self.reached is not None and self.reached.answered:
++                repo_inbox.withdraw_local(self.root, self.location)
++        except InboxError as error:
++            self.error = self.error or str(error)
++
+     def check_store(self) -> Optional[S3Transport]:
+         """The S3 location's transport, once its store has passed the probe: on a full pass, and whenever no probe
+         has finished since the last one, it must refuse an unsigned listing and honor each condition a lease
+         relies on. Answers None while the location is off, with why in `refused`."""
+         assert self.store is not None
+-        transport = S3Transport(self.store)
++        transport = self.reached = S3Transport(self.store)
+         if self.held is None:
+             self.refused = NO_KEY
+             return None
+@@ -1591,7 +1615,7 @@ def prune_mirror(self) -> None:
+         queued = [item["ref"] for item in outbox_items(self.root, self.location) if item["sealed"] is not None]
+         present = {ref[len(prefix):] for ref in [*self.cache["remote"], *queued] if ref.startswith(prefix)}
+         self.forget_entries([entry["id"] for entry in repo_inbox.entries(self.root, self.location)
+-                             if entry["id"] not in present])
++                             if entry["id"] not in present and entry["role"] != repo_inbox.LOCAL])
+ 
+     def forget_entries(self, ids: list[str]) -> None:
+         """Remove entries from the mirror, and delete their state records with them."""
+diff --git a/src/projector/repo_inbox.py b/src/projector/repo_inbox.py
+index ee4a9234..6bb1991a 100644
+--- a/src/projector/repo_inbox.py
++++ b/src/projector/repo_inbox.py
+@@ -14,9 +14,14 @@
+ and on, as a session's inbox numbers its items. Commands queue their ref changes in the relay's outbox and change
+ the mirror at once; the watch daemon pushes them.
+ 
+-Files under the state root, beside the watch state root:
++The mirror also holds Projector's own notice about the location, with the role `local`, such as the notice that
++an S3 location's credentials lapsed. No relay carries it: it exists only on this machine, and dismissing it
++changes nothing anywhere else.
++
++Files under the state root, beside the watch state root, each in the folder `config.location_key` names:
+ 
+     repo-inbox/<owner>/<repo>/r<number>.json    an opened entry with its role, its peer, and when it opened
++    repo-inbox/<owner>/<repo>/notice.json        the local notice's ID and text, and whether you dismissed it
+     repo-inbox/<owner>/<repo>/count.json         the last number given
+     repo-inbox/<owner>/<repo>/states.json        each entry's state record, by the entry's ID
+     repo-inbox/<owner>/<repo>/claims.json        the responses this machine is queuing, by the entry's ID,
+@@ -41,7 +46,8 @@
+ LETTER = re.compile(r"^[a-z]$")
+ KINDS = ("question", "request", "notice")
+ OUTCOMES = ("answer", "done", "declined", "dismissed", "reply")
+-ROLES = ("incoming", "sent", "reply")
++LOCAL = "local"
++ROLES = ("incoming", "sent", "reply", LOCAL)
+ MAX_DETAIL = 16 * 1024
+ MAX_REPLIED = 256
+ # How long a response's reservation holds at most, so one that a command left behind when it stopped between
+@@ -174,6 +180,48 @@ def forget(root: Path, repo: str, ids: Iterable[str]) -> list[dict]:
+     return removed
+ 
+ 
++def post_local(root: Path, location: str, text: str, now: float) -> None:
++    """Show Projector's notice `text` about the location in its inbox, on this machine only: one at most, which a
++    new text replaces under the same number. A notice you dismissed stays hidden, whatever its text becomes, until
++    `withdraw_local` withdraws it.
++
++    `notice.json` records the text only once the mirror holds it, so a mirror that stays busy past the lock's wait
++    leaves the text unrecorded, and the next job posts it again."""
++    store = folder(root, location)
++    with locked(store / "notice"):
++        found = read_json(store / "notice.json") or {}
++        if found.get("text") == text:
++            return
++        entry_id = found.get("id") or new_id()
++        if not found.get("dismissed"):
++            mirror(root, location, {"schema_version": 1, "id": entry_id, "location": location, "kind": "notice",
++                                    "subject": text, "sent_at": now_ms(now)},
++                   role=LOCAL, peer=None, key_id="", now=now)
++        write_json(store / "notice.json", {"id": entry_id, "text": text, "dismissed": bool(found.get("dismissed"))})
++
++
++def withdraw_local(root: Path, location: str) -> None:
++    """Withdraw the location's local notice, so the next one shows even if you dismissed this one."""
++    store = folder(root, location)
++    if not (store / "notice.json").exists():
++        return
++    with locked(store / "notice"):
++        found = read_json(store / "notice.json") or {}
++        if found.get("id"):
++            forget(root, location, [found["id"]])
++        (store / "notice.json").unlink(missing_ok=True)
++
++
++def dismiss_local(root: Path, location: str, entry: dict) -> None:
++    """Hide the local notice until it is withdrawn."""
++    store = folder(root, location)
++    with locked(store / "notice"):
++        found = read_json(store / "notice.json") or {}
++        if found.get("id") == entry["id"]:
++            write_json(store / "notice.json", {**found, "dismissed": True})
++        forget(root, location, [entry["id"]])
++
++
+ def mark_woken(root: Path, repo: str, ref: str, now: float) -> bool:
+     """Record that a reply woke its session, once: answers False when another pass already did."""
+     store = folder(root, repo)
+@@ -503,8 +551,8 @@ def respond(root: Path, repo: str, cwd: Path, key: relay.Key, peers: dict[str, b
+     entry, with `reply` holding the response sealed, or None for a notice's dismissal, which sends none."""
+     entry = by_ref(root, repo, ref)
+     if entry["role"] != "incoming":
+-        raise RepoInboxError(f"{ref} is {'a reply' if entry['role'] == 'reply' else 'an item your agent sent'}, not "
+-                             "an item a peer sent you; only an incoming item takes a response")
++        what = {"reply": "a reply", LOCAL: "Projector's own notice"}.get(entry["role"], "an item your agent sent")
++        raise RepoInboxError(f"{ref} is {what}, not an item a peer sent you; only an incoming item takes a response")
+     name, public = peer_of(entry, peers)
+     kind = entry["kind"]
+     record = {"schema_version": 1, "id": new_id(), "location": repo, **(origin or {}), "answers": entry["id"],
+@@ -678,6 +726,9 @@ def snooze(root: Path, repo: str, cwd: Path, key: relay.Key, ref: str, minutes:
+     if not 0 <= minutes <= inbox.MAX_SNOOZE_MINUTES:
+         raise RepoInboxError(f"snooze for 0 to {inbox.MAX_SNOOZE_MINUTES} minutes, a day at most, not {minutes}")
+     entry = by_ref(root, repo, ref)
++    if entry["role"] == LOCAL:
++        raise RepoInboxError(f"{ref} is Projector's own notice, which takes no snooze; dismiss it to hide it until "
++                             "it is withdrawn")
+     at = now_ms(now)
+     state = update_state(root, repo, entry, now, snoozed_at=at, snoozed_until=at + minutes * 60_000)
+     relay.queue(root, repo, str(cwd), [state_change(key, state, now)], now, key=key)
+@@ -730,6 +781,9 @@ def dismiss(root: Path, repo: str, cwd: Path, key: relay.Key, ref: str, now: flo
+     entry = by_ref(root, repo, ref)
+     if entry["role"] == "incoming":
+         raise RepoInboxError(f"{ref} came from a peer; dismiss it with --as user or --as agent")
++    if entry["role"] == LOCAL:
++        dismiss_local(root, repo, entry)
++        return [entry]
+     cleared = [entry]
+     if entry["role"] == "sent":
+         cleared += [found for found in entries(root, repo) if found["role"] == "reply"
+@@ -845,6 +899,8 @@ def holds_reply(root: Path, reply_id: str) -> bool:
+ # Listing and showing
+ 
+ def peer_label(entry: dict) -> str:
++    if entry["role"] == LOCAL:
++        return "Projector"
+     return entry.get("peer") or f"key {entry['key_id']}"
+ 
+ 
+@@ -864,6 +920,8 @@ def describe(entry: dict) -> str:
+         return f"{agent_of(entry, 'from')} {ASKS[entry['kind']]}: {entry['subject']}"
+     if entry["role"] == "sent":
+         return f"{SENT[entry['kind']].format(peer=peer_label(entry))}: {entry['subject']}"
++    if entry["role"] == LOCAL:
++        return f"Projector: {entry['subject']}"
+     return f"{who(entry)} {did_of(entry)}: {outcome_preview(entry)}"
+ 
+ 
+@@ -976,6 +1034,8 @@ def reply_lines(reply: dict, reader: Optional[str]) -> list[str]:
+ 
+ 
+ def entry_text(entry: dict, found: list[dict], reader: Optional[str]) -> str:
++    if entry["role"] == LOCAL:
++        return f"{entry['ref']} from Projector on this machine\n\n{entry['subject']}"
+     if entry["role"] == "reply":
+         asked = next((other for other in found if other["role"] == "sent" and other["id"] == entry["answers"]), None)
+         how = " ".join(part for part in (agents.describe(entry["by_host"], entry.get("by_model"))
+diff --git a/tests/test_console.py b/tests/test_console.py
+index 19c1a519..1860eb7a 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -22,7 +22,7 @@
+ from unittest import mock
+ 
+ from projector import cli, console, inbox, repo_inbox, watch
+-from projector.inbox import write_json
++from projector.inbox import read_json, write_json
+ 
+ SOURCE = Path(cli.__file__).resolve().parents[1]
+ 
+@@ -264,6 +264,20 @@ def test_a_sent_items_drawer_lists_its_replies_and_offers_close(self) -> None:
+         self.assertIn("jason replied: Half done", self.screen().split("you requested of jason", 1)[1])
+         self.assertIn("6: Close", self.screen())
+ 
++    def test_projectors_local_notice_offers_dismiss_and_no_snooze(self) -> None:
++        """A local notice takes a dismissal and nothing else, so its drawer offers no Snooze."""
++        repo_inbox.post_local(self.root, "acme/app", "Relay off: the AWS sign-in for profile acme expired.",
++                              self.clock.now)
++        self.open_entry("s1", "repo:r4")
++        drawer = self.screen()
++        self.press("8")
++
++        self.assertIn("Relay off: the AWS sign-in for profile acme expired.", drawer)
++        self.assertIn("8: Dismiss", drawer)
++        self.assertNotIn("Snooze", drawer)
++        self.assertIsNone(repo_inbox.by_id(self.root, "acme/app", read_json(
++            repo_inbox.folder(self.root, "acme/app") / "notice.json")["id"]))
++
+ 
+ class Messages(ConsoleCase):
+     def test_seven_with_no_drawer_open_sends_a_message_about_an_empty_session(self) -> None:
+diff --git a/tests/test_relay.py b/tests/test_relay.py
+index 06a84a64..33185fdf 100644
+--- a/tests/test_relay.py
++++ b/tests/test_relay.py
+@@ -30,7 +30,7 @@
+ from typing import Optional
+ from unittest import mock
+ 
+-from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, s3, watch
++from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, repo_inbox, s3, watch
+ from projector.inbox import read_json, try_lock, unlock, write_json
+ from tests.fake_s3 import FakeS3, plain
+ from tests.scratch import copy_of
+@@ -2184,14 +2184,21 @@ def test_a_message_queued_before_shared_relays_is_delivered_with_no_source(self)
+ S3_TOKEN = "IQoJb3JpZ2luX2VjEXAMPLETOKEN"
+ TEAM = "s3://team/relay"
+ 
+-# A credential_process that logs its arguments and prints `credentials.json` beside it, or hangs while `mode` says
+-# so.
++# A credential_process that logs its arguments and prints `credentials.json` beside it, or, as `mode` says, hangs,
++# fails as an expired AWS sign-in does, or fails another way.
+ CREDENTIAL_PROCESS = '''import json, pathlib, sys, time
+ here = pathlib.Path(__file__).parent
+ with (here / "runs.jsonl").open("a") as log:
+     log.write(json.dumps(sys.argv[1:]) + "\\n")
+-if (here / "mode").exists() and (here / "mode").read_text().strip() == "hang":
++mode = (here / "mode").read_text().strip() if (here / "mode").exists() else ""
++if mode == "hang":
+     time.sleep(60)
++if mode == "expired":
++    print("Error when retrieving token from sso: Token has expired and refresh failed", file=sys.stderr)
++    sys.exit(255)
++if mode == "fail":
++    print("Unable to locate credentials", file=sys.stderr)
++    sys.exit(253)
+ print((here / "credentials.json").read_text())
+ '''
+ 
+@@ -2683,6 +2690,105 @@ def test_a_hung_credential_process_or_store_is_stopped_and_stalls_no_codex_event
+         self.assertIn("declares a document type", declared["error"])
+ 
+ 
++class LapseNoticeTests(S3RelayCase):
++    """A and C on machine one, in `acme/api` and `acme/docs`, relaying through the bucket with profile `acme-relay`,
++    whose credential_process fails as `mode` says."""
++
++    EXPIRED = ("Projector: Relay off: the AWS sign-in for profile acme-relay expired. Run "
++               "`aws sso login --profile acme-sso`.")
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.folder = self.credential_process(self.one, self.now + 3600)
++        self.aws_file(self.one, "credentials", "")
++        self.s3_team(self.one, extra='s3_profile = "acme-relay"\n')
++        self.api, self.docs = self.checkout(self.one, "acme/api"), self.checkout(self.one, "acme/docs")
++        self.mode("expired")
++        for session, cwd in ((A, self.api), (C, self.docs)):
++            self.one.claude(session)
++            self.one.register(session, "--name", f"agent-{session[0]}", cwd=cwd)
++
++    def mode(self, mode: str) -> None:
++        (self.folder / "mode").write_text(mode)
++
++    def notices(self, session: str = A) -> list[dict]:
++        cwd = self.api if session == A else self.docs
++        listed = json.loads(self.one.project("inbox", "list", "--repo", "--json", claude=session, cwd=cwd)[1])
++        return [entry for entry in listed["items"] if entry["role"] == "local"]
++
++    def next_pass(self) -> None:
++        self.advance(3)
++        for session in (A, C):
++            self.one.claude(session)
++        self.one.run_pass()
++
++    def test_a_lapse_shows_one_notice_in_every_session_replaced_as_its_reason_changes_until_a_request_succeeds(
++            self) -> None:
++        self.one.run_pass()
++        expired = {session: self.notices(session) for session in (A, C)}
++        self.mode("fail")
++        self.next_pass()
++        self.next_pass()
++        failed = self.notices()
++        self.mode("")
++        self.next_pass()
++
++        [shown] = expired[A]
++        self.assertEqual(expired[A], expired[C])
++        self.assertEqual(self.EXPIRED, shown["line"])
++        [replaced] = failed
++        self.assertEqual(shown["ref"], replaced["ref"])
++        self.assertIn("Relay off: the credential_process of profile acme-relay failed: Unable to locate credentials",
++                      replaced["line"])
++        self.assertEqual([], self.notices())
++        self.assertEqual(2, len(self.server.names("team", f"relay/{self.key.id}/agents/")),
++                         "the presences queued while the relay was off")
++
++    def test_a_notice_a_busy_inbox_kept_out_shows_on_the_next_job(self) -> None:
++        """Another command holds the location's inbox for longer than the job waits, so the job cannot post its
++        notice. The next job posts it."""
++        store = repo_inbox.folder(self.one.root, self.identity())
++        store.mkdir(parents=True, exist_ok=True)
++        descriptor = os.open(store / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
++        self.addCleanup(os.close, descriptor)
++        self.assertTrue(try_lock(descriptor))
++        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.1):
++            self.one.run_pass()
++        busy = self.notices()
++        unlock(descriptor)
++        self.next_pass()
++
++        self.assertEqual([], busy)
++        self.assertEqual([self.EXPIRED], [entry["line"] for entry in self.notices()])
++        self.assertEqual([self.EXPIRED], [entry["line"] for entry in self.notices(C)])
++
++    def test_a_dismissed_notice_stays_hidden_while_the_relay_is_off_and_shows_again_when_it_next_turns_off(
++            self) -> None:
++        self.one.run_pass()
++        [shown] = self.notices()
++        snoozed = self.one.project("inbox", "snooze", shown["ref"], "--for", "30", claude=A, cwd=self.api)
++        code, _, err = self.one.project("inbox", "dismiss", shown["ref"], claude=A, cwd=self.api)
++        hidden = self.notices(C)
++        self.mode("fail")
++        self.next_pass()
++        still = self.notices()
++        self.mode("")
++        self.next_pass()
++        self.mode("expired")
++        self.advance(3600)
++        for session in (A, C):
++            self.one.claude(session)
++        self.one.run_pass()
++
++        self.assertEqual(0, code, err)
++        self.assertNotEqual(0, snoozed[0])
++        self.assertIn("is Projector's own notice, which takes no snooze", snoozed[2])
++        self.assertEqual(([], []), (hidden, still))
++        self.assertEqual([self.EXPIRED], [entry["line"] for entry in self.notices()])
++        self.assertEqual([], [item for item in relay.outbox_items(self.one.root, self.identity())
++                              if "/user" in item["ref"]], "the notice reaches no relay")
++
++
+ class LifecycleTests(RelayCase):
+     def a_refs(self) -> list[str]:
+         relay_id = agents.record(self.one.root, A)["relay_id"]

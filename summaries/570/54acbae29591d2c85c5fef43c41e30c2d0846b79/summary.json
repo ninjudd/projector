@@ -1,0 +1,182 @@
+{
+ "version": 1,
+ "name": "S3 relay credential notices",
+ "project": "agent-messages/s3-relay",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 570,
+  "title": "Tell every session on an S3 location when its credentials lapse",
+  "head": "54acbae29591d2c85c5fef43c41e30c2d0846b79",
+  "headRef": "s3-relay/notices",
+  "base": "727a26b72441a8d79b569a1aeb33c55d9b6855bc",
+  "baseRef": "s3-relay/relay",
+  "basePr": 569
+ },
+ "overview": {
+  "summary": [
+   "Projector carries messages between your agent sessions through a relay location. An S3 location stores those encrypted records in a bucket, and the daemon signs each request with your AWS credentials. Until this layer, a credential failure stopped delivery with an explanation available only through status commands.",
+   "This layer adds one notice to the location’s repository inbox on the affected machine. Every session using that location can see it. A changed failure reason replaces the same notice, dismissing it hides it until recovery, and a successful signed request withdraws it. The notice stays on this machine and is never sent to the bucket.",
+   "The earlier review findings are fixed: a busy mirror is retried, and the console no longer offers Snooze for local notices. This head still has two defects: an interrupted first metadata commit can leave a false warning after recovery, and local dismissal requires a relay key even though it sends nothing. The latter also fails the exact-head CI check, so sign-off remains withheld."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used on this page",
+    "html": "<ul class=\"tight\"><li><b>Location:</b> the endpoint, bucket, and prefix shared by a group of sessions.</li><li><b>Mirror:</b> the local numbered copies that the inbox, panel, and console display.</li><li><b>Local notice:</b> a Projector-generated entry held only in that mirror, with no corresponding bucket record.</li><li><b>Signed request:</b> an S3 operation authenticated with AWS credentials.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "What was checked",
+    "html": "<ul class=\"tight\"><li>Local plugin validation, 256 hook tests, type-checking, and diff validation passed.</li><li>The <a href=\"https://github.com/ninjudd/projector/actions/runs/44353529722/job/134975373641\">exact-head CI check failed</a> in the new console dismissal test.</li><li>187 focused notice, repository-console, inbox, and peer tests passed in the configured environment; the dismissal case fails with an empty temporary home because it requires a relay key.</li><li>A temporary fake daemon showed the orphaned notice after authenticated recovery, restart, and two more successful jobs.</li><li>The real two-machine bucket check remains deferred until after merge; no cloud service was contacted during this review.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "contract",
+   "title": "A notice has its own entry role",
+   "kicker": "The panel can distinguish a machine-local notice from peer traffic.",
+   "intro": [
+    "The repository inbox already distinguishes incoming items, copies of items you sent, and replies. The new <code>local</code> role represents Projector’s own notice about the relay location. It has the notice kind, takes a dismissal, and carries no response back to a peer."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds the local role to the entry shape shared by the panel’s inbox code."
+    }
+   ]
+  },
+  {
+   "id": "mirror",
+   "title": "Keep one local notice in the mirror",
+   "kicker": "A separate metadata file remembers the notice and its dismissal.",
+   "intro": [
+    "A mirror is the local store of numbered repository-inbox entries. The new functions post, replace, dismiss, and withdraw one local notice per location. Its metadata remembers the random ID, text, and dismissal, so the next failure reason can reuse its number without publishing a relay record.",
+    "The same module renders the entry as a notice from Projector on this machine and refuses responses and snoozes. The busy-lock fix now saves the text after the mirror write, so a failed mirror operation is retried. The review checks the remaining gap before the notice’s ID is recorded, and the callers that try to read a relay key before a purely local dismissal."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/repo_inbox.py",
+     "note": "Persists the local notice lifecycle, refuses relayed actions, and adds its inbox display text.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 200,
+       "text": "The first mirror write creates a visible entry before its ID is saved here. A failed metadata write or interruption leaves withdrawal with no ID to remove; a retry can create a second entry. The fake daemon recovered authenticated requests, restarted, and completed two more jobs while the old notice still claimed the sign-in had expired. Persist a stable ID before mirroring, while committing the delivered text afterward."
+      },
+      {
+       "kind": "flag",
+       "line": 784,
+       "text": "The CLI and console wrappers call <code>sealing_key</code> before reaching this purely local dismissal. With no configured key, or an unavailable keychain, the notice cannot be dismissed even though nothing is encrypted or sent. This also caused the new console test’s CI failure. Dispatch the local action before reading the key."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "daemon",
+   "title": "Connect notices to credential failures and recovery",
+   "kicker": "The relay job posts after its work and withdraws after authenticated success.",
+   "intro": [
+    "An S3 transport sends the bucket requests for one relay job. This layer records whether a signed operation succeeds, even if the store’s capability probe later refuses to use the bucket. That distinction lets the job remove a credential notice once the credentials work again.",
+    "The job posts or withdraws the notice on its worker thread after it saves the relay cache. It also excludes local entries from pruning, because they have no bucket record whose disappearance could mean they were dismissed elsewhere."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/relay.py",
+     "note": "Tracks authenticated success, updates the local notice after each S3 job, and preserves it during mirror pruning.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1618,
+       "text": "The pruning filter excludes the local role. The lapse lifecycle tests passed, including recovery withdrawal and a later failure showing the notice again."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_relay.py",
+     "note": "Adds credential-process failure modes and two daemon-to-inbox lifecycle tests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2747,
+       "text": "The new real-lock regression passed: the first daemon job cannot write the mirror, and the next job displays the notice in both sessions once the lock is released. All three lapse lifecycle cases passed in the 187-test focused run."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "Offer the notice a dismissal in both interfaces",
+   "kicker": "The panel and console omit the unsupported Snooze control.",
+   "intro": [
+    "The Claude Code panel and terminal console draw the repository inbox beside a session’s own items and pull requests. A local notice uses the existing row and drawer, but both action lists omit Snooze. Dismiss continues through the corresponding repository-inbox wrapper.",
+    "The panel test opens a local notice, checks that Snooze is absent, and presses Dismiss. The console now has an equivalent regression test. The controls are corrected, but its real dismissal path reveals the key dependency flagged in the mirror group: the new test fails when no relay key exists."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Omits Snooze when the displayed repository entry has the local role.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2601,
+       "text": "The configured gate ran the new panel test among 256 passing hook tests. It confirmed no Snooze button and one dismiss command for the local notice."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Exercises the local notice’s visible controls and emitted dismissal command."
+    },
+    {
+     "path": "src/projector/console.py",
+     "note": "Omits Snooze for the local role in the terminal console’s action list.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 768,
+       "text": "Read the updated control dispatch and ran the repository-console tests. A local notice’s drawer no longer offers Snooze; the separate dismissal failure occurs when the wrapper reads an unavailable relay key."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "Adds a real local-notice drawer and dismissal regression, which exposes the missing-key failure in CI.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 267,
+       "text": "This test passed in a configured environment but failed in CI and in a fresh temporary home. The failure is its final assertion that Dismiss removed the notice; the command stops at the relay-key lookup first."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Document the notice and record project completion",
+   "kicker": "The reference describes the lifecycle; the plan records evidence and the deferred real-bucket check.",
+   "intro": [
+    "The CLI reference explains how you hear about a credential failure, how to dismiss the notice, and when recovery removes it. The S3 project plan records the local-notice design and marks the four-layer implementation completed.",
+    "The outcome maps acceptance criteria to automated tests. It explicitly leaves the two-machine exchange through a real bucket for the user after merge, with delivery timing to be recorded in the plan afterward."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Adds the credential-notice example and its machine-local dismissal and withdrawal rules."
+    },
+    {
+     "path": "docs/projects/agent-messages/s3-relay/readme.md",
+     "note": "Records the local-notice design, completed status, acceptance evidence, and deferred real-bucket exercise."
+    }
+   ]
+  }
+ ]
+}
