@@ -1,0 +1,74 @@
+{
+ "version": 1,
+ "name": "S3 relay transport plan",
+ "project": "agent-messages/s3-relay",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 541,
+  "title": "Plan a relay through an S3 bucket",
+  "head": "f1661e1ed9ff2aa56a0e8c4d3578a1a2a83e32db",
+  "headRef": "plan-s3-relay",
+  "base": "fd97cba50f18ff0650adf3dd9ff636d89a5d411e",
+  "baseRef": "plan-shared-relay",
+  "basePr": 540
+ },
+ "overview": {
+  "summary": [
+   "Projector relays encrypted records between machines. This plan adds an S3 object-store transport so a recipient can poll its own key prefix more often without accumulating Git objects.",
+   "The transport maps record references to object names and uses ETags, identifiers for object contents, as expected versions on writes. Existing sealing and delivery stay above the transport. The plan is ready/next; hosted service and instance/container credentials are explicitly deferred."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation and review",
+    "html": "<ul class=\"tight\"><li><b>Gate:</b> exact-head CI, 268 hook tests, and project metadata checks passed.</li><li><b>External contracts:</b> AWS and Cloudflare primary documentation were checked for conditional requests.</li><li><b>Limit:</b> this change is a plan. No cloud operations or live credential reads were performed.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "s3-transport",
+   "title": "Carry sealed records through an object store",
+   "kicker": "Location settings, conditional leases, credentials, and bounded polling",
+   "intro": [
+    "The relay stores one encrypted record per object. A poll lists recipient-key prefixes, reads changed objects under size and count limits, and applies queued writes only when their expected ETags still match.",
+    "You select the bucket and prefix with <code>agent.relay</code>. Optional endpoint and profile settings are treated as destinations requiring approval when supplied by tracked configuration. Credentials refresh before expiry, and a local notice explains failures.",
+    "The review flags three gaps in the ready design: destination identity omits the endpoint, a leftover fixed-name probe has no restart recovery, and the create-only probe does not prove update/delete lease support."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Read the entire plan and traced its dependencies against current relay job grouping, retry handling, and persistent machine identity. Gate, exact-head CI, 268 hook tests, and metadata checks passed."
+    },
+    {
+     "kind": "context",
+     "text": "The fake S3 server and post-merge two-machine exchange are acceptance work for implementation; they are not results of this plan review."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/s3-relay/readme.md",
+     "note": "Defines the S3 transport contract, settings, object layout, capability probe, credential lifecycle, and acceptance criteria.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 183,
+       "text": "Endpoint-specific destinations with the same bucket/prefix collapse into one job and outbox. Include the resolved endpoint in the canonical location identity."
+      },
+      {
+       "kind": "flag",
+       "line": 97,
+       "text": "A crash after the first successful fixed-name probe write leaves an object that makes the next first create return 412. Define restart-safe probe naming or recovery."
+      },
+      {
+       "kind": "flag",
+       "line": 99,
+       "text": "The probe checks conditional creation only, although safe updates and deletions require If-Match. Verify wrong-ETag update/delete refusal before enabling a store."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
