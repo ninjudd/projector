@@ -4,10 +4,7 @@ import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testi
 import type { Message, MessageItem, Notice, Question, Request } from './types'
 
 const HOME = '/home/ada'
-const REVIEW = `${HOME}/loops/review/tracked`
-const WATCH = `${HOME}/loops/watch/tracked`
-const REVIEW_COMMAND = 'scripts/watch-prs.sh --tracked ~/loops/review/tracked --state ~/loops/review/state'
-const WATCH_COMMAND = 'bash /plugin/skills/start-watch-loop/scripts/watch-threads.sh --tracked ~/loops/watch/tracked --state s'
+const SESSION = 's1'
 
 const PANEL = {
   plugin: 'projector',
@@ -42,7 +39,7 @@ const COMMAND = {
 } as const
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
-/** The account the panel's `gh` is signed in as. */
+/** The operator, as the daemon's `daemon.json` names them. */
 const VIEWER = 'ada'
 const SEVEN = 'https://github.com/x/y/pull/7'
 const SUMMARY = 'https://example.com/site/reviews/7'
@@ -245,13 +242,63 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
   },
 }
 
-/** Answers a GraphQL query with the signed-in login and each repository it names, under the alias it gave. */
+/** Answers a GraphQL query with each repository it names, under the alias it gave. */
 function answer(query: string): string {
-  const data: Record<string, unknown> = query.includes('viewer { login }') ? { viewer: { login: VIEWER } } : {}
+  const data: Record<string, unknown> = {}
   for (const [, alias, owner, name] of query.matchAll(/(r\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\)/g)) {
     data[alias ?? ''] = BY_REPO[`${owner}/${name}`.toLowerCase()] ?? null
   }
   return JSON.stringify({ data })
+}
+
+const WATCH_ROOT = `${HOME}/.local/state/projector/watch`
+const MODEL = 'claude-opus-5-5'
+/** The files of `SESSION` under the daemon's folder `root`. */
+const sessionFiles = (root = WATCH_ROOT) => {
+  const folder = `${root}/sessions/${SESSION}`
+  return { subscriptions: `${folder}/subscriptions`, events: `${folder}/events`, state: `${folder}/state.json` }
+}
+const { subscriptions: SUBSCRIPTIONS, events: EVENTS, state: STATE } = sessionFiles()
+
+/** The daemon's cache file for a pull request of `repo`, holding the pull request as its query gave it. */
+const cached = (repo: string, node: Record<string, unknown>) => ({
+  [`${WATCH_ROOT}/cache/${repo.toLowerCase()}/pulls/${String(node.number)}.json`]: JSON.stringify({
+    fetched_at: new Date(NOW - 60_000).toISOString(),
+    etags: { pull: 'W/"1"' },
+    repository: { visibility: 'PUBLIC', pullRequest: node },
+    reviews: [],
+  }),
+})
+
+/** What GitHub gives for a pull request of `BY_REPO`. */
+const given = (repo: string, number: number) => (BY_REPO[repo]?.[`p${number}`] ?? {}) as Record<string, unknown>
+
+/** The pull requests a session subscribes to, each as `owner/repo#number`: to fix them, and to review them. */
+type Subscriptions = { fix?: readonly string[]; review?: readonly string[] }
+
+/**
+ * The daemon's files for `SESSION`: its `subscriptions`, each pull request's
+ * cached result from `BY_REPO`, and the `daemon.json` of a daemon that names
+ * ada as the operator. A pull request `BY_REPO` does not hold has no result
+ * yet, so it draws as loading.
+ */
+function daemonFiles({ fix = [], review = [] }: Subscriptions): Record<string, string> {
+  const lines = [...fix.map(named => `${named} fix`), ...review.map(named => `${named} review ${MODEL} ${VIEWER}`)]
+  const files: Record<string, string> = {
+    [`${WATCH_ROOT}/daemon.json`]: JSON.stringify({
+      pid: 41,
+      version: '0.9.0',
+      started_at: '2026-10-12T11:00:00Z',
+      operator: VIEWER,
+    }),
+    [SUBSCRIPTIONS]: lines.map(line => `${line}\n`).join(''),
+  }
+  for (const named of new Set([...fix, ...review])) {
+    const [repo = '', number = ''] = named.split('#')
+    const node = BY_REPO[repo.toLowerCase()]?.[`p${number}`] as Record<string, unknown> | undefined
+    if (node !== undefined) Object.assign(files, cached(repo, node))
+  }
+  return files
 }
 
 const ran = (stdout: string) => ({
@@ -278,13 +325,15 @@ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 /**
  * GitHub's answer to a query, where a test needs another, or needs it late,
  * the settings `.projector.toml` holds, by dotted key, which a test may
- * change between reloads, and what a Bash command prints, where a test needs
- * it to print something.
+ * change between reloads, what a Bash command prints, where a test needs it
+ * to print something, and the session's id each time the mod asks for it,
+ * `SESSION` unless a test moves the session.
  */
 type Beneath = {
   github?: (query: string) => Ran | Promise<Ran>
   settings?: Record<string, unknown>
   bash?: (command: string) => { stdout: string; stderr: string }
+  sessionId?: () => string
 }
 
 /** `project config get <key> [--default <value>] --json`, answered from `settings` as the CLI answers it. */
@@ -297,19 +346,27 @@ function configGet(argv: readonly string[], settings: Record<string, unknown>): 
 }
 
 /**
- * Answers the files, GitHub, prompt and Bash calls beneath the plugin,
- * `project config get` from `settings`, and any other `project` command, with
- * what it reads on standard input, when given. A file that `files` does not
- * hold is missing.
+ * Answers the session, files, GitHub, prompt and Bash calls beneath the
+ * plugin, `project config get` from `settings`, and any other `project`
+ * command, with what it reads on standard input, when given. A file that
+ * `files` does not hold is missing.
  */
 function world(
   on: On,
   files: Record<string, string>,
   project?: (argv: string[], stdin?: string) => Outcome | Promise<Outcome>,
-  { github = query => ran(answer(query)), settings = {}, bash = () => ({ stdout: '', stderr: '' }) }: Beneath = {},
+  {
+    github = query => ran(answer(query)),
+    settings = {},
+    bash = () => ({ stdout: '', stderr: '' }),
+    sessionId = () => SESSION,
+  }: Beneath = {},
 ) {
   const commands: string[][] = []
   const filled: string[] = []
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.id', () => ({ value: sessionId() }))
+  on('command.register', () => ({ value: { command: 'projector' } }))
   on('fs.stat', ($, e) => {
     const text = files[e.path]
     return text === undefined
@@ -355,19 +412,19 @@ function partsOf(text: { children: unknown[] } | undefined) {
   return parts.map(part => (typeof part === 'string' ? part : [part.children.join(''), part.props.color]))
 }
 
-test('draws one line per open pull request of the session’s own loops', async ($, on) => {
+test('draws one line per open pull request the session subscribes to', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const { commands } = world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#3\n', [WATCH]: 'x/y#7\n' })
+  // The daemon caches x/y#7 for another session, so the panel does not list it.
+  const { commands } = world(on, {
+    ...daemonFiles({ review: ['o/r#1', 'o/r#2', 'o/r#3'] }),
+    ...cached('x/y', given('x/y', 7)),
+  })
 
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
-  // The watch loop runs in another session, so the panel does not list it.
-  const gh = commands.filter(argv => argv[0] === 'gh')
-  expect(gh.length).toBe(1)
-  expect(gh[0]?.join(' ')).not.toContain('repository(owner: "x", name: "y")')
+  // The rows come from the daemon's cache, so the panel asks GitHub nothing for them.
+  expect(commands.filter(argv => argv[0] === 'gh')).toEqual([])
 
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
@@ -395,7 +452,7 @@ test('draws one line per open pull request of the session’s own loops', async 
   // The rows start on the line under the header, with no blank line between.
   expect(texts.slice(3, 6).map(found => found.text)).toEqual(['#2', 'findings', 'Change under review'])
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|session|Refresh/ })).toBeUndefined()
   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
   await ui.unmount()
 })
@@ -403,10 +460,9 @@ test('draws one line per open pull request of the session’s own loops', async 
 test('a row says what holds it back first, then reviewing, clean, draft, or ready, with a draft’s number and word in italic', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#10\no/r#11\no/r#12\no/r#13\no/r#14\no/r#15\no/r#16\no/r#18\no/r#19\n' })
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  const numbers = [1, 2, 10, 11, 12, 13, 14, 15, 16, 18, 19]
+  world(on, daemonFiles({ review: numbers.map(number => `o/r#${number}`) }))
+  await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
 
   type Drawn = [color: unknown, isItalic: boolean]
@@ -469,11 +525,9 @@ test('a row says what holds it back first, then reviewing, clean, draft, or read
 test('draws no background and no header on a surface that does not lay text out in columns', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\n' })
+  world(on, daemonFiles({ review: ['o/r#1'] }))
 
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...PANEL, surface })
@@ -510,11 +564,9 @@ const backgroundOf = async (ui: Pick<Mounted, 'find'>) => (await ui.find({ key: 
 test('in a terminal the panel is inset a column and padded, on a background of its own', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\n' })
+  world(on, daemonFiles({ review: ['o/r#1'] }))
 
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
   // The panel pads one column at each side, and no row: its header is its first line and its key hint its last.
@@ -531,7 +583,7 @@ test('in a terminal the panel is inset a column and padded, on a background of i
 test('the panel’s last line says how to focus the panel, and once the panel has the keyboard, which keys work', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\n' })
+  world(on, daemonFiles({ review: ['o/r#1'] }))
   on('ui.focus', { plugin: '*' }, () => ({}))
   on('prompt.edit', ($, e) => ({ text: e.text, cursor: e.cursor }))
   on('prompt.submit', ($, e) => ({ text: e.text }))
@@ -549,9 +601,7 @@ test('the panel’s last line says how to focus the panel, and once the panel ha
     await prompt.edit({ origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0, inputText: text })
     await clock.settle()
   }
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
   const hint = async () => {
@@ -600,10 +650,8 @@ const ENGINE = { plugin: 'engine', tier: 'core' } as const
 test('the header’s age, a pull request’s age, and the key hint end in one column', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#2\n' })
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  world(on, daemonFiles({ review: ['o/r#2'] }))
+  await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
   // The header and the hint sit in the panel's padding of one column, and the rows in a Box one column further in at
@@ -643,20 +691,30 @@ type PanelOptions = {
   files?: Record<string, string>
   settings?: Record<string, unknown>
   github?: Beneath['github']
+  subscriptions?: Subscriptions
 }
 
 /**
- * A session on a Claude Code theme whose review loop tracks o/r#1, with the
- * theme's `/config` row, the files, the settings and GitHub's answers beneath
- * the plugin. A change of theme to `dark-ansi` is refused.
+ * A session on a Claude Code theme that subscribes to `subscriptions`, by
+ * default to review o/r#1, with the theme's `/config` row, the files, the
+ * settings and GitHub's answers beneath the plugin. A change of theme to
+ * `dark-ansi` is refused.
  */
-function panelWorld(on: On, { theme = 'dark', env = {}, files = {}, settings = {}, github }: PanelOptions = {}) {
+function panelWorld(
+  on: On,
+  {
+    theme = 'dark',
+    env = {},
+    files = {},
+    settings = {},
+    github,
+    subscriptions = { review: ['o/r#1'] },
+  }: PanelOptions = {},
+) {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME, ...env })
-  const { commands } = world(on, { [REVIEW]: 'o/r#1\n', ...files }, undefined, { settings, github })
+  const { commands } = world(on, { ...daemonFiles(subscriptions), ...files }, undefined, { settings, github })
   const toasts = toastsOf(on)
-  on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('command.register', () => ({ value: { command: 'projector' } }))
   on('config.list', () => ({ value: [themeRow(theme)] }))
   on('config.set', ($, e) => (e.value === 'dark-ansi' ? { deny: 'the theme stays' } : { value: e.value }))
   return { clock, commands, toasts }
@@ -820,10 +878,8 @@ test('a panel.background the panel does not take leaves the color to the theme, 
 test('a row’s notes name every other status that applies, and read the same with its drawer open', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\no/r#22\no/r#23\no/r#24\n' })
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  world(on, daemonFiles({ review: ['o/r#10', 'o/r#11', 'o/r#12', 'o/r#14', 'o/r#21', 'o/r#22', 'o/r#23', 'o/r#24'] }))
+  await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
 
   // A row's notes are the Text after its title, when it has any; the age comes after them.
@@ -891,12 +947,9 @@ test('a row’s notes name every other status that applies, and read the same wi
 test('a press on a pull request’s number opens its drawer, and discuss puts it in the prompt', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const { filled } = world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
+  const { filled } = world(on, daemonFiles({ fix: ['x/y#7'], review: ['o/r#1'] }))
 
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
   // The number is a plain button, so no terminal draws a URL beside it.
@@ -915,7 +968,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   // The drawer's facts name no author, whoever wrote the pull request.
   const facts = await ui.find({ type: 'Text', text: /^fixer · fix-branch · \+12 −3 in 2 files · checks passing$/ })
   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
-  // What the loop does takes its loop's color, the branch the palette's cyan, and the size reads as a diff stat:
+  // What the session does takes its role's color, the branch the palette's cyan, and the size reads as a diff stat:
   // insertions green, deletions red. The checks take theirs, and the files and each `·` keep the default color.
   expect([facts?.props.color, facts?.props.dimColor]).toEqual([undefined, undefined])
   const pieces = (facts?.children ?? []) as (string | { props: { color?: string }; children: string[] })[]
@@ -1033,7 +1086,7 @@ for (const [theme, labels] of [
   ],
 ] as const) {
   test(`a drawer ends its facts with every label in its color, made readable on the ${theme} theme, a clean the row’s word gave way to among them`, async ($, on) => {
-    const { clock } = panelWorld(on, { theme, files: { [REVIEW]: 'o/r#17\n' } })
+    const { clock } = panelWorld(on, { theme, subscriptions: { review: ['o/r#17'] } })
     await startSession($, clock)
     const ui = await $.ui.mount(PANEL)
 
@@ -1060,12 +1113,9 @@ for (const [theme, labels] of [
 test('names pull requests by number alone when their one repository is spelled in two cases', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const { filled } = world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'O/R#2\n' })
+  const { filled } = world(on, daemonFiles({ fix: ['O/R#2'], review: ['o/r#1'] }))
 
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
   // GitHub ignores case in owner and repository names, so `o/r` and `O/R` are one repository.
   const ui = await $.ui.mount(PANEL)
@@ -1079,7 +1129,7 @@ test('names pull requests by number alone when their one repository is spelled i
 })
 
 test('reads a pull request’s threads only while its drawer is open, and only when the poll counted one', async ($, on) => {
-  const { clock, commands } = panelWorld(on, { files: { [WATCH]: 'x/y#7\n' } })
+  const { clock, commands } = panelWorld(on, { subscriptions: { fix: ['x/y#7'], review: ['o/r#1'] } })
   // The queries the panel sent GitHub since the last call.
   let read = 0
   const fresh = () => {
@@ -1091,14 +1141,9 @@ test('reads a pull request’s threads only while its drawer is open, and only w
   const isThreads = (query: string) => query.includes('comments(')
 
   await startSession($, clock)
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
-  // Each thread's first comment is a connection of its own, which would cost a point per pull request on every poll,
-  // so the poll asks only whether each thread is resolved.
-  const polls = fresh()
-  expect(polls.length).toBeGreaterThan(0)
-  expect(polls.filter(isThreads)).toEqual([])
+  // Each thread's first comment is a connection of its own, which would cost a point per pull request, so with no
+  // drawer open the panel asks GitHub nothing.
+  expect(fresh()).toEqual([])
 
   const ui = await $.ui.mount(PANEL)
   // GitHub counted no open thread on #1, so its drawer asks it nothing.
@@ -1121,14 +1166,14 @@ test('reads a pull request’s threads only while its drawer is open, and only w
   ])
   await clock.advance(30_000 + TICK)
   await clock.settle()
-  expect(fresh().map(isThreads)).toEqual([false, true])
+  expect(fresh().map(isThreads)).toEqual([true])
 
   // Once it closes, the poll reads no threads.
   await ui.press({ key: 'pr:x/y#7' })
   await clock.settle()
   await clock.advance(30_000 + TICK)
   await clock.settle()
-  expect(fresh().map(isThreads)).toEqual([false])
+  expect(fresh()).toEqual([])
   await ui.unmount()
 })
 
@@ -1146,15 +1191,12 @@ const threadNode = (path: string, line: number | null, body: string, login: stri
 /** A panel with x/y#7's drawer open, listing `nodes` as its threads. */
 async function drawerListing($: Engine, on: On, nodes: unknown[]) {
   const { clock } = panelWorld(on, {
-    files: { [WATCH]: 'x/y#7\n' },
+    subscriptions: { fix: ['x/y#7'], review: ['o/r#1'] },
     github: query =>
       ran(query.includes('comments(') ? JSON.stringify({ data: { r0: { p7: { reviewThreads: { nodes } } } } }) : answer(query)),
   })
 
   await startSession($, clock)
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
 
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'pr:x/y#7' })
@@ -1194,7 +1236,7 @@ test('collapses each file in a drawer to its name and count, until a press opens
 async function twoDrawersListing($: Engine, on: On) {
   const nodes = [threadNode('src/a.ts', 1, 'First', 'ann', 1)]
   const { clock } = panelWorld(on, {
-    files: { [WATCH]: 'x/y#7\n', [REVIEW]: 'o/r#2\n' },
+    subscriptions: { fix: ['x/y#7'], review: ['o/r#2'] },
     github: query =>
       ran(
         query.includes('comments(')
@@ -1205,10 +1247,6 @@ async function twoDrawersListing($: Engine, on: On) {
       ),
   })
   await startSession($, clock)
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
   return { clock, ui: await $.ui.mount(PANEL) }
 }
 
@@ -1314,14 +1352,11 @@ test('keeps listing a drawer’s threads when GitHub cannot say what they are no
   let isOffline = false
   const offline = { ...ran(''), exitCode: 1, stderr: 'error connecting to api.github.com\n' }
   const { clock } = panelWorld(on, {
-    files: { [WATCH]: 'x/y#7\n' },
+    subscriptions: { fix: ['x/y#7'], review: ['o/r#1'] },
     github: query => (isOffline && query.includes('comments(') ? offline : ran(answer(query))),
   })
 
   await startSession($, clock)
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
 
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'pr:x/y#7' })
@@ -1339,12 +1374,9 @@ test('keeps listing a drawer’s threads when GitHub cannot say what they are no
 test('ends each pull request’s line with its age, in one column as wide as the widest', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\no/r#2\n', [WATCH]: 'x/y#7\n' })
+  world(on, daemonFiles({ fix: ['x/y#7'], review: ['o/r#1', 'o/r#2'] }))
 
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
   // Ages of different widths sit right-aligned in one column, so the titles and notes before them line up.
@@ -1364,17 +1396,12 @@ test('ends each pull request’s line with its age, in one column as wide as the
 test('lists your pull requests first, then everyone else’s by author, naming theirs before the title', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const { commands } = world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#6\n', [WATCH]: 'x/y#7\n' })
+  const { commands } = world(on, daemonFiles({ fix: ['x/y#7'], review: ['o/r#4', 'o/r#9', 'o/r#5', 'o/r#6'] }))
 
-  // One command starts both watchers, so the panel loads once.
-  await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
-  // The signed-in login comes in the one query that asks for the pull requests.
-  const gh = commands.filter(argv => argv[0] === 'gh')
-  expect(gh).toHaveLength(1)
-  expect(gh[0]?.join(' ')).toContain('viewer { login }')
+  // The operator is the login the daemon's `daemon.json` names, so the panel asks GitHub nothing for it.
+  expect(commands.filter(argv => argv[0] === 'gh')).toEqual([])
 
   const ui = await $.ui.mount(PANEL)
   // Yours by repository, each repository's newest first, whatever order they came in; then bob's, then grace's two,
@@ -1406,10 +1433,8 @@ test('lists your pull requests first, then everyone else’s by author, naming t
 test('your pull requests and the review requests collapse apart, yours always first', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#20\no/r#6\n', [WATCH]: 'x/y#7\n' })
-  await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
-  await clock.advance(1)
-  await clock.settle()
+  world(on, daemonFiles({ fix: ['x/y#7'], review: ['o/r#4', 'o/r#9', 'o/r#5', 'o/r#20', 'o/r#6'] }))
+  await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
   /** The panel's lines, a pull request by its key and a collapsed section by what it reads. */
   const lines = async () => {
@@ -1465,79 +1490,12 @@ function toastsOf(on: On): string[] {
   return toasts
 }
 
-test('dismiss drops a pull request from each loop that tracks it, and its line goes', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  const files: Record<string, string> = { [REVIEW]: 'o/r#1\nx/y#7\n', [WATCH]: 'x/y#7\n' }
-  // `project loop drop <reference> --tracked <file>` appends the exclusion, as the CLI does.
-  const { commands } = world(on, files, ([, , , reference = '', , tracked = '']) => {
-    files[tracked] = `${files[tracked] ?? ''}!${reference}\n`
-    return ran(`dropped ${reference} from ${tracked}\n`)
-  })
-  const toasts = toastsOf(on)
-  await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
-  await clock.advance(1)
-  await clock.settle()
-
-  const ui = await $.ui.mount(PANEL)
-  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests  \d+s$/)
-  await ui.press({ key: 'pr:x/y#7' })
-  // The drawer's actions are lines of their own, as an item's are.
-  expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
-  expect((await ui.find({ type: 'Button', key: 'dismiss:x/y#7' }))?.props.plain).toBe(true)
-
-  await ui.press({ key: 'dismiss:x/y#7' })
-
-  await ui.press({ key: 'confirm:x/y#7' })
-  await clock.settle()
-
-  expect(commands.filter(argv => argv[0] === 'project' && argv[1] === 'loop')).toEqual([
-    ['project', 'loop', 'drop', 'x/y#7', '--tracked', REVIEW],
-    ['project', 'loop', 'drop', 'x/y#7', '--tracked', WATCH],
-  ])
-  expect(toasts).toEqual(['projector: stopped fixing and reviewing x/y#7'])
-  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
-  // The header stops counting the dismissed pull request.
-  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
-  await ui.unmount()
-})
-
-test('a dismiss the CLI refuses says why and keeps the line', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  const refused = { ...ran(''), exitCode: 66, stderr: `project: no tracked file at ${WATCH}\n` }
-  world(on, { [WATCH]: 'x/y#7\n' }, () => refused)
-  const toasts = toastsOf(on)
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
-
-  const ui = await $.ui.mount(PANEL)
-  await ui.press({ key: 'pr:x/y#7' })
-  await ui.press({ key: 'dismiss:x/y#7' })
-  await ui.press({ key: 'confirm:x/y#7' })
-  await clock.settle()
-
-  expect(toasts).toEqual([`projector: no tracked file at ${WATCH}`])
-  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
-  expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
-  await ui.unmount()
-})
-
 test('a pull request’s drawer closes when its line leaves the panel, so it does not open again when the line returns', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  const files: Record<string, string> = { [WATCH]: 'x/y#7\n' }
-  world(on, files, ([, , , reference = '', , tracked = '']) => {
-    files[tracked] = `${files[tracked] ?? ''}!${reference}\n`
-    return ran(`dropped ${reference} from ${tracked}\n`)
+  const { clock, files } = watchWorld(on, {
+    files: { [SUBSCRIPTIONS]: 'x/y#7 fix\n', ...cached('x/y', given('x/y', 7)) },
   })
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
-  // Hiding and showing the panel reloads it, as a watcher's report does.
+  await startSession($, clock)
+  // Hiding and showing the panel reloads it.
   const reload = async () => {
     await $.command.run(COMMAND)
     await $.command.run(COMMAND)
@@ -1548,11 +1506,11 @@ test('a pull request’s drawer closes when its line leaves the panel, so it doe
   const ui = await $.ui.mount(PANEL)
   // Dropped from a terminal while its drawer is open, the pull request leaves the panel.
   await ui.press({ key: 'pr:x/y#7' })
-  files[WATCH] = 'x/y#7\n!x/y#7\n'
+  files[SUBSCRIPTIONS] = 'x/y#7 fix\n!x/y#7 fix\n'
   await reload()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  // `project loop restore` brings its line back with the drawer closed.
-  files[WATCH] = 'x/y#7\n'
+  // Subscribing to it again brings its line back with the drawer closed.
+  files[SUBSCRIPTIONS] = 'x/y#7 fix\n'
   await reload()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
@@ -1563,70 +1521,68 @@ test('a pull request’s drawer closes when its line leaves the panel, so it doe
   await ui.press({ key: 'confirm:x/y#7' })
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  files[WATCH] = 'x/y#7\n'
+  files[SUBSCRIPTIONS] = 'x/y#7 fix\n'
   await reload()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
   await ui.unmount()
 })
 
-/** What the loops do with a pull request, as its open drawer's facts line starts: each word with its color, and the `and` between. */
-async function loopsOf(ui: Pick<Mounted, 'find'>, key: string) {
+/**
+ * What the session does with a pull request, as its open drawer's facts line
+ * starts: each word with its color, and the `and` between.
+ */
+async function rolesOf(ui: Pick<Mounted, 'find'>, key: string) {
   const drawer = await ui.find({ key: `drawer:${key}` })
   const facts = ((drawer?.children ?? []) as { children?: unknown[] }[])[0]
   type Piece = string | { props: { color?: string }; children: string[] }
   const pieces = (facts?.children ?? []) as Piece[]
-  const loops = pieces.slice(0, pieces.findIndex(piece => piece === ' · '))
-  return loops.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color]))
+  const roles = pieces.slice(0, pieces.findIndex(piece => piece === ' · '))
+  return roles.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color]))
 }
 
 test('opening one drawer closes the one that was open', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
+  world(on, daemonFiles({ fix: ['x/y#7'], review: ['o/r#1'] }))
 
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'pr:x/y#7' })
-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)']])
+  expect(await rolesOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)']])
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ key: 'github:o/r#1' })).toBeDefined()
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
   // The reviewer takes the theme's `claude` orange, as the fixer takes the palette's blue.
-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewer', 'claude']])
+  expect(await rolesOf(ui, 'o/r#1')).toEqual([['reviewer', 'claude']])
   await ui.unmount()
 })
 
-test('lists a pull request both loops track once, as fixed and reviewed, and counts it once', async ($, on) => {
+test('lists a pull request the session both fixes and reviews once, and counts it once', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'o/r#1\n' })
+  world(on, daemonFiles({ fix: ['o/r#1'], review: ['o/r#1'] }))
 
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
   // The header counts its one line once, in the singular.
   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ type: 'Text', text: /^fixer and reviewer/ })).toBeDefined()
-  // Each loop takes its own color, and the `and` between them the default color.
-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['fixer', 'ansi256(4)'], ' and ', ['reviewer', 'claude']])
+  // Each role takes its own color, and the `and` between them the default color.
+  expect(await rolesOf(ui, 'o/r#1')).toEqual([['fixer', 'ansi256(4)'], ' and ', ['reviewer', 'claude']])
   await ui.unmount()
 })
 
 test('`/projector` only shows or hides the panel, whatever follows it', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const { commands } = world(on, { [WATCH]: 'x/y#7\n' })
+  const { commands } = world(on, { ...cached('x/y', given('x/y', 7)) })
 
-  await $.command.run({ ...COMMAND, args: '~/loops/watch/tracked' })
+  // Arguments that read as a subscription line subscribe the session to nothing.
+  await $.command.run({ ...COMMAND, args: 'x/y#7 fix' })
   await clock.advance(1)
   await clock.settle()
 
@@ -1638,100 +1594,16 @@ test('`/projector` only shows or hides the panel, whatever follows it', async ($
   await ui.unmount()
 })
 
-test('leaves out a tracked file an earlier version was given by hand, until the session starts its watcher', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
-  let loops: unknown = [{ tracked: WATCH }, { kind: 'reviewing', tracked: REVIEW }]
-  let version = 1
-  on('state.get', { plugin: 'projector', key: 'seenLoops' }, () => ({ value: { value: loops as never, version } }))
-  on('state.set', { plugin: 'projector', key: 'seenLoops' }, ($, e) => {
-    loops = e.value
-    version += 1
-    return { value: { isSet: true as const, version } }
-  })
-
-  await $.command.run(COMMAND)
-  await clock.advance(1)
-  await clock.settle()
-
-  const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
-  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
-  expect(loops).toEqual([
-    { kind: 'reviewing', tracked: REVIEW },
-    { kind: 'watching', tracked: WATCH },
-  ])
-  await ui.unmount()
-})
-
-test('stays hidden until the session starts a watcher or asks for it', async ($, on) => {
-  const clock = mock.clock(on)
-  mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
-
-  await clock.advance(1)
-  await clock.settle()
-
-  const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
-  await ui.unmount()
-})
-
-test('keeps a panel you hid hidden when a known watcher starts again', async ($, on) => {
-  const clock = mock.clock(on)
-  mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\n' })
-
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await $.command.run(COMMAND)
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
-
-  const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
-  await ui.unmount()
-})
-
-test('says once when it cannot tell which tracked file a watcher reads', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  world(on, {})
-  const toasts: string[] = []
-  on('ui.toast', ($, e) => {
-    toasts.push(e.text)
-    return { value: undefined }
-  })
-
-  const command = 'bash scripts/watch-prs.sh --tracked "$LOOP/tracked" --state s'
-  await $.tool.call({ tool: 'Bash', command })
-  await $.tool.call({ tool: 'Bash', command })
-  await clock.settle()
-
-  expect(toasts).toEqual(['projector: cannot tell which file $LOOP/tracked names, so the panel does not list that loop'])
-})
-
 test('draws over a snapshot an earlier version left in the session', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\n' })
+  world(on, daemonFiles({ review: ['o/r#1'] }))
   const earlier = { watching: [], reviewing: [], fetchedAt: null, error: null }
   on('state.get', { plugin: 'projector', key: 'panelSnapshot' }, () => ({
     value: { value: earlier as never, version: 1 },
   }))
 
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeDefined()
@@ -1741,23 +1613,21 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
 test('draws over a snapshot whose labels an earlier version kept as names alone', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\n' })
+  world(on, daemonFiles({ review: ['o/r#1'] }))
   const row = { pr: { repo: 'o/r', number: 1, title: 'Signed-off change', labels: ['clean'] }, roles: ['reviewing'] }
   const earlier = { rows: [row], viewer: null, fetchedAt: null, error: null }
   on('state.get', { plugin: 'projector', key: 'panelSnapshot' }, () => ({
     value: { value: earlier as never, version: 1 },
   }))
 
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeDefined()
   await ui.unmount()
 })
 
-test('shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request', async ($, on) => {
+test('shows its tagline, one space in and in the subtle color, when the session subscribes to no open pull request', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
   world(on, {})
@@ -1790,65 +1660,6 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
   await desktop.unmount()
 })
 
-/** What `gh` answers when it cannot reach GitHub. */
-const DOWN = { ...ran(''), exitCode: 1, stderr: 'read: connection reset by peer\n' }
-
-test('says why GitHub failed only when the panel has no pull request from it to draw', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  let isDown = true
-  world(on, { [REVIEW]: 'o/r#1\n' }, undefined, { github: query => (isDown ? DOWN : ran(answer(query))) })
-  // Hiding the panel and showing it again loads it again.
-  const reload = async () => {
-    await $.command.run(COMMAND)
-    await $.command.run(COMMAND)
-    await clock.advance(1)
-    await clock.settle()
-  }
-
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
-
-  const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeUndefined()
-
-  isDown = false
-  await reload()
-  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
-
-  // A later failure keeps what GitHub said last, and says nothing of it.
-  isDown = true
-  await reload()
-  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^GitHub:/ })).toBeUndefined()
-  await ui.unmount()
-})
-
-test('says why GitHub failed for a loop added after the panel loaded with nothing to track', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  const files: Record<string, string> = {}
-  world(on, files, undefined, { github: () => DOWN })
-
-  // A panel shown before any loop tracks a pull request asks GitHub nothing.
-  await $.command.run(COMMAND)
-  await clock.advance(1)
-  await clock.settle()
-
-  files[REVIEW] = 'o/r#1\n'
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
-
-  const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: TAGLINE })).toBeUndefined()
-  await ui.unmount()
-})
-
-const SESSION = 's1'
 const STORE = `${HOME}/.local/state/projector/inbox/${SESSION}`
 /** What the CLI says, exiting 75, when another command holds the store's lock. */
 const BUSY = `another command holds ${STORE}/.lock; try again once it finishes`
@@ -2269,20 +2080,24 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
   return { run, files, store, refusal, failing, during, write: put }
 }
 
-type Options = Beneath & { agents?: AgentInfo[]; drop?: string; isTurnRunning?: boolean }
+type Options = Beneath & {
+  agents?: AgentInfo[]
+  drop?: string
+  isTurnRunning?: boolean
+  /** What the session subscribes to, by default to review x/y#7. A session that subscribes to nothing keeps its panel hidden. */
+  subscriptions?: Subscriptions
+}
 
-/** A session with a loop on x/y#7 and a store of questions beneath the plugin. */
+/** A session that subscribes to `options.subscriptions`, with a store of questions beneath the plugin. */
 function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options: Options = {}) {
   const store = questionStore(clock, seed)
-  const { commands, filled } = world(on, { [REVIEW]: 'x/y#7\n' }, store.run, options)
+  const files = daemonFiles(options.subscriptions ?? { review: ['x/y#7'] })
+  const { commands, filled } = world(on, files, store.run, options)
   const registered: unknown[] = []
   const notified: string[] = []
   const toasts: string[] = []
   const sent: { to: string; text: string }[] = []
   const submitted: { text: string; context: readonly string[] }[] = []
-  on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('session.id', () => ({ value: SESSION }))
-  on('command.register', () => ({ value: { command: 'projector' } }))
   on('tool.register', ($, e) => {
     registered.push(e)
     return { value: { tool: `mcp__projector__${e.name}` } }
@@ -2321,12 +2136,13 @@ async function headerOf(ui: Pick<Mounted, 'find'>): Promise<string> {
   return (await ui.find({ key: 'header' }))?.text ?? ''
 }
 
-async function startSession($: Engine, clock: Clock, isShown = true) {
+/** Starts the session and lets the timers its start sets run: the first renewal, and the panel its subscriptions show. */
+async function startSession($: Engine, clock: Clock) {
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
-  // A shown panel belongs to a session that started its review loop's watcher.
-  if (isShown) await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  for (let step = 0; step < 3; step += 1) {
+    await clock.advance(1)
+    await clock.settle()
+  }
 }
 
 const running = (status: AgentInfo['status']): AgentInfo =>
@@ -2471,20 +2287,6 @@ test('a pull request’s age and an item’s age end in one column', async ($, o
   await ui.unmount()
 })
 
-test('a blank line sets GitHub’s error apart from the items under it', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  questionWorld(on, clock, [notice()], { github: () => DOWN })
-  await startSession($, clock)
-
-  const ui = await $.ui.mount(PANEL)
-  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  const failure = texts.indexOf('GitHub: read: connection reset by peer')
-  expect(failure).toBeGreaterThan(-1)
-  expect(texts.slice(failure + 1, failure + 3)).toEqual([' ', '- '])
-  await ui.unmount()
-})
-
 test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -2514,8 +2316,8 @@ test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it
 test('a question asked from the shell shows the hidden panel within a tick', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  questionWorld(on, clock, [held({ pr: null, subject: 'Run project init?' })])
-  await startSession($, clock, false)
+  questionWorld(on, clock, [held({ pr: null, subject: 'Run project init?' })], { subscriptions: {} })
+  await startSession($, clock)
   await clock.advance(TICK)
   await clock.settle()
 
@@ -3456,8 +3258,11 @@ test('an answer from a terminal reaches the live subagent that asked', async ($,
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
-  const session = questionWorld(on, clock, [held({ agentId: 'agent-1', answer })], { agents: [running('running')] })
-  await startSession($, clock, false)
+  const session = questionWorld(on, clock, [held({ agentId: 'agent-1', answer })], {
+    agents: [running('running')],
+    subscriptions: {},
+  })
+  await startSession($, clock)
   await clock.advance(TICK)
   await clock.settle()
 
@@ -3472,8 +3277,11 @@ test('an answer from a terminal for a subagent that ended goes to the main loop,
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const answer = { letter: 'b', text: 'Add a budget', answeredAt: NOW - 1_000 }
-  const session = questionWorld(on, clock, [held({ agentId: 'agent-1', answer })], { agents: [running('completed')] })
-  await startSession($, clock, false)
+  const session = questionWorld(on, clock, [held({ agentId: 'agent-1', answer })], {
+    agents: [running('completed')],
+    subscriptions: {},
+  })
+  await startSession($, clock)
   await clock.advance(TICK)
   await clock.settle()
 
@@ -3539,8 +3347,8 @@ test('an answer from a terminal waits behind a long turn on one claim, renewed w
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
-  const session = questionWorld(on, clock, [held({ answer })], { isTurnRunning: true })
-  await startSession($, clock, false)
+  const session = questionWorld(on, clock, [held({ answer })], { subscriptions: {}, isTurnRunning: true })
+  await startSession($, clock)
   await clock.advance(TICK)
   await clock.settle()
   const lists = () => session.project().filter(command => command.startsWith('inbox list')).length
@@ -3565,9 +3373,9 @@ test('a store read that fails runs again on the next tick', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
-  const session = questionWorld(on, clock, [held({ answer })])
+  const session = questionWorld(on, clock, [held({ answer })], { subscriptions: {} })
   session.store.failing.lists = 1
-  await startSession($, clock, false)
+  await startSession($, clock)
   for (let at = 0; at < 3; at += 1) await clock.advance(TICK)
   await clock.settle()
 
@@ -3580,8 +3388,8 @@ test('a store read that runs past the CLI’s timeout still renews the claim of 
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
-  const session = questionWorld(on, clock, [held({ answer })], { isTurnRunning: true })
-  await startSession($, clock, false)
+  const session = questionWorld(on, clock, [held({ answer })], { subscriptions: {}, isTurnRunning: true })
+  await startSession($, clock)
   await clock.advance(TICK)
   await clock.settle()
   const renewals = () => session.project().filter(command => command.includes('--renew')).length
@@ -3609,7 +3417,8 @@ test('a submit an earlier copy of the module left keeps its claim and settles wh
   mock.env(on, { HOME })
   const text = 'ANSWER 1.a Decline the finding? → Decline it'
   const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
-  const session = questionWorld(on, clock, [held({ answer, claim: { token: 'old', renewedAt: NOW } })])
+  const claimed = held({ answer, claim: { token: 'old', renewedAt: NOW } })
+  const session = questionWorld(on, clock, [claimed], { subscriptions: {} })
   let pending: Record<string, unknown> = { '1': { ref: '1', session: SESSION, token: 'old', route: 'submit', text } }
   let version = 1
   on('state.get', { plugin: 'projector', key: 'panelSending' }, () => ({ value: { value: pending as never, version } }))
@@ -3618,7 +3427,7 @@ test('a submit an earlier copy of the module left keeps its claim and settles wh
     version += 1
     return { value: { isSet: true as const, version } }
   })
-  await startSession($, clock, false)
+  await startSession($, clock)
   await clock.advance(2 * TICK)
   await clock.settle()
 
@@ -3636,7 +3445,8 @@ test('a submit the release before the rename left under bandSending keeps its cl
   mock.env(on, { HOME })
   const text = 'ANSWER 1.a Decline the finding? → Decline it'
   const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
-  const session = questionWorld(on, clock, [held({ answer, claim: { token: 'old', renewedAt: NOW } })])
+  const claimed = held({ answer, claim: { token: 'old', renewedAt: NOW } })
+  const session = questionWorld(on, clock, [claimed], { subscriptions: {} })
   // The release before the rename kept the panel's deliveries under `bandSending`.
   const stored = {
     bandSending: {
@@ -3657,7 +3467,7 @@ test('a submit the release before the rename left under bandSending keeps its cl
     value: { value: stored.panelSending.value as never, version: stored.panelSending.version },
   }))
   on('state.set', { plugin: 'projector', key: 'panelSending' }, ($, e) => put('panelSending', e.value))
-  await startSession($, clock, false)
+  await startSession($, clock)
   await clock.advance(90_000)
   await clock.settle()
 
@@ -3991,10 +3801,8 @@ test('a collapsed number takes the color of its row’s word, and is italic for 
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const numbers = ['#1', '#2', '#10', '#11', '#12', '#13', '#14', '#15', '#16', '#17', '#18', '#19']
-  world(on, { [REVIEW]: `${numbers.map(number => `o/r${number}`).join('\n')}\n` })
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  world(on, daemonFiles({ review: numbers.map(number => `o/r${number}`) }))
+  await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
 
   // Each row's word is the Text right after its number.
@@ -4032,10 +3840,8 @@ test('a collapsed number takes the color of its row’s word, and is italic for 
 test('collapsed pull requests list their labels in the rows’ order and status colors, and each label is a tab for its drawer', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#10\no/r#12\n' })
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await clock.advance(1)
-  await clock.settle()
+  world(on, daemonFiles({ review: ['o/r#1', 'o/r#2', 'o/r#10', 'o/r#12'] }))
+  await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
   const label = async (text: string) => (await ui.find({ type: 'Text', text: new RegExp(`^${text}$`) }))?.props
   const drawers = async () =>
@@ -4499,8 +4305,8 @@ test('a sent prompt that quotes a notice answers nothing, and closes its drawer'
 test('a snoozed item read at the start leaves a hidden panel hidden until its time', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  questionWorld(on, clock, [notice({ snoozedUntil: NOW + 3 * TICK })])
-  await startSession($, clock, false)
+  questionWorld(on, clock, [notice({ snoozedUntil: NOW + 3 * TICK })], { subscriptions: {} })
+  await startSession($, clock)
   await clock.advance(TICK)
   await clock.settle()
   const hidden = await $.ui.mount(PANEL)
@@ -4517,24 +4323,16 @@ test('a snoozed item read at the start leaves a hidden panel hidden until its ti
 test('an item whose snooze ends while the panel is hidden is drawn the moment the panel returns', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  let isSlow = false
-  const github = (query: string) =>
-    isSlow ? clock.sleep(10 * TICK).then(() => ran(answer(query))) : ran(answer(query))
-  questionWorld(on, clock, [notice({ snoozedUntil: NOW + 3 * TICK })], { github })
+  questionWorld(on, clock, [notice({ snoozedUntil: NOW + 3 * TICK })])
   await startSession($, clock)
   await $.command.run(COMMAND)
-  isSlow = true
 
-  // The tick that sees the snooze end brings the panel back, and GitHub has not answered yet.
+  // The tick that sees the snooze end brings the panel back.
   await clock.advance(3 * TICK)
   await clock.settle()
   const woken = await $.ui.mount(PANEL)
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
   expect(await headerOf(woken)).toMatch(/^\/projector +1 pull request · 1 notice  \d+s$/)
-
-  await clock.advance(10 * TICK)
-  await clock.settle()
-  expect(await woken.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
   await woken.unmount()
 })
 
@@ -5385,14 +5183,14 @@ test('an item’s dismiss, restore, and unsnooze act at once, and a pull request
   expect(ran('restore')).toEqual(['inbox restore 3 --session s1 --json', 'inbox restore 4 --session s1 --json'])
   await ui.press({ key: 'close:4' })
 
-  // A pull request's dismiss asks to be sure, and 9 keeps it in its loops.
+  // A pull request's dismiss asks to be sure, and 9 keeps the session subscribed to it.
   await ui.press({ key: 'pr:x/y#7' })
   expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
   await ui.press({ key: 'dismiss:x/y#7' })
   expect(await lines('x/y#7')).toEqual(['confirm:x/y#7 8 Yes, dismiss it', 'keep:x/y#7 9 No, keep it'])
   await ui.press({ key: 'keep:x/y#7' })
   expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
-  expect(session.project().filter(line => line.startsWith('loop drop'))).toEqual([])
+  expect(session.project().filter(line => line.startsWith('watch drop'))).toEqual([])
 
   // From the keyboard, the ring goes onto the confirmation, and from 9 back onto dismiss.
   await tab($, 'dismiss:x/y#7')
@@ -5481,8 +5279,8 @@ test('messages discussed from a terminal reach the agent as DISCUSS, each once a
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const messages = [yours('Why decline?', NOW - 2_000), yours('What does the budget cost?')]
-  const session = questionWorld(on, clock, [held({ messages })])
-  await startSession($, clock, false)
+  const session = questionWorld(on, clock, [held({ messages })], { subscriptions: {} })
+  await startSession($, clock)
   for (let tick = 0; tick < 3; tick += 1) {
     await clock.advance(TICK)
     await clock.settle()
@@ -5579,36 +5377,13 @@ test('dismissing a message about the session sends the agent nothing but the mes
   await ui.unmount()
 })
 
-// The daemon's files: the session's subscriptions, each pull request's cached
-// result, and the events the mod delivers.
+// The daemon's events, which the mod delivers, and the subscriptions a push or a dismiss changes.
 
-const WATCH_ROOT = `${HOME}/.local/state/projector/watch`
-const MODEL = 'claude-opus-5-5'
 /** What the panel delivers when the daemon reports a finding and a conflict. */
 const EVENT_LINES = [
   'FINDING x/y#7 src/fetch.ts:40 by grace — run fix-pr on x/y#7 in subagent fix-7',
   'CONFLICT x/y#7 conflicts with main — run fix-pr on x/y#7 in subagent fix-7',
 ]
-
-/** The files of `SESSION` under the daemon's folder `root`. */
-const sessionFiles = (root = WATCH_ROOT) => {
-  const folder = `${root}/sessions/${SESSION}`
-  return { subscriptions: `${folder}/subscriptions`, events: `${folder}/events`, state: `${folder}/state.json` }
-}
-const { subscriptions: SUBSCRIPTIONS, events: EVENTS, state: STATE } = sessionFiles()
-
-/** The daemon's cache file for a pull request of `repo`, holding the pull request as its query gave it. */
-const cached = (repo: string, node: Record<string, unknown>) => ({
-  [`${WATCH_ROOT}/cache/${repo.toLowerCase()}/pulls/${String(node.number)}.json`]: JSON.stringify({
-    fetched_at: new Date(NOW - 60_000).toISOString(),
-    etags: { pull: 'W/"1"' },
-    repository: { visibility: 'PUBLIC', pullRequest: node },
-    reviews: [],
-  }),
-})
-
-/** What GitHub gives for a pull request of `BY_REPO`. */
-const given = (repo: string, number: number) => (BY_REPO[repo]?.[`p${number}`] ?? {}) as Record<string, unknown>
 
 type WatchOptions = {
   files?: Record<string, string>
@@ -5621,12 +5396,11 @@ type WatchOptions = {
 }
 
 /**
- * A session of ada's, whose daemon runs, with the `project watch` and
- * `project loop drop` commands the panel runs answered as the CLI answers
- * them: `take` prints and empties the events, `add --from-output` subscribes
- * to fix the pull request each URL on standard input names, and each `drop`
- * writes its exclusion. A prompt the panel submits waits while `hold` holds
- * it, until `release`.
+ * A session of ada's, whose daemon runs, with the `project watch` commands
+ * the panel runs answered as the CLI answers them: `take` prints and empties
+ * the events, `add --from-output` subscribes to fix the pull request each URL
+ * on standard input names, and `drop` writes its exclusion. A prompt the
+ * panel submits waits while `hold` holds it, until `release`.
  */
 function watchWorld(on: On, { files = {}, env = {}, bash, refusal, sessionId = () => SESSION }: WatchOptions = {}) {
   const clock = mock.clock(on, { now: NOW })
@@ -5643,10 +5417,6 @@ function watchWorld(on: On, { files = {}, env = {}, bash, refusal, sessionId = (
   }
   const cli = (argv: string[], stdin?: string): Outcome => {
     const [, group, verb, target = '', , value = ''] = argv
-    if (group === 'loop' && verb === 'drop') {
-      append(value, `!${target}`)
-      return ran(`dropped ${target} from ${value}\n`)
-    }
     if (group !== 'watch') return { ...ran(''), exitCode: 2, stderr: `project: invalid choice: '${group ?? ''}'\n` }
     if (verb === 'take') {
       const events = (all[own.events] ?? '').split('\n').filter(line => line !== '')
@@ -5667,10 +5437,7 @@ function watchWorld(on: On, { files = {}, env = {}, bash, refusal, sessionId = (
     }
     return ran('')
   }
-  const { commands } = world(on, all, cli, { bash })
-  on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('session.id', () => ({ value: sessionId() }))
-  on('command.register', () => ({ value: { command: 'projector' } }))
+  const { commands } = world(on, all, cli, { bash, sessionId })
   const toasts = toastsOf(on)
   const submitted: string[] = []
   let isHeld = false
@@ -5700,15 +5467,6 @@ function watchWorld(on: On, { files = {}, env = {}, bash, refusal, sessionId = (
   }
 }
 
-/** Starts the session, and lets the timers its start sets run: the first renewal, and any panel it shows. */
-async function begin($: Engine, clock: Clock) {
-  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
-  for (let step = 0; step < 3; step += 1) {
-    await clock.advance(1)
-    await clock.settle()
-  }
-}
-
 /** The pull requests the panel lists, by their lines' Buttons, in its order. */
 async function rowsOf(ui: Pick<Mounted, 'findAll'>) {
   return (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
@@ -5731,7 +5489,7 @@ test('lists the session’s subscriptions from the daemon’s cache, with their 
       ...cached('o/r', given('o/r', 5)),
     },
   })
-  await begin($, session.clock)
+  await startSession($, session.clock)
 
   // The session's new subscriptions showed the panel. The operator daemon.json names is ada, so her pull request
   // and the one still loading, whose author nobody knows yet, so it counts as hers, come first, by repository; then
@@ -5758,14 +5516,14 @@ test('lists the session’s subscriptions from the daemon’s cache, with their 
   // changed lines from the cache. The open drawer still asks GitHub for its threads, and nothing else does.
   await ui.press({ key: 'pr:x/y#7' })
   await session.clock.settle()
-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)'], ' and ', ['reviewer', 'claude']])
+  expect(await rolesOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)'], ' and ', ['reviewer', 'claude']])
   expect(
     await ui.find({ type: 'Text', text: /^fixer and reviewer · fix-branch · \+12 −3 in 2 files · checks passing$/ }),
   ).toBeDefined()
   expect(session.gh()).toHaveLength(1)
   expect(session.gh()[0]).toContain('r0: repository(owner: "x", name: "y") { p7: pullRequest(number: 7) { reviewThreads')
   await ui.press({ key: 'pr:o/r#4' })
-  expect(await loopsOf(ui, 'o/r#4')).toEqual([['reviewer', 'claude']])
+  expect(await rolesOf(ui, 'o/r#4')).toEqual([['reviewer', 'claude']])
   // A loading pull request's drawer names its role and nothing the daemon has yet to say.
   await ui.press({ key: 'pr:o/r#13' })
   expect(await ui.find({ type: 'Text', text: /^fixer$/ })).toBeDefined()
@@ -5783,45 +5541,34 @@ test('lists the pull requests the daemon adopted for a repository the session re
       ...cached('o/r', given('o/r', 11)),
     },
   })
-  await begin($, session.clock)
+  await startSession($, session.clock)
 
   const ui = await $.ui.mount(PANEL)
   expect(await rowsOf(ui)).toEqual(['pr:o/r#11', 'pr:o/r#1'])
   expect(session.gh()).toEqual([])
   await ui.press({ key: 'pr:o/r#11' })
-  expect(await loopsOf(ui, 'o/r#11')).toEqual([['reviewer', 'claude']])
+  expect(await rolesOf(ui, 'o/r#11')).toEqual([['reviewer', 'claude']])
   await ui.unmount()
 })
 
-test('reads its rows from the cache on each tick, and asks GitHub only for an earlier watcher’s pull request the daemon has no result for', async ($, on) => {
+test('reads its rows from the cache on each tick, and asks GitHub nothing for them, at a poll too', async ($, on) => {
   const daemonSaw = (title: string) => cached('o/r', { ...given('o/r', 1), title })
-  const session = watchWorld(on, { files: { [REVIEW]: 'o/r#1\no/r#2\n', ...daemonSaw('Signed off, as the daemon saw it') } })
-  await begin($, session.clock)
-  // An earlier watcher this session started before the upgrade lists its tracked file by its kind.
-  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
-  await session.clock.advance(1)
-  await session.clock.settle()
+  const session = watchWorld(on, {
+    files: { [SUBSCRIPTIONS]: `o/r#1 review ${MODEL} ${VIEWER}\n`, ...daemonSaw('Signed off, as the daemon saw it') },
+  })
+  await startSession($, session.clock)
 
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'Signed off, as the daemon saw it' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
-  const [poll, ...others] = session.gh()
-  expect(others).toEqual([])
-  expect(poll).toContain('p2: pullRequest(number: 2)')
-  expect(poll).not.toContain('p1: pullRequest')
-  await ui.press({ key: 'pr:o/r#1' })
-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewer', 'claude']])
 
   // The daemon's next result shows within a tick, with no query of the panel's own.
   Object.assign(session.files, daemonSaw('Signed off, after the next pass'))
   await session.clock.advance(TICK)
   await session.clock.settle()
   expect(await ui.find({ type: 'Text', text: 'Signed off, after the next pass' })).toBeDefined()
-  expect(session.gh()).toHaveLength(1)
-  // GitHub is asked again for the earlier watcher's pull request once the poll is due.
   await session.clock.advance(30_000)
   await session.clock.settle()
-  expect(session.gh().filter(query => query.includes('p2: pullRequest(number: 2)'))).toHaveLength(2)
+  expect(session.gh()).toEqual([])
   await ui.unmount()
 })
 
@@ -5829,7 +5576,7 @@ test('reads the open drawer’s threads again as soon as the daemon’s events a
   const label = 'LABEL x/y#7 +clean head=9f3c2a1b: labeled clean, so a review signed off its head — tell the user it is clean'
   const session = watchWorld(on, { files: { [SUBSCRIPTIONS]: 'x/y#7 fix\n', ...cached('x/y', given('x/y', 7)) } })
   const threads = () => session.gh().filter(query => query.includes('p7: pullRequest(number: 7) { reviewThreads'))
-  await begin($, session.clock)
+  await startSession($, session.clock)
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'pr:x/y#7' })
   await session.clock.settle()
@@ -5853,7 +5600,7 @@ test('reads the open drawer’s threads again as soon as the daemon’s events a
 test('renews the session at its start, which starts the daemon, and once a minute while no event comes', async ($, on) => {
   const session = watchWorld(on)
   const watched = () => session.project().filter(command => command.startsWith('watch'))
-  await begin($, session.clock)
+  await startSession($, session.clock)
   expect(watched()).toEqual(['watch renew --deliverer mod --session s1'])
 
   await session.clock.advance(55_000)
@@ -5872,7 +5619,7 @@ test('renews a new session id at the next tick, as after /clear, rather than a m
   let id = 's1'
   const session = watchWorld(on, { sessionId: () => id })
   const watched = () => session.project().filter(command => command.startsWith('watch'))
-  await begin($, session.clock)
+  await startSession($, session.clock)
   expect(watched()).toEqual(['watch renew --deliverer mod --session s1'])
 
   await session.clock.advance(20_000)
@@ -5890,7 +5637,7 @@ test('renews a new session id at the next tick, as after /clear, rather than a m
 test('submits the daemon’s events as one prompt and empties the file, which renews the session', async ($, on) => {
   const session = watchWorld(on, { files: { [EVENTS]: EVENT_LINES.map(line => `${line}\n`).join('') } })
   const watched = () => session.project().filter(command => command.startsWith('watch'))
-  await begin($, session.clock)
+  await startSession($, session.clock)
 
   expect(session.submitted).toEqual([EVENT_LINES.join('\n')])
   expect(session.files[EVENTS]).toBe('')
@@ -5911,7 +5658,7 @@ test('finds the session’s events under XDG_STATE_HOME when it is set', async (
     env: { XDG_STATE_HOME: '/state' },
     files: { [events]: 'MERGED x/y#7 merged — finish subagent fix-7\n', [EVENTS]: `${EVENT_LINES[0] ?? ''}\n` },
   })
-  await begin($, session.clock)
+  await startSession($, session.clock)
   expect(session.submitted).toEqual(['MERGED x/y#7 merged — finish subagent fix-7'])
 })
 
@@ -5920,7 +5667,7 @@ test('holds the events that arrive while a batch waits for the session, and send
   const session = watchWorld(on, { files: { [EVENTS]: `${first}\n` } })
   const takes = () => session.project().filter(command => command.startsWith('watch take')).length
   session.hold()
-  await begin($, session.clock)
+  await startSession($, session.clock)
   expect(session.submitted).toEqual([first])
 
   // The session is busy, so the daemon's next events stay in the file.
@@ -5947,7 +5694,7 @@ test('passes the output of a push, a new pull request, or a stack command to pro
     bash: command =>
       command.startsWith('gh pr create') ? opened : command.includes('push') ? pushed : { stdout: 'push\n', stderr: '' },
   })
-  await begin($, session.clock)
+  await startSession($, session.clock)
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
 
@@ -5969,7 +5716,7 @@ test('passes the output of a push, a new pull request, or a stack command to pro
   }
   expect(await rowsOf(ui)).toEqual(['pr:x/y#7'])
   await ui.press({ key: 'pr:x/y#7' })
-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)']])
+  expect(await rolesOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)']])
   await ui.unmount()
 })
 
@@ -5981,7 +5728,7 @@ test('a new subscription shows a panel you hid, and one the panel knew keeps it 
       ...cached('o/r', given('o/r', 4)),
     },
   })
-  await begin($, session.clock)
+  await startSession($, session.clock)
   const ui = await $.ui.mount(PANEL)
   expect(await rowsOf(ui)).toEqual(['pr:x/y#7'])
 
@@ -5999,33 +5746,32 @@ test('a new subscription shows a panel you hid, and one the panel knew keeps it 
   await ui.unmount()
 })
 
-test('dismiss drops a pull request from each role the session holds and from an earlier watcher, and its line goes', async ($, on) => {
+test('dismiss drops a pull request from each role the session holds, and its line goes', async ($, on) => {
   const session = watchWorld(on, {
     files: {
       [SUBSCRIPTIONS]: `x/y#7 fix auto\nx/y#7 review ${MODEL} ${VIEWER}\no/r#4 fix\n`,
-      [WATCH]: 'x/y#7\n',
       ...cached('x/y', given('x/y', 7)),
       ...cached('o/r', given('o/r', 4)),
     },
   })
-  await begin($, session.clock)
-  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
-  await session.clock.advance(1)
-  await session.clock.settle()
+  await startSession($, session.clock)
 
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'pr:x/y#7' })
+  // The drawer's actions are lines of their own, as an item's are.
+  expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
+  expect((await ui.find({ type: 'Button', key: 'dismiss:x/y#7' }))?.props.plain).toBe(true)
   await ui.press({ key: 'dismiss:x/y#7' })
   await ui.press({ key: 'confirm:x/y#7' })
   await session.clock.settle()
 
-  expect(session.project().filter(command => /^(watch|loop) drop/.test(command))).toEqual([
+  expect(session.project().filter(command => command.startsWith('watch drop'))).toEqual([
     'watch drop x/y#7 --role fix --session s1',
     'watch drop x/y#7 --role review --session s1',
-    `loop drop x/y#7 --tracked ${WATCH}`,
   ])
   expect(session.toasts).toEqual(['projector: stopped fixing and reviewing x/y#7'])
   expect(await rowsOf(ui)).toEqual(['pr:o/r#4'])
+  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
   expect(await headerOf(ui)).toMatch(/^\/projector +1 review request  \d+s$/)
   // With none of your own pull requests left, no blank line opens the list.
   expect((await ui.findAll({ type: 'Text' })).filter(found => found.text === ' ')).toEqual([])
@@ -6043,7 +5789,7 @@ test('dismissing a pull request the daemon adopted takes its line away at once, 
       ...cached('o/r', given('o/r', 11)),
     },
   })
-  await begin($, session.clock)
+  await startSession($, session.clock)
 
   const ui = await $.ui.mount(PANEL)
   expect(await rowsOf(ui)).toEqual(['pr:o/r#11', 'pr:o/r#1'])
@@ -6068,7 +5814,7 @@ test('a drop the CLI refuses says why and keeps the line', async ($, on) => {
     refusal: busy,
     files: { [SUBSCRIPTIONS]: 'x/y#7 fix\n', ...cached('x/y', given('x/y', 7)) },
   })
-  await begin($, session.clock)
+  await startSession($, session.clock)
 
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'pr:x/y#7' })

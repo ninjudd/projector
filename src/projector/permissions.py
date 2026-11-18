@@ -139,9 +139,9 @@ COMMANDS = "every `project` command but the few that reach outside Projector's o
 # Each pattern Codex may run without asking, and outside its sandbox, with the
 # justification Codex shows for it.
 CODEX_ALLOW = (
-    (["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary",
+    (["project", ["check", "done", "help", "list", "owner", "priority", "search", "show", "status", "summary",
                   "version", "watch", "worktree"]],
-     "Runs a Projector command that works on plans, loops, watches, or pull request summaries, finds a branch's "
+     "Runs a Projector command that works on plans, watches, or pull request summaries, finds a branch's "
      "worktree, or prints its version or help."),
     (["project", "agent", ["list", "read", "register", "reply", "send", "unregister"]],
      "Registers or unregisters the session, lists your registered sessions, or sends, reads, or answers a message "

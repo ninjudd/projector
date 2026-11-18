@@ -25,8 +25,7 @@ from typing import NamedTuple, Optional
 from urllib.parse import urlparse
 from urllib.request import Request, url2pathname, urlopen
 
-from . import (agents, codex_watch, crypto, inbox, instructions, ios, loop, permissions, relay, review, site, summary,
-               watch)
+from . import agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, review, site, summary, watch
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
@@ -893,7 +892,6 @@ def parser() -> argparse.ArgumentParser:
     subcommands.add_parser("console", help="list every live session in a terminal, and answer or discuss each one's "
                                            "inbox items and pull requests")
     add_ios_parser(subcommands)
-    add_loop_parser(subcommands)
     add_watch_parser(subcommands)
     add_agent_parser(subcommands)
     worktree = subcommands.add_parser("worktree", help="print the folder of the worktree that has a branch, or a "
@@ -1151,21 +1149,6 @@ def add_inbox_parser(subcommands) -> None:
     watch.add_argument("--once", action="store_true", help="make one pass and exit")
 
 
-def add_loop_parser(subcommands) -> None:
-    parser = subcommands.add_parser("loop", help="change a loop's tracked file: add a pull request, forget one that "
-                                                 "merged or closed, keep one out, or let it back in")
-    commands = parser.add_subparsers(dest="loop_command", required=True)
-    for name, help_text in (("add", "append an owner/repo#number line that brings the pull request into the loop, "
-                                    "creating the file"),
-                            ("drop", "append a !owner/repo#number line that keeps the pull request out of the loop"),
-                            ("restore", "remove the pull request's !owner/repo#number lines"),
-                            ("remove", "remove the pull request's owner/repo#number lines, leaving its ! lines")):
-        command = commands.add_parser(name, help=help_text)
-        command.add_argument("reference", help="the pull request, as owner/repo#number")
-        command.add_argument("--tracked", required=True, type=Path, help="the loop's tracked file")
-        add_output(command)
-
-
 def add_ios_parser(subcommands) -> None:
     parser = subcommands.add_parser("ios", help="build a branch's iOS app in a worktree of its own, put it on a "
                                                  "device, and read the device's crash reports and log")
@@ -1269,26 +1252,6 @@ def run_worktree(arguments: argparse.Namespace) -> int:
     if found is None:
         raise NoWorktree(f"no worktree has {named} checked out")
     print(found)
-    return 0
-
-
-def run_loop(arguments: argparse.Namespace) -> int:
-    reference = arguments.reference
-    tracked = arguments.tracked
-    change, action, changed_text, unchanged_text = {
-        "add": (loop.add, "added", f"added {reference} to {tracked}", f"{reference} is already listed in {tracked}"),
-        "drop": (loop.drop, "dropped", f"dropped {reference} from {tracked}",
-                 f"{reference} is already dropped from {tracked}"),
-        "restore": (loop.restore, "restored", f"restored {reference} to {tracked}",
-                    f"{reference} is not dropped from {tracked}"),
-        "remove": (loop.remove, "removed", f"removed {reference} from {tracked}",
-                   f"{reference} is not listed in {tracked}"),
-    }[arguments.loop_command]
-    changed = change(tracked, reference)
-    if arguments.json_output:
-        print(json_text({"action": action if changed else "unchanged", "pr": reference, "tracked": str(tracked)}))
-    else:
-        print(changed_text if changed else unchanged_text)
     return 0
 
 
@@ -3300,8 +3263,6 @@ def run(arguments: argparse.Namespace) -> int:
         return run_inbox(arguments)
     if arguments.command == "console":
         return run_console()
-    if arguments.command == "loop":
-        return run_loop(arguments)
     if arguments.command == "ios":
         return run_ios(arguments)
     if arguments.command == "watch":

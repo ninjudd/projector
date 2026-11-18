@@ -530,26 +530,13 @@ account's hourly GraphQL quota, because GitHub charges for each thread's
 first comment. So the panel asks for them in a `gh api graphql` call of
 their own, for that one pull request, when the drawer opens, every 30
 seconds while it stays open, and as soon as the panel takes the daemon's
-events. Taking events runs a whole poll, so `panel.background` and an
-earlier watcher's query run then too. The daemon writes its cache before its
-events, so the panel reloads its lines then as well. It skips the threads
-call when the pull request has no unresolved thread. The skills never
+events. Taking events runs a whole poll, so `panel.background` is read
+then too. The daemon writes its cache before its events, so the panel
+reloads its lines then as well. It skips the threads call when the pull
+request has no unresolved thread. The skills never
 depend on the panel. In Codex or a terminal, `project console` shows the
 same pull requests and items for every live session, as
 [Use the console](cli.md#use-the-console) describes.
-
-A session that started a `watch-threads.sh` or `watch-prs.sh` watcher under
-an earlier release keeps it until the session ends, and the panel lists the
-pull requests in that watcher's `--tracked` file
-meanwhile: `watch-threads.sh`'s as `fixer`, and `watch-prs.sh`'s as
-`reviewer`. For such a pull request that the daemon has no result for, the
-panel asks GitHub itself, in one `gh api graphql` call every 30 seconds.
-When that call cannot reach GitHub, the panel keeps showing what GitHub gave
-last, and shows GitHub's error only when it has no pull request to show.
-Dismissing such a pull request also runs `project loop drop` on the tracked
-file. When the panel cannot tell which file a watcher's `--tracked` argument
-names, such as a path built from a variable the session does not set, it
-says so once and leaves that watcher out.
 
 #### Get the daemon's events as prompts
 

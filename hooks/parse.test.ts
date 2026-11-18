@@ -1,14 +1,12 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { buildQuery, buildThreadsQuery, loadingOf, parseCache, parseResponse, parseThreads } from './github'
+import { buildThreadsQuery, loadingOf, parseCache, parseThreads } from './github'
 import {
   cachePathOf,
-  findWatchers,
   isPushCommand,
   parseAdopted,
   parseOperator,
   parseSubscriptions,
-  parseTracked,
   subscribedOf,
   watchRootOf,
 } from './parse'
@@ -16,131 +14,34 @@ import {
 const VARIABLES: Record<string, string> = { HOME: '/home/ada' }
 const env = (name: string) => VARIABLES[name]
 
-describe('findWatchers', () => {
-  test('reads the tracked path of a review watcher', () => {
-    expect(
-      findWatchers('scripts/watch-prs.sh --tracked /loops/tracked --state /loops/state --once', env),
-    ).toEqual([{ kind: 'reviewing', tracked: '/loops/tracked', written: '/loops/tracked' }])
-  })
-
-  test('reads a fix watcher behind cd, quotes and a variable script path', () => {
-    const command =
-      'cd /repo && "$ROOT/skills/start-watch-loop/scripts/watch-threads.sh" --tracked "$HOME/watch loop/tracked" --state s'
-    expect(findWatchers(command, env)).toEqual([
-      { kind: 'watching', tracked: '/home/ada/watch loop/tracked', written: '$HOME/watch loop/tracked' },
-    ])
-  })
-
-  test('expands ~ and leaves single-quoted text alone', () => {
-    expect(findWatchers('watch-prs.sh --tracked ~/t', env)[0]?.tracked).toBe('/home/ada/t')
-    expect(findWatchers("watch-prs.sh --tracked '$HOME/t'", env)[0]?.tracked).toBe('$HOME/t')
-    expect(findWatchers('watch-prs.sh --tracked=${HOME}/t', env)[0]?.tracked).toBe('/home/ada/t')
-  })
-
-  test('leaves a path it cannot expand undefined', () => {
-    expect(findWatchers('watch-prs.sh --tracked "$LOOP/tracked"', env)).toEqual([
-      { kind: 'reviewing', tracked: undefined, written: '$LOOP/tracked' },
-    ])
-    expect(findWatchers('watch-prs.sh --tracked "$(pwd)/tracked"', env)[0]?.tracked).toBeUndefined()
-  })
-
-  test('expands a variable the command assigns before the watcher', () => {
-    const command =
-      'D=~/.local/state/projector; ID=projector-review-loop; bash /p/watch-prs.sh --tracked $D/$ID.tracked --state s'
-    expect(findWatchers(command, env)[0]?.tracked).toBe('/home/ada/.local/state/projector/projector-review-loop.tracked')
-    expect(findWatchers('export T="$HOME/t" && watch-threads.sh --tracked "$T"', env)[0]?.tracked).toBe('/home/ada/t')
-    expect(findWatchers('watch-prs.sh --tracked $D/t; D=/late', env)[0]?.tracked).toBeUndefined()
-    expect(findWatchers('D=$(pwd); watch-prs.sh --tracked $D/t', env)[0]?.tracked).toBeUndefined()
-  })
-
-  test('stops at the end of the watcher command', () => {
-    expect(findWatchers('watch-prs.sh --once; echo --tracked /x', env)).toEqual([])
-    expect(findWatchers('watch-prs.sh --once && other --tracked /x', env)).toEqual([])
-  })
-
-  test('ignores a command that only mentions a watcher', () => {
-    expect(findWatchers("echo 'watch-prs.sh --tracked /x'", env)).toEqual([])
-    expect(findWatchers('cat skills/start-review-loop/scripts/watch-prs.sh', env)).toEqual([])
-    expect(findWatchers('my-watch-prs.sh --tracked /x', env)).toEqual([])
-  })
-})
-
-describe('parseTracked', () => {
-  test('keeps entries in order, once each, less the excluded ones', () => {
-    const text = 'o/r#1\no/r#2\n!o/r#2\n\nnot an entry\no/r#1\n  other/re.po#30  \no/r#0\n'
-    expect(parseTracked(text)).toEqual([
-      { repo: 'o/r', number: 1 },
-      { repo: 'other/re.po', number: 30 },
-    ])
-  })
-
-  test('lowercases repositories, so entries and exclusions match without regard to case', () => {
-    expect(parseTracked('Owner/Repo#5\nowner/repo#5\nowner/repo#6\n!OWNER/REPO#6\n')).toEqual([
-      { repo: 'owner/repo', number: 5 },
-    ])
-  })
-})
-
 describe('GitHub', () => {
-  const query = buildQuery([
-    { repo: 'o/r', number: 1 },
-    { repo: 'o/r', number: 2 },
-    { repo: 'x/y', number: 3 },
-  ])
+  test('reads each field of a cached pull request, and a default for each one it leaves out', () => {
+    const cacheOf = (pullRequest: Record<string, unknown>) => JSON.stringify({ repository: { pullRequest } })
+    const first = cacheOf({
+      number: 1,
+      title: 'First',
+      url: 'https://github.com/o/r/pull/1',
+      state: 'OPEN',
+      isDraft: true,
+      reviewDecision: 'CHANGES_REQUESTED',
+      mergeable: 'CONFLICTING',
+      reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }, { isResolved: false }] },
+      author: { login: 'ada' },
+      headRefName: 'first-change',
+      additions: 120,
+      deletions: 7,
+      changedFiles: 4,
+      updatedAt: '2026-10-12T12:00:00Z',
+      labels: { nodes: [{ name: 'Reviewing', color: 'FBCA04' }, { name: 'bug', color: 'not a color' }] },
+      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+      body:
+        'Why the change exists.\n\n<!-- projector-summary v=1 sha=' +
+        'a'.repeat(40) +
+        ' -->\n📽️ **Projector summary** of aaaaaaa: https://example.com/site/reviews/1\n',
+    })
+    const third = cacheOf({ number: 3, title: 'Third', state: 'MERGED', isDraft: false, mergeable: 'UNKNOWN' })
 
-  test('asks for every pull request in one query, grouped by repository, with the signed-in login', () => {
-    expect(query.text).toMatch(/^query \{ viewer \{ login \} r0: /)
-    expect(query.text).toContain('r0: repository(owner: "o", name: "r") { p1: pullRequest(number: 1)')
-    expect(query.text).toContain('p2: pullRequest(number: 2)')
-    expect(query.text).toContain('r1: repository(owner: "x", name: "y") { p3: pullRequest(number: 3)')
-  })
-
-  test('asks the poll only whether each thread is resolved, which costs no point per pull request', () => {
-    // A connection under `reviewThreads(first: 100)`, such as each thread's comments, makes GitHub count 100 more
-    // requests, a point more, for each pull request. The poll reads every tracked pull request every 30 seconds.
-    expect(query.text).toContain('reviewThreads(first: 100) { nodes { isResolved } }')
-    expect(query.text).not.toContain('comments(')
-  })
-
-  test('reads what came back even when one pull request is missing', () => {
-    const body = {
-      data: {
-        viewer: { login: 'ada' },
-        r0: {
-          p1: {
-            number: 1,
-            title: 'First',
-            url: 'https://github.com/o/r/pull/1',
-            state: 'OPEN',
-            isDraft: true,
-            reviewDecision: 'CHANGES_REQUESTED',
-            mergeable: 'CONFLICTING',
-            reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }, { isResolved: false }] },
-            author: { login: 'ada' },
-            headRefName: 'first-change',
-            additions: 120,
-            deletions: 7,
-            changedFiles: 4,
-            updatedAt: '2026-10-12T12:00:00Z',
-            labels: { nodes: [{ name: 'Reviewing', color: 'FBCA04' }, { name: 'bug', color: 'not a color' }] },
-            commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
-            body:
-              'Why the change exists.\n\n<!-- projector-summary v=1 sha=' +
-              'a'.repeat(40) +
-              ' -->\n📽️ **Projector summary** of aaaaaaa: https://example.com/site/reviews/1\n',
-          },
-          p2: null,
-        },
-        r1: { p3: { number: 3, title: 'Third', state: 'MERGED', isDraft: false, mergeable: 'UNKNOWN' } },
-      },
-      errors: [{ message: 'Could not resolve to a PullRequest with the number of 2.' }],
-    }
-    const fetched = parseResponse(query, { exitCode: 1, stdout: JSON.stringify(body), stderr: '' })
-
-    expect(fetched.error).toBeNull()
-    expect(fetched.viewer).toBe('ada')
-    expect([...fetched.prs.keys()]).toEqual(['o/r#1', 'x/y#3'])
-    expect(fetched.prs.get('o/r#1')).toEqual({
+    expect(parseCache({ repo: 'o/r', number: 1 }, first)).toEqual({
       repo: 'o/r',
       number: 1,
       title: 'First',
@@ -165,16 +66,17 @@ describe('GitHub', () => {
       updatedAt: Date.UTC(2026, 9, 12, 12, 0),
       summaryUrl: 'https://example.com/site/reviews/1',
     })
-    expect(fetched.prs.get('x/y#3')?.state).toBe('MERGED')
-    expect(fetched.prs.get('x/y#3')).toMatchObject({ author: null, checks: null, updatedAt: null, summaryUrl: null })
-    expect(fetched.prs.get('x/y#3')?.url).toBe('https://github.com/x/y/pull/3')
+    expect(parseCache({ repo: 'x/y', number: 3 }, third)).toMatchObject({
+      state: 'MERGED',
+      author: null,
+      checks: null,
+      updatedAt: null,
+      summaryUrl: null,
+      url: 'https://github.com/x/y/pull/3',
+    })
   })
 
   test('reads a head’s checks without the projector/review status a review posts', () => {
-    // The panel's own query asks for that status and the rollup's counts, as the daemon's does.
-    expect(query.text).toContain('status { context(name: "projector/review") { state } }')
-    expect(query.text).toContain('checkRunCountsByState { state count } statusContextCountsByState { state count }')
-
     type Counts = { checkRuns?: Record<string, number>; statuses?: Record<string, number> }
     const checksOf = (rollup: string, review: string | null, { checkRuns = {}, statuses = {} }: Counts) => {
       const rows = (counts: Record<string, number>) => Object.entries(counts).map(([state, count]) => ({ state, count }))
@@ -232,9 +134,6 @@ describe('GitHub', () => {
   })
 
   test('reads a cancelled run’s failed checks as cancelled when the cancel caused them or a newer run tests them again, and notes a workflow whose newest run was cancelled', () => {
-    expect(query.text).toContain('CheckRun { name conclusion startedAt completedAt')
-    expect(query.text).toContain('checkSuite { conclusion workflowRun { databaseId createdAt workflow { databaseId } } }')
-
     // A check run as the rollup lists it: its name and conclusion, its workflow run's conclusion, workflow, and
     // start, which give the run its id, and its own start and end. A check run with no workflow belongs to no
     // workflow run.
@@ -331,22 +230,6 @@ describe('GitHub', () => {
       'a run failed and nothing cancelled it': ['failing', false],
       'a check run that no workflow run made': ['failing', false],
     })
-  })
-
-  test('reports why gh failed', () => {
-    const offline = parseResponse(query, {
-      exitCode: 1,
-      stdout: '',
-      stderr: 'error connecting to api.github.com\ncheck your internet connection\n',
-    })
-    expect(offline).toEqual({ prs: new Map(), viewer: null, error: 'error connecting to api.github.com' })
-
-    const refused = parseResponse(query, {
-      exitCode: 1,
-      stdout: JSON.stringify({ errors: [{ message: 'Bad credentials' }] }),
-      stderr: '',
-    })
-    expect(refused).toEqual({ prs: new Map(), viewer: null, error: 'Bad credentials' })
   })
 
   describe('an open drawer’s threads', () => {

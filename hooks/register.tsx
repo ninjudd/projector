@@ -4,7 +4,6 @@ import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-
 import type {
   Checks,
   Item,
-  LoopKind,
   MessageItem,
   Notice,
   PullRequest,
@@ -13,21 +12,18 @@ import type {
   Role,
   Row,
   Section,
-  SeenLoop,
   Sending,
   Snapshot,
   Thread,
 } from './types'
-import { buildQuery, buildThreadsQuery, loadingOf, parseCache, parseResponse, parseThreads, type Fetched } from './github'
+import { buildThreadsQuery, loadingOf, parseCache, parseThreads } from './github'
 import {
   cachePathOf,
-  findWatchers,
   isPushCommand,
   keyOf,
   parseAdopted,
   parseOperator,
   parseSubscriptions,
-  parseTracked,
   subscribedOf,
   watchRootOf,
   type Env,
@@ -95,7 +91,7 @@ const TICK_MS = 5_000
 const POLL_MS = 30_000
 /** How often the session tells the daemon it is live when no event came, well inside the 5 minutes it lapses after. */
 const RENEW_MS = 60_000
-const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
+const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
 const REQUEST_TOOL = 'mcp__projector__request'
@@ -106,17 +102,13 @@ const REVISE_TOOL = 'mcp__projector__revise'
 const RESTORE_TOOL = 'mcp__projector__restore'
 const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 
-const KINDS: readonly LoopKind[] = ['watching', 'reviewing']
-
 /** The roles in the order a drawer names them. */
 export const ROLES: readonly Role[] = ['fixing', 'reviewing']
 
-/** The role a subscription's role, or an earlier watcher's kind, holds. */
-export const ROLE_OF: Record<SubscriptionRole | LoopKind, Role> = {
+/** The role each of a subscription's roles holds, as a drawer names it. */
+export const ROLE_OF: Record<SubscriptionRole, Role> = {
   fix: 'fixing',
   review: 'reviewing',
-  watching: 'fixing',
-  reviewing: 'reviewing',
 }
 
 const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning' | 'subtle'> = {
@@ -358,7 +350,6 @@ const SNOOZES = [
   { label: '1 day', minutes: 1440 },
 ] as const
 
-const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
 const subscribed = atom({ plugin: 'projector', key: 'panelSubscribed' } as const, [])
 const snapshot = atom({ plugin: 'projector', key: 'panelSnapshot' } as const, EMPTY)
 const now = atom({ plugin: 'projector', key: 'panelNow' } as const, 0)
@@ -385,7 +376,6 @@ const oldSending = atom({ plugin: 'projector', key: 'bandSending' } as const, {}
 
 // The session keeps its state across a reload or an update of the plugin,
 // so a value an earlier version wrote can have another shape.
-const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
 const current = (value: Snapshot): Snapshot =>
   Array.isArray(value.rows) &&
   value.rows.every(row => Array.isArray(row.roles) && row.pr.labels.every(label => typeof label === 'object'))
@@ -409,7 +399,6 @@ let renewed: { session: string; at: number } | undefined
 let isWatching = false
 /** Whether the daemon's last batch of events waits to reach the session, so the next batch waits behind it and goes as one prompt. */
 let isSubmitting = false
-const unreadable = new Set<string>()
 
 /** The store's directory as the panel last read it, so it reads again only after a change. */
 let listed: string | undefined
@@ -472,15 +461,6 @@ function envOf($: Engine): Promise<Env> {
   return envLoad
 }
 
-async function canonical($: Engine, path: string): Promise<string | undefined> {
-  try {
-    const stat = await $.fs.stat(path, { resolve: true })
-    return stat.realPath ?? path
-  } catch {
-    return undefined
-  }
-}
-
 /**
  * Runs the `project` CLI, with `stdin` on its standard input when given;
  * rejects when it cannot start or is still running at the 15-second timeout.
@@ -497,56 +477,6 @@ const textOf = ($: Engine, path: string): Promise<string | undefined> => $.fs.re
 /** The CLI's error, as its last line of standard error says it. */
 const errorOf = (ran: Ran) =>
   (ran.stderr.trim().split('\n').pop() ?? '').replace(/^project: /, '') || `project exited ${ran.exitCode}`
-
-/**
- * Records a loop, answering whether the session had not seen it before. An
- * entry an earlier version kept with no kind gives way to the watcher's.
- */
-async function remember($: Engine, loop: SeenLoop): Promise<boolean> {
-  let isNew = false
-  await update($, seen, list => {
-    isNew = !list.some(one => one.tracked === loop.tracked && isKind(one.kind))
-    return isNew ? [...list.filter(one => one.tracked !== loop.tracked), loop] : list
-  })
-  return isNew
-}
-
-/**
- * Records the tracked file of each watcher a command starts, and shows the
- * panel when one is new. A loop restarts its watcher with the same command,
- * as a Monitor does each time it expires, so a known one shows nothing and
- * a path it cannot read is said once.
- */
-async function adopt($: Engine, command: string): Promise<void> {
-  if (!command.includes('watch-')) return
-  const env = await envOf($)
-  let isAdded = false
-  for (const watcher of findWatchers(command, env)) {
-    if (watcher.tracked === undefined) {
-      if (!unreadable.has(watcher.written)) {
-        unreadable.add(watcher.written)
-        $.ui.toast(`projector: cannot tell which file ${watcher.written} names, so the panel does not list that loop`)
-      }
-      continue
-    }
-    const tracked = (await canonical($, watcher.tracked)) ?? watcher.tracked
-    isAdded = (await remember($, { kind: watcher.kind, tracked })) || isAdded
-  }
-  if (isAdded) show($)
-}
-
-async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> {
-  if (prs.length === 0) return { prs: new Map(), viewer: null, error: null }
-  const query = buildQuery(prs)
-  try {
-    const result = await $.process.run(['gh', 'api', 'graphql', '-f', `query=${query.text}`], {
-      timeoutMs: 30_000,
-    })
-    return parseResponse(query, result)
-  } catch (error) {
-    return { prs: new Map(), viewer: null, error: messageOf(error) }
-  }
-}
 
 /** One pull request's unresolved threads, or null when GitHub cannot say. */
 async function fetchThreads($: Engine, pr: TrackedPr): Promise<Thread[] | null> {
@@ -638,18 +568,6 @@ async function readBackground($: Engine): Promise<void> {
   }
 }
 
-/** The session's own loops, the watchers it started, each with the pull requests its tracked file lists. */
-async function trackedSets($: Engine): Promise<(SeenLoop & { entries: TrackedPr[] })[]> {
-  const loops = (await read($, seen)).filter(loop => isKind(loop.kind))
-  // A tracked file that is gone belongs to a loop that ended.
-  return Promise.all(
-    loops.map(async loop => ({
-      ...loop,
-      entries: await $.fs.read(loop.tracked).then(parseTracked, () => [] as TrackedPr[]),
-    })),
-  )
-}
-
 /** The folder the daemon and the CLI keep a session's subscriptions and events in. */
 const folderOf = (root: string, session: string) => `${root}/sessions/${session}`
 
@@ -672,61 +590,33 @@ async function cachedOf($: Engine, root: string | undefined, pr: TrackedPr): Pro
 }
 
 /**
- * Lists the pull requests the session subscribes to, and those an earlier
- * watcher's tracked file lists, each with its roles. Each pull request's row
- * comes from the daemon's cache, and a subscribed one the daemon has no result
- * for yet draws as loading. An earlier watcher's pull request that the daemon
- * has no result for comes from GitHub, asked only when `isPolled`, and
- * between polls keeps what GitHub said last.
+ * Lists the pull requests the session subscribes to, each with its roles.
+ * Each pull request's row comes from the daemon's cache, and one the daemon
+ * has no result for yet draws as loading.
  */
 async function load($: Engine, isPolled: boolean): Promise<void> {
   const root = watchRootOf(await envOf($))
-  const [subscriptions, sets, daemon] = await Promise.all([
+  const [subscriptions, daemon] = await Promise.all([
     sessionOf($).then(session => subscriptionsOf($, root, session)),
-    trackedSets($),
     root === undefined ? undefined : textOf($, `${root}/daemon.json`),
   ])
-
-  const rolesOf = new Map<string, Role[]>()
-  const tracked = new Map<string, TrackedPr>()
-  const add = (pr: TrackedPr, role: Role) => {
-    const key = keyOf(pr)
-    tracked.set(key, tracked.get(key) ?? pr)
-    const roles = rolesOf.get(key) ?? []
-    if (!roles.includes(role)) rolesOf.set(key, ROLES.filter(one => one === role || roles.includes(one)))
-  }
-  for (const { pr, roles } of subscriptions) for (const role of roles) add(pr, ROLE_OF[role])
-  for (const kind of KINDS) {
-    for (const entry of sets.filter(set => set.kind === kind).flatMap(set => set.entries)) add(entry, ROLE_OF[kind])
-  }
-
-  const cached = new Map(
-    await Promise.all([...tracked].map(async ([key, pr]) => [key, await cachedOf($, root, pr)] as const)),
-  )
-  const isSubscribed = new Set(subscriptions.map(({ pr }) => keyOf(pr)))
-  const unknown = [...tracked].filter(([key]) => cached.get(key) === null && !isSubscribed.has(key))
   // Each poll reads the panel's setting too, so an edit to it shows without a restart.
-  const [fetched] = isPolled
-    ? await Promise.all([fetchPrs($, unknown.map(([, pr]) => pr)), readBackground($)])
-    : [undefined]
+  const [cached] = await Promise.all([
+    Promise.all(subscriptions.map(({ pr }) => cachedOf($, root, pr))),
+    isPolled ? readBackground($) : undefined,
+  ])
 
-  // When GitHub cannot be reached, or is not asked, keep drawing what it said last time.
-  const last = current(await read($, snapshot))
-  const previous = new Map(last.rows.map(row => [keyOf(row.pr), row.pr]))
-  const error = fetched === undefined ? last.error : fetched.error
-  const fromGitHub = (key: string) => (fetched?.error === null ? fetched.prs.get(key) : previous.get(key))
-
-  const rows: Row[] = [...tracked].flatMap(([key, entry]) => {
-    const pr = cached.get(key) ?? (isSubscribed.has(key) ? loadingOf(entry) : fromGitHub(key))
-    return pr !== undefined && pr.state === 'OPEN' ? [{ pr, roles: rolesOf.get(key) ?? [] }] : []
+  const rows: Row[] = subscriptions.flatMap(({ pr: entry, roles }, index) => {
+    const pr = cached[index] ?? loadingOf(entry)
+    return pr.state === 'OPEN' ? [{ pr, roles: ROLES.filter(role => roles.some(one => ROLE_OF[one] === role)) }] : []
   })
 
+  const last = current(await read($, snapshot))
   const time = await $.clock.now()
   await update($, snapshot, () => ({
     rows,
-    viewer: parseOperator(daemon ?? '') ?? fetched?.viewer ?? last.viewer,
-    fetchedAt: error === null ? time : last.fetchedAt,
-    error,
+    viewer: parseOperator(daemon ?? '') ?? last.viewer,
+    fetchedAt: time,
   }))
   await update($, now, () => time)
   await closeLeftDrawer($, time)
@@ -750,8 +640,8 @@ function refresh($: Engine, isForced = false, isPolled = true): Promise<void> {
         await load($, isPolled)
       }
     } catch (error) {
-      const message = messageOf(error)
-      await update($, snapshot, last => ({ ...current(last), error: message })).catch(() => undefined)
+      // The panel keeps drawing what it read last, and the next tick reads again.
+      $.ui.log(`projector: the panel could not reload: ${messageOf(error)}`, { to: 'debug' })
     }
   })().finally(() => {
     inFlight = undefined
@@ -1052,8 +942,7 @@ async function act(
 
 /**
  * Dismisses a pull request from the session: `project watch drop` keeps it
- * out of each role the session subscribes to it in, `project loop drop` out
- * of each earlier watcher's tracked file that lists it, and the panel reloads
+ * out of each role the session subscribes to it in, and the panel reloads
  * without it. A failure says why, and the line stays.
  */
 async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
@@ -1074,11 +963,6 @@ async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
     )
     for (const role of subscription?.roles ?? []) {
       if (session !== undefined) await drop(['watch', 'drop', named, '--role', role, '--session', session], ROLE_OF[role])
-    }
-    for (const loop of await trackedSets($)) {
-      if (loop.entries.some(entry => keyOf(entry) === key)) {
-        await drop(['loop', 'drop', named, '--tracked', loop.tracked], ROLE_OF[loop.kind])
-      }
     }
     await closeDrawer($, key)
   } catch (error) {
@@ -1147,7 +1031,7 @@ async function deliverEvents($: Engine, root: string, session: string, time: num
 
 /**
  * Shows the panel when the session subscribes to a pull request it had not
- * subscribed to when the panel last looked, as a new watcher shows it.
+ * subscribed to when the panel last looked.
  */
 async function noticeSubscriptions($: Engine, root: string, session: string): Promise<void> {
   const keys = (await subscriptionsOf($, root, session)).map(({ pr }) => keyOf(pr))
@@ -1662,13 +1546,12 @@ export const register: Register = on => {
     deny: 'Projector could not restore the item; tell the person in the conversation that it could not be restored',
   }))
 
-  // These hooks only watch: the catch hands back what the event settled to,
+  // This hook only watches: the catch hands back what the event settled to,
   // so a failure here never runs a tool twice or refuses anything. A push's
   // subscription waits on GitHub, so the tool's result does not wait on it.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
     if (ran.deny !== undefined) return ran
-    await adopt($, e.command)
     if (isPushCommand(e.command)) {
       const output = ran.isError === true ? (ran.text ?? '') : `${ran.result.stdout}\n${ran.result.stderr}`
       void subscribeFrom($, output).catch(() => undefined)
@@ -1676,17 +1559,7 @@ export const register: Register = on => {
     return ran
   }).catch(($, e, next) => next(e))
 
-  on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
-    const ran = await next(e)
-    if (ran.deny === undefined) await adopt($, e.command ?? '')
-    return ran
-  }).catch(($, e, next) => next(e))
-
   on('prompt.submit', async ($, e, next) => {
-    // A watcher's line reaches the session as a task notification: the moment
-    // a pull request it tracks has changed.
-    if (e.origin.kind === 'task-notification') soon($)
-
     // A prompt sent from the terminal means the prompt has the keyboard, even
     // when no keystroke edited it since Esc, as with one a drawer filled.
     if (e.origin.kind === 'composer') void unfocus($).catch(() => undefined)
@@ -1866,10 +1739,6 @@ export const register: Register = on => {
     )
     const tally = counts.filter(part => part !== undefined).join(' · ')
     const reloaded = shown.fetchedAt === null ? '' : span(secondsSince(time, shown.fetchedAt))
-    // A failed poll keeps drawing the pull requests GitHub last gave, and the
-    // header's time says how old they are, so the panel says why it failed
-    // only when it has none of them to draw.
-    const failure = shown.error === null || shown.rows.length > 0 ? undefined : `GitHub: ${shown.error}`
     // Enter with the ring on the Button it presses takes the ring along,
     // `onto` what the press puts in the Button's place; a click leaves the
     // ring where it was.
@@ -2028,11 +1897,7 @@ export const register: Register = on => {
 
     if (shown.rows.length === 0 && shownItems.length === 0) {
       return panel([
-        failure !== undefined ? (
-          <Text key="failure" color="error">
-            {failure}
-          </Text>
-        ) : shown.fetchedAt === null ? (
+        shown.fetchedAt === null ? (
           <Text key="looking" color="subtle">
             Looking for pull requests…
           </Text>
@@ -2632,12 +2497,7 @@ export const register: Register = on => {
         ...(at === 0 ? [] : [<Text key="before-reviews"> </Text>]),
         ...lines,
       ]),
-      failure !== undefined && (
-        <Text key="failure" color="error">
-          {failure}
-        </Text>
-      ),
-      shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
+      shownItems.length > 0 && shown.rows.length > 0 && (
         <Text key="before-items"> </Text>
       ),
       // A collapsed kind's items give way to one line at the top of the list.
