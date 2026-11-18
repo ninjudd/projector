@@ -56,7 +56,7 @@ from urllib.parse import quote
 
 from .core import ProjectorError, distribution_version, state_home
 from .inbox import SESSION, locked, write_json
-from .summary import repo_slug
+from .summary import TOKEN_LOGIN, repo_slug, token_login
 
 FINDING_MARKER = "projector-finding"
 # The mark that opens both the start comment and the review's signature line, as
@@ -148,28 +148,8 @@ def model_key(model: str) -> str:
     return key
 
 
-# What GitHub answers `gh api user` with for a token that belongs to no user, such as a workflow's GITHUB_TOKEN
-# or a GitHub App's installation token.
-INTEGRATION_REFUSAL = "Resource not accessible by integration"
-# The login the review action names for its token, since GitHub tells a token that belongs to no user nothing
-# about whom it acts as. It is read only after that refusal, so it can never rename a person's token.
-TOKEN_LOGIN = "PROJECTOR_TOKEN_LOGIN"
-
-
 def authenticated_login() -> str:
-    try:
-        login = run_gh(["api", "user", "--jq", ".login"]).strip()
-    except ReviewError as error:
-        if INTEGRATION_REFUSAL not in str(error):
-            raise
-        named = os.environ.get(TOKEN_LOGIN, "").strip()
-        if not named:
-            raise ReviewError(f"this token belongs to no GitHub user, so GitHub does not say whom it acts as; set "
-                              f"{TOKEN_LOGIN} to the login it posts as, such as github-actions[bot]") from error
-        return named
-    if not login:
-        raise ReviewError("could not read the authenticated GitHub user; run `gh auth status`")
-    return login
+    return token_login(lambda: run_gh(["api", "user", "--jq", ".login"]), ReviewError)
 
 
 def reviewer_login(explicit: Optional[str], configured: Optional[str], operator: str) -> str:

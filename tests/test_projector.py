@@ -1699,7 +1699,7 @@ class RequiredCheckTests(RepositoryTestCase):
         if answer is not None:
             self.at_a_terminal()
             self.enterContext(mock.patch("sys.stdin.readline", return_value=answer))
-        return self.invoke("init", "--no-site", "--no-publish-rule", *extra)
+        return self.invoke("init", "--no-site", "--no-publish-rule", "--no-ci-review", *extra)
 
     def workflow(self) -> Path:
         return self.root / review.CLEAN_WORKFLOW_PATH
@@ -3026,6 +3026,7 @@ class UpgradeTests(unittest.TestCase):
             "clean-workflow": mock.patch.object(review, "clean_workflow_text",
                                                 return_value=review.clean_workflow_text() + "# x\n"),
             "permission-rules": mock.patch.object(permissions, "ASK", (*permissions.ASK, "Bash(project x *)")),
+            "ci-review-workflow": mock.patch.object(cli.ci, "body", return_value=cli.ci.body("v0", {"claude": ""}) + "# x\n"),
         }
         self.assertEqual(set(edits), set(before))
         for name, edit in edits.items():

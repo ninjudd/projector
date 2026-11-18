@@ -256,7 +256,7 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
+      pattern = ["project", "review", ["census", "ci-workflow", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
       decision = "allow",
   )
   prefix_rule(
@@ -592,6 +592,29 @@ labels up to date, whatever you answer about the check:
 When GitHub refuses, `init` says so and goes on, because the labels only show
 a review. With `review.labels` set to `false`, `init` leaves the labels
 alone.
+
+### Review pull requests in GitHub Actions
+
+When you run `init` at a terminal in a GitHub repository that has not
+answered yet, it asks:
+
+```text
+Review this repository's pull requests in GitHub Actions? [y/N]
+```
+
+`--ci-review` answers yes and `--no-ci-review` answers no, without a prompt,
+and `init` records the answer as `review.ci`. Without a terminal, a flag, or
+a recorded answer, `init` asks nothing and changes nothing. A yes writes
+`.github/workflows/projector-review.yml`, records `review.ci` and
+`review.ci_agents`, adds `github-actions[bot]` to `review.reviewers`, and has
+`gh` prompt for each agent's missing credential secret. `--ci-agents` picks
+the agents, `claude` by default, each as `agent=<model>` to name the model it
+runs, such as `claude,codex=<model>`. `codex` needs a model, so `init`
+refuses it without one. `--ci-credential` picks the kind of secret `init`
+asks for. Once `review.ci` is `true`, every later `init`
+refreshes the workflow, replacing one nobody edited and keeping an edited
+one. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
+setup, the credentials, and what each job does.
 
 ## Browse projects
 
@@ -1040,6 +1063,8 @@ reads, which are these:
 | `review.require_check` | boolean | none | `init`, as your answer to whether the repository relies on Projector alone to sign off pull requests: none asks at a terminal, `true` keeps the ruleset and the label workflow in place, and `false` asks no more; `init` writes it when you answer, as [Require a clean review before merge](#require-a-clean-review-before-merge) describes |
 | `review.reviewers` | string | none | `project review status`, `suggestions`, `setup`, and `publish`, and the watch daemon from the configuration of a checkout a live session works in, as the logins whose Projector verdicts count beside the reviewer's and those of the repository's owner, members, and collaborators, separated by commas, as `github-actions[bot]`. On a public repository a review from any other account does not count, so name an account here, such as the one a CI review posts as, only when you trust every review it posts |
 | `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
+| `review.ci` | boolean | none | `init`, as your answer to whether the repository's pull requests get a review in GitHub Actions: none asks at a terminal, `true` refreshes the workflow, and `false` asks no more; `init` writes it when you answer, as [Review pull requests in GitHub Actions](#review-pull-requests-in-github-actions) describes |
+| `review.ci_agents` | string | `claude` | `init` and `project review ci-workflow`, as the agents the CI review workflow runs, separated by commas, from `claude` and `codex`, each as `agent=<model>` to name the model its job runs, which `codex` needs, such as `claude, codex=<model>` |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
 | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
@@ -1960,6 +1985,7 @@ project review hold 66
 project review ready 66
 project review rules
 project review workflow
+project review ci-workflow
 project review run 66 --model claude-opus-5-5
 ```
 
@@ -2579,7 +2605,10 @@ still allow the commands.
 writes, as this release renders it, so you can compare it with a copy you
 edited, as [Require a clean review before merge](#require-a-clean-review-before-merge)
 describes. It writes nothing, takes no pull request, and runs from any
-directory.
+directory. `ci-workflow` prints the `.github/workflows/projector-review.yml`
+that `init --ci-review` writes, for `--agents`, then `review.ci_agents`, then
+`claude`, at `--action-ref`, `v0` by default, so you can compare it with a
+copy you edited.
 
 No command takes a SHA: each comes from GitHub or the state file. `setup` works
 from the checkout containing the working directory, or `--checkout`, and

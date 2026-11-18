@@ -396,7 +396,8 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
       matrix:
-        agent: [claude]
+        include:
+          - agent: claude
     concurrency:
       group: projector-review-${{ github.event.pull_request.number || inputs.pr }}-${{ matrix.agent }}
       cancel-in-progress: true
@@ -406,6 +407,7 @@ jobs:
       - uses: ninjudd/projector/actions/review@v0
         with:
           agent: ${{ matrix.agent }}
+          model: ${{ matrix.model }}
           pr: ${{ github.event.pull_request.number || inputs.pr }}
           rereview: ${{ inputs.rereview || false }}
         env:
@@ -484,7 +486,7 @@ never adds a workflow by surprise. Once `review.ci` is `true`, every later
 | Flag | Default | Effect |
 | --- | --- | --- |
 | `--ci-review`, `--no-ci-review` | The recorded `review.ci`, then the prompt | Set CI review up, or record that the repository has none |
-| `--ci-agents <list>` | The recorded `review.ci_agents`, then `claude` | The agents in the workflow's matrix, such as `claude,codex` |
+| `--ci-agents <list>` | The recorded `review.ci_agents`, then `claude` | The agents in the workflow's matrix, each as `agent=<model>` to name its model, such as `claude,codex=<model>`. `codex` needs a model. |
 | `--ci-credential <kind>` | `subscription` for `claude`, `api-key` for `codex` | Which secret `init` asks for, as the credentials table in § 2.4 lists them |
 | `--ci-app <slug>` | None | Post as this GitHub App. `init` reads the app's ID with `gh api apps/<slug>`, which needs no credential. |
 | `--action-ref <ref>` | `v0` | The existing flag, which now sets the ref of the review action too |
@@ -898,3 +900,38 @@ These tests fail before the change, and each catches the bug it names:
 - **The handoff runs only where the site is hosted.** Elsewhere
   `project summary publish` keeps the summary in the checkout, as it does
   in a session, and the action uploads nothing.
+- **The workflow passes both credentials of each agent.** A secret that is
+  not set reads as empty, and the action's check accepts exactly one, so the
+  workflow does not depend on the kind of credential you chose.
+  `--ci-credential` only picks the secret `init` asks for.
+- **A digest line marks a workflow nobody edited.** The workflow's second
+  line records the SHA-256 of the rest, and `init` replaces the file only
+  while the two agree. The site workflow's way, matching each earlier
+  template with its variable parts left free, would need a pattern for every
+  combination of agents, and the clean label workflow's list of earlier
+  digests would need one for every agent list and ref.
+- **Codex reads Projector's skills from a link.** The action links
+  `$CODEX_HOME/skills` to the skills in its own checkout, because a
+  downloaded action is not a Git checkout that `install.sh codex` can install
+  a marketplace from.
+- **`project` is a shim on `PATH`.** The agent runs `project` by name, so the
+  action writes a script that runs the action's own `src` with `python3 -P`.
+- **The app comes later.** `--ci-app` and the `app-id` input ship with
+  context repositories in the later pull request § 6 step 4 names.
+- **A runner fact to check:** that `actions/download-artifact` succeeds when
+  no artifact matches its pattern, as in a repository that hosts no site.
+- **Setup names each agent's model.** `--ci-agents` and `review.ci_agents`
+  take `agent=<model>` entries, and the workflow's matrix lists each agent
+  with its model, which the job passes as the action's `model` input. The
+  action has a default model only for `claude`, so `init` refuses `codex`
+  without one rather than write a job that stops before every review.
+  Projector names no default Codex model, because a model ID it chose would
+  go stale as models change, and a wrong one fails every run.
+- **The summary job names its token too.** `project summary publish` reads
+  the account it posts as before it links the summary, to find and replace
+  that account's earlier link, and GitHub refuses `gh api user` to the
+  summary job's token just as it does to the review job's. So the lookup
+  `authenticated_login` makes, with its `PROJECTOR_TOKEN_LOGIN` fallback,
+  lives in `src/projector/summary.py`, which `review.py` already imports,
+  and both commands use it. The action sets the variable on every step that
+  runs `project` with the workflow's token.
