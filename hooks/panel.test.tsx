@@ -3659,6 +3659,22 @@ test('the repository inbox’s entries show by their roles, and an option answer
   expect(session.filled).toEqual([])
 })
 
+test('the repository inbox’s entries are drawn when they are all the panel has, and a new one shows a hidden panel', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  // The session subscribes to no pull request, so its panel starts hidden, and it has no item of its own.
+  questionWorld(on, clock, [], { entries: ENTRIES, subscriptions: {} })
+  await startSession($, clock)
+  await clock.advance(TICK)
+  await clock.settle()
+
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeUndefined()
+  for (const line of ENTRIES.map(entry => entry.line)) expect(await ui.find({ type: 'Text', text: line })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: ` ${TAGLINE}` })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a notice’s drawer quotes it, and dismiss clears it without sending anything', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

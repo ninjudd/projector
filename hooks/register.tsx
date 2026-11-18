@@ -46,6 +46,7 @@ import {
   holdsQuote,
   isAnswerable,
   isEntry,
+  isEntryAwakeAt,
   isShownAt,
   isSnoozedAt,
   letterAt,
@@ -741,6 +742,22 @@ async function setItems($: Engine, list: Item[]): Promise<void> {
 }
 
 /**
+ * Holds the repository inbox's entries as the CLI listed them, and shows a
+ * hidden panel for an entry that waits on you and did not when the panel
+ * last held the list, as a new item shows it.
+ */
+async function setEntries($: Engine, list: Entry[]): Promise<void> {
+  const time = await $.clock.now()
+  let isNew = false
+  await update($, entries, before => {
+    const awake = new Set(before.filter(entry => isEntryAwakeAt(entry, time)).map(entry => entry.ref))
+    isNew = list.some(entry => isEntryAwakeAt(entry, time) && !awake.has(entry.ref))
+    return list
+  })
+  if (isNew && !(await read($, isShown))) show($)
+}
+
+/**
  * Reads the session's inbox when the store's directory changed since the
  * last read that succeeded. Listing a directory starts no process, so an idle
  * session, panel shown or hidden, starts none. The signature is recorded only
@@ -763,13 +780,13 @@ async function readStore($: Engine, session: string): Promise<void> {
   if (signature === listed) return
   if (files === '' && mirrored === '') {
     await setItems($, [])
-    await update($, entries, () => [])
+    await setEntries($, [])
   } else {
     const ran = await project($, ['inbox', 'list', '--all', '--json', '--session', session])
     if (ran.exitCode !== 0) return
     const { items: list } = JSON.parse(ran.stdout) as { items: (Item | Entry)[] }
     await setItems($, list.filter((row): row is Item => !isEntry(row)))
-    await update($, entries, () => list.filter(isEntry))
+    await setEntries($, list.filter(isEntry))
   }
   listed = signature
 }
@@ -1936,7 +1953,7 @@ export const register: Register = on => {
         <Box flexDirection="column">{lines}</Box>
       )
 
-    if (shown.rows.length === 0 && shownItems.length === 0) {
+    if (shown.rows.length === 0 && shownItems.length === 0 && shownEntries.length === 0) {
       return panel([
         shown.fetchedAt === null ? (
           <Text key="looking" color="subtle">

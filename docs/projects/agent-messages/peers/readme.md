@@ -636,6 +636,11 @@ settled these details:
   `review-pr`, and `review-repo` keep the line in the main conversation and
   point to the `message` skill, which gains sections on reaching another
   person's inbox and on answering a `PEER REPLY` line.
+- **An entry shows the panel as an item does.** The panel draws the
+  entries when they are all it has, with no open pull request and no item of
+  the session's, rather than its tagline. A new entry that waits on you, one
+  neither snoozed nor an item you sent and closed, brings a hidden panel
+  back, as a new item does.
 
 ## 9. Outcome
 

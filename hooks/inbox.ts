@@ -396,6 +396,9 @@ export function repoOf(registration: string | undefined): string | undefined {
   }
 }
 
+/** Whether an entry waits on you: one shown at a time and not an item you sent and closed. */
+export const isEntryAwakeAt = (entry: Entry, time: number) => entry.state !== 'closed' && entry.state !== 'snoozed'
+
 /** Whether a row `project inbox list --json` gives is a repository inbox entry rather than a session's item. */
 export const isEntry = (row: Item | Entry): row is Entry => (row as Partial<Entry>).scope === 'repo'
 
