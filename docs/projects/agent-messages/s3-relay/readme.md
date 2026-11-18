@@ -95,12 +95,25 @@ and the controls in `../shared-relay/readme.md` § 2.3.
    - **Not public.** An unsigned `ListObjectsV2` on the prefix must fail. If
      it succeeds, anyone can list the relay, so the location is `off` with
      the reason `the bucket lets anyone list s3://…`.
-   - **Conditional writes.** `PutObject` with `If-None-Match: *` on a fresh
-     name, `<prefix>/<own-key-id>/probe/<random>` with 32 random hex digits,
-     must succeed, and the same request again must answer `412`. A store that
-     ignores the condition would break every lease, so the location is `off`
-     with the reason `this store does not honor If-None-Match`. The probe
-     object is then deleted.
+   - **Conditional writes.** The job sends these requests in order on a
+     fresh name, `<prefix>/<own-key-id>/probe/<random>` with 32 random hex
+     digits. Together they exercise every precondition the leases in step 6
+     rely on:
+
+     | Request | Must answer |
+     | --- | --- |
+     | `PutObject` with `If-None-Match: *` | Success, with an ETag |
+     | The same request again | `412` |
+     | `PutObject` with `If-Match` on a wrong ETag | `412` |
+     | `DeleteObject` with `If-Match` on a wrong ETag | `412` |
+     | `DeleteObject` with `If-Match` on the first request's ETag | Success |
+
+     A store that answers any of them otherwise would break leases, so the
+     location is `off` with a reason that names the request, such as `this
+     store does not honor If-Match on DeleteObject`. When a request fails
+     the check, the job still deletes the probe object with its ETag. A
+     `5xx` or a timeout is an error for that job rather than a result, and
+     the next job probes again.
 
    Each probe picks a new name, so a probe interrupted before its deletion
    cannot make the next one fail. Each full pass also deletes every object
@@ -251,7 +264,11 @@ SHA-256 of the identity, and each file records the identity itself.
 - **Refuse a public or unconditional store.** A bucket anyone can list
   exposes the same metadata a public relay repository would, and a store
   that ignores conditions would let two machines overwrite each other's
-  leases without either noticing.
+  leases without either noticing. A store can honor `If-None-Match` on
+  creation and still ignore `If-Match` on updates or deletions, and then a
+  stale deletion removes another machine's renewed record. So the probe
+  sends each conditional request the leases use, with a condition that must
+  fail, before the relay trusts the store.
 - **Poll first.** Polling every 10 seconds already cuts the Git relay's
   latency by a factor of 6 or more, with no infrastructure beyond the
   bucket. Event notifications need a queue or a server per subscriber, so
@@ -265,7 +282,8 @@ SHA-256 of the identity, and each file records the identity itself.
 The tests run a fake S3 server on a local port. It implements
 `ListObjectsV2` with continuation and last-modified times, `GetObject`, `PutObject`, and
 `DeleteObject` with `If-Match` and `If-None-Match`, and it checks each
-request's Signature Version 4. They point `agent.s3_endpoint` at it, and run
+request's Signature Version 4. A test can tell it to ignore one condition on
+one request. They point `agent.s3_endpoint` at it, and run
 the relay tests' two-machine setup with an S3 location.
 
 | Exercise | Expected result, and the bug it catches |
@@ -277,7 +295,7 @@ the relay tests' two-machine setup with an S3 location.
 | Delete an object another machine already deleted. | The `404` counts as deleted, and the outbox empties. Catches a deletion retried forever. |
 | List an object of 33 KiB, an object with a malformed name, and 300 new valid objects. | The first is rejected with no `GetObject`, the second is ignored, and the job examines 256 and opens 64. Catches a transport that reads unbounded input. |
 | Stop the daemon after the probe's first `PutObject` and before its deletion, restart it, and run a full pass with the fake server's clock an hour later. | The probe after the restart passes on a new name, and the full pass deletes the first probe's object. Catches a probe name reused across runs, which turns a valid store `off` for good, and a leftover probe object nothing removes. |
-| Make the fake server ignore `If-None-Match`, then let it answer an unsigned listing. | The location is `off` with each reason, and nothing else is written. Catches a relay on a store that breaks leases, or on a public bucket. |
+| Make the fake server ignore `If-None-Match`, then `If-Match` on `PutObject` alone, then `If-Match` on `DeleteObject` alone, then let it answer an unsigned listing. | The location is `off` each time, with a reason that names the request it failed, no probe object is left, and nothing else is written. Catches a relay on a store that breaks creation, update, or deletion leases, or on a public bucket. |
 | On each machine, register one session in a checkout whose `agent.s3_endpoint` names one fake server and one in a checkout whose endpoint names a second, all with `agent.relay = "s3://team/relay"`. Send a peers item from machine 1 through the first, and copy its object into the second server's bucket. Resolve a checkout with no endpoint. | Each machine runs two jobs with two cache files and two outbox files, and each server holds only the presence records of its own sessions. The item arrives through the first server, and its copy is rejected as `location-mismatch` on the second. The checkout with no endpoint resolves to the identity `https://s3.amazonaws.com/team/relay`. Catches a location keyed by its bucket and prefix alone, which sends one store's records to another. |
 | Commit `agent.s3_endpoint` and `agent.s3_profile` to the default branch's `.projector.toml`, and allow neither. | No request is sent to the endpoint and no credentials are read for the profile, and `list` names `project config allow` for each. Catches a repository that points your relay at its own server, or signs with an identity you did not choose. |
 | Give credentials through the environment, then a profile, then a `credential_process` whose credentials expire during the test. | Each signs correctly. The `credential_process` runs again 5 minutes before the expiry, and no request is signed with credentials past it. No output, log line, `watch status`, or process argument holds the secret key or the token. Catches a credential leak and a stale session. |
