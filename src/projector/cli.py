@@ -1362,6 +1362,17 @@ def add_agent_parser(subcommands) -> None:
         # No help, so help lists none of them; a prefix no argument starts with takes any arguments they had.
         keys.add_parser(removed, add_help=False, prefix_chars="\0").add_argument("ignored", nargs="*")
 
+    peer = commands.add_parser("peer", help="list another person's public key under a name, so their agents can "
+                                            "reach your inbox and yours theirs")
+    peers = peer.add_subparsers(dest="peer_command", required=True)
+    added = peers.add_parser("add", help="list a person's public key under a name you choose; terminal only")
+    added.add_argument("name", help="your name for them, 1 to 32 letters, digits, and hyphens")
+    added.add_argument("public_key", help="the public key their `project agent key show` prints")
+    added.add_argument("--replace", action="store_true", help="give a name you already listed this key instead")
+    removed_peer = peers.add_parser("remove", help="stop a person's agents reaching your inbox")
+    removed_peer.add_argument("name", help="the name you listed them under")
+    add_output(peers.add_parser("list", help="list your peers, with each one's key ID"))
+
 
 def terminal_line(prompt: str, deadline: float, outcome: str) -> str:
     """A line typed at the terminal by `deadline`, of at most `MAX_PASTE` bytes, or an error that ends with
@@ -1444,7 +1455,8 @@ def run_agent_key(arguments: argparse.Namespace) -> int:
         if arguments.json_output:
             print(json_text(shown))
         else:
-            print(f"key {shown['key_id']}\npublic key: {shown['public_key']}\nstored: {shown['store']}")
+            print(f"key {shown['key_id']}\npublic key: {shown['public_key']}\nstored: {shown['store']}\n"
+                  f"{relay.SHARE}")
         return 0
     if command == "remove":
         removed, found = relay.remove_key(root)
@@ -1478,6 +1490,39 @@ def run_agent_key(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def run_agent_peer(arguments: argparse.Namespace) -> int:
+    command = arguments.peer_command
+    if command == "list":
+        rows = relay.peer_rows()
+        if arguments.json_output:
+            print(json_text({"peers": rows}))
+            return 0
+        for row in rows:
+            print(f"{row['name']}\tkey {row['key_id']}")
+        if not rows:
+            print("no peers; run `project agent peer add <name> <public-key>` in a terminal to add one")
+        return 0
+    if command == "remove":
+        key_id = relay.remove_peer(arguments.name)
+        print(f"removed peer {arguments.name.lower()}, key {key_id}, from {user_config_path()}; their agents can no "
+              "longer reach your inbox")
+        return 0
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise EnvironmentError("`project agent peer add` decides who can post to your inbox, so it runs only with a "
+                               "terminal on standard input and output, where no agent can run it; run it yourself in "
+                               "a terminal")
+    name, public = relay.check_peer(arguments.name, arguments.public_key, replace=arguments.replace)
+    key_id = crypto.key_id(public)
+    outcome = "no peer was added"
+    if not confirmed(f"Does {name}'s project agent key show print key {key_id}? [y/N] ",
+                     time.monotonic() + JOIN_TIMEOUT, outcome):
+        raise relay.RelayError(f"key {key_id} was not confirmed, so {outcome}")
+    relay.add_peer(name, public, replace=arguments.replace)
+    print(f"added peer {name}, key {key_id}, to {user_config_path()}. Their agents reach your inbox once {name} lists "
+          "your public key too, which `project agent key show` prints")
+    return 0
+
+
 def warn_ignored(config: Config) -> None:
     for source, key in config.ignored:
         where = "from" if source.override is None else "outside an override in"
@@ -1488,6 +1533,8 @@ def warn_ignored(config: Config) -> None:
 def run_agent(arguments: argparse.Namespace) -> int:
     if arguments.agent_command == "key":
         return run_agent_key(arguments)
+    if arguments.agent_command == "peer":
+        return run_agent_peer(arguments)
     root = watch.state_root()
     command = arguments.agent_command
     now = time.time()
@@ -1875,11 +1922,18 @@ def change_config(arguments: argparse.Namespace) -> int:
         raise UsageError(f"{arguments.key} holds the relay's private key, which a command line would show; run "
                          "`project agent key join` in a terminal to copy a key from another machine, or "
                          "`project agent key init` to make one")
+    if arguments.config_command == "set" and (arguments.key + ".").startswith("agent.peers."):
+        raise UsageError(f"{arguments.key} decides whose agents can post to your inbox, so only a terminal sets it; "
+                         "run `project agent peer add <name> <public-key>` in a terminal")
     path = config_file(arguments)
-    if arguments.config_command == "set":
-        change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value), arguments.override)
-    else:
-        change = unset_value(path, arguments.key, arguments.override)
+    # The peer and key commands change ~/.projector.toml too, so a change to it holds their lock, an override's
+    # included.
+    user = path.resolve() == user_config_path().resolve()
+    with relay.config_lock() if user else contextlib.nullcontext():
+        if arguments.config_command == "set":
+            change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value), arguments.override)
+        else:
+            change = unset_value(path, arguments.key, arguments.override)
     try:
         config: Optional[Config] = load_config(config_start(arguments))
     except ConfigError:

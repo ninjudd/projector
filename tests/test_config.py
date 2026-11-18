@@ -650,8 +650,8 @@ class ConfigSetTests(unittest.TestCase):
 
     def test_the_documented_keys_are_the_known_keys(self) -> None:
         documentation = (Path(__file__).resolve().parents[1] / "docs" / "cli.md").read_text()
-        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string|whole number) \|", documentation, re.MULTILINE)
-        names = {bool: "boolean", str: "string", int: "whole number"}
+        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string|whole number|table) \|", documentation, re.MULTILINE)
+        names = {bool: "boolean", str: "string", int: "whole number", dict: "table"}
 
         self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))
 

@@ -57,6 +57,9 @@ DECISIONS = (
     ("project inbox discuss 3 --text 'Why decline it?' --session s1", "ask", "none"),
     ("project inbox discuss --pr acme/app#12 --text hello --session s1", "ask", "none"),
     ("project console", "ask", "none"),
+    ("project agent peer list --json", "allow", "allow"),
+    ("project agent peer add jason q3Jx", "allow", "none"),
+    ("project agent peer remove jason", "allow", "none"),
     ("project list --json", "allow", "allow"),
     ("project config get review.username", "allow", "allow"),
     ("project config list", "allow", "allow"),
@@ -121,7 +124,8 @@ DECISIONS = (
 
 # What the Codex rules leave to Codex's usual approval: each command with the
 # subcommands left out, or None where the whole command is.
-CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None, "agent": {"key"},
+CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None,
+                  "agent": {"key", "peer"},
                   "config": {"set", "unset", "allow"},
                   "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},
                   "review": {"gate"},
@@ -202,8 +206,12 @@ class PermissionRulesTests(unittest.TestCase):
 
     def test_the_codex_rules_name_every_command_or_leave_it_out(self) -> None:
         (_, whole), *rest = (pattern for pattern, _ in permissions.CODEX_ALLOW)
-        partial = {command: set(names) for _, command, names in rest}
+        partial = {pattern[1]: set(pattern[2]) for pattern in rest if len(pattern) == 3}
         commands = subcommands(cli.parser())
+        for _, command, group, name in (pattern for pattern in rest if len(pattern) == 4):
+            # A rule that allows one subcommand of a group leaves the group out, so its other subcommands ask.
+            self.assertIn(group, CODEX_LEFT_OUT[command])
+            self.assertIn(name, subcommands(subcommands(commands[command])[group]))
         self.assertLessEqual(set(whole) | set(partial), set(commands))
         for command, parser in commands.items():
             with self.subTest(command):

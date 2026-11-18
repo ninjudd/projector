@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Optional
 from unittest import mock
 
-from projector import agents, cli, codex_watch as codex, config, crypto, keychain, relay, watch
+from projector import agents, cli, codex_watch as codex, config, crypto, inbox, keychain, relay, watch
 from projector.inbox import read_json, try_lock, unlock, write_json
 from tests.scratch import copy_of
 from tests.test_watch import FakeGitHub
@@ -1171,6 +1171,229 @@ class PairingTests(RelayCase):
                 self.assertEqual(2, code, err)
                 self.assertIn("run `project agent key join` in a terminal", err)
         self.stored_nothing()
+
+
+def public_of(private: bytes) -> str:
+    return crypto.encode(crypto.public_key(private))
+
+
+class PeerCommandTests(RelayCase):
+    """`project agent peer` on machine one, which holds the shared key inline, listing other people's keys."""
+
+    JASON = bytes(range(40, 72))
+    AMY = bytes(range(80, 112))
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.one.inline_key(self.private)
+
+    def config_text(self) -> str:
+        return (self.one.home / ".projector.toml").read_text()
+
+    def add(self, name: str, key: str, *flags: str, answer: str = "y",
+            terminal: bool | str = True) -> tuple[int, str, str]:
+        return self.one.project("agent", "peer", "add", name, key, *flags, stdin=answer + "\n", terminal=terminal)
+
+    def test_a_peer_confirmed_at_a_terminal_is_listed_by_name_and_key_id_and_removed_by_name(self) -> None:
+        jason_id = crypto.key_id(crypto.public_key(self.JASON))
+
+        code, out, err = self.add("Jason", public_of(self.JASON))
+        listed = self.one.project("agent", "peer", "list")
+        listed_json = json.loads(self.one.project("agent", "peer", "list", "--json")[1])
+        added = config.peers(self.one.env)
+        removed = self.one.project("agent", "peer", "remove", "jason")
+        after = self.one.project("agent", "peer", "list")
+
+        self.assertEqual(0, code, err)
+        self.assertIn(f"Does jason's project agent key show print key {jason_id}? [y/N] ", out)
+        self.assertIn(f"added peer jason, key {jason_id}", out)
+        self.assertEqual({"jason": crypto.public_key(self.JASON)}, added)
+        self.assertEqual(f"jason\tkey {jason_id}\n", listed[1])
+        self.assertEqual([{"name": "jason", "key_id": jason_id, "public_key": public_of(self.JASON)}],
+                         listed_json["peers"])
+        self.assertEqual(0, removed[0], removed[2])
+        self.assertIn(f"removed peer jason, key {jason_id}", removed[1])
+        self.assertEqual({}, config.peers(self.one.env))
+        self.assertIn("no peers", after[1])
+
+    def test_peer_add_refuses_without_a_terminal_or_a_yes_and_refuses_a_bad_name_or_key_writing_nothing(
+            self) -> None:
+        self.assertEqual(0, self.add("amy", public_of(self.AMY))[0])
+        before = self.config_text()
+        cases = {
+            "no terminal on standard input": (("jason", public_of(self.JASON)), {"terminal": "stdout"}, 69,
+                                              "runs only with a terminal"),
+            "no terminal on standard output": (("jason", public_of(self.JASON)), {"terminal": "stdin"}, 69,
+                                               "runs only with a terminal"),
+            "your own key": (("jason", public_of(self.private)), {}, 65, "is your own key"),
+            "a key another name holds": (("jason", public_of(self.AMY)), {}, 65, "amy already holds key"),
+            "a malformed key": (("jason", "not-a-key"), {}, 65, "is not a public key"),
+            "a key of 31 bytes": (("jason", crypto.encode(bytes(31))), {}, 65, "is not a public key"),
+            "a name that is not a name": (("Jason Smith", public_of(self.JASON)), {}, 65, "is not a peer name"),
+            "an existing name": (("amy", public_of(self.JASON)), {}, 65, "pass --replace"),
+            "the answer n": (("jason", public_of(self.JASON)), {"answer": "n"}, 65, "no peer was added"),
+        }
+        for case, (args, options, status, said) in cases.items():
+            with self.subTest(case):
+                code, out, err = self.add(*args, **options)
+                self.assertEqual(status, code, out + err)
+                self.assertIn(said, err)
+                self.assertEqual(before, self.config_text())
+
+    def test_replace_gives_a_listed_name_another_key(self) -> None:
+        self.add("amy", public_of(self.AMY))
+
+        code, out, err = self.add("amy", public_of(self.JASON), "--replace")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({"amy": crypto.public_key(self.JASON)}, config.peers(self.one.env))
+
+    def test_a_peer_planted_in_a_checkout_is_ignored_and_config_set_refuses_to_add_one(self) -> None:
+        (self.one.work / ".projector.toml").write_text(f'[agent.peers]\nmallory = "{public_of(self.JASON)}"\n')
+
+        listed = self.one.project("agent", "peer", "list")
+        got = self.one.project("config", "get", "agent.peers")
+        refused = [self.one.project("config", "set", key, public_of(self.JASON), "--user")
+                   for key in ("agent.peers.mallory", "agent.peers")]
+
+        self.assertIn("no peers", listed[1])
+        self.assertEqual(1, got[0], got[1])
+        self.assertIn("sets agent.peers.mallory, which Projector reads only from", got[2])
+        for code, out, err in refused:
+            self.assertEqual(2, code, err)
+            self.assertIn("run `project agent peer add <name> <public-key>` in a terminal", err)
+        self.assertNotIn("peers", self.config_text())
+
+    def test_a_peer_under_an_override_is_ignored_in_every_file_so_peer_remove_leaves_no_copy(self) -> None:
+        # `peer remove` edits only the ordinary `[agent.peers]`, so a peer honored under an override, in a
+        # checkout's file or your own, would reach your inbox past the user-only rule or outlive its removal.
+        mallory, alice = bytes(range(120, 152)), bytes(range(160, 192))
+        self.assertEqual(0, self.add("amy", public_of(self.AMY))[0])
+        checkout = self.one.work / ".projector.toml"
+        checkout.write_text(f'[override.1]\nagent.peers.mallory = "{public_of(mallory)}"\n'
+                            '[review]\ngate_checks = "check"\n')
+        with (self.one.home / ".projector.toml").open("a") as stream:
+            stream.write(f'\n[override.2]\nagent.peers.amy = "{public_of(self.AMY)}"\n'
+                         f'agent.peers."alice.work" = "{public_of(alice)}"\n')
+
+        got = self.one.project("config", "get", "review.gate_checks")
+        listed = self.one.project("agent", "peer", "list")
+        peers = config.peers(self.one.env)
+        removed = self.one.project("agent", "peer", "remove", "amy")
+
+        self.assertEqual((0, "check\n"), got[:2], got[2])
+        for source, key in (("(override 1)", "agent.peers.mallory"), ("(override 2)", "agent.peers.amy"),
+                            ("(override 2)", "agent.peers.alice.work")):
+            self.assertIn(f"{source} sets {key}, which Projector reads only outside an override in", got[2])
+        self.assertEqual({"amy": crypto.public_key(self.AMY)}, peers)
+        self.assertEqual(0, listed[0], listed[2])
+        self.assertEqual(["amy"], [line.split("\t")[0] for line in listed[1].splitlines()])
+        self.assertEqual(0, removed[0], removed[2])
+        self.assertEqual({}, config.peers(self.one.env))
+        self.assertIn("no peers", self.one.project("agent", "peer", "list")[1])
+
+    def test_a_planted_peer_whose_quoted_name_holds_a_dot_is_ignored_without_breaking_other_settings(self) -> None:
+        (self.one.work / ".projector.toml").write_text(
+            f'[agent.peers]\n"alice.work" = "{public_of(self.JASON)}"\n[review]\ngate_checks = "check"\n')
+
+        got = self.one.project("config", "get", "review.gate_checks")
+        listed = self.one.project("agent", "peer", "list")
+
+        self.assertEqual((0, "check\n"), got[:2], got[2])
+        self.assertIn("sets agent.peers.alice.work, which Projector reads only from", got[2])
+        self.assertEqual(0, listed[0], listed[2])
+        self.assertIn("no peers", listed[1])
+
+    def test_a_peer_another_terminal_adds_while_add_waits_for_its_answer_is_rechecked_before_the_write(
+            self) -> None:
+        def meanwhile(*_) -> bool:
+            # A second terminal lists the same key as amy while this one waits for its yes.
+            relay.add_peer("amy", crypto.public_key(self.JASON), environ=self.one.env)
+            return True
+
+        with mock.patch.object(cli, "confirmed", side_effect=meanwhile):
+            code, out, err = self.add("jason", public_of(self.JASON))
+
+        self.assertEqual(65, code, out + err)
+        self.assertIn("amy already holds key", err)
+        self.assertEqual({"amy": crypto.public_key(self.JASON)}, config.peers(self.one.env))
+
+    def test_a_change_to_the_file_while_an_add_is_between_its_read_and_its_write_is_kept(self) -> None:
+        amy, jason = crypto.public_key(self.AMY), crypto.public_key(self.JASON)
+        path = self.one.home / ".projector.toml"
+        both = {"amy": amy, "jason": jason}
+        for label, change, peers, key, renotify in (
+                ("peer remove", lambda: relay.remove_peer("amy", environ=self.one.env), {"jason": jason}, True, None),
+                ("config unset", lambda: cli.main(["config", "unset", "--user", "agent.peers.amy"]),
+                 {"jason": jason}, True, None),
+                ("config set", lambda: cli.main(["config", "set", "--user", "watch.renotify", "600"]), both, True,
+                 600),
+                ("config set --override", lambda: cli.main(["config", "set", "--user", "--override", "1",
+                                                            "watch.renotify", "600"]), both, True, 600),
+                ("key remove", lambda: relay.remove_key(self.one.root, environ=self.one.env), both, False, None)):
+            with self.subTest(label):
+                self.one.inline_key(self.private)
+                with path.open("a") as stream:
+                    stream.write(f'[agent.peers]\namy = "{public_of(self.AMY)}"\n')
+                read, waiting, done = threading.Event(), threading.Event(), threading.Event()
+                write_through, try_lock = config.write_through, inbox.try_lock
+
+                def paused(target: Path, text: str) -> None:
+                    # The add has read the file. Let the other command run until it finishes or waits for the
+                    # lock the add holds, and only then write what the add read.
+                    if threading.current_thread().name == "add" and not read.is_set():
+                        read.set()
+                        while not (done.is_set() or waiting.is_set()):
+                            time.sleep(0.01)
+                    write_through(target, text)
+
+                def contended(descriptor: int) -> bool:
+                    taken = try_lock(descriptor)
+                    if not taken and threading.current_thread().name == "change":
+                        waiting.set()
+                    return taken
+
+                def other() -> None:
+                    read.wait(10)
+                    try:
+                        change()
+                    finally:
+                        done.set()
+
+                adding = threading.Thread(name="add", target=relay.add_peer, args=("jason", jason),
+                                          kwargs={"environ": self.one.env})
+                changing = threading.Thread(name="change", target=other)
+                with self.one.acting(), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), \
+                        mock.patch.object(config, "write_through", paused), \
+                        mock.patch.object(inbox, "try_lock", contended):
+                    adding.start()
+                    changing.start()
+                    adding.join(10)
+                    changing.join(10)
+
+                self.assertTrue(done.is_set())
+                self.assertEqual(peers, config.peers(self.one.env))
+                written = tomllib.loads(path.read_text())
+                self.assertEqual(key, "key" in written["agent"])
+                table = written.get("override", {}).get("1", written)
+                self.assertEqual(renotify, table.get("watch", {}).get("renotify"))
+
+    def test_a_table_that_repeats_a_key_or_holds_your_own_is_refused_when_read(self) -> None:
+        for table, said in ((f'amy = "{public_of(self.AMY)}"\njason = "{public_of(self.AMY)}"\n', "hold one key"),
+                            (f'me = "{public_of(self.private)}"\n', "holds your own public key"),
+                            ('jason = "short"\n', "is not a public key")):
+            with self.subTest(said):
+                (self.one.home / ".projector.toml").write_text(
+                    f'[agent]\nkey = "x25519:{crypto.encode(self.private)}"\n[agent.peers]\n{table}')
+                with self.assertRaisesRegex(config.ConfigError, said):
+                    config.peers(self.one.env)
+
+    def test_key_show_says_the_public_key_is_not_secret(self) -> None:
+        code, out, err = self.one.project("agent", "key", "show")
+
+        self.assertEqual(0, code, err)
+        self.assertIn(f"public key: {public_of(self.private)}", out)
+        self.assertIn("Give this public key to anyone whose agents should reach your inbox; it is not secret.", out)
 
 
 def wait_for(condition, seconds: float = 10.0) -> bool:

@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -275,7 +275,7 @@ jason = "q3Jx…base64 of 32 bytes…="
 
 | Setting | Type and meaning |
 | --- | --- |
-| `agent.peers` | A table from a peer name, matching `agents.NAME`, to the base64 of the peer's 32-byte X25519 public key. Read only from `~/.projector.toml`: a walked file's value is ignored with a warning, as `agent.key` is. Two names may not hold one key, and no name may hold your own key. |
+| `agent.peers` | A table from a peer name, matching `agents.NAME`, to the base64 of the peer's 32-byte X25519 public key. Read only from `~/.projector.toml`, outside its overrides: a walked file's value, and a value under an `[override.<priority>]` table in any file, is ignored with a warning, as `agent.key` is. Two names may not hold one key, and no name may hold your own key. |
 | `agent.peer_limit` | `int`, default 12 (kept in `agents.py`), minimum 1. Items this machine opens from one peer in a rolling hour, and replies it opens to any one item you sent. |
 
 ### 2.3 Records and refs

@@ -146,6 +146,7 @@ CODEX_ALLOW = (
     (["project", "agent", ["list", "read", "register", "reply", "send", "unregister"]],
      "Registers or unregisters the session, lists your registered sessions, or sends, reads, or answers a message "
      "between them."),
+    (["project", "agent", "peer", "list"], "Lists the people whose agents may reach your inbox."),
     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
     (["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore",
                            "revise", "show", "tell", "watch", "withdraw"]],
