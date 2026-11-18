@@ -424,6 +424,19 @@ pull requests' base branches:
   on its parent's current head, and the comparison under "Check that it is
   in sync" checks it.
 
+When `gh stack rebase` or `gh stack push` refuses because another worktree
+has a layer's branch checked out, the stack is still a stack, so update it
+by rebasing without moving that branch:
+
+1. Copy each layer to a branch of your own with
+   `git switch --no-track -c <copy> origin/<layer>`, and note each layer's
+   head with `git rev-parse origin/<layer>`.
+2. Carry the fix up from the bottom with
+   `git rebase --onto <copy of the layer below> <old head of the layer below> <copy>`.
+3. Run each rewritten layer's gate, then push the copies from the bottom up
+   with `git push --force-with-lease=<layer>:<old head> origin <copy>:<layer>`,
+   and check that each layer is in sync with the comparison above.
+
 Tell the user at most once why the chain is not a stack: that
 `gh extension install github/gh-stack` would make it one when the extension
 is missing, or that the repository does not have stacks enabled when
