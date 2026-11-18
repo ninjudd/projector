@@ -184,19 +184,37 @@ class OperationTests(ServerCase):
         self.assertEqual([], listed)
         self.assertEqual(["", ""], [found.signed_by for found in self.server.seen("GET")])
 
-    def test_a_listing_that_declares_a_document_type_or_holds_more_than_1_mib_is_not_parsed(self) -> None:
+    def test_a_response_that_declares_a_document_type_is_refused_in_any_encoding(self) -> None:
+        """The parser refuses a document type, so no entity it declares is expanded, whether the body is UTF-8 or
+        UTF-16, whose bytes for `<!DOCTYPE` hold a NUL between each character."""
         self.env_keys()
-        entity = (b'<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol">]>'
-                  b"<ListBucketResult><Contents><Key>&lol;</Key></Contents></ListBucketResult>")
-        large = b"<ListBucketResult>" + b" " * s3.MAX_RESPONSE + b"</ListBucketResult>"
+        document = ('<?xml version="1.0" encoding="{}"?><!DOCTYPE lolz [<!ENTITY lol "lol">'
+                    '<!ENTITY lol2 "&lol;&lol;&lol;&lol;">]>'
+                    "<ListBucketResult><Contents><Key>&lol2;</Key><Size>1</Size>"
+                    "<LastModified>2026-01-01T00:00:00.000Z</LastModified></Contents></ListBucketResult>")
+        bodies = {"utf-8": document.format("UTF-8").encode("utf-8"),
+                  "utf-16": document.format("UTF-16").encode("utf-16"),
+                  "utf-16-be": "﻿".encode("utf-16-be") + document.format("UTF-16").encode("utf-16-be"),
+                  "utf-16 without a declaration": document.split("?>", 1)[1].encode("utf-16")}
 
-        for body, said in ((entity, "document type"), (large, "more than 1024 KiB")):
-            with self.subTest(said=said):
+        for encoding, body in bodies.items():
+            with self.subTest(encoding=encoding):
                 self.server.listing_body = body
-                with mock.patch("xml.etree.ElementTree.fromstring",
-                                side_effect=AssertionError("parsed")), self.assertRaises(s3.S3Error) as refused:
+                with self.assertRaises(s3.S3Error) as refused:
                     self.client().list_objects("relay/")
-                self.assertIn(said, str(refused.exception))
+                self.assertIn("document type", str(refused.exception))
+        self.server.listing_body = document.split("]>", 1)[1].replace("&lol2;", "relay/a").encode("utf-16")
+        self.assertEqual(["relay/a"], [found.name for found in self.client().list_objects("relay/")])
+
+    def test_a_listing_that_holds_more_than_1_mib_is_not_parsed(self) -> None:
+        self.env_keys()
+        self.server.listing_body = b"<ListBucketResult>" + b" " * s3.MAX_RESPONSE + b"</ListBucketResult>"
+
+        with mock.patch.object(s3, "parse_xml", side_effect=AssertionError("parsed")), \
+                self.assertRaises(s3.S3Error) as refused:
+            self.client().list_objects("relay/")
+
+        self.assertIn("more than 1024 KiB", str(refused.exception))
 
     def test_a_request_that_hangs_or_trickles_is_stopped_at_its_timeout(self) -> None:
         self.env_keys()

@@ -379,3 +379,8 @@ observed delivery time in this plan.
 - **The signer is checked against AWS's own cases,** `get-vanilla` and two
   query cases from the Signature Version 4 test suite, and the four S3
   examples in AWS's documentation, each with the signature AWS publishes.
+- **The parser refuses a document type, not a scan of the bytes.**
+  `parse_xml` builds the tree with an expat parser whose document type and
+  entity declaration handlers raise, so it refuses the declaration after
+  decoding the body. A UTF-16 body, whose bytes never spell `<!DOCTYPE`,
+  is refused as a UTF-8 one is.

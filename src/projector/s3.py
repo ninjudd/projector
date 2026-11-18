@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, NamedTuple, Optional
 from urllib.parse import quote, urlsplit
+from xml.parsers import expat
 
 from .core import ProjectorError, run_bounded
 
@@ -52,7 +53,6 @@ SERVICE = "s3"
 DEFAULT_REGION = "us-east-1"
 UNRESERVED = "-_.~"
 NAMESPACE = "{http://s3.amazonaws.com/doc/2006-03-01/}"
-DOCTYPE = re.compile(rb"<!doctype", re.IGNORECASE)
 EXPIRED = re.compile(r"expired|refresh failed|sso session", re.IGNORECASE)
 LAST_LINE = 200
 
@@ -341,13 +341,35 @@ def connect(host: str, port: int, timeout: float) -> http.client.HTTPConnection:
 
 def parse_xml(body: bytes) -> ElementTree.Element:
     """The XML document in a response body, refusing one that declares a document type, so no entity it could
-    declare is expanded."""
-    if DOCTYPE.search(body):
+    declare is expanded.
+
+    The parser refuses it as it reads the declaration, after decoding the body, so the refusal holds in UTF-16 or
+    any other encoding expat reads, whose bytes need not spell `<!DOCTYPE`. Entities are declared only inside a
+    document type, so refusing it refuses them all; refusing an entity declaration as well guards the rule twice.
+    """
+
+    def refuse(*_: object) -> None:
         raise S3Error("the response declares a document type, which S3 never sends, so it was not parsed")
+
+    builder = ElementTree.TreeBuilder()
+    parser = expat.ParserCreate(namespace_separator="}")
+    parser.buffer_text = True
+    parser.StartDoctypeDeclHandler = refuse
+    parser.EntityDeclHandler = refuse
+    parser.StartElementHandler = lambda name, attributes: builder.start(
+        qualified(name), {qualified(key): value for key, value in attributes.items()})
+    parser.EndElementHandler = lambda name: builder.end(qualified(name))
+    parser.CharacterDataHandler = builder.data
     try:
-        return ElementTree.fromstring(body)
-    except ElementTree.ParseError:
+        parser.Parse(body, True)
+        return builder.close()
+    except expat.ExpatError:
         raise S3Error("the response is not XML") from None
+
+
+def qualified(name: str) -> str:
+    """An expat name, `<namespace>}<tag>`, as ElementTree writes it: `{<namespace>}<tag>`."""
+    return "{" + name if "}" in name else name
 
 
 def child(element: ElementTree.Element, name: str) -> str:
