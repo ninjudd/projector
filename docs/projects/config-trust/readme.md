@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 priority: now
 ---
 
@@ -8,7 +8,7 @@ priority: now
 A `.projector.toml` that Git tracks takes effect from the repository's default
 branch, never from whatever branch is checked out. A file outside the
 repository can override a setting the repository defines, with an
-`[override]` table.
+`[override.<priority>]` table.
 
 ## 1. Problem
 
@@ -52,9 +52,10 @@ are working in, Projector reads the copy on the default branch,
 then take effect only once they merge, which is the review checkpoint the
 repository already has. Untracked files, including every file above the
 repository and `~/.projector.toml`, are read from disk as today, because you
-put them there. Any file may also hold an `[override]` table, whose settings
-beat every ordinary setting on the walk. Among overrides the nearest file
-wins, and `~/.projector.toml`'s overrides beat every other file's. Two smaller
+put them there. Any file may also hold an `[override.<priority>]` table, whose
+settings beat every ordinary setting on the walk. Among overrides the higher
+priority wins, and at equal priority the farthest file wins, with
+`~/.projector.toml` farthest of all. Two smaller
 guards close the cases the default branch cannot. A **destination** setting,
 one that says where your data goes, needs a one-time
 `project config allow` when its value comes from a tracked file, because the
@@ -91,24 +92,32 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
 3. **Merge ordinary values.** The ordinary tables merge as today, from the
    user layer through the walk to the nearest file, and `USER_ONLY` keys are
    still dropped from every file but `~/.projector.toml`.
-4. **Apply overrides.** Each file's `[override]` table holds settings under
-   their usual names:
+4. **Apply overrides by priority.** A file overrides settings in an
+   `[override.<priority>]` table, where the priority is a whole number from 1
+   to 99. The table holds settings under their usual names:
 
    ```toml
-   # ~/work/acme/.projector.toml
-   [override.agent]
-   relay = "github:acme/agents"
+   # ~/work/.projector.toml, for a company
+   [override.1]
+   agent.relay = "github:acme/agents"
 
-   [override.review]
-   gate_checks = "ci"
+   # ~/work/acme/web-team/.projector.toml, for a team that needs its own relay
+   [override.2]
+   agent.relay = "github:acme/web-agents"
+   review.gate_checks = "ci"
    ```
 
-   After the ordinary merge, the walked files' overrides apply from the
-   farthest to the nearest, then `~/.projector.toml`'s. So any override beats
-   every ordinary value, a nearer override beats a farther one, and your own
-   file has the last word. `USER_ONLY` keys under `[override]` are dropped from
-   walked files, as they are elsewhere. `override` becomes a reserved name, and
-   `SETTINGS` holds no key under it.
+   After the ordinary merge, every override beats every ordinary value. Among
+   overrides of one setting, the higher priority wins. At equal priority, the
+   farthest file wins, and `~/.projector.toml` counts as farther than every
+   walked file. So in the example, the team's relay wins because it chose 2.
+   Had both chosen 1, the company's would win. An override of yours at any
+   priority beats every other file's override at that priority, and you can
+   always choose a higher one. A key under `override` that is not a whole
+   number from 1 to 99 is a configuration error that names the file.
+   `USER_ONLY` keys under an override are dropped from walked files, as they
+   are elsewhere. `override` becomes a reserved name, and `SETTINGS` holds no
+   key under it.
 5. **Allow destinations from tracked files.** `config.DESTINATIONS` names the
    settings that say where your data goes. It starts empty, and the shared
    relay and S3 relay plans add `agent.relay`, `agent.s3_endpoint`, and
@@ -130,10 +139,10 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
 7. **Write where it will take effect.** `project config set` and `unset`
    still change one file. When that file is tracked, they say
    `takes effect once this change merges to origin/main` beside the result.
-   `--override` writes the key under `[override]` in the chosen file. `config
-   list` and `config get` show each value's source, such as
-   `origin/main:.projector.toml`, `~/work/acme/.projector.toml (override)`, or
-   `~/.projector.toml`.
+   `--override <priority>` writes the key under `[override.<priority>]` in the
+   chosen file. `config list` and `config get` show each value's source, such
+   as `origin/main:.projector.toml`,
+   `~/work/acme/.projector.toml (override 2)`, or `~/.projector.toml`.
 8. **Cache.** Reading a tracked file from the default branch costs about 38
    ms with three Git commands. So Projector caches each blob in
    `$XDG_STATE_HOME/projector/config-cache/`, keyed by the default branch's
@@ -145,7 +154,7 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
 
 | Thing | Shape |
 | --- | --- |
-| `[override]` | A table in any `.projector.toml`, holding settings under their usual dotted names. |
+| `[override.<priority>]` | A table in any `.projector.toml`, keyed by a whole number from 1 to 99, holding settings under their usual dotted names. |
 | `config.DESTINATIONS` | A frozenset of setting names, empty in this project. |
 | `allowed.json` | `schema_version: 1` and `allowed`, a list of `{key, value, source, allowed_at}`. |
 | `Config.sources` | Each value's source gains a form for a default-branch blob, `<branch>:<path>`, and an override flag. |
@@ -176,8 +185,15 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
   the walk so outer files win would break repositories that rely on beating
   your personal defaults. An `[override]` table leaves ordinary settings
   exactly as they are, and says in the file that this value is meant to win.
-  It works the way `!important` does in CSS. Your own file overriding last
-  keeps you in charge of your machine.
+  It works the way `!important` does in CSS.
+- **Rank overrides by a number, and break ties by distance.** A single rule
+  for which override wins would suit some organizations and not others: a
+  company may need its relay to hold, while a team may need its own. A
+  priority lets each file say how hard it insists, so neither case needs the
+  other's file changed. At equal priority the farthest file wins, which is
+  the simple default that the broader scope holds. Counting
+  `~/.projector.toml` as farthest keeps you in charge of your machine
+  without a special case.
 - **Allow only destinations.** The default branch's owner may be a stranger
   in a repository you cloned. Most of their settings shape their own project,
   such as which checks gate a review, which you accepted by working there.
@@ -211,8 +227,9 @@ temporary home.
 | Add a tracked `.projector.toml` in a subdirectory on a feature branch only. | Its values do not apply, and `config list` says `not on origin/main yet`. Catches a file a branch adds. |
 | Put an untracked `.projector.toml` in the repository's parent directory, and edit `~/.projector.toml`. | Both take effect at once from disk. Catches untracked files read from a branch. |
 | From a worktree under `.claude/worktrees/`, whose main checkout is on another branch with a different working copy. | Both files read the default branch's blob, and the result matches a load from the main checkout. Catches a worktree that reads the main checkout's working copy. |
-| Set `review.gate_checks` in the repository, `[override.review] gate_checks` in the parent, and another override in `~/.projector.toml`. Remove the user override and load again. | The user override wins, and then the parent's. An ordinary parent value without `[override]` still loses to the repository. Catches overrides applied in the wrong order, and an ordinary value that beats a nearer one. |
-| Put `agent.key` under `[override.agent]` in the parent directory. | It is dropped with a warning. Catches a user-only key smuggled through an override. |
+| Set `review.gate_checks` in the repository, `[override.1]` for it in the grandparent and the parent directories, and in `~/.projector.toml`. Then raise the parent's to `[override.2]`. Then remove the user's and the parent's overrides. | First the user's override wins, then the parent's at priority 2, then the grandparent's. An ordinary parent value with no override still loses to the repository's. Catches priorities ignored, ties broken toward the nearer file, and an ordinary value that beats a nearer one. |
+| Use `[override.0]`, `[override.100]`, and `[override.x]`. | Each is a configuration error naming the file. Catches a priority outside 1 to 99 read silently. |
+| Put `agent.key` under `[override.1]` in the parent directory. | It is dropped with a warning. Catches a user-only key smuggled through an override. |
 | Add a key to `DESTINATIONS` in the test, set it on the default branch, and read it. Then run `config allow` with and without a terminal. Then change the value on the default branch. | The read raises `NotAllowed` naming the file and the command. The allow refuses without a terminal and succeeds with one, and the new value asks again. The same value from the parent's untracked file needs no allowing. Catches a destination chosen by a branch's owner, and an approval that carries over to a new value. |
 | Set `projects.dir = "../elsewhere"`, then `/tmp/x`, in the repository, and `ios.output = "/tmp/out"` in the repository and then in `~/.projector.toml`. | The `projects.dir` values are refused, the repository's `ios.output` is refused, and the user's is accepted. Catches writes outside the repository. |
 | Run `config set review.gate x` on the repository's tracked file. | It writes the working tree and prints that the change takes effect once it merges to `origin/main`. Catches a write that silently does nothing. |
@@ -233,10 +250,6 @@ this repository before and after the change.
 
 ## 6. Open questions
 
-- **Precedence among overrides.** Needs the user's decision. Recommended:
-  the nearest override wins, with `~/.projector.toml`'s last, so a team's
-  override beats a company's and yours beats both. The alternative, the
-  farthest override wins, lets a company's insist over a team's.
 - **A personal file inside a checkout.** Deferred. A repository that tracks
   `.projector.toml` leaves no room for an untracked one beside it, so a
   person's per-checkout setting goes in a parent directory or in
@@ -245,3 +258,12 @@ this repository before and after the change.
 - **Superprojects.** Deferred. A file tracked by a superproject that contains
   the repository as a submodule is read from disk, like any file another
   repository tracks.
+
+## 7. Decisions
+
+- **Overrides carry a priority, and the farthest file breaks ties.** Decided
+  by the user on 2026-11-17. A file overrides in `[override.<priority>]`, the
+  higher priority wins, and at equal priority the farthest file wins, with
+  `~/.projector.toml` farthest of all (§ 2.1 step 4). A team can then beat a
+  company by choosing a higher number, and a company's override holds when
+  both choose the same one.
