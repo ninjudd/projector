@@ -348,11 +348,15 @@ def check_peer(name: str, text: str, *, replace: bool, environ: Optional[dict] =
     return name, public
 
 
-def add_peer(name: str, public: bytes, environ: Optional[dict] = None) -> None:
-    path = user_config_path(environ)
-    if not path.exists():
-        os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
-    write_value(path, f"agent.peers.{name}", crypto.encode(public))
+def add_peer(name: str, public: bytes, *, replace: bool = False, environ: Optional[dict] = None) -> None:
+    """Write the peer to `~/.projector.toml`, checking it again against the table as it is now, under a lock,
+    since another `peer add` may have changed the table while this one waited for its confirmation."""
+    with locked(watch.state_root(environ) / "peers"):
+        check_peer(name, crypto.encode(public), replace=replace, environ=environ)
+        path = user_config_path(environ)
+        if not path.exists():
+            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        write_value(path, f"agent.peers.{name}", crypto.encode(public))
 
 
 def remove_peer(name: str, environ: Optional[dict] = None) -> str:

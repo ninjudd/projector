@@ -1264,6 +1264,32 @@ class PeerCommandTests(RelayCase):
             self.assertIn("run `project agent peer add <name> <public-key>` in a terminal", err)
         self.assertNotIn("peers", self.config_text())
 
+    def test_a_planted_peer_whose_quoted_name_holds_a_dot_is_ignored_without_breaking_other_settings(self) -> None:
+        (self.one.work / ".projector.toml").write_text(
+            f'[agent.peers]\n"alice.work" = "{public_of(self.JASON)}"\n[review]\ngate_checks = "check"\n')
+
+        got = self.one.project("config", "get", "review.gate_checks")
+        listed = self.one.project("agent", "peer", "list")
+
+        self.assertEqual((0, "check\n"), got[:2], got[2])
+        self.assertIn("sets agent.peers.alice.work, which Projector reads only from", got[2])
+        self.assertEqual(0, listed[0], listed[2])
+        self.assertIn("no peers", listed[1])
+
+    def test_a_peer_another_terminal_adds_while_add_waits_for_its_answer_is_rechecked_before_the_write(
+            self) -> None:
+        def meanwhile(*_) -> bool:
+            # A second terminal lists the same key as amy while this one waits for its yes.
+            relay.add_peer("amy", crypto.public_key(self.JASON), environ=self.one.env)
+            return True
+
+        with mock.patch.object(cli, "confirmed", side_effect=meanwhile):
+            code, out, err = self.add("jason", public_of(self.JASON))
+
+        self.assertEqual(65, code, out + err)
+        self.assertIn("amy already holds key", err)
+        self.assertEqual({"amy": crypto.public_key(self.JASON)}, config.peers(self.one.env))
+
     def test_a_table_that_repeats_a_key_or_holds_your_own_is_refused_when_read(self) -> None:
         for table, said in ((f'amy = "{public_of(self.AMY)}"\njason = "{public_of(self.AMY)}"\n', "hold one key"),
                             (f'me = "{public_of(self.private)}"\n', "holds your own public key"),

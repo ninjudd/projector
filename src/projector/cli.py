@@ -1517,7 +1517,7 @@ def run_agent_peer(arguments: argparse.Namespace) -> int:
     if not confirmed(f"Does {name}'s project agent key show print key {key_id}? [y/N] ",
                      time.monotonic() + JOIN_TIMEOUT, outcome):
         raise relay.RelayError(f"key {key_id} was not confirmed, so {outcome}")
-    relay.add_peer(name, public)
+    relay.add_peer(name, public, replace=arguments.replace)
     print(f"added peer {name}, key {key_id}, to {user_config_path()}. Their agents reach your inbox once {name} lists "
           "your public key too, which `project agent key show` prints")
     return 0
