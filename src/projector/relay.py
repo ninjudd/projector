@@ -54,7 +54,7 @@ from typing import Callable, NamedTuple, Optional, Protocol
 from . import agents, config, crypto, keychain, repo_inbox, review, s3, summary, watch
 from .config import INLINE_KEY, KEYCHAIN, ConfigError, inline_key, unset_value, user_config_path, write_value
 from .core import ProjectorError, run_bounded
-from .inbox import SESSION, locked, read_json, write_json
+from .inbox import SESSION, InboxError, locked, read_json, write_json
 from .keychain import KeychainError
 
 REMOTE = "origin"
@@ -1036,6 +1036,8 @@ class S3Transport:
         self.probes: dict[str, list[s3.Listed]] = {}
         # The lapse a request in `apply` met, which turns the location off.
         self.lapsed: Optional[Lapsed] = None
+        # Whether a signed request succeeded, which shows the credentials work.
+        self.answered = False
 
     def name_of(self, ref: str) -> str:
         namespace, key_id, rest = ref[len("refs/projector/"):].split("/", 2)
@@ -1048,9 +1050,11 @@ class S3Transport:
 
     def call(self, operation: Callable[[], object]) -> object:
         try:
-            return operation()
+            found = operation()
         except s3.S3Error as error:
             raise store_error(error, self.client.source()) from None
+        self.answered = True
+        return found
 
     def snapshot(self, prefixes: tuple[str, ...]) -> dict[str, str]:
         """One listing for each key the prefixes name, keeping each object under a prefix by its ref."""
@@ -1107,6 +1111,7 @@ class S3Transport:
                     self.client.delete_object(name, item["old"])
                 except s3.NotFound:
                     pass
+                self.answered = True
                 return Outcome(True, "deleted", False, None)
             body = sealed_text(item["sealed"]).encode()
             if forced:
@@ -1115,6 +1120,7 @@ class S3Transport:
                 etag = self.client.put_object(name, body, if_match=item["old"])
             else:
                 etag = self.client.put_object(name, body, if_none_match=True)
+            self.answered = True
             return Outcome(True, "written", False, etag)
         except (s3.PreconditionFailed, s3.NotFound) as error:
             return Outcome(False, f"stale lease: {error}", True, None)
@@ -1194,6 +1200,9 @@ class Job:
         self.store = store
         # The lapse of an S3 location's credentials that turned it off in this job.
         self.lapse: Optional[Lapsed] = None
+        # The S3 location's transport, which says whether a signed request succeeded, even while the probe refuses
+        # the store.
+        self.reached: Optional[S3Transport] = None
         self.key = key
         # Each peer's key, by its ID, with your name for them.
         self.peers = {crypto.key_id(public): (name, public) for name, public in (peers or {}).items()}
@@ -1265,6 +1274,8 @@ class Job:
             path = repo_file(self.root, "relay", self.location)
             path.parent.mkdir(parents=True, exist_ok=True)
             write_json(path, self.cache)
+        if self.store is not None:
+            self.tell_lapse()
         if self.store is not None and self.refused:
             return self.result("off", self.refused)
         if self.transport is None and not self.error:
@@ -1288,12 +1299,25 @@ class Job:
                          refreshable=cached.refreshable if cached else True)
         return found
 
+    def tell_lapse(self) -> None:
+        """Post the local notice of a lapse of the S3 location's credentials to its inbox, replacing one whose
+        reason changed, and withdraw it once a signed request succeeds. A busy mirror is tried again next job."""
+        try:
+            if self.lapse is not None:
+                fix = f" Run `{self.lapse.fix}`." if self.lapse.fix else ""
+                repo_inbox.post_local(self.root, self.location, f"Relay off: {str(self.lapse).rstrip('.')}.{fix}",
+                                      self.now)
+            elif self.reached is not None and self.reached.answered:
+                repo_inbox.withdraw_local(self.root, self.location)
+        except InboxError as error:
+            self.error = self.error or str(error)
+
     def check_store(self) -> Optional[S3Transport]:
         """The S3 location's transport, once its store has passed the probe: on a full pass, and whenever no probe
         has finished since the last one, it must refuse an unsigned listing and honor each condition a lease
         relies on. Answers None while the location is off, with why in `refused`."""
         assert self.store is not None
-        transport = S3Transport(self.store)
+        transport = self.reached = S3Transport(self.store)
         if self.held is None:
             self.refused = NO_KEY
             return None
@@ -1591,7 +1615,7 @@ class Job:
         queued = [item["ref"] for item in outbox_items(self.root, self.location) if item["sealed"] is not None]
         present = {ref[len(prefix):] for ref in [*self.cache["remote"], *queued] if ref.startswith(prefix)}
         self.forget_entries([entry["id"] for entry in repo_inbox.entries(self.root, self.location)
-                             if entry["id"] not in present])
+                             if entry["id"] not in present and entry["role"] != repo_inbox.LOCAL])
 
     def forget_entries(self, ids: list[str]) -> None:
         """Remove entries from the mirror, and delete their state records with them."""

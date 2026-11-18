@@ -4382,6 +4382,20 @@ expire or S3 refuses them, the location is `off`, with the reason in
 `project agent list` and `project watch status`. Outgoing records wait in
 the outbox and incoming ones in the bucket meanwhile.
 
+The daemon also posts one notice to the location's repository inbox, which
+every one of your sessions on the location shows, naming the fix when it
+knows one:
+
+```text
+Projector: Relay off: the AWS sign-in for profile acme-relay expired. Run `aws sso login --profile acme-sso`.
+```
+
+The notice is local: no relay carries it, and it exists only on the
+machine whose credentials lapsed. A new reason replaces its text under the
+same number, and the daemon withdraws it once a signed request succeeds
+again. `project inbox dismiss` hides it until the next time the location
+turns `off`, and it takes no response or snooze.
+
 Each person needs this IAM policy, with your bucket and prefix:
 
 ```json

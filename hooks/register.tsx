@@ -2598,7 +2598,9 @@ export const register: Register = on => {
           onPress: () => fill(`[${ref}] "${entry.subject}"\n\n`),
         },
         { name: 'dismiss', label: 'Dismiss', hotkey: '8', onPress: press({ kind: 'dismiss' }) },
-        { name: 'snooze', label: 'Snooze', hotkey: '9', onPress: press({ kind: 'snooze', minutes: SNOOZES[1].minutes }) },
+        ...(entry.role === 'local'
+          ? []
+          : [{ name: 'snooze', label: 'Snooze', hotkey: '9', onPress: press({ kind: 'snooze', minutes: SNOOZES[1].minutes }) }]),
       ]
       const said = [entry.role === 'reply' ? entry.text : entry.detail, entry.follow_up].filter(
         (text): text is string => text !== undefined && text !== '',

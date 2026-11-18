@@ -14,9 +14,14 @@ The relay opens each entry and mirrors it in a local store for the location, whi
 and on, as a session's inbox numbers its items. Commands queue their ref changes in the relay's outbox and change
 the mirror at once; the watch daemon pushes them.
 
-Files under the state root, beside the watch state root:
+The mirror also holds Projector's own notice about the location, with the role `local`, such as the notice that
+an S3 location's credentials lapsed. No relay carries it: it exists only on this machine, and dismissing it
+changes nothing anywhere else.
+
+Files under the state root, beside the watch state root, each in the folder `config.location_key` names:
 
     repo-inbox/<owner>/<repo>/r<number>.json    an opened entry with its role, its peer, and when it opened
+    repo-inbox/<owner>/<repo>/notice.json        the local notice's ID and text, and whether you dismissed it
     repo-inbox/<owner>/<repo>/count.json         the last number given
     repo-inbox/<owner>/<repo>/states.json        each entry's state record, by the entry's ID
     repo-inbox/<owner>/<repo>/claims.json        the responses this machine is queuing, by the entry's ID,
@@ -41,7 +46,8 @@ NUMBER = re.compile(r"^r[1-9][0-9]*$")
 LETTER = re.compile(r"^[a-z]$")
 KINDS = ("question", "request", "notice")
 OUTCOMES = ("answer", "done", "declined", "dismissed", "reply")
-ROLES = ("incoming", "sent", "reply")
+LOCAL = "local"
+ROLES = ("incoming", "sent", "reply", LOCAL)
 MAX_DETAIL = 16 * 1024
 MAX_REPLIED = 256
 # How long a response's reservation holds at most, so one that a command left behind when it stopped between
@@ -172,6 +178,45 @@ def forget(root: Path, repo: str, ids: Iterable[str]) -> list[dict]:
         if wanted & set(states):
             write_states(store, {key: value for key, value in states.items() if key not in wanted})
     return removed
+
+
+def post_local(root: Path, location: str, text: str, now: float) -> None:
+    """Show Projector's notice `text` about the location in its inbox, on this machine only: one at most, which a
+    new text replaces under the same number. A notice you dismissed stays hidden, whatever its text becomes, until
+    `withdraw_local` withdraws it."""
+    store = folder(root, location)
+    with locked(store / "notice"):
+        found = read_json(store / "notice.json") or {}
+        if found.get("text") == text:
+            return
+        entry_id = found.get("id") or new_id()
+        write_json(store / "notice.json", {"id": entry_id, "text": text, "dismissed": bool(found.get("dismissed"))})
+        if not found.get("dismissed"):
+            mirror(root, location, {"schema_version": 1, "id": entry_id, "location": location, "kind": "notice",
+                                    "subject": text, "sent_at": now_ms(now)},
+                   role=LOCAL, peer=None, key_id="", now=now)
+
+
+def withdraw_local(root: Path, location: str) -> None:
+    """Withdraw the location's local notice, so the next one shows even if you dismissed this one."""
+    store = folder(root, location)
+    if not (store / "notice.json").exists():
+        return
+    with locked(store / "notice"):
+        found = read_json(store / "notice.json") or {}
+        if found.get("id"):
+            forget(root, location, [found["id"]])
+        (store / "notice.json").unlink(missing_ok=True)
+
+
+def dismiss_local(root: Path, location: str, entry: dict) -> None:
+    """Hide the local notice until it is withdrawn."""
+    store = folder(root, location)
+    with locked(store / "notice"):
+        found = read_json(store / "notice.json") or {}
+        if found.get("id") == entry["id"]:
+            write_json(store / "notice.json", {**found, "dismissed": True})
+        forget(root, location, [entry["id"]])
 
 
 def mark_woken(root: Path, repo: str, ref: str, now: float) -> bool:
@@ -503,8 +548,8 @@ def respond(root: Path, repo: str, cwd: Path, key: relay.Key, peers: dict[str, b
     entry, with `reply` holding the response sealed, or None for a notice's dismissal, which sends none."""
     entry = by_ref(root, repo, ref)
     if entry["role"] != "incoming":
-        raise RepoInboxError(f"{ref} is {'a reply' if entry['role'] == 'reply' else 'an item your agent sent'}, not "
-                             "an item a peer sent you; only an incoming item takes a response")
+        what = {"reply": "a reply", LOCAL: "Projector's own notice"}.get(entry["role"], "an item your agent sent")
+        raise RepoInboxError(f"{ref} is {what}, not an item a peer sent you; only an incoming item takes a response")
     name, public = peer_of(entry, peers)
     kind = entry["kind"]
     record = {"schema_version": 1, "id": new_id(), "location": repo, **(origin or {}), "answers": entry["id"],
@@ -678,6 +723,9 @@ def snooze(root: Path, repo: str, cwd: Path, key: relay.Key, ref: str, minutes: 
     if not 0 <= minutes <= inbox.MAX_SNOOZE_MINUTES:
         raise RepoInboxError(f"snooze for 0 to {inbox.MAX_SNOOZE_MINUTES} minutes, a day at most, not {minutes}")
     entry = by_ref(root, repo, ref)
+    if entry["role"] == LOCAL:
+        raise RepoInboxError(f"{ref} is Projector's own notice, which takes no snooze; dismiss it to hide it until "
+                             "it is withdrawn")
     at = now_ms(now)
     state = update_state(root, repo, entry, now, snoozed_at=at, snoozed_until=at + minutes * 60_000)
     relay.queue(root, repo, str(cwd), [state_change(key, state, now)], now, key=key)
@@ -730,6 +778,9 @@ def dismiss(root: Path, repo: str, cwd: Path, key: relay.Key, ref: str, now: flo
     entry = by_ref(root, repo, ref)
     if entry["role"] == "incoming":
         raise RepoInboxError(f"{ref} came from a peer; dismiss it with --as user or --as agent")
+    if entry["role"] == LOCAL:
+        dismiss_local(root, repo, entry)
+        return [entry]
     cleared = [entry]
     if entry["role"] == "sent":
         cleared += [found for found in entries(root, repo) if found["role"] == "reply"
@@ -845,6 +896,8 @@ def holds_reply(root: Path, reply_id: str) -> bool:
 # Listing and showing
 
 def peer_label(entry: dict) -> str:
+    if entry["role"] == LOCAL:
+        return "Projector"
     return entry.get("peer") or f"key {entry['key_id']}"
 
 
@@ -864,6 +917,8 @@ def describe(entry: dict) -> str:
         return f"{agent_of(entry, 'from')} {ASKS[entry['kind']]}: {entry['subject']}"
     if entry["role"] == "sent":
         return f"{SENT[entry['kind']].format(peer=peer_label(entry))}: {entry['subject']}"
+    if entry["role"] == LOCAL:
+        return f"Projector: {entry['subject']}"
     return f"{who(entry)} {did_of(entry)}: {outcome_preview(entry)}"
 
 
@@ -976,6 +1031,8 @@ def reply_lines(reply: dict, reader: Optional[str]) -> list[str]:
 
 
 def entry_text(entry: dict, found: list[dict], reader: Optional[str]) -> str:
+    if entry["role"] == LOCAL:
+        return f"{entry['ref']} from Projector on this machine\n\n{entry['subject']}"
     if entry["role"] == "reply":
         asked = next((other for other in found if other["role"] == "sent" and other["id"] == entry["answers"]), None)
         how = " ".join(part for part in (agents.describe(entry["by_host"], entry.get("by_model"))

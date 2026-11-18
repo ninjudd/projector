@@ -188,8 +188,9 @@ export type Entry = {
   scope: 'repo'
   ref: string
   id: string
-  role: 'incoming' | 'sent' | 'reply'
-  /** An incoming or sent item's kind; a reply has none. */
+  /** `local` is Projector's own notice about the location, which no relay carries and which only dismisses. */
+  role: 'incoming' | 'sent' | 'reply' | 'local'
+  /** An incoming or sent item's kind, and `notice` for a local one; a reply has none. */
   kind?: 'question' | 'request' | 'notice'
   subject: string
   detail?: string
