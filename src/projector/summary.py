@@ -1246,6 +1246,46 @@ def head_blobs(root: Path, head: str, files: list[dict]) -> dict[str, str]:
     return {path: blob for path, blob in found.items() if blob in small}
 
 
+# The folder a CI review job names for `publish` to leave the summary in, since that job's token cannot push the
+# summaries ref; a job that runs no agent publishes it from there.
+HANDOFF = "PROJECTOR_SUMMARY_HANDOFF"
+
+
+def checked(summary_path: Path, remote: str, diff_path: Path | None = None) -> tuple[dict, str, list[dict]]:
+    """The summary at `summary_path`, the diff it describes, and the diff's files, once the summary passes every
+    check `publish` makes before it writes anything: its shape, its stack choices, that `remote` is its
+    repository, and that each place it names is in the diff."""
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    pr = summary_pr(summary)
+    require_stack_choices(summary)
+    slug = repo_slug(git("remote", "get-url", remote))
+    if slug and slug.lower() != pr["repo"].lower():
+        raise SummaryError(f"{remote} is {slug}, but the summary is for {pr['repo']}")
+    diff = diff_path.read_text(encoding="utf-8") if diff_path else summary_diff(summary)
+    return summary, diff, prepare_page(summary, diff=diff, at_head=True, generated={})["files"]
+
+
+def hand_off(summary_path: Path, folder: Path, remote: str, diff_path: Path | None = None) -> None:
+    """Check the summary as `publish` checks it, and leave it and its diff in `folder`, as `summary.json` and
+    `DIFF_FILE`, for a job whose token can push the summaries ref, in place of pushing it."""
+    summary, diff, _ = checked(summary_path, remote, diff_path)
+    pr = summary["pr"]
+    folder.mkdir(parents=True, exist_ok=True)
+    write_summary(folder / "summary.json", summary)
+    write_through(folder / DIFF_FILE, diff)
+    print(f"left the summary of #{pr['number']} at {str(pr['head'])[:9]} in {folder}, where {HANDOFF} points, "
+          "for the workflow to publish; nothing was pushed")
+
+
+def current_head(repo: str, number: int) -> str | None:
+    """The head commit pull request `number` has now, or None when GitHub does not say."""
+    try:
+        found = gh_lookup("api", f"repos/{repo}/pulls/{number}", "--jq", ".head.sha")
+    except SummaryError:
+        return None
+    return (found or "").strip() or None
+
+
 def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: str = PAGES_REF, root: str = PAGES_ROOT,
             diff_path: Path | None = None, push: bool = True, reason: str = "") -> str | None:
     """Commit the summary and its diff to the summaries ref, and push them unless `push` is false.
@@ -1257,14 +1297,8 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
     on this checkout's own `ref` and nothing leaves it, no dispatch included;
     `reason` says why, for the report.
     """
-    summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    pr = summary_pr(summary)
-    require_stack_choices(summary)
-    slug = repo_slug(git("remote", "get-url", remote))
-    if slug and slug.lower() != pr["repo"].lower():
-        raise SummaryError(f"{remote} is {slug}, but the summary is for {pr['repo']}")
-    diff = diff_path.read_text(encoding="utf-8") if diff_path else summary_diff(summary)
-    files = prepare_page(summary, diff=diff, at_head=True, generated={})["files"]
+    summary, diff, files = checked(summary_path, remote, diff_path)
+    pr = summary["pr"]
     head = str(pr["head"])
     top = readable_head(remote, head) if files else None
     generated, blobs = None, {}

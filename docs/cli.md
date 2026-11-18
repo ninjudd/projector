@@ -1469,6 +1469,17 @@ Pass `--checkout <path>` to publish from that checkout rather than the
 repository containing the current directory, so an agent whose shell is
 elsewhere runs the publish as one command, with no `cd` before it.
 `--summary` and `--diff` still name files relative to the current directory.
+Pass `--pr <number>` to refuse a summary of any other pull request, as the
+job that publishes a summary another job wrote does.
+
+Where `PROJECTOR_SUMMARY_HANDOFF` names a folder and the site is hosted,
+`summary publish` checks the summary exactly as it does before a push, then
+writes it to that folder as `summary.json` with its diff as `diff.patch`,
+and pushes nothing, starts no workflow, and links nothing. A CI review job
+sets the variable, because its token cannot push the summaries ref. A second
+job, whose token can and which runs no agent, publishes the folder's summary
+with `--summary`, `--diff`, and `--pr`. A summary that fails a check fails
+the handoff, so the review job reports it at once.
 
 `summary publish` pushes only to a repository that hosts its site, which
 `site status` reports as hosted. Anywhere else nothing on GitHub reads the
@@ -1488,6 +1499,10 @@ Once the site is hosted, publish the summary again to push it.
 
 When `summary publish` pushes to a hosted site, it then comments a link to
 the summary on the pull request, `📽️ **Projector summary** of <head>: <url>`.
+It links a summary only while its head is still the pull request's head. A
+publish of an earlier head, such as a CI job that finishes after the next
+head's, still pushes the summary, because the site keeps a page for every
+head, and says that it left the links alone.
 It keeps one such comment per account and pull request, as the pull
 request's last message: each publish posts the link again at the end, and
 then deletes the account's older summary comments. A rerun on the same head

@@ -755,6 +755,9 @@ def parser() -> argparse.ArgumentParser:
     )
     summary_publish.add_argument("--diff", help="publish the diff from this file instead of fetching it from GitHub")
     summary_publish.add_argument(
+        "--pr", type=int, help="refuse the summary unless it is of this pull request, as a summary another job wrote"
+    )
+    summary_publish.add_argument(
         "--no-dispatch", action="store_true", help="push the summary without starting the workflow"
     )
     summary_publish.add_argument(
@@ -3000,8 +3003,15 @@ def run_summary(arguments: argparse.Namespace) -> int:
         if not checkout.is_dir():
             raise UsageError(f"--checkout {checkout} is not a directory")
         pr = summary.summary_pr(json.loads(summary_path.read_text(encoding="utf-8")))
+        if arguments.pr is not None and int(pr["number"]) != arguments.pr:
+            raise UsageError(f"the summary is of #{pr['number']}, not of #{arguments.pr}, which --pr names")
         site, reason = (None, "--local asked for a local preview") if arguments.local \
             else summary.push_decision(pr["repo"])
+        handoff = os.environ.get(summary.HANDOFF)
+        if handoff and site is not None:
+            with contextlib.chdir(checkout):
+                summary.hand_off(summary_path, Path(handoff).resolve(), arguments.remote, diff_path)
+            return 0
         with contextlib.chdir(checkout):
             summary.publish(
                 summary_path,
@@ -3011,8 +3021,13 @@ def run_summary(arguments: argparse.Namespace) -> int:
                 push=site is not None,
                 reason=reason,
             )
-        # A summary kept in this checkout has no page on GitHub to link.
-        if site is not None:
+        current = summary.current_head(pr["repo"], pr["number"]) if site is not None else None
+        # A summary kept in this checkout has no page on GitHub to link, and an earlier head's summary, which a
+        # late publish can push after the next head's, must not take the link from it.
+        if site is not None and current not in (None, pr["head"]):
+            print(f"left the links on {pr['repo']}#{pr['number']} alone, because its head is {current[:7]} now, "
+                  f"not {str(pr['head'])[:7]}")
+        elif site is not None:
             print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))
             if arguments.no_describe:
                 print("left the description alone, as --no-describe asked")
