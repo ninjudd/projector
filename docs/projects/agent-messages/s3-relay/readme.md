@@ -64,7 +64,9 @@ and the controls in `../shared-relay/readme.md` § 2.3.
    your AWS identities signs. So when a tracked file sets any of the three,
    each value is used only once you run `project config allow <key> <value>`
    in a terminal. Values from untracked files and `~/.projector.toml` need no
-   allowing.
+   allowing. The location's identity is its endpoint, bucket, and prefix
+   together (§ 2.3), so two checkouts that name the same bucket and prefix on
+   two endpoints use two locations.
 2. **Find credentials.** The S3 client takes the first of these that is
    present, and never prints, logs, or passes a secret as a process argument:
    1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
@@ -128,9 +130,9 @@ and the controls in `../shared-relay/readme.md` § 2.3.
    of another machine's record. A `409`, a `5xx`, or a timeout keeps the item
    queued with the error for the next job. A request that succeeds returns
    the new ETag, which the job records as the item's landed version.
-7. **Report.** `project agent relay show` prints an S3 location with its
-   region, its endpoint, where the credentials came from, such as `profile
-   acme`, never the keys, and the probe's result.
+7. **Report.** `project agent relay show` prints an S3 location by its
+   identity (§ 2.3), with its region, where the credentials came from, such
+   as `profile acme`, never the keys, and the probe's result.
 8. **Tell you when credentials lapse.** When a location turns `off` because
    its credentials could not be read, refreshed, or used, the daemon posts
    one notice to that location's inbox (`../peers/readme.md`), which every
@@ -156,7 +158,7 @@ and the controls in `../shared-relay/readme.md` § 2.3.
 | --- | --- |
 | `agent.relay` | Gains the form `s3://<bucket>/<prefix>`. The prefix may be empty, holds no `..`, and has no trailing `/`. |
 | `agent.s3_region` | `str`, optional. The bucket's region. |
-| `agent.s3_endpoint` | `str`, optional. An `https://` URL for a store that speaks S3, such as Cloudflare R2 or MinIO. With it, requests use path-style addressing. Without it, they go to `https://<bucket>.s3.<region>.amazonaws.com`. |
+| `agent.s3_endpoint` | `str`, optional. An `https://` URL with no path, query, or user info, for a store that speaks S3, such as Cloudflare R2 or MinIO. With it, requests use path-style addressing. Without it, they go to `https://<bucket>.s3.<region>.amazonaws.com`. |
 | `agent.s3_profile` | `str`, optional. The AWS profile to read credentials from. |
 | `agent.s3_poll` | `int`, default 10 (kept in `relay.py`), minimum 2. Seconds between polls of an S3 location. |
 
@@ -179,21 +181,42 @@ moved to the front:
 | `refs/projector/user-state/<key-id>/<id>` | `<prefix>/<key-id>/user-state/<id>` |
 
 The transport maps between the two forms, so the job, the outbox, and the
-cache keep using ref names. A location's cache and outbox live at
-`relay/s3/<digest>.json` and `outbox/s3/<digest>.json`. The digest is the
-first 16 hex digits of the SHA-256 of the location, and each file records the
-location itself.
+cache keep using ref names.
+
+An S3 location's identity is its endpoint, bucket, and prefix together,
+written as the path-style URL of the prefix, such as
+`https://s3.amazonaws.com/acme-agents/relay`. The endpoint is
+`agent.s3_endpoint` with its scheme and host in lowercase and a default port
+removed. A location with no endpoint is on AWS, and its identity is written
+with `https://s3.amazonaws.com`, because an AWS bucket name is unique across
+regions. The region is not part of the identity: it picks the host that
+requests go to and the scope they are signed for, so a wrong region makes
+requests fail rather than reach another bucket. Every rule that names a
+location uses the identity. The daemon groups registrations into jobs by it,
+each registration records it as `location` in `agent.json`
+(`../shared-relay/readme.md` § 2.1 step 2), each peers record carries it as
+`location` (`../peers/readme.md` § 2.3), and `relay show` prints it. So two
+checkouts that name `s3://team/relay` on two endpoints run two jobs with two
+caches and two outboxes, and a record copied from one store into the other
+is rejected as `location-mismatch`. `project config allow` still approves
+each setting's value on its own, one per key and value
+(`../../config-trust/readme.md` § 2.1 step 5), so an identity is used only
+once every part of it that a tracked file sets is allowed.
+
+A location's cache and outbox live at `relay/s3/<digest>.json` and
+`outbox/s3/<digest>.json`. The digest is the first 16 hex digits of the
+SHA-256 of the identity, and each file records the identity itself.
 
 ### 2.4 Components
 
 | File | Change |
 | --- | --- |
 | New `src/projector/s3.py` | A small S3 client from the standard library. It signs requests with Signature Version 4 over `hmac` and `hashlib`, and sends them with `urllib.request` and the default `ssl` context, with a 30-second timeout. It finds credentials as § 2.1 step 2 describes. It provides `list_objects(prefix)`, `get_object(name, if_match)`, `put_object(name, body, if_match=None, if_none_match=False)`, and `delete_object(name, if_match)`, and raises `PreconditionFailed`, `NotFound`, and `S3Error`. It reads at most 1 MiB of any response, refuses an XML body that holds a `<!DOCTYPE`, and parses listings with `xml.etree.ElementTree`. It refreshes credentials with an `Expiration` 5 minutes before it (§ 2.1 step 2). Its errors and its `repr` never include a secret key or a session token. |
-| `src/projector/relay.py` | Add the `Transport` interface: `snapshot(prefixes)`, `read(ref, version)`, and `apply(items)`. Move today's fetch, `for-each-ref`, `ls-tree`, `cat-file`, `write_commit`, and push code into `GitTransport`, without changing its behavior. Add `S3Transport` with the mapping in § 2.3 and the requests in § 2.1 step 6, and the probe in § 2.1 step 3. `Job` takes a transport, and its examine step asks the transport whether an object is too large before it reads one. Key caches and outboxes of S3 locations as § 2.3 says. |
-| `src/projector/config.py` | Accept `s3://` in `relay_location`. Add the four `agent.s3_*` settings, `agent.s3_poll` to `MINIMUMS` with 2, and `agent.s3_endpoint` and `agent.s3_profile` to `DESTINATIONS`. |
+| `src/projector/relay.py` | Add the `Transport` interface: `snapshot(prefixes)`, `read(ref, version)`, and `apply(items)`. Move today's fetch, `for-each-ref`, `ls-tree`, `cat-file`, `write_commit`, and push code into `GitTransport`, without changing its behavior. Add `S3Transport` with the mapping in § 2.3 and the requests in § 2.1 step 6, and the probe in § 2.1 step 3. `Job` takes a transport, and its examine step asks the transport whether an object is too large before it reads one. Group S3 registrations into jobs, and key their caches and outboxes, by the identity in § 2.3. |
+| `src/projector/config.py` | Accept `s3://` in `relay_location`, refuse an `agent.s3_endpoint` with a path, query, or user info, and add `s3_identity(endpoint, bucket, prefix)`, which writes the identity in § 2.3. Add the four `agent.s3_*` settings, `agent.s3_poll` to `MINIMUMS` with 2, and `agent.s3_endpoint` and `agent.s3_profile` to `DESTINATIONS`. |
 | `src/projector/watch.py` | Start an S3 location's job every `agent.s3_poll` seconds as well as when its outbox changes, and report its probe result and credential source in `watch status`. Post, replace, and withdraw the credential notice in § 2.1 step 8 as the location's state changes. |
 | `src/projector/repo_inbox.py` (from `../peers/readme.md`) | Hold local notices from Projector itself, which are never relayed, and let `withdraw` remove one. |
-| `src/projector/cli.py` | Show S3 locations in `project agent relay show`, as § 2.1 step 7 says. |
+| `src/projector/cli.py` | Show S3 locations in `project agent relay show` by their identity, as § 2.1 step 7 says. |
 | `docs/cli.md` | Document the S3 relay. Give the IAM policy each person needs: `s3:ListBucket` on the bucket with an `s3:prefix` condition, and `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on `<prefix>/*`. Recommend a lifecycle rule that expires objects after 8 days, as a backstop for the relay's own 7-day sweep. Say that a bucket with versioning keeps deleted records. |
 | New `tests/test_s3.py`, `tests/test_relay.py` | The criteria in § 4, against a fake S3 server that the tests run on a local port. |
 
@@ -245,6 +268,7 @@ the relay tests' two-machine setup with an S3 location.
 | Delete an object another machine already deleted. | The `404` counts as deleted, and the outbox empties. Catches a deletion retried forever. |
 | List an object of 33 KiB, an object with a malformed name, and 300 new valid objects. | The first is rejected with no `GetObject`, the second is ignored, and the job examines 256 and opens 64. Catches a transport that reads unbounded input. |
 | Make the fake server ignore `If-None-Match`, then let it answer an unsigned listing. | The location is `off` with each reason, and nothing else is written. Catches a relay on a store that breaks leases, or on a public bucket. |
+| On each machine, register one session in a checkout whose `agent.s3_endpoint` names one fake server and one in a checkout whose endpoint names a second, all with `agent.relay = "s3://team/relay"`. Send a peers item from machine 1 through the first, and copy its object into the second server's bucket. Resolve a checkout with no endpoint. | Each machine runs two jobs with two cache files and two outbox files, and each server holds only the presence records of its own sessions. The item arrives through the first server, and its copy is rejected as `location-mismatch` on the second. The checkout with no endpoint resolves to the identity `https://s3.amazonaws.com/team/relay`. Catches a location keyed by its bucket and prefix alone, which sends one store's records to another. |
 | Commit `agent.s3_endpoint` and `agent.s3_profile` to the default branch's `.projector.toml`, and allow neither. | No request is sent to the endpoint and no credentials are read for the profile, and `list` names `project config allow` for each. Catches a repository that points your relay at its own server, or signs with an identity you did not choose. |
 | Give credentials through the environment, then a profile, then a `credential_process` whose credentials expire during the test. | Each signs correctly. The `credential_process` runs again 5 minutes before the expiry, and no request is signed with credentials past it. No output, log line, `watch status`, or process argument holds the secret key or the token. Catches a credential leak and a stale session. |
 | Make `credential_process` report an expired sign-in, then fail again with another reason, then succeed. | One notice appears in every session on the location, naming the profile and `aws sso login`. It is replaced when the reason changes, never duplicated, and withdrawn after the first successful request. Records queued meanwhile push afterward. Catches a lapse nobody is told about, a stack of notices, and one that outlives the fix. |
