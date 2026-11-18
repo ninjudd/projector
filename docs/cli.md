@@ -4067,9 +4067,10 @@ with another key, or a bug in the relay's own checks, so the relay records
 why. `project watch status --json` lists the last 20 rejections in each
 repository under `relay.repositories.<owner/repo>.rejections`, oldest first,
 beside the `rejected` count. Each entry holds only the `ref`, the `reason`,
-and the time `at`, and never the record, its ciphertext, its plaintext, or
-key material. The daemon also writes one line to `daemon.log` for each
-rejection:
+the time `at`, and, for an `unexpected` rejection, the `error` class, such
+as `TypeError`, and never the record, its ciphertext, its plaintext, the
+error's message, or key material. The daemon also writes one line to
+`daemon.log` for each rejection:
 
 ```text
 2026-11-16T04:37:02+00:00 relay acme/app: rejected refs/projector/inbox/3f2a9c1d7e4b6a05/9bf078d49df0e5ff/m-2b…: tag-mismatch, at 2026-11-16T04:37:02+00:00
@@ -4092,6 +4093,7 @@ rejection:
 | `field-shape` | field shape | A record with a missing field or a field that is not the shape `register` or `send` gives it, including a presence that names a review target outside its own repository |
 | `expired` | expired | A message 7 days old |
 | `collision` | ID collision | A message under the ID of a different message already delivered |
+| `unexpected` | unexpected error | A record that passed its checks but raised an error while the relay handled it, a gap in the checks. The relay deletes it like any other rejection and goes on to the next record, so one record cannot fail every later pass |
 
 ### What a presence carries
 
@@ -4288,7 +4290,10 @@ Every record names the repository it was posted in, sealed with the rest,
 so a commit copied into another repository is rejected there as
 `location-mismatch`. A job opens an entry only when your own key or a
 peer's sealed it, and holds a peer's records to the shapes the commands
-give them. It counts the items it opens from each peer in a rolling hour,
+give them, before anything else reads them: each string has a UTF-8
+encoding, so none holds a lone surrogate, and each time is a whole number of
+milliseconds no later than the year 9999. A record out of shape is rejected
+as `field-shape`. It counts the items it opens from each peer in a rolling hour,
 and the replies it opens to each item you sent, and rejects what passes
 `agent.peer_limit` as `peer-limit`, so another person's Projector cannot
 skip the count. A reply opens only when the item it answers went to the key

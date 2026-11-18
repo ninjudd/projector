@@ -40,6 +40,9 @@ OUTCOMES = ("answer", "done", "declined", "dismissed", "reply")
 ROLES = ("incoming", "sent", "reply")
 MAX_DETAIL = 16 * 1024
 MAX_REPLIED = 256
+# The last millisecond of the year 9999, the latest time a record may carry, so every time converts to a date and
+# divides to seconds as a float.
+MAX_STAMP = 253_402_300_799_999
 WINDOW_MS = 3600 * 1000
 ITEM_FIELDS = frozenset({"schema_version", "id", "location", "kind", "subject", "detail", "choices", "pr",
                          "from_name", "from_host", "from_model", "branch", "sent_at", "reopened_at", "follow_up"})
@@ -232,17 +235,27 @@ def is_snoozed(entry: dict, at_ms: int) -> bool:
 
 # The shapes a record from the relay must have
 
+def utf8(value: str) -> Optional[bytes]:
+    """A string's UTF-8, or None for one that has none, such as one holding a lone surrogate, which JSON's `\\ud800`
+    escape carries and Python reads, but which the mirror could not write or a terminal print."""
+    try:
+        return value.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+
+
 def line(value: object, most: int) -> bool:
-    return isinstance(value, str) and bool(value.strip()) and is_one_line(value) and "\t" not in value \
-        and len(value) <= most
+    return (isinstance(value, str) and bool(value.strip()) and is_one_line(value) and "\t" not in value
+            and len(value) <= most and utf8(value) is not None)
 
 
 def text_of(value: object) -> bool:
-    return isinstance(value, str) and len(value.encode("utf-8")) <= MAX_DETAIL
+    return isinstance(value, str) and (encoded := utf8(value)) is not None and len(encoded) <= MAX_DETAIL
 
 
 def stamp(value: object, optional: bool = False) -> bool:
-    return (optional and value is None) or (isinstance(value, int) and not isinstance(value, bool) and value >= 0)
+    return (optional and value is None) or (isinstance(value, int) and not isinstance(value, bool)
+                                            and 0 <= value <= MAX_STAMP)
 
 
 def sender_shaped(record: dict, prefix: str, host_optional: bool = False) -> bool:

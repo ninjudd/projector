@@ -101,7 +101,12 @@ REASONS = {
     "recipient-mismatch": "recipient mismatch", "message-id-mismatch": "message ID mismatch", "expired": "expired",
     "field-shape": "field shape", "collision": "ID collision", "peer-limit": "over agent.peer_limit",
     "sender-mismatch": "sender mismatch", "no-sent-copy": "no sent copy", "location-mismatch": "location mismatch",
+    "unexpected": "unexpected error",
 }
+# The errors a record's contents could raise in code its shape checks should have guarded, which reject that record
+# alone, as `unexpected`, so one record the checks missed cannot fail every later pass. A `ProjectorError`, such as a
+# Git command that timed out or a lock another command holds, is not the record's doing and still ends the job.
+RECORD_ERRORS = (ArithmeticError, AttributeError, LookupError, TypeError, ValueError)
 KEEP_REJECTIONS = 20
 KEEP_SENDERS = 20
 
@@ -967,12 +972,20 @@ class Job:
                     self.take_state(ref, sha, name, record)
             except Rejected as rejected:
                 self.reject(ref, sha, rejected)
+            except ProjectorError:
+                raise
+            except RECORD_ERRORS as error:
+                self.reject(ref, sha, Rejected("unexpected"), type(error).__name__)
         for ref, sha, name, sender, record in waiting:
             try:
                 # A reply whose sent copy is still unopened, past this job's limits, waits for a later job.
                 self.take_user(ref, sha, name, sender, record)
             except Rejected as rejected:
                 self.reject(ref, sha, rejected)
+            except ProjectorError:
+                raise
+            except RECORD_ERRORS as error:
+                self.reject(ref, sha, Rejected("unexpected"), type(error).__name__)
         self.prune_mirror()
         repo_inbox.wake(self.root, self.repo, self.live, self.machine, self.now)
 
@@ -1081,16 +1094,20 @@ class Job:
             raise Rejected("field-shape")
         return sender, record
 
-    def reject(self, ref: str, sha: str, rejected: Rejected) -> None:
+    def reject(self, ref: str, sha: str, rejected: Rejected, error: Optional[str] = None) -> None:
         self.cache["seen"][ref] = {"sha": sha, "kind": "rejected"}
-        self.note_rejection(ref, rejected.reason, rejected.sender)
+        self.note_rejection(ref, rejected.reason, rejected.sender, error)
         self.delete(ref)
 
-    def note_rejection(self, ref: str, reason: str, sender: Optional[bytes] = None) -> None:
+    def note_rejection(self, ref: str, reason: str, sender: Optional[bytes] = None,
+                       error: Optional[str] = None) -> None:
         """Count a rejection, and keep its ref, reason, and time, but nothing the record holds. A record sealed by
         another key keeps that key's ID, and a key that is no peer of yours is kept among the unknown senders, so
-        `project agent peer list` can name it."""
+        `project agent peer list` can name it. An `unexpected` rejection keeps the name of the error's class, but
+        not its message, which could quote the record."""
         rejection = {"ref": ref, "reason": reason, "at": watch.stamp(self.now)}
+        if error is not None:
+            rejection["error"] = error
         if sender is not None:
             key_id = crypto.key_id(sender)
             rejection["key_id"] = key_id
@@ -1402,7 +1419,8 @@ class Relay:
                 del self.jobs[repo]
                 self.settled[repo] = job.attempted
                 for rejection in job.rejections:
-                    self.log(f"relay {job.repo}: rejected {rejection['ref']}: {rejection['reason']}, at "
+                    error = f" ({rejection['error']})" if rejection.get("error") else ""
+                    self.log(f"relay {job.repo}: rejected {rejection['ref']}: {rejection['reason']}{error}, at "
                              f"{rejection['at']}")
                 try:
                     self.results[repo] = future.result()

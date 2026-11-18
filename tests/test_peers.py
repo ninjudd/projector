@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import subprocess
 from typing import Optional
+from unittest import mock
 
 from projector import agents, codex_watch as codex, crypto, relay, repo_inbox, watch
 from tests.test_relay import A, B, C, D, LOGIN, Machine, RelayCase, git, public_of
@@ -591,6 +592,59 @@ class CheckTests(PeersCase):
         reasons = {found["ref"]: found["reason"] for found in self.rejections(self.one)}
         self.assertEqual("message-id-mismatch", reasons[refs["an ID that is not its ref's"]])
         self.assertEqual({"field-shape"}, {reasons[refs[case]] for case in list(records)[:3]})
+
+    def test_a_record_whose_strings_or_times_cannot_be_kept_is_rejected_and_the_next_one_still_opens(self) -> None:
+        sent = self.status_request()
+        self.one.run_pass()
+        records = {
+            "a lone surrogate in a detail": self.item_record(detail="\ud800"),
+            "a lone surrogate in a subject": self.item_record(subject="Did the \udfff land?"),
+            "a lone surrogate in a branch": self.item_record(branch="parser-\ud800"),
+            "a lone surrogate in a reply's text": self.reply_record(sent["id"], "Half \ud800 done"),
+            "a time past the year 9999": self.item_record(sent_at=10 ** 400),
+            "a detail that is a number": self.item_record(detail=7),
+            "choices that are an object": self.item_record(kind="request", choices={"a": "Yes"}),
+        }
+        refs = {case: relay.user_ref(self.key.id, record["id"]) for case, record in records.items()}
+        for case, record in records.items():
+            self.plant_sealed(refs[case], record, JASON, self.private)
+        fine = self.item_record("The parser landed")
+        self.plant_sealed(relay.user_ref(self.key.id, fine["id"]), fine, JASON, self.private)
+
+        self.one.run_pass()
+        self.one.run_pass()
+
+        self.assertEqual("ok", self.one.status()["repositories"][REPO]["state"])
+        self.assertEqual(["The parser landed"], [entry["subject"] for entry in self.by_role(self.one, A, "incoming")])
+        self.assertEqual([], self.by_role(self.one, A, "reply"))
+        reasons = {found["ref"]: found["reason"] for found in self.rejections(self.one)}
+        for case, ref in refs.items():
+            with self.subTest(case):
+                self.assertEqual("field-shape", reasons.get(ref))
+                self.assertNotIn(ref, self.refs())
+
+    def test_an_error_opening_one_record_rejects_it_and_the_job_goes_on_to_the_next(self) -> None:
+        broken, fine = self.item_record("Breaks the mirror"), self.item_record("The parser landed")
+        for record in (broken, fine):
+            self.plant_sealed(relay.user_ref(self.key.id, record["id"]), record, JASON, self.private)
+        mirror = repo_inbox.mirror
+
+        def failing(root, repo, record, **options):
+            if record["id"] == broken["id"]:
+                raise TypeError("a fault no shape check foresaw")
+            return mirror(root, repo, record, **options)
+
+        with mock.patch.object(repo_inbox, "mirror", failing):
+            self.one.run_pass()
+        self.one.run_pass()
+
+        ref = relay.user_ref(self.key.id, broken["id"])
+        self.assertEqual("ok", self.one.status()["repositories"][REPO]["state"])
+        self.assertEqual(["The parser landed"], [entry["subject"] for entry in self.entries(self.one, A)])
+        self.assertEqual({"ref": ref, "reason": "unexpected", "error": "TypeError"},
+                         {key: self.rejections(self.one)[-1].get(key) for key in ("ref", "reason", "error")})
+        self.assertNotIn(ref, self.refs())
+        self.assertIn(f"relay {REPO}: rejected {ref}: unexpected (TypeError)", "\n".join(self.one.logged))
 
     def test_a_record_replayed_into_another_repository_is_rejected_there(self) -> None:
         other = self.scratch / "other.git"

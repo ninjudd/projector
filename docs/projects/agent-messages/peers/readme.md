@@ -555,3 +555,15 @@ building:
 - **The Codex rules allow `reply` and `close`.** An agent replies and closes
   under the user's instructions. `answer`, `done`, `decline`, `dismiss`, and
   `snooze` still ask, even with `--as agent`, as they do on a session's item.
+- **Every string must have a UTF-8 encoding, and every time a date.** JSON's
+  `\ud800` escape carries a lone surrogate that Python reads but cannot
+  write to the mirror, and a time of 400 digits overflows a float, so either
+  failed every later pass on the record. The shape checks reject a string
+  with no UTF-8 encoding, and a time later than the last millisecond of the
+  year 9999, as `field-shape`.
+- **An error the checks missed rejects one record.** A record that raises an
+  error while the relay handles it, such as a `TypeError`, is rejected as
+  `unexpected`, with the error's class but not its message, its ref deleted,
+  and the job goes on to the next record. A Projector error, such as a Git
+  command that timed out or a held lock, still ends the job, since it is not
+  the record's doing.
