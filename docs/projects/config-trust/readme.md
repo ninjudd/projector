@@ -59,8 +59,11 @@ priority wins, and at equal priority the farthest file wins, with
 guards close the cases the default branch cannot. A **destination** setting,
 one that says where your data goes, needs a one-time
 `project config allow` when its value comes from a tracked file, because the
-default branch's owner may not be you. And `projects.dir` and `ios.output`
-must resolve inside the repository unless `~/.projector.toml` sets them.
+default branch's owner may not be you. And `projects.dir` must resolve
+inside the repository whichever file sets it, `~/.projector.toml` included,
+because a project's plans live in its repository. `ios.output` must resolve
+inside the repository or Projector's state directory unless
+`~/.projector.toml` sets it.
 
 ### 2.1 Runtime flow
 
@@ -141,11 +144,12 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
    `project config allow --list` prints your approvals with the file each was
    granted for, and `project config allow --remove <key> <value>` revokes
    one, after which the next read waits for a new approval.
-6. **Keep paths inside the repository.** A `projects.dir` from any file must
-   resolve inside the working tree's top, or `project` refuses with the
-   value and the file. An `ios.output` from any file but `~/.projector.toml`
-   must resolve inside the working tree or under Projector's state
-   directory.
+6. **Keep paths inside the repository.** A `projects.dir` from any file,
+   `~/.projector.toml` included, must resolve inside the working tree's top,
+   or `project` refuses with the value and the file. An `ios.output` from
+   any file but `~/.projector.toml` must resolve inside the working tree or
+   under Projector's state directory, or `project` refuses it the same way.
+   An `ios.output` from `~/.projector.toml` may name any directory.
 7. **Write where it will take effect.** `project config set` and `unset`
    still change one file. When that file is tracked, they say
    `takes effect once this change merges to origin/main` beside the result.
@@ -203,7 +207,7 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
 | `src/projector/watch.py` | On each full pass, fetch each live repository's default branch into `refs/projector/default/origin/<branch>` with an empty `--refmap=`, on the relay's worker pool, unless `watch.fetch_default` is false, and report a failed fetch in `watch status` (§ 2.1 step 9). |
 | `src/projector/config.py` | Add `watch.fetch_default` to `SETTINGS`. Find the repository (§ 2.1 step 1) and choose each file's source (step 2), with the cache (step 8). Merge ordinary values, then overrides (steps 3 and 4). Add `DESTINATIONS`, `NotAllowed`, and the check in `Config.setting` (step 5). Record each value's source and override flag. Reserve `override`. Update the module docstring, which describes the layers. |
 | `src/projector/cli.py` | Add `project config allow <key> <value>`, terminal only, with `--list` and `--remove <key> <value>`. Add `--override` to `config set` and `unset`, the "takes effect once this change merges" note, and the sources and ignored-copy notes in `config list` and `config get`. |
-| `src/projector/core.py` | Refuse a `projects.dir` that resolves outside the working tree (step 6). |
+| `src/projector/core.py` | Refuse a `projects.dir` that resolves outside the working tree, whichever file sets it, `~/.projector.toml` included (step 6). |
 | `src/projector/ios.py` | Refuse an `ios.output` outside the working tree or the state directory unless `~/.projector.toml` sets it (step 6). |
 | `docs/cli.md` | Rewrite "Read configuration" and "Change configuration" for the default-branch rule, `[override]`, `config allow`, and the path rules. |
 | `tests/test_config.py`, `tests/test_projector.py`, `tests/test_ios.py` | The criteria in § 4. |
@@ -242,6 +246,14 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
   processes per load would add about 38 ms to each. Git documents the
   layout of `.git`, refs, and `packed-refs`, and the cache makes the common
   case a few file reads.
+- **Keep plans in the repository, and let only diagnostics leave it.** A
+  project's plans are files the repository tracks, reviewed and merged with
+  its code, so a `projects.dir` outside the working tree would write plans
+  no branch carries, wherever the value came from. `ios.output` holds the
+  crash reports and log files `project ios` copies, which you may want on
+  your desktop, so `~/.projector.toml`, which you wrote, can send them
+  anywhere, while a repository's file can keep them only in the repository
+  or the state directory.
 - **Rejected: marking only sensitive keys as default-branch-only.** It is
   more precise, but it is a second rule to remember and a list that each new
   setting must remember to join.
@@ -268,7 +280,7 @@ temporary home.
 | Use `[override.0]`, `[override.100]`, and `[override.x]`. | Each is a configuration error naming the file. Catches a priority outside 1 to 99 read silently. |
 | Put `agent.key` under `[override.1]` in the parent directory. | It is dropped with a warning. Catches a user-only key smuggled through an override. |
 | Add a key to `DESTINATIONS` in the test, set it on the default branch, and read it. Then run `config allow` with and without a terminal. Then change the value on the default branch. | The read raises `NotAllowed` naming the file and the command. The allow refuses without a terminal and succeeds with one, and the new value asks again. The same value from the parent's untracked file needs no allowing. Catches a destination chosen by a branch's owner, and an approval that carries over to a new value. |
-| Set `projects.dir = "../elsewhere"`, then `/tmp/x`, in the repository, and `ios.output = "/tmp/out"` in the repository and then in `~/.projector.toml`. | The `projects.dir` values are refused, the repository's `ios.output` is refused, and the user's is accepted. Catches writes outside the repository. |
+| Set `projects.dir = "../elsewhere"`, then `/tmp/x`, in the repository, then `projects.dir = "/tmp/x"` in `~/.projector.toml`. Set `ios.output = "/tmp/out"` in the repository and then in `~/.projector.toml`. | Every `projects.dir` value is refused, the user's included, with the value and its file. The repository's `ios.output` is refused, and the user's is accepted. Catches writes outside the repository, and a user-file exemption extended to `projects.dir`. |
 | Run `config set review.gate x` on the repository's tracked file. | It writes the working tree and prints that the change takes effect once it merges to `origin/main`. Catches a write that silently does nothing. |
 | Load configuration 100 times with a warm cache, with a fake `git` on `PATH` that records each run. | No load starts a process. Advancing `origin/HEAD` or touching the index makes the next load read Git once. Catches a cache that never hits, or one that never notices a new commit. |
 | In a clone that keeps Git's default `remote.origin.fetch` of `+refs/heads/*:refs/remotes/origin/*`, merge a change to `.projector.toml` on `origin` without fetching, and run a full pass with a fake clock. Then fetch into `origin/main` yourself while the daemon's fetch runs, and force-push the default branch so the two refs diverge. Then set `watch.fetch_default = false`. | After the pass, the change applies, `refs/projector/default/origin/main` holds the merged commit, and `refs/remotes/origin/main` still names the commit it named before the pass, so `git status` reports no new `behind`. Your own fetch succeeds. After the divergence, configuration reads your `origin/HEAD`. With the setting off, no fetch runs. Catches a fetch without `--refmap=`, which Git's configured mapping turns into an update of your remote-tracking ref, as well as a newer commit ignored and an opt-out ignored. |
