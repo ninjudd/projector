@@ -1,0 +1,138 @@
+{
+ "version": 1,
+ "name": "Repository inbox peers",
+ "project": "agent-messages/peers",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 550,
+  "title": "List another person's public key as a peer, from a terminal only",
+  "head": "30f52b1533872f96fd7b0cb4dba9f766337a69c6",
+  "headRef": "repo-inbox/peers",
+  "base": "f78962341ca90ab1d29e4bef0e4a8df0db6ece22",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The relay currently carries messages between your own machines. This change adds the personal list of other people's public keys that a later repository-inbox layer will use; it does not yet admit their records or deliver their items.",
+   "Each peer has a local name and an X25519 public key. Only ordinary settings in your user configuration supply this trust list; overrides in every file are excluded. A terminal command checks the key, asks you to confirm its ID, and writes the entry; repository configuration and the general configuration setter cannot add peers."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Review validation",
+    "html": "<ul class=\"tight\"><li>The configured gate and exact-head CI passed, including 268 hook tests.</li><li>All 171 focused relay, configuration, and permission tests passed.</li><li>The full rebase follow-up checked configuration-trust conflict resolutions, override exclusion, and shared locking. All three earlier findings remain fixed.</li></ul>"
+   },
+   {
+    "id": "scope",
+    "title": "This layer and the next",
+    "html": "<p>The peer plan moves to <code>in-progress</code>. This layer stores and manages trust decisions; the relay continues to accept only the existing shared machine key until the later inbox layer uses this table.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "personal-trust",
+   "title": "Read peers only from personal configuration",
+   "kicker": "A repository cannot add people to your trust list",
+   "intro": [
+    "<code>agent.peers</code> is a table from names you choose to public keys. The configuration reader validates names, key lengths, duplicate identities, and the rule that your own key needs no peer entry.",
+    "The user-only filter removes each protected subtree by walking parsed TOML tables. It runs on ordinary checkout values and on every override table, including overrides in the user file. Quoted names containing dots stay ordinary keys, and tables emptied by filtering are removed."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds peer-table validation and recursive removal of user-only configuration from checkout layers.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 956,
+       "text": "Read subtree filtering through the layered loader and user-only peer accessor. The new regression confirms that ordinary peers remain usable, override peers are ignored in all files, and removing a peer leaves no active override copy."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_config.py",
+     "note": "Keeps the documented setting types aligned with the new table-valued setting.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "peer-commands",
+   "title": "Manage peer trust at a terminal",
+   "kicker": "Confirm a key ID before recording a peer",
+   "intro": [
+    "The new <code>project agent peer</code> commands add, list, replace, and remove peer entries. Adding requires terminal input and output and a positive confirmation of the public key's ID. Listing reports names and IDs, with public keys included in JSON output.",
+    "Validation runs before confirmation and again under the user-configuration lock immediately before adding. The same lock serializes peer removal, user configuration commands including override edits, and key configuration writes, so an overlapping write preserves the other command's change."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/relay.py",
+     "note": "Provides peer validation, personal-file mutations, and list rows; shares key-ID parsing with configuration.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 375,
+       "text": "The shared configuration lock still surrounds peer removal and addition. The focused suite confirms that peer removals, ordinary and override config writes, and key removal preserve their effects when they overlap an addition."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Registers the peer commands, enforces terminal confirmation, and refuses general config-set additions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1968,
+       "text": "The conflict resolution keeps shared locking for user configuration and forwards the requested override priority to both set and unset."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_relay.py",
+     "note": "Exercises terminal refusal, confirmation, validation, replacement, removal, repository filtering, and key-display guidance.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All 171 focused relay/configuration/permission tests passed, including new override peer exclusions and concurrent config-set --override behavior."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "permissions-docs",
+   "title": "Expose the trust workflow and its limits",
+   "kicker": "Allow listing without allowing automatic trust additions",
+   "intro": [
+    "Codex receives an explicit allow rule only for <code>peer list</code>; adding or removing a peer remains outside that allow rule. Permission tests and documented rules describe the same command surface.",
+    "The CLI guide explains public-key sharing and the peer table, and the project plan records that implementation has begun. The next layer must supply the repository inbox behavior that uses these trust decisions."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Allows the read-only peer listing command in generated Codex rules.",
+     "checks": []
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Checks nested peer command permissions and intentional exclusions.",
+     "checks": []
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents public-key sharing, peer commands, user-only storage, and generated permissions.",
+     "checks": []
+    },
+    {
+     "path": "docs/projects/agent-messages/peers/readme.md",
+     "note": "Moves the peer-inbox project from ready to in-progress.",
+     "checks": []
+    }
+   ]
+  }
+ ]
+}
