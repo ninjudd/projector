@@ -1,0 +1,156 @@
+{
+ "version": 1,
+ "name": "Retire legacy watch loops",
+ "project": "watch-daemon",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 539,
+  "title": "Remove project loop and the panel's support for watchers older than the daemon, and complete the watch daemon project",
+  "head": "3e1419a79faaffb16d01c6e29c13129901b4d5b3",
+  "headRef": "finish-watch-daemon",
+  "base": "0c945a8321f9deaf6432c8c313fb913c0cb9a0ce",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The watch daemon polls pull requests once per machine and delivers events to the sessions that subscribe to them. This change removes compatibility with the older watcher scripts, whose separate tracked files could also populate Projector’s panel.",
+   "The CLI stops accepting <code>project loop</code>. The panel reads pull-request rows only from subscription files and the daemon’s cache, while an open drawer still fetches its review threads. The watch-daemon plan records the shipped outcome and closes the project."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Files that drive the panel",
+    "html": "<ul><li><b>Subscriptions:</b> the pull requests and review roles a session asks the daemon to watch.</li><li><b>Cache:</b> the daemon’s last GitHub result for each pull request.</li><li><b>Legacy tracked file:</b> a list maintained by a watcher script from before the daemon.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review result",
+    "html": "<p>The session-targeting finding is verified fixed. The outcome now explains which environment variables the CLI reads and that Codex commands pass the parent ID supplied by hooks with <code>--session</code>.</p><p>The follow-up gate includes 242 hook tests and type-checking. The implementation is unchanged from the earlier review, whose 76 focused packaging, permission, and configuration tests passed. Reported rollout observations were checked for consistency, not rerun.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "cli",
+   "title": "Retire the tracked-file command",
+   "kicker": "The CLI and permission rules leave project loop behind",
+   "intro": [
+    "The old watcher scripts edited their tracked files through <code>project loop</code>. The daemon uses <code>project watch</code> and subscription files instead. Removing the old command also removes its implementation, tests, and public command documentation.",
+    "Codex’s generated permission rule drops the command name. The rule text changes with it, so the existing upgrade mechanism detects that installed rules need refreshing."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The CLI rejects project loop with exit 2. The packaging, permission, and configuration tests all passed (76 tests). Searches found no live imports of projector.loop or live callers of the removed command."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Remove the loop parser, dispatch, and module import; all other command routing stays in place."
+    },
+    {
+     "path": "src/projector/loop.py",
+     "note": "Delete the tracked-file mutation implementation, including its atomic rewrite helpers."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Remove loop from Codex’s allow pattern and from its explanation."
+    },
+    {
+     "path": "tests/test_loop.py",
+     "note": "Delete tests whose only subject is the removed command."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Remove the tracked-file command reference and its command-specific exit-code descriptions."
+    }
+   ]
+  },
+  {
+   "id": "parsers",
+   "title": "Keep only the daemon and drawer readers",
+   "kicker": "The remaining parsers serve cache rows, thread drawers, and push detection",
+   "intro": [
+    "Rows already come from the daemon’s cached pull-request records. The panel therefore needs no batched GitHub query for legacy tracked files. A smaller query type now identifies the one pull request whose drawer lists review threads.",
+    "The shell parser still recognizes pushes and pull-request creation, which subscribe the session to work it opened or updated. It drops the quoting metadata and variable expansion used only to locate a legacy watcher’s tracked file."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The hook gate passed all 242 tests and type-checking. Push detection, cached row mapping, and drawer thread parsing remain covered by the retained tests."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/parse.ts",
+     "note": "Remove watcher discovery and tracked-file parsing while retaining command unquoting for push detection."
+    },
+    {
+     "path": "hooks/github.ts",
+     "note": "Remove full-row GraphQL query building and response mapping; cache parsing and one-drawer thread queries remain."
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Remove legacy watcher state and the snapshot query error; fetchedAt now describes the panel’s cache read."
+    },
+    {
+     "path": "hooks/parse.test.ts",
+     "note": "Move full row-mapping assertions to parseCache and remove tests for deleted watcher/query behavior."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "Render session subscriptions from the cache",
+   "kicker": "The panel’s row lifecycle uses the daemon’s files",
+   "intro": [
+    "The panel reads the viewed session’s subscriptions and adopted pull requests, then loads each row from the daemon’s cache. A subscribed pull request without cached data remains a loading row. The panel asks GitHub only for an open drawer’s threads.",
+    "Dismissing a row drops the session’s subscribed roles. A failed reload is logged while the panel keeps its previous snapshot. The tests now create subscription/cache fixtures instead of pretending to start watcher commands."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The migrated panel tests passed in the 242-test hook gate, including cache-only rows, thread refresh after daemon events, subscription adoption, and dismiss behavior."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Remove watcher adoption and direct row queries, simplify load/dismiss, and remove the legacy query-error display."
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Use daemon-backed fixtures for existing panel assertions and retain subscription, event, drawer, and dismiss coverage."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Describe cache-backed rows and drawer-thread polling without the legacy watcher fallback."
+    }
+   ]
+  },
+  {
+   "id": "outcome",
+   "title": "Record the daemon’s completed outcome",
+   "kicker": "The plan closes shipped work and names dropped measurements",
+   "intro": [
+    "The plan becomes completed and records the daemon’s delivery, ownership, cache, and panel work. Its outcome explicitly drops the hour-long rate measurement and says the rollout probe results were not retained; the original inferences remain marked.",
+    "The outcome now distinguishes session discovery from hook registration. Claude Code supplies an environment variable the CLI reads; Codex hooks instead tell the agent which parent ID to pass as <code>--session</code>. Other hosts without a supplied ID choose one."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/watch-daemon/readme.md",
+     "note": "Mark the project completed and add the shipped outcome, probe caveat, and compatibility cleanup.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1133,
+       "text": "The corrected targeting description matches watch.session_id’s explicit/PROJECTOR_SESSION/CLAUDE_CODE_SESSION_ID resolution and the Codex hook’s instruction to pass its parent session ID with --session."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
