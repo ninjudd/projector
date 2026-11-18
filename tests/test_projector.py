@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -22,7 +24,7 @@ import importlib.metadata as metadata
 
 from projector import cli, instructions, permissions, review
 from projector.cli import distribution_version, main
-from projector.core import AmbiguousProject, ProjectorError, ProjectStore, project_from_text
+from projector.core import AmbiguousProject, ProjectorError, ProjectStore, interruptible_waits, project_from_text
 from tests.scratch import copy_of
 
 
@@ -3504,6 +3506,35 @@ class ClosedReaderTests(RepositoryTestCase):
         with mock.patch.object(cli, "run", side_effect=PermissionError(13, "Permission denied", "readme.md")):
             self.assertEqual((65, "", "project: [Errno 13] Permission denied: 'readme.md'\n"),
                              self.invoke("show", "small"))
+
+
+
+class InterruptibleWaitTests(unittest.TestCase):
+    def test_a_ctrl_c_that_no_wait_saw_ends_the_block(self) -> None:
+        handler = signal.getsignal(signal.SIGINT)
+        finished = False
+        with self.assertRaises(KeyboardInterrupt):
+            with interruptible_waits():
+                signal.raise_signal(signal.SIGINT)
+                finished = True
+        self.assertTrue(finished)
+        self.assertIs(handler, signal.getsignal(signal.SIGINT))
+
+    def test_another_thread_waits_without_setting_a_handler(self) -> None:
+        # Only the main thread may set a handler; any other gets ValueError from `signal.signal`.
+        outcome: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                with interruptible_waits() as wait:
+                    wait(queue.Queue(), time.monotonic() + 0.2)
+            except BaseException as error:
+                outcome.append(error)
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        worker.join()
+        self.assertEqual([queue.Empty], [type(error) for error in outcome])
 
 
 if __name__ == "__main__":

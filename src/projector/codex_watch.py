@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import inbox
-from .core import ProjectorError, UsageError
+from .core import ProjectorError, UsageError, interruptible_waits
 from .inbox import locked, read_json, try_lock, unlock, write_json
 
 LEASE = 24 * 3600
@@ -498,9 +498,6 @@ def listed_hooks(executable: str, cwd: str, *, popen: Callable, timeout: float) 
                 lines.put(line)
         lines.put(None)
 
-    threading.Thread(target=read, daemon=True).start()
-    deadline = time.monotonic() + timeout
-
     def send(message: dict) -> None:
         process.stdin.write(json.dumps({"jsonrpc": "2.0", **message}) + "\n")
         process.stdin.flush()
@@ -508,7 +505,7 @@ def listed_hooks(executable: str, cwd: str, *, popen: Callable, timeout: float) 
     def call(number: int, method: str, params: dict) -> object:
         send({"id": number, "method": method, "params": params})
         while True:
-            line = lines.get(timeout=max(0.0, deadline - time.monotonic()))
+            line = wait(lines, deadline)
             if line is None:
                 raise EOFError
             answer = json.loads(line)
@@ -516,13 +513,17 @@ def listed_hooks(executable: str, cwd: str, *, popen: Callable, timeout: float) 
                 return answer["result"]
 
     try:
-        call(1, "initialize", {"clientInfo": {"name": "projector", "version": "1"},
-                               "capabilities": {"experimentalApi": True}})
-        send({"method": "initialized"})
-        result = call(2, "hooks/list", {"cwds": [cwd]})
-        return [hook for entry in result["data"] for hook in entry["hooks"] if isinstance(hook, dict)]
-    except (OSError, ValueError, EOFError, queue.Empty, KeyError, TypeError):
-        return None
+        with interruptible_waits() as wait:
+            threading.Thread(target=read, daemon=True).start()
+            deadline = time.monotonic() + timeout
+            try:
+                call(1, "initialize", {"clientInfo": {"name": "projector", "version": "1"},
+                                       "capabilities": {"experimentalApi": True}})
+                send({"method": "initialized"})
+                result = call(2, "hooks/list", {"cwds": [cwd]})
+                return [hook for entry in result["data"] for hook in entry["hooks"] if isinstance(hook, dict)]
+            except (OSError, ValueError, EOFError, queue.Empty, KeyError, TypeError):
+                return None
     finally:
         process.kill()
         process.wait()
