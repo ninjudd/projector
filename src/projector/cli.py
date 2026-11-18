@@ -31,6 +31,7 @@ from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
     CONFIG_NAME,
+    PRIORITY,
     SECRETS,
     Change,
     ConfigError,
@@ -980,6 +981,15 @@ def add_config_file(command: argparse.ArgumentParser) -> None:
     target.add_argument("--user", action="store_const", const="user", dest="scope",
                         help=f"~/{CONFIG_NAME}, which applies in every repository")
     target.add_argument("--file", type=Path, help="this configuration file, such as one in a parent directory")
+    command.add_argument("--override", type=override_priority, metavar="PRIORITY",
+                         help="the key under [override.PRIORITY], which beats every ordinary value; a whole number "
+                              "from 1 to 99, where the higher wins")
+
+
+def override_priority(text: str) -> int:
+    if not PRIORITY.fullmatch(text):
+        raise argparse.ArgumentTypeError(f"{text!r} is not a priority, a whole number from 1 to 99")
+    return int(text)
 
 
 def seconds(text: str) -> float:
@@ -1866,9 +1876,9 @@ def change_config(arguments: argparse.Namespace) -> int:
                          "`project agent key init` to make one")
     path = config_file(arguments)
     if arguments.config_command == "set":
-        change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value))
+        change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value), arguments.override)
     else:
-        change = unset_value(path, arguments.key)
+        change = unset_value(path, arguments.key, arguments.override)
     try:
         config: Optional[Config] = load_config(config_start(arguments))
     except ConfigError:
@@ -1879,11 +1889,13 @@ def change_config(arguments: argparse.Namespace) -> int:
     if arguments.json_output:
         print(json_text({"action": change.action, "key": change.key, "old": redact(change.key, change.old),
                          "new": redact(change.key, change.new), "file": str(change.path),
-                         **({"takes_effect_on_merge_to": waits} if waits else {})}), flush=True)
+                         "override": change.override, **({"takes_effect_on_merge_to": waits} if waits else {})}),
+              flush=True)
     else:
         shown = "" if change.new is None else f" = {format_value(redact(change.key, change.new))}"
+        table = "" if change.override is None else f" under [override.{change.override}]"
         pending = f"; takes effect once this change merges to {waits}" if waits else ""
-        print(f"{change.action} {change.key}{shown} in {change.path}{pending}", flush=True)
+        print(f"{change.action} {change.key}{shown}{table} in {change.path}{pending}", flush=True)
     if not waits:
         report_override(config, change)
     return 0
@@ -1910,7 +1922,8 @@ def run_config(arguments: argparse.Namespace) -> int:
                     {
                         "key": arguments.key,
                         "value": value,
-                        "source": str(source) if source else None,
+                        "source": source.location if source else None,
+                        "override": source.override if source else None,
                     }
                 )
             )
@@ -1927,7 +1940,9 @@ def run_config(arguments: argparse.Namespace) -> int:
                 json_text(
                     {
                         "config": redact("", config.values),
-                        "sources": {key: str(source) for key, source in config.sources.items()},
+                        "sources": {key: source.location for key, source in config.sources.items()},
+                        "overrides": {key: source.override for key, source in config.sources.items()
+                                      if source.override is not None},
                         "notes": [{"file": str(path), "note": note} for path, note in config.notes],
                     }
                 )

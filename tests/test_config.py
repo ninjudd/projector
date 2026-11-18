@@ -452,7 +452,7 @@ class ConfigSetTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual(
             {"action": "set", "key": "watch.auto_start", "old": True, "new": False,
-             "file": str(self.repo_file), "schema_version": 2},
+             "file": str(self.repo_file), "override": None, "schema_version": 2},
             json.loads(stdout),
         )
 
@@ -652,6 +652,100 @@ class ConfigSetTests(unittest.TestCase):
         names = {bool: "boolean", str: "string", int: "whole number"}
 
         self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))
+
+
+class OverrideTests(unittest.TestCase):
+    """`[override.<priority>]` beats every ordinary value, by priority and then by distance."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.home = Path(self.temporary.name).resolve() / "home"
+        self.grandparent = self.home / "company"
+        self.parent = self.grandparent / "team"
+        self.repo = self.parent / "repo"
+        self.repo.mkdir(parents=True)
+        self.environ = {"HOME": str(self.home)}
+        environment = mock.patch.dict(os.environ, {"HOME": str(self.home)})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def merged(self):
+        return load(self.repo, self.home, self.environ)
+
+    def winner(self) -> tuple[object, str]:
+        config = self.merged()
+        return config.get("review.gate_checks"), str(config.source("review.gate_checks"))
+
+    def invoke(self, *arguments: str) -> tuple[int, str, str]:
+        stdout, stderr = StringIO(), StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main([*arguments, "--root", str(self.repo)])
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_the_highest_priority_wins_then_the_farthest_file(self) -> None:
+        repo = write(self.repo / ".projector.toml", '[review]\ngate_checks = "repo"\n')
+        grandparent = write(self.grandparent / ".projector.toml", '[override.1]\nreview.gate_checks = "company"\n')
+        parent = write(self.parent / ".projector.toml", '[override.1]\nreview.gate_checks = "team"\n')
+        user = write(self.home / ".projector.toml", '[override.1]\nreview.gate_checks = "mine"\n')
+
+        self.assertEqual(("mine", f"{user} (override 1)"), self.winner())
+
+        parent.write_text('[override.2]\nreview.gate_checks = "team"\n')
+        self.assertEqual(("team", f"{parent} (override 2)"), self.winner())
+
+        user.write_text("")
+        parent.write_text('[review]\ngate_checks = "team"\n')
+        self.assertEqual(("company", f"{grandparent} (override 1)"), self.winner())
+
+        grandparent.write_text("")
+        self.assertEqual(("repo", str(repo)), self.winner())
+
+    def test_a_priority_outside_one_to_ninety_nine_names_the_file(self) -> None:
+        for table in ("override.0", "override.100", "override.x", "override.01"):
+            broken = write(self.parent / ".projector.toml", f'[{table}]\nreview.gate_checks = "team"\n')
+
+            with self.assertRaises(ConfigError) as caught:
+                self.merged()
+
+            self.assertIn(f"{broken}: [{table}] needs a priority, a whole number from 1 to 99", str(caught.exception))
+
+        write(self.parent / ".projector.toml", "override = 1\n")
+        with self.assertRaises(ConfigError) as caught:
+            self.merged()
+        self.assertIn("override must hold tables named by priority", str(caught.exception))
+
+    def test_a_user_only_key_under_an_override_is_dropped_from_a_walked_file(self) -> None:
+        parent = write(self.parent / ".projector.toml", '[override.1]\nagent.key = "x25519:planted"\n')
+        write(self.home / ".projector.toml", '[agent]\nkey = "keychain:mine"\n')
+
+        config = self.merged()
+        _, _, stderr = self.invoke("config", "get", "agent.key")
+
+        self.assertEqual("keychain:mine", config.get("agent.key"))
+        self.assertEqual([(Source(parent, None, 1), "agent.key")], config.ignored)
+        self.assertIn(f"{parent} (override 1) sets agent.key", stderr)
+
+    def test_set_and_unset_write_under_the_override_table(self) -> None:
+        team = self.parent / ".projector.toml"
+        team.write_text('# The team\'s settings.\n[override.2]\nreview.gate_checks = "ci"\n')
+
+        def change(*arguments: str) -> tuple[int, str]:
+            code, stdout, stderr = self.invoke("config", *arguments, "--file", str(team))
+            return code, stdout + stderr
+
+        self.assertEqual((0, f"set review.gate = make under [override.2] in {team}\n"),
+                         change("set", "review.gate", "make", "--override", "2"))
+        self.assertEqual(0, change("set", "review.gate_checks", "lint", "--override", "3")[0])
+        self.assertEqual('# The team\'s settings.\n[override.2]\nreview.gate_checks = "ci"\nreview.gate = "make"\n'
+                         '\n[override.3]\nreview.gate_checks = "lint"\n', team.read_text())
+        self.assertEqual(("lint", f"{team} (override 3)"), self.winner())
+
+        self.assertEqual(0, change("unset", "review.gate_checks", "--override", "3")[0])
+        self.assertEqual(("ci", f"{team} (override 2)"), self.winner())
+        with self.assertRaises(SystemExit) as refused:
+            change("set", "review.gate", "x", "--override", "100")
+        self.assertEqual(2, refused.exception.code)
 
 
 GIT_IDENTITY = {"GIT_AUTHOR_NAME": "Tester", "GIT_AUTHOR_EMAIL": "tester@example.invalid",

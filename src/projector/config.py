@@ -40,6 +40,13 @@ its refs are, and a cache under the state directory holds each blob by the
 commit and path, and whether each file is tracked by the index's signature,
 so a load that finds what it needs there starts no process.
 
+Any file may also hold `[override.<priority>]` tables, where the priority is a
+whole number from 1 to 99. After the ordinary merge, every override beats
+every ordinary value. Among overrides of one setting the higher priority wins,
+and at equal priority the farthest file wins, with the user layer farthest of
+all, so a team can outrank a company by choosing a higher number and a person
+can outrank everyone.
+
 `project config set` and `unset` change one file, one line at a time, so the
 comments and layout a person wrote survive every change.
 """
@@ -116,6 +123,11 @@ MINIMUMS: dict[str, int] = {
 # is ignored, so a repository cannot plant a key its author knows.
 USER_ONLY = frozenset({"agent.key"})
 
+# The table that holds a file's overrides, `[override.<priority>]`, so no
+# setting's name may start with it.
+OVERRIDE = "override"
+PRIORITY = re.compile(r"[1-9][0-9]?")
+
 # Keys whose value can be a secret. A value under `keychain:` names an item in
 # the OS keychain and holds no secret; any other value is the secret itself.
 SECRETS = frozenset({"agent.key"})
@@ -173,7 +185,7 @@ def user_value(key: str, environ: Optional[dict[str, str]] = None) -> Any:
     path = user_config_path(environ)
     if not path.is_file():
         return None
-    value = Config(read_config_file(path), {}, []).setting(key)
+    value = layered([(Source(path), read_config_file(path))], path).setting(key)
     if is_secret(key, value):
         check_private(path)
     return value
@@ -598,9 +610,14 @@ class Source:
 
     path: Path
     blob: Optional[str] = None
+    override: Optional[int] = None
+
+    @property
+    def location(self) -> str:
+        return self.blob or str(self.path)
 
     def __str__(self) -> str:
-        return self.blob or str(self.path)
+        return self.location if self.override is None else f"{self.location} (override {self.override})"
 
 
 class Config:
@@ -725,22 +742,65 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
     # both the user layer and the top of the walk, is read once.
     user = found.resolve() if found.is_file() else None
     walked = _walk(start, home, user, env)
+    config = layered(walked.layers, user)
+    config.notes, config.committed = walked.notes, walked.committed
+    return config
+
+
+def _overrides(source: Source, loaded: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+    """Take the `[override.<priority>]` tables out of a file's values, refusing a priority outside 1 to 99."""
+
+    found = loaded.pop(OVERRIDE, None)
+    if found is None:
+        return []
+    if not isinstance(found, dict):
+        raise ConfigError(f"{source}: {OVERRIDE} must hold tables named by priority, such as [{OVERRIDE}.1]")
+    tables = []
+    for priority, table in found.items():
+        if not PRIORITY.fullmatch(priority) or not isinstance(table, dict):
+            raise ConfigError(f"{source}: [{OVERRIDE}.{priority}] needs a priority, a whole number from 1 to 99, "
+                              f"such as [{OVERRIDE}.1]")
+        tables.append((int(priority), table))
+    return tables
+
+
+def _drop_user_only(source: Source, loaded: dict[str, Any], ignored: list[tuple[Source, str]]) -> None:
+    for key in sorted(USER_ONLY & set(_flatten(loaded))):
+        *tables, name = key.split(".")
+        table = loaded
+        for part in tables:
+            table = table[part]
+        del table[name]
+        ignored.append((source, key))
+
+
+def layered(layers: list[tuple[Source, dict[str, Any]]], user: Optional[Path]) -> Config:
+    """Merge `layers`, lowest precedence first, then apply every override over them.
+
+    Among overrides, the higher priority wins, and at equal priority the
+    farther file wins, so `user`, the first layer, wins over every walked file.
+    """
+
     values: dict[str, Any] = {}
     sources: dict[str, Source] = {}
     ignored: list[tuple[Source, str]] = []
-    for source, loaded in walked.layers:
+    overrides: list[tuple[int, int, Source, dict[str, Any]]] = []
+    for nearness, (source, loaded) in enumerate(layers):
+        for priority, table in _overrides(source, loaded):
+            overriding = Source(source.path, source.blob, priority)
+            if source.path != user:
+                _drop_user_only(overriding, table, ignored)
+            overrides.append((priority, -nearness, overriding, table))
         if source.path != user:
-            for key in sorted(USER_ONLY & set(_flatten(loaded))):
-                *tables, name = key.split(".")
-                table = loaded
-                for part in tables:
-                    table = table[part]
-                del table[name]
-                ignored.append((source, key))
+            _drop_user_only(source, loaded, ignored)
         values = merge(values, loaded)
         # Recorded after merging so the last writer of each leaf wins, which is
         # the file whose value actually survived.
         for dotted in _flatten(loaded):
+            sources[dotted] = source
+    for _, _, source, table in sorted(overrides, key=lambda found: found[:2]):
+        values = merge(values, table)
+        for dotted in _flatten(table):
             sources[dotted] = source
 
     # A later file can replace a scalar with a table, which leaves the scalar's
@@ -748,8 +808,7 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
     # key the merged result does not actually have.
     final = _flatten(values)
     sources = {key: source for key, source in sources.items() if key in final}
-    return Config(values, sources, [source for source, _ in walked.layers], ignored, walked.notes,
-                  walked.committed)
+    return Config(values, sources, [source for source, _ in layers], ignored)
 
 
 @dataclass(frozen=True)
@@ -761,17 +820,24 @@ class Change:
     old: Any
     new: Any
     path: Path
+    override: Optional[int] = None
 
 
-def write_value(path: Path, key: str, value: Any) -> Change:
-    """Set `key` to `value` in the file at `path`, or remove it when `value` is None.
+def write_value(path: Path, setting: str, value: Any, override: Optional[int] = None) -> Change:
+    """Set `setting` to `value` in the file at `path`, or remove it when `value` is None, under
+    `[override.<override>]` when `override` names a priority.
 
-    Only the lines that set `key` change, so every comment, blank line, and
+    Only the lines that set the key change, so every comment, blank line, and
     other setting stays byte for byte. The edit is checked twice: before
     writing, by parsing the new text, and after, by reading the file back,
     which restores the original when the two disagree.
     """
 
+    change = _write_key(path, setting if override is None else f"{OVERRIDE}.{override}.{setting}", value)
+    return Change(change.action, setting, change.old, change.new, path, override)
+
+
+def _write_key(path: Path, key: str, value: Any) -> Change:
     original = path.read_bytes().decode("utf-8") if path.exists() else None
     try:
         before = tomllib.loads(original or "")
@@ -803,15 +869,15 @@ def write_value(path: Path, key: str, value: Any) -> Change:
     return Change("unset" if value is None else "set", key, old, value, path)
 
 
-def unset_value(path: Path, key: str) -> Change:
-    """Remove `key` from the file at `path`.
+def unset_value(path: Path, key: str, override: Optional[int] = None) -> Change:
+    """Remove `key` from the file at `path`, or from its `[override.<override>]` table.
 
     A key outside `SETTINGS` is removed when the file sets it, so a setting
     Projector no longer reads can be cleaned up, and refused when the file
     does not, so a misspelled key still gets the list of keys.
     """
 
-    change = write_value(path, key, None)
+    change = write_value(path, key, None, override)
     if change.action == "unchanged" and key not in SETTINGS:
         raise _unknown_key(key, f", which {path} does not set")
     return change
@@ -953,13 +1019,21 @@ def _edited(text: str, key: str, value: Any) -> str:
     if value is None:
         return text
 
+    def table_header(table: tuple[str, ...]) -> Optional[_Header]:
+        return next((header for header in headers if header.table == table and not header.array), None)
+
     parent = path[:-1]
-    header = next((header for header in headers if header.table == parent and not header.array), None)
+    header = table_header(parent)
+    if header is None and path[0] == OVERRIDE and len(path) > 3:
+        # An override holds settings under their usual dotted names, as
+        # `[override.1]` and then `agent.relay = ...` do.
+        parent = path[:2]
+        header = table_header(parent)
     if header is not None or not parent:
         # After the section's last statement rather than at its end, so a
         # comment that introduces the next table stays above that table.
         siblings = [entry for entry in entries if entry.table == parent]
-        written = path[-1:]
+        written = path[len(parent):]
         after = siblings[-1] if siblings else None
         at = after.end if after else (header.line + 1 if header else 0)
     else:
@@ -972,7 +1046,7 @@ def _edited(text: str, key: str, value: Any) -> str:
             separator = newline if text.strip() and not text.endswith(newline * 2) else ""
             ending = newline if text and not text.endswith("\n") else ""
             return (f"{text}{ending}{separator}[{'.'.join(parent)}]{newline}"
-                    f"{path[-1]} = {_toml_value(value)}{newline}")
+                    f"{'.'.join(path[len(parent):])} = {_toml_value(value)}{newline}")
         after = dotted[-1]
         written = path[len(after.table):]
         at = after.end
