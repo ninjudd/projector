@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 priority: now
 ---
 
@@ -503,9 +503,11 @@ These tests fail before the change, and each catches the bug it names:
   credential and a writing token in its environment. Until then, the job's
   `if` stays the boundary, and no change offers `pull_request_target` for
   reviews.
-- **The app model.** Recommended: each owner creates their own app and
-  passes `app-id` and `app-private-key`. One shared app that Projector hosts
-  is rejected in § 3. This needs the user's decision.
+- **The app model.** Decided: an app is optional. Reviews post as
+  `github-actions[bot]` by default. An owner who wants a named reviewer, or
+  reviews that read context repositories, creates their own app once and
+  passes `app-id` and `app-private-key`, as § 2.4 says. One shared app that
+  Projector hosts is rejected in § 3.
 - **Approvals.** Decided: no change. A clean CI review posts a `COMMENT`,
   `review.allow_approve` alone permits a real `APPROVE`, and the `clean`
   label with the `projector/review` status stays the sign-off, as § 2.4
@@ -537,11 +539,13 @@ These tests fail before the change, and each catches the bug it names:
     is tied to a person's account.
   - How many runs a `CODEX_AUTH_JSON` secret lasts on a hosted runner before
     its refresh token stops working.
-- **Subscription use for other people's pull requests.** Deferred to the
-  user. A subscription credential is for personal use. Reviewing your own
-  pull requests with it fits that. Reviewing every collaborator's pull
-  request in a shared repository may not, and an API key or the
-  collaborator's own credential fits that case.
+- **Subscription use for other people's pull requests.** Deferred to each
+  repository's setup, because the action supports both kinds of credential
+  and nothing in the build depends on the choice. A subscription credential
+  is for personal use. Reviewing your own pull requests with it fits that.
+  Reviewing every collaborator's pull request in a shared repository may
+  not, and an API key fits that case. `docs/review-in-ci.md` says so where
+  it describes the secrets.
 
 ## 8. Background
 
