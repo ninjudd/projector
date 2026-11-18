@@ -1,0 +1,131 @@
+{
+ "version": 1,
+ "name": "Prompt and hook cancellation",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 572,
+  "title": "Let Ctrl-C end a Codex hook check at once, through the wait a `key join` prompt uses",
+  "head": "6c51b948315b6e28cdc72bf67572f923a0c9aae5",
+  "headRef": "fix-listed-hooks-interrupt",
+  "base": "9126e629c6f2deeace56b8e57454bc6946390181",
+  "baseRef": "fix-flaky-join-interrupt",
+  "basePr": 558
+ },
+ "overview": {
+  "summary": [
+   "Projector checks whether Codex runs its hooks by starting <code>codex app-server</code> and reading its replies on a background thread. A silent server could leave the main thread waiting until the full timeout even after Ctrl-C, because Python had recorded the signal without waking the queue wait.",
+   "This layer shares the key-join prompt’s existing solution with that hook check. The new <code>interruptible_waits</code> context manager records SIGINT and checks it between queue waits of at most 0.1 seconds. It restores the earlier signal handler when the operation ends. The reader threads and the JSON-RPC exchange stay in place."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Verified on this head",
+    "html": "<ul class=\"tight\"><li>The configured gate and exact-head CI passed, including 247 hook tests.</li><li>All 306 focused Codex, relay and core tests passed.</li><li>Each of the three added regression tests failed with its corresponding behavior broken, then passed on the restored head.</li></ul>"
+   },
+   {
+    "id": "scope",
+    "title": "What stays bounded elsewhere",
+    "html": "The change covers the hook check and the key-join prompt. It leaves the separate two-second release lookup and five-second keychain wait unchanged. A worker thread may use the helper, but only the main thread installs a Python signal handler."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "shared-wait",
+   "title": "Share one interruptible queue wait",
+   "kicker": "A signal is recorded before it is raised at a safe boundary.",
+   "intro": [
+    "A queue carries results from a background reader to the main thread. <code>interruptible_waits</code> supplies a <code>wait(items, deadline)</code> function that checks a monotonic deadline and waits in short slices, so Ctrl-C does not have to wait for the full operation timeout.",
+    "On the main thread, the context manager temporarily records SIGINT instead of raising an exception inside threading internals. The wait raises <code>KeyboardInterrupt</code> after a signal, or <code>queue.Empty</code> when the deadline passes. A signal that no wait observes is raised as the block ends; the previous signal handler is restored first."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/core.py",
+     "note": "Adds the common queue-wait context manager and its 0.1-second polling bound.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 170,
+       "text": "The previous SIGINT handler is restored on exit. Both interrupt regression tests passed, including the case where the block receives Ctrl-C without calling wait."
+      },
+      {
+       "kind": "verify",
+       "line": 156,
+       "text": "The main-thread guard keeps worker-thread calls from installing a signal handler. Removing that guard made the worker-thread regression fail with ValueError instead of its expected queue timeout."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "callers",
+   "title": "Use the helper in both readers",
+   "kicker": "Hook checks gain prompt cancellation; key joining keeps its behavior.",
+   "intro": [
+    "The Codex hook check exchanges JSON-RPC requests with a child app-server. Its background thread still reads output, while the main thread now uses the shared wait for both initialization and hook-list replies. The child process is killed and reaped in the existing cleanup path.",
+    "The terminal prompt used to join a relay key replaces its private signal and polling loop with the same helper. Its input-size limit, text decoding and timeout error stay at the prompt boundary."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/codex_watch.py",
+     "note": "Wraps thread startup and both response waits in the shared interrupt context.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 513,
+       "text": "The silent-server SIGINT regression passes on this head and fails against the base implementation after the full five-second timeout. Existing trusted-hook, missing-hook and silent-server checks also pass."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Replaces the key-join prompt’s duplicated polling loop with the common wait.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1383,
+       "text": "The existing terminal Ctrl-C regression passed after extraction. The focused relay suite also passed, covering the surrounding key workflow and prompt errors."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "regressions",
+   "title": "Exercise signals at the missed boundaries",
+   "kicker": "The tests distinguish prompt cancellation from a timeout.",
+   "intro": [
+    "The hook regression starts a real local fake server that never answers. Once the main thread enters its queue wait, another thread receives SIGINT. The check must raise before its five-second deadline and restore the previous handler.",
+    "The helper tests cover a signal that arrives without any queue wait and a call from a worker thread. These check the context manager’s exit behavior and the Python restriction that signal handlers belong to the main thread."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_codex_watch.py",
+     "note": "Adds a synchronized silent-server interrupt regression.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 806,
+       "text": "Running this test with the base hook-check source failed its deadline assertion after five seconds. The source was restored and all seven targeted hook, terminal and helper tests passed."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "Checks deferred interruption and safe worker-thread use.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 3512,
+       "text": "Dropping the final interrupted check made the first regression fail because KeyboardInterrupt was not raised. Forcing handler installation on the worker made the second fail. Both pass after restoring the exact-head source."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
