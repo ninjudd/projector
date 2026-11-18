@@ -165,16 +165,21 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
    Projector's own:
 
    ```console
-   $ git fetch --quiet --no-write-fetch-head origin +refs/heads/main:refs/projector/default/origin/main
+   $ git fetch --quiet --no-write-fetch-head --refmap= origin +refs/heads/main:refs/projector/default/origin/main
    ```
 
-   It leaves `refs/remotes/origin/*`, your branches, and `git status` as they
-   were, so a fetch you run yourself never fails with `cannot lock ref`, and
-   nothing starts saying `behind by 3` on its own. Git's background
-   maintenance fetches into `refs/prefetch/` for the same reason. The fetch
-   runs on the relay's worker pool through `relay.git`, with a closed standard
-   input, `GIT_TERMINAL_PROMPT=0`, and the fetch timeout, so it never prompts
-   and never stalls the daemon. A fetch that fails leaves the last commit in
+   The empty `--refmap=` matters. When you fetch from a named remote with a
+   refspec on the command line, Git also updates the remote-tracking ref that
+   `remote.origin.fetch` maps the fetched branch to, so without it this
+   command would move `refs/remotes/origin/main` too. `--refmap=` with no
+   value turns that mapping off for this one command. The fetch then leaves
+   `refs/remotes/origin/*`, your branches, and `git status` as they were, so
+   a fetch you run yourself never fails with `cannot lock ref`, and nothing
+   starts saying `behind by 3` on its own. Git's background maintenance
+   fetches into `refs/prefetch/` for the same reason. The fetch runs on the
+   relay's worker pool through `relay.git`, with a closed standard input,
+   `GIT_TERMINAL_PROMPT=0`, and the fetch timeout, so it never prompts and
+   never stalls the daemon. A fetch that fails leaves the last commit in
    place, with the error in `watch status`. A merged change to a tracked
    `.projector.toml` therefore takes effect within one full pass, and loading
    configuration still never touches the network. `watch.fetch_default =
@@ -195,7 +200,7 @@ must resolve inside the repository unless `~/.projector.toml` sets them.
 
 | File | Change |
 | --- | --- |
-| `src/projector/watch.py` | On each full pass, fetch each live repository's default branch into `refs/projector/default/origin/<branch>` on the relay's worker pool, unless `watch.fetch_default` is false, and report a failed fetch in `watch status` (§ 2.1 step 9). |
+| `src/projector/watch.py` | On each full pass, fetch each live repository's default branch into `refs/projector/default/origin/<branch>` with an empty `--refmap=`, on the relay's worker pool, unless `watch.fetch_default` is false, and report a failed fetch in `watch status` (§ 2.1 step 9). |
 | `src/projector/config.py` | Add `watch.fetch_default` to `SETTINGS`. Find the repository (§ 2.1 step 1) and choose each file's source (step 2), with the cache (step 8). Merge ordinary values, then overrides (steps 3 and 4). Add `DESTINATIONS`, `NotAllowed`, and the check in `Config.setting` (step 5). Record each value's source and override flag. Reserve `override`. Update the module docstring, which describes the layers. |
 | `src/projector/cli.py` | Add `project config allow <key> <value>`, terminal only, with `--list` and `--remove <key> <value>`. Add `--override` to `config set` and `unset`, the "takes effect once this change merges" note, and the sources and ignored-copy notes in `config list` and `config get`. |
 | `src/projector/core.py` | Refuse a `projects.dir` that resolves outside the working tree (step 6). |
@@ -266,7 +271,7 @@ temporary home.
 | Set `projects.dir = "../elsewhere"`, then `/tmp/x`, in the repository, and `ios.output = "/tmp/out"` in the repository and then in `~/.projector.toml`. | The `projects.dir` values are refused, the repository's `ios.output` is refused, and the user's is accepted. Catches writes outside the repository. |
 | Run `config set review.gate x` on the repository's tracked file. | It writes the working tree and prints that the change takes effect once it merges to `origin/main`. Catches a write that silently does nothing. |
 | Load configuration 100 times with a warm cache, with a fake `git` on `PATH` that records each run. | No load starts a process. Advancing `origin/HEAD` or touching the index makes the next load read Git once. Catches a cache that never hits, or one that never notices a new commit. |
-| Merge a change to `.projector.toml` on `origin` without fetching, and run a full pass with a fake clock. Then fetch into `origin/main` yourself while the daemon's fetch runs, and force-push the default branch so the two refs diverge. Then set `watch.fetch_default = false`. | After the pass, the change applies, `refs/projector/default/origin/main` holds the merged commit, and `refs/remotes/origin/main` and `git status` are unchanged. Your own fetch succeeds. After the divergence, configuration reads your `origin/HEAD`. With the setting off, no fetch runs. Catches a fetch that disturbs your refs, a newer commit ignored, and an opt-out ignored. |
+| In a clone that keeps Git's default `remote.origin.fetch` of `+refs/heads/*:refs/remotes/origin/*`, merge a change to `.projector.toml` on `origin` without fetching, and run a full pass with a fake clock. Then fetch into `origin/main` yourself while the daemon's fetch runs, and force-push the default branch so the two refs diverge. Then set `watch.fetch_default = false`. | After the pass, the change applies, `refs/projector/default/origin/main` holds the merged commit, and `refs/remotes/origin/main` still names the commit it named before the pass, so `git status` reports no new `behind`. Your own fetch succeeds. After the divergence, configuration reads your `origin/HEAD`. With the setting off, no fetch runs. Catches a fetch without `--refmap=`, which Git's configured mapping turns into an update of your remote-tracking ref, as well as a newer commit ignored and an opt-out ignored. |
 | Run `config allow --list`, then `config allow --remove` on an approved value, and read the setting again. | The list names each approval and its file. After the removal, the read raises `NotAllowed` again. Catches an approval that cannot be seen or taken back. |
 | A repository with no `origin/HEAD`, and a start outside any repository. | Both read every file from disk, as today. Catches a load that fails where nothing can be trusted more than disk. |
 
