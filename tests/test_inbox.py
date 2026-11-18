@@ -1,6 +1,6 @@
 """The `project inbox` commands, against a temporary state directory.
 
-Each test points `XDG_STATE_HOME` at its own directory and runs the CLI from a temporary
+Each test points `XDG_STATE_HOME` and `HOME` at its own directories and runs the CLI from a temporary
 directory. A test that shows the checkout's repository does not shape a number runs the CLI from
 a temporary Git checkout instead.
 """
@@ -65,7 +65,10 @@ class InboxCase(unittest.TestCase):
         self.addCleanup(scratch.cleanup)
         self.scratch = Path(scratch.name)
         self.state = self.scratch / "state"
-        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.state)})
+        # A home of its own, so no test reads the `~/.projector.toml`, and the `agent.key`, of whoever runs it.
+        self.home = self.scratch / "home"
+        self.home.mkdir()
+        environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.state), "HOME": str(self.home)})
         environ.start()
         self.addCleanup(environ.stop)
         os.environ.pop("PROJECTOR_SESSION", None)
@@ -1575,7 +1578,8 @@ class MessageTests(InboxCase):
 class ChangedChoiceTests(unittest.TestCase):
     def test_a_choice_made_from_text_the_agent_has_since_revised_records_nothing(self) -> None:
         # Catches `answer` or `done` recording a letter or outcome against options the person never read.
-        with tempfile.TemporaryDirectory() as scratch, mock.patch.dict(os.environ, {"XDG_STATE_HOME": scratch}):
+        with tempfile.TemporaryDirectory() as scratch, \
+                mock.patch.dict(os.environ, {"XDG_STATE_HOME": scratch, "HOME": scratch}):
             question = inbox.ask("s1", "Build it?", "Build locally", ["Wait"])
             request = inbox.request("s1", "Check the build", options=["Built locally"])
             inbox.revise("s1", question["ref"], recommend="Deploy production")
