@@ -45,7 +45,10 @@ these:
 When such a decision blocks only part of the work, choose the answer you
 would recommend where it is safe to build on and easy to change later,
 build on it, and post the decision for review. When no answer is safe to
-build on, post it and build everything else first.
+build on, post it and build everything else first. When that question is
+all that is left, stop with a request to answer it, as
+[Keep going until the work is done](#keep-going-until-the-work-is-done)
+describes, never with the question alone.
 
 ## Post what the user must see
 
@@ -137,8 +140,9 @@ declining it is their decision.
 
 ## Keep going until the work is done
 
-Do not end a turn with a question or a plan for the user to approve. When
-one piece is blocked, go on with the next.
+Don't get blocked. Keep going. When one piece is blocked, go on with the
+next, and never end a turn with a question or a plan for the user to
+approve.
 
 A piece that depends on a pull request nobody has merged yet is not
 blocked, and neither is one whose merge the user keeps for themselves.
@@ -154,11 +158,13 @@ going, as [Decide what you can](#decide-what-you-can) describes. In the
 best case a session leaves a few such questions behind and still reaches
 the end.
 
-Stop only when every piece of the work is done or waits on something only
-the user can give, such as an answer, a test, or a sign-in. Never stop
-without posting to the inbox, because a user who is away sees only what is
-above their prompt. Post the item that says why you stopped, as
-[Post what the user must see](#post-what-the-user-must-see) describes:
+Only two things end the work: reaching its end, or something only the user
+can do, such as signing in, testing on their device, or answering a
+question that nothing left can be built past. A question alone never ends
+it. Never stop without posting to the inbox, because a user who is away
+sees only what is above their prompt. Post the item that says why you
+stopped, as [Post what the user must see](#post-what-the-user-must-see)
+describes:
 
 - **You reached the end of the work.** Post a notice with `tell` that says
   so, naming in its detail each pull request that is ready for the user to
