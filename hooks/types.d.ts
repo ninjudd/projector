@@ -1,13 +1,3 @@
-/**
- * What an earlier watcher did with the pull requests its tracked file lists:
- * `watch-threads.sh` watches, `watch-prs.sh` reviews. A session that started
- * one before the daemon keeps it until the session ends.
- */
-export type LoopKind = 'watching' | 'reviewing'
-
-/** A tracked file this session started an earlier watcher on. */
-export type SeenLoop = { kind: LoopKind; tracked: string }
-
 /** What the session does with a pull request, as its drawer names it. */
 export type Role = 'fixing' | 'reviewing'
 
@@ -69,10 +59,10 @@ export type Row = { pr: PullRequest; roles: Role[] }
 
 export type Snapshot = {
   rows: Row[]
-  /** The operator's login, from the daemon or else from GitHub; null until one says. */
+  /** The operator's login, as the daemon's `daemon.json` names it; null until it does. */
   viewer: string | null
+  /** When the panel last read the daemon's files; null until it has. */
   fetchedAt: number | null
-  error: string | null
 }
 
 /** A dismissal, `withdrawn` when the agent that posted the item took it back. */
@@ -214,7 +204,6 @@ export type Sending = {
 declare module 'claude-code' {
   interface PluginState {
     projector: {
-      seenLoops: SeenLoop[]
       /** The pull requests the session subscribed to when the panel last looked, by `keyOf`, so a new one shows the panel. */
       panelSubscribed: string[]
       panelSnapshot: Snapshot

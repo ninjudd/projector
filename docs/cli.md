@@ -220,7 +220,7 @@ what it did to each:
 
   ```text
   prefix_rule(
-      pattern = ["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary", "version", "watch", "worktree"]],
+      pattern = ["project", ["check", "done", "help", "list", "owner", "priority", "search", "show", "status", "summary", "version", "watch", "worktree"]],
       decision = "allow",
   )
   prefix_rule(
@@ -3029,10 +3029,8 @@ its conversation.
 
 Dismissing a pull request appends the `!` lines `project watch drop` appends,
 for each role the viewed session holds on it, so another session that watches
-the same pull request keeps it. The console lists only the pull requests a
-session subscribes to. Projector's panel also lists those that an older
-`watch-prs.sh` or `watch-threads.sh` watcher tracks, which the console cannot
-see.
+the same pull request keeps it. The console lists the pull requests a
+session subscribes to, as Projector's panel does.
 
 The console reads the inbox store each second, and reloads a session's items
 only when its directory changed. It reads the pull request rows from the
@@ -3928,62 +3926,6 @@ repository's relay`. A reviewer on another machine takes no role here and
 changes no other event. A presence from an earlier version of Projector has
 no `reviews`, and reviews nothing.
 
-## Change a loop's tracked file
-
-A watch or review loop reads its tracked file, one `owner/repo#number` a
-line, and acts only on the pull requests the file lists. A line
-`!owner/repo#number` keeps that pull request out of the loop wherever it sits
-in the file, and both watchers and Projector's panel match it without regard
-to case. Change the file with `project loop`, whose four commands each
-change one kind of line:
-
-| Command | What it changes | When to run it |
-| --- | --- | --- |
-| `add` | Appends an `owner/repo#number` line, and creates the file. | To bring a pull request into the loop. |
-| `remove` | Removes the lines that list the pull request, and leaves its `!` lines. | To forget a pull request that merged or closed. |
-| `drop` | Appends a `!owner/repo#number` line. | To keep an open pull request out of the loop. |
-| `restore` | Removes the pull request's `!` lines. | To let a dropped pull request back in. |
-
-```console
-$ project loop add acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
-added acme/app#337 to /home/ada/.local/state/projector/projector-review-loop.tracked
-$ project loop drop acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
-dropped acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
-$ project loop restore acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
-restored acme/app#337 to /home/ada/.local/state/projector/projector-review-loop.tracked
-$ project loop remove acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
-removed acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
-```
-
-Each command matches the reference without regard to case.
-
-`add` and `drop` append their line rather than rewriting the file, because a
-watcher may be appending a pull request it adopted at the same moment. `add`
-creates the tracked file and any missing directory above it, so a loop
-builds its set from nothing by adding each pull request. It changes nothing
-when the file already lists the pull request. It refuses, with exit code 65,
-a pull request the file drops, because the `!` line would keep that pull
-request out all the same; run `project loop restore` first to let it back
-in. `drop` changes nothing when the file already holds an exclusion for the
-pull request.
-
-`restore` removes every `!` line for the pull request, and only those, by
-writing the file anew and renaming it into place. It leaves a plain
-`owner/repo#number` line alone, so the pull request returns to the loop when
-the file lists it.
-
-`remove` removes every plain line for the pull request by the same rewrite,
-and changes nothing when the file does not list it. A loop runs it when a
-pull request merges or closes. It leaves the pull request's `!` lines alone,
-so a pull request you dropped stays out even if it reopens and a review loop
-would otherwise adopt it again.
-
-Each command refuses, with exit code 65, a reference that is not
-`owner/repo#number`. `drop`, `restore`, and `remove` refuse, with exit code
-66, a tracked file that does not exist. With `--json`, each prints its
-`action`, which is `added`, `dropped`, `restored`, `removed`, or
-`unchanged`, with the `pr` and the `tracked` file.
-
 ## Put an iOS app on a device
 
 `project ios` builds a branch or a pull request of the repository's iOS app
@@ -4161,8 +4103,8 @@ Projector uses these exit codes:
 | `0` | The command completed successfully. |
 | `2` | Command syntax or an argument is invalid. |
 | `3` | `project site status` found no Projector site for the repository. |
-| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, a `loop add`, `loop drop`, `loop restore`, or `loop remove` reference is not `owner/repo#number`, or `loop add` names a pull request the tracked file drops, `watch add` names a pull request the session drops from the role, or `watch drop` names a pull request the session does not review. |
-| `66` | The requested project, the projects directory, the inbox item, or the tracked file of a `loop drop`, `loop restore`, or `loop remove` command does not exist. |
+| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, `watch add` names a pull request the session drops from the role, or `watch drop` names a pull request the session does not review. |
+| `66` | The requested project, the projects directory, or the inbox item does not exist. |
 | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
 | `69` | Git, the interactive editor, or the installer is unavailable. |
 | `75` | Another command held an inbox or watch session's lock for five seconds; run the command again. |

@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -878,6 +878,19 @@ So a change of owner needs the hand-over in § 2.5, not only `--replace`.
 `tests/test_watchers.py` holds the watchers' tests, through a fake `gh` that
 refuses any argument it does not know, `-i` and `-H` among them.
 
+The user ran the probe that rollout step 1 (§ 6) describes, on a scratch
+pull request, but its results were not kept. Neither the pull requests that
+built the daemon nor an issue records them. So each `Inferred` mark in
+§ 2.6 stands, both the reviews request and the base request stay, and
+`watch.full_every` stays at 600 seconds. Two later observations bear on
+§ 2.6 without settling an inference in it:
+
+- **Quiet passes.** In a live run of the daemon, the passes after the first
+  got `304` for the pull request, its reviews page, and its base, and ran no
+  GraphQL query.
+- **Labels.** Adding or removing a label moves the pull request's `ETag`,
+  so a label change is queried on the next pass (§ 9.4).
+
 ## 9. What implementation settled
 
 Building the daemon settled these choices, which the design above left open.
@@ -1071,3 +1084,51 @@ Building the daemon settled these choices, which the design above left open.
   panel reads nothing, as on its 5-second ticks. The daemon writes its
   cache before its events, so an open drawer shows what the events report
   without waiting for the next 30-second poll.
+
+## 10. Outcome
+
+Shipped. The daemon, `project watch`, the lock touch and fence in
+`project review`, the skills, the panel, and the mod's delivery merged as
+[#386](https://github.com/ninjudd/projector/pull/386),
+[#387](https://github.com/ninjudd/projector/pull/387), and
+[#388](https://github.com/ninjudd/projector/pull/388), and were released in
+0.8.7. [#395](https://github.com/ninjudd/projector/pull/395),
+[#415](https://github.com/ninjudd/projector/pull/415),
+[#425](https://github.com/ninjudd/projector/pull/425),
+[#426](https://github.com/ninjudd/projector/pull/426), and
+[#442](https://github.com/ninjudd/projector/pull/442) refined what the
+daemon announces, as § 9 records. Delivery to Codex shipped as the nested
+project `watch-daemon/codex-delivery`, which is completed and records its
+own outcome.
+
+The tests that § 4 names pin its criteria: `tests/test_watch.py` for the
+daemon's start, replacement, lapse, passes, owners, hand-over, adoption,
+events, and commands; `tests/test_review.py` for the lock touch, the fence,
+and the record's lock; and `hooks/panel.test.tsx` for the panel's rows from
+the cache, the mod's delivery, and `--from-output`. Three items closed
+otherwise:
+
+- **Rollout step 1, the probe.** Done, but its results were not kept, as
+  § 8 records. The design holds whichever way each inference comes out, and
+  the full pass every `watch.full_every` seconds bounds the delay of any
+  that proves wrong.
+- **The hour on a live repository**, the last criterion in § 4. Dropped.
+  The user has run the daemon every day for weeks since its release and has
+  never reached GitHub's rate limit, so the measurement would change no
+  decision. The measurement taken is the query's cost of 2 points, in § 8.
+- **Removing `project loop`.** § 2.9 kept `project loop` for one release
+  after the daemon, so a session that started a watcher before the upgrade
+  could still change its tracked file. That release passed long ago. This
+  change removes `project loop`, `src/projector/loop.py`,
+  `tests/test_loop.py`, and the `loop` word in Codex's allow rule. It also
+  removes the panel's support for an earlier watcher, which § 9.3 kept for
+  the same release: reading a watcher's `--tracked` file from the command
+  that started it, the panel's own 30-second GraphQL query for those pull
+  requests with the line that showed that query's error, and dismissing one
+  with `project loop drop`. The panel now lists only the session's
+  subscriptions, from the daemon's files. The 30-second poll still reads an
+  open drawer's threads and `panel.background`.
+
+The open questions in § 7 stay deferred as written. For Codex,
+`watch-daemon/codex-delivery` registers the parent session through Codex's
+hooks, so only another host still passes `--session`.
