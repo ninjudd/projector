@@ -638,9 +638,14 @@ def standing_suggestions(reviews: list[dict], head: str, operator: str, visibili
     return {found["id"]: review.listed_suggestions(found) for found in chosen}
 
 
-def open_pull(found: dict) -> dict:
+def open_pull(found: dict, repo: str) -> dict:
+    """What a pass keeps of an open pull request from the repository's list: who wrote it, whose review it
+    requests, and its branches. A head branch in a fork is kept as None, since no layer here builds on it."""
+    head = found.get("head") or {}
+    own = ((head.get("repo") or {}).get("full_name") or "").lower() == repo.lower()
     return {"number": found.get("number"), "author": (found.get("user") or {}).get("login"),
-            "requested": [(person or {}).get("login") for person in found.get("requested_reviewers") or []]}
+            "requested": [(person or {}).get("login") for person in found.get("requested_reviewers") or []],
+            "base": (found.get("base") or {}).get("ref"), "head": head.get("ref") if own else None}
 
 
 def nodes(value: Optional[dict], key: str) -> list[dict]:
@@ -883,6 +888,8 @@ class Daemon:
         self.fetching: dict[str, tuple[Path, Future]] = {}
         self.fetched: dict[str, dict] = {}
         self.last_fetch: Optional[float] = None
+        # By pull request, when GitHub's stacks were last asked about it, and the bottom layer of its stack.
+        self.stacks: dict[tuple[str, int], tuple[float, Optional[int]]] = {}
 
     def log(self, message: str) -> None:
         print(f"{stamp(self.wall())} {message}", flush=True)
@@ -1140,6 +1147,22 @@ class Daemon:
         contexts["nodes"] = read
         contexts["pageInfo"] = page
 
+    def stack(self, repo: str, number: int, now: float) -> Optional[int]:
+        """The bottom layer of the open GitHub stack of two or more that holds the pull request, or None, recorded
+        for each of the stack's layers. A stack lists a merged layer still, so its bottom stays the bottom."""
+        result = self.gh(["api", f"repos/{repo}/stacks?pull_request={number}"])
+        try:
+            found = json.loads(result.stdout) if result.returncode == 0 else None
+        except ValueError:
+            found = None
+        stack = found[0] if isinstance(found, list) and found and isinstance(found[0], dict) else {}
+        layers = [layer["number"] for layer in stack.get("pull_requests") or []
+                  if isinstance(layer, dict) and isinstance(layer.get("number"), int)]
+        bottom = layers[0] if stack.get("open", True) and len(layers) > 1 and number in layers else None
+        for layer in layers if bottom is not None else [number]:
+            self.stacks[repo.lower(), layer] = (now, bottom)
+        return bottom
+
     def read_reviews(self, repo: str, number: int) -> Optional[list[dict]]:
         result = self.gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews?per_page={PAGE}"])
         found = decode_pages(result.stdout) if result.returncode == 0 else None
@@ -1203,6 +1226,9 @@ class Pass:
         # By repository, what `adopt` found, and the review targets of the operator's sessions on other machines.
         self.covering: dict[str, Optional[set[int]]] = {}
         self.remote: dict[str, Optional[list[list[dict]]]] = {}
+        # By repository, its open pull requests, and by pull request, the subagent that fixes it.
+        self.listings: dict[str, object] = {}
+        self.fixers: dict[tuple[str, int], str] = {}
 
     def tell(self, session: str, *lines: str) -> None:
         self.outbox.setdefault(session, []).extend(lines)
@@ -1229,7 +1255,8 @@ class Pass:
             else:
                 results[pull] = result
         roles = {role: claims for role, claims in roles.items() if role[0] in results}
-        owners = self.choose(roles, spellings)
+        self.daemon.stacks = {pull: found for pull, found in self.daemon.stacks.items() if pull in results}
+        owners = self.choose(roles, spellings, results)
         closing = self.route(roles, owners, results, spellings)
         for pull in closing:
             self.close(pull, roles, owners, results[pull], spellings[pull], adopted)
@@ -1282,35 +1309,53 @@ class Pass:
         operator = (self.daemon.operator or "").lower()
         if not operator:
             return adopted
-        found: set[int] = set()
-        page = 1
-        while True:
-            path = folder / "open" / f"{page}.json"
-            cached = read_json(path) or {}
-            response = self.daemon.conditional(f"repos/{repo}/pulls?state=open&per_page={PAGE}&page={page}",
-                                               cached.get("etag"))
-            body = response.json()
-            if response.status == 200 and isinstance(body, list):
-                pulls = [open_pull(item) for item in body if isinstance(item, dict)]
-                path.parent.mkdir(parents=True, exist_ok=True)
-                write_json(path, {"etag": response.etag, "pulls": pulls})
-            elif response.status == 304 and isinstance(cached.get("pulls"), list):
-                pulls = cached["pulls"]
-            elif response.status == 404 and page == 1:
-                return None
-            else:
-                return adopted
-            found |= {pull["number"] for pull in pulls if isinstance(pull.get("number"), int)
-                      and ((pull.get("author") or "").lower() == operator
-                           or operator in [(person or "").lower() for person in pull.get("requested") or []])}
-            if len(pulls) < PAGE:
-                break
-            page += 1
+        pulls = self.open_pulls(repo)
+        if pulls is GONE:
+            return None
+        if not isinstance(pulls, list):
+            return adopted
+        found = {pull["number"] for pull in pulls if isinstance(pull.get("number"), int)
+                 and ((pull.get("author") or "").lower() == operator
+                      or operator in [(person or "").lower() for person in pull.get("requested") or []])}
         if found - closed - adopted:
             adopted |= found - closed
             folder.mkdir(parents=True, exist_ok=True)
             write_json(folder / "adopted.json", {"numbers": sorted(adopted), "closed": sorted(closed)})
         return adopted
+
+    def open_pulls(self, repo: str) -> object:
+        """The repository's open pull requests as `open_pull` keeps them, read once a pass by conditional
+        requests for its cached pages, None when a request failed, or GONE when the repository does not exist."""
+        name = repo.lower()
+        if name in self.listings:
+            return self.listings[name]
+        folder = cache_dir(self.root, repo)
+        found: list[dict] = []
+        page = 1
+        while True:
+            path = folder / "open" / f"{page}.json"
+            cached = read_json(path) or {}
+            kept = cached.get("pulls")
+            # A page cached before the list kept each pull request's branches is read again whole.
+            current = isinstance(kept, list) and all(isinstance(pull, dict) and "base" in pull for pull in kept)
+            response = self.daemon.conditional(f"repos/{repo}/pulls?state=open&per_page={PAGE}&page={page}",
+                                               cached.get("etag") if current else None)
+            body = response.json()
+            if response.status == 200 and isinstance(body, list):
+                pulls = [open_pull(item, repo) for item in body if isinstance(item, dict)]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                write_json(path, {"etag": response.etag, "pulls": pulls})
+            elif response.status == 304 and current:
+                pulls = kept
+            else:
+                self.listings[name] = GONE if response.status == 404 and page == 1 else None
+                return self.listings[name]
+            found += pulls
+            if len(pulls) < PAGE:
+                break
+            page += 1
+        self.listings[name] = found
+        return found
 
     def claims(self, lines: dict[str, list[Subscription]], adopted: dict[str, set[int]]
                ) -> tuple[dict[tuple[tuple[str, int], str], dict[str, Claim]], dict[tuple[str, int], str]]:
@@ -1470,7 +1515,8 @@ class Pass:
             closed = self.states[session].data["closed"]
             if pull_label(pull) not in closed:
                 closed[pull_label(pull)] = self.now
-                self.tell(session, f"{detail} — {closing_actions(repo, number, names)}")
+                fixer = self.fixer(pull, repo, pr) if "fix" in names else ""
+                self.tell(session, f"{detail} — {closing_actions(repo, number, names, fixer)}")
         for name in session_names(self.root):
             remove(self.root, name, repo, number, None)
         for state in self.states.values():
@@ -1483,7 +1529,7 @@ class Pass:
 
     # Owners
 
-    def choose(self, roles: dict, spellings: dict[tuple[str, int], str]) -> dict[str, str]:
+    def choose(self, roles: dict, spellings: dict[tuple[str, int], str], results: dict) -> dict[str, str]:
         previous = {label: owner for label, owner in (read_json(self.root / "owners.json") or {}).items()
                     if isinstance(owner, str)}
         self.release_lapsed(previous, spellings)
@@ -1494,7 +1540,7 @@ class Pass:
             desired = max(bucket.values(), key=lambda claim: (claim.rank, claim.session)).session
             repo = spellings[pull]
             if name == "fix":
-                owner = self.move_fix(pull, repo, current, desired)
+                owner = self.move_fix(pull, repo, pull_request(results.get(pull)), current, desired)
             else:
                 owner = self.move_review(pull, name, repo, current, desired)
             owners[label] = owner
@@ -1509,11 +1555,12 @@ class Pass:
                     if lock.loop == owner:
                         self.clear(pull, lock)
 
-    def move_fix(self, pull: tuple[str, int], repo: str, current: Optional[str], desired: str) -> str:
+    def move_fix(self, pull: tuple[str, int], repo: str, pr: dict, current: Optional[str], desired: str) -> str:
         if current == desired:
             return current
         if current in self.daemon.live:
-            self.tell(current, f"MOVED {repo}#{pull[1]} fix to another session — stop subagent fix-{pull[1]}")
+            self.tell(current, f"MOVED {repo}#{pull[1]} fix to another session — stop subagent "
+                               f"{self.fixer(pull, repo, pr)}")
         self.gain(desired, pull, "fix")
         return desired
 
@@ -1613,7 +1660,7 @@ class Pass:
         announced = self.states[session].data["fix"].get(label) or {}
         kept: dict[str, float] = {}
         lines: list[str] = []
-        action = f"run fix-pr on {ref} in subagent fix-{number}"
+        action = f"run fix-pr on {ref} in subagent {self.fixer(pull, repo, pr)}"
 
         def standing(key: str, first: str, again: Optional[str], revision: object = None) -> None:
             last = announced.get(key)
@@ -1708,6 +1755,45 @@ class Pass:
                 kept.setdefault(key, last)
         self.states[session].data["fix"][label] = kept
         return lines + self.route_labels(session, label, ref, pr, head)
+
+    def fixer(self, pull: tuple[str, int], repo: str, pr: dict) -> str:
+        """The subagent that fixes the pull request: `fix-stack-<number>`, named for the bottom layer, for a
+        layer of a stack, or else `fix-<number>`. A fix to a layer is carried up into each layer above it, so
+        two subagents on one stack would push the same branches."""
+        if pull not in self.fixers:
+            bottom = self.bottom(pull, repo, pr)
+            self.fixers[pull] = f"fix-stack-{bottom}" if bottom is not None else f"fix-{pull[1]}"
+        return self.fixers[pull]
+
+    def bottom(self, pull: tuple[str, int], repo: str, pr: dict) -> Optional[int]:
+        """The bottom layer of the stack that holds the pull request, or None when it is in none. GitHub's
+        stack answers, asked once each full pass for all its layers, and a chain of base branches answers where
+        GitHub records none. A pull request the open ones show in no chain costs no request, unless GitHub put
+        it in a stack before, which keeps its bottom while the layers below it merge."""
+        number = pull[1]
+        pulls = self.open_pulls(repo)
+        listed = [found for found in pulls if isinstance(found.get("number"), int)] if isinstance(pulls, list) else []
+        bases = {found["number"]: found.get("base") for found in listed}
+        heads = {found["head"]: found["number"] for found in listed if found.get("head")}
+        own = next((found for found in listed if found["number"] == number), None)
+        base = own.get("base") if own else pr.get("baseRefName")
+        head = own.get("head") if own else pr.get("headRefName")
+        chained = base in heads or head is not None and head in bases.values()
+        cached = self.daemon.stacks.get(pull)
+        if cached is not None and self.now - cached[0] < self.settings.full_every:
+            bottom = cached[1]
+        elif chained or not isinstance(pulls, list) or cached is not None and cached[1] is not None:
+            bottom = self.daemon.stack(repo, number, self.now)
+        else:
+            bottom = None
+        if bottom is not None or not chained:
+            return bottom
+        bottom, seen = number, {number}
+        while base in heads and heads[base] not in seen:
+            bottom = heads[base]
+            seen.add(bottom)
+            base = bases[bottom]
+        return bottom
 
     def remote_reviews(self, repo: str) -> Optional[list[list[dict]]]:
         """The review targets of the operator's live sessions on other machines that share the repository's relay,
@@ -1915,10 +2001,15 @@ def newest_answer(unresolved: list[dict]) -> Optional[int]:
     return max(answers) if answers else None
 
 
-def closing_actions(repo: str, number: int, names: list[str]) -> str:
+def closing_actions(repo: str, number: int, names: list[str], fixer: str) -> str:
+    """What each role's owner does once the pull request merges or closes. A stack's fixer goes on fixing the
+    layers still open, because the user can merge a stack's lower layers first."""
     actions = []
-    if "fix" in names:
-        actions.append(f"finish subagent fix-{number}")
+    if "fix" in names and fixer.startswith("fix-stack-"):
+        actions.append(f"send subagent {fixer} no more work for {repo}#{number}, and finish it once no layer of "
+                       "its stack is open")
+    elif "fix" in names:
+        actions.append(f"finish subagent {fixer}")
     for name in names:
         if name != "fix":
             model = name.split(" ", 1)[1]

@@ -3531,6 +3531,30 @@ NEW HEAD acme/app#14 (feature): 4f2a9c1 -> 9f3c2a1, needs an exact-head review �
 MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagent review-14 and run no project review finish
 ```
 
+A `fix` line names the subagent that fixes the pull request: `fix-<number>`
+for a pull request alone, and `fix-stack-<number>` for a layer of a stack,
+named for the stack's bottom layer. One subagent fixes every layer of a
+stack, because a fix to a layer is carried up into each layer above it, so
+two subagents would push the same branches. A finding on layer 13 of a stack
+whose bottom layer is 12 reads:
+
+```text
+FINDING acme/app#13 src/x.py:7 [bugbot]: P1 nil deref — run fix-pr on acme/app#13 in subagent fix-stack-12
+```
+
+The daemon finds the stack from the repository's open pull requests, which it
+lists once a pass. A pull request whose base branch is no other open pull
+request's head, and whose head no open pull request is based on, is alone,
+and costs no further request. For any other, the daemon asks GitHub which
+stack holds it, with `gh api "repos/<owner>/<repo>/stacks?pull_request=<number>"`,
+once each full pass, and one answer covers every layer of the stack. GitHub
+still lists a layer that merged, so the name holds while the user merges a
+stack's lower layers first. Where GitHub records no stack, or cannot answer,
+the daemon follows base branches down to the bottom layer. `MOVED`,
+`MERGED`, and `CLOSED` use the same name. For a layer of a stack, `MERGED`
+and `CLOSED` tell the session to send the subagent no more work for that
+layer and to finish it once no layer of its stack is open.
+
 | Kind | Role | Reports |
 | --- | --- | --- |
 | `FINDING` | `fix` | An unresolved review thread |
