@@ -253,6 +253,10 @@ observed delivery time in this plan.
   a paid service, with credentials scoped to each key's prefix and
   `agent.s3_endpoint` pointing at it. Nothing in this plan stands in its way.
   A hosted relay could also push notifications, which § 3 leaves for later.
-- **Instance and container credentials.** Deferred. The client reads no
-  EC2 instance metadata or container credentials, because the relay runs on
-  people's own machines.
+- **Instance and container credentials.** Deferred. The S3 client is part of
+  the watch daemon, the one process that makes S3 requests, and the daemon
+  runs on people's own computers. Those have no EC2 instance metadata
+  endpoint and no ECS or EKS container credentials, so the client reads
+  neither. Both could follow if people run the daemon on AWS, such as agents
+  in cloud workspaces on EC2, where the machine's own role could reach the
+  bucket with no keys to set up.
