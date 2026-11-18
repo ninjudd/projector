@@ -21,7 +21,7 @@ from typing import Iterator, Optional
 from urllib.parse import quote
 
 from . import review
-from .core import EnvironmentError, ProjectorError, UsageError, visible_files
+from .core import EnvironmentError, ProjectorError, UsageError, state_home, visible_files
 
 TOOLS_MESSAGE = "project ios needs Xcode's command-line tools on macOS"
 DEVICE_DESTINATION = "generic/platform=iOS"
@@ -118,7 +118,7 @@ class State:
 
 
 def state_for(repo: str) -> State:
-    return State(review.state_home() / "ios" / repo)
+    return State(state_home() / "ios" / repo)
 
 
 @contextmanager

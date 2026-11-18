@@ -54,7 +54,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import quote
 
-from .core import ProjectorError, distribution_version
+from .core import ProjectorError, distribution_version, state_home
 from .inbox import SESSION, locked, write_json
 from .summary import repo_slug
 
@@ -216,13 +216,6 @@ def trusted_head(repo: str, pr: dict, operator: str) -> tuple[bool, str]:
 
 
 # State
-
-def state_home(environ: Optional[dict] = None) -> Path:
-    """Projector's own folder under `$XDG_STATE_HOME`, or under `~/.local/state` without it."""
-    environ = os.environ if environ is None else environ
-    base = environ.get("XDG_STATE_HOME")
-    return (Path(base) if base else Path.home() / ".local" / "state") / "projector"
-
 
 def state_dir(explicit: Optional[Path] = None, environ: Optional[dict] = None) -> Path:
     if explicit is not None:

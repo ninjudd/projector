@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -331,3 +331,57 @@ full pass, which transfers only commits this clone lacks.
   with a running daemon within about 10 minutes, without disturbing your
   remote-tracking refs. `project config allow` can list and revoke approvals
   (§ 2.1 step 5).
+
+## 8. Settled while building
+
+### 8.1 Reading tracked files from the default branch
+
+- **A file the branch deletes still applies.** Projector looks up the default
+  branch's blob for every walked directory inside the repository, not only
+  for files on disk, so deleting `.projector.toml` on a branch drops no
+  policy. Step 2's first case covers a missing working copy too.
+- **One blob, read once.** A worktree under `.claude/worktrees/` and its main
+  checkout both walk `.projector.toml` at the top of a working tree, which is
+  one path on the default branch. Projector reads it once, at the nearer
+  position, which gives the same values as reading it twice.
+- **Each working tree's own index.** Tracked-ness comes from the index of the
+  working tree that holds the file, so `tracked.json` keys each entry by that
+  index file's path and its size, modification time, and inode, rather than
+  by the common directory.
+- **No symbolic `origin/HEAD`, no default branch.** An `origin/HEAD` that is
+  not a symbolic ref, or that names a ref the clone lacks, counts as none, and
+  every file is read from disk, as step 1 says for a missing `origin/HEAD`.
+- **A Git failure is an error, not a fallback.** When `git cat-file` or
+  `git ls-files` fails, as for a repository Git refuses as unsafe, loading
+  configuration fails with a configuration error naming Git's message. Reading
+  the working copy instead would reopen the route this project closes.
+- **Any path reads back exactly.** `git cat-file --batch` reads one name a
+  line, so a walked path with a newline in a directory name is looked up by
+  one `git ls-tree -z`, which takes the paths as arguments, and its object is
+  read in the same batch. `git rev-parse`, used for an unrecognized layout,
+  runs once for each path it reports, because it ends each with a newline.
+- **A committed symbolic link resolves on the default branch.** A tracked
+  `.projector.toml` that is a symbolic link is followed within the default
+  branch's tree, through `git cat-file --batch --follow-symlinks`, and its
+  target's blob there applies. It is never followed on disk, so neither the
+  working copy of its target nor a file outside the repository can supply
+  policy. A link that leads outside the repository, to no file, or into a loop
+  is a configuration error naming `origin/main:<path>`, and so is a link at a
+  path with a newline, which the batch cannot name.
+- **The cache's shape.** A blob is `<commit>-<digest>.toml`, and a path the
+  commit lacks is an empty `<commit>-<digest>.absent`. Each cache miss removes
+  blobs not written for 30 days, which are mostly those of commits the default
+  branch has moved past. `state_home` moved to `core.py` and now honors the
+  `HOME` of the environment it is given, so a load given a test's environment
+  never writes to the real state directory.
+- **What the commands print.** `config list` prints `key = value  # source`
+  and writes each note to stderr as `project: <path>: <note>`, and
+  `config list --json` adds `notes`. `config paths` prints a default-branch
+  source as `origin/main:<path>`. `config set` and `unset` append
+  `; takes effect once this change merges to origin/main` to their result
+  line, and `--json` adds `takes_effect_on_merge_to`. A file in the
+  repository that Git does not track applies at once, so `set` adds no note
+  for it.
+- **Measured cost.** On this repository a warm load takes about 1.1 ms,
+  against 0.4 ms before, almost all of it `pathlib`, and `project list --json`
+  shows no difference beyond run-to-run noise of about 0.4 s either way.

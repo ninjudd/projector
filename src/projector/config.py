@@ -25,6 +25,21 @@ A worktree under the repository, as `.claude/worktrees/<name>` is, keeps the
 repository and its parents on the walk. A worktree created outside the
 repository does not, and sees only its own file and the user layer.
 
+A walked file that the repository you work in tracks is policy, reviewed where
+the repository merges its changes, so its values come from the default branch,
+the commit `refs/remotes/origin/HEAD` names, and never from the working copy
+of whatever branch is checked out. The repository is the one whose working
+tree holds the starting directory, and every worktree of it shares its common
+Git directory. For each walked directory in one of its working trees, the
+blob at that path on the default branch applies, even where the branch deleted
+the file. A file Git tracks on this branch only, which the branch added, is
+ignored until it merges. A file Git does not track is read from disk, as is
+every file outside the repository, the user layer, and every file when the
+repository has no `origin/HEAD`. Git's own files say where the repository and
+its refs are, and a cache under the state directory holds each blob by the
+commit and path, and whether each file is tracked by the index's signature,
+so a load that finds what it needs there starts no process.
+
 `project config set` and `unset` change one file, one line at a time, so the
 comments and layout a person wrote survive every change.
 """
@@ -33,17 +48,21 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re
 import stat
+import subprocess
+import tempfile
+import time
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 from . import crypto
-from .core import ProjectorError, UsageError, write_through
+from .core import ProjectorError, UsageError, run_bounded, state_home, write_through
 
 
 CONFIG_NAME = ".projector.toml"
@@ -206,58 +225,340 @@ def _within(directory: Path, ancestor: Path) -> bool:
     return directory == ancestor or ancestor in directory.parents
 
 
-def config_paths(start: Path, home: Path, environ: Optional[dict[str, str]] = None) -> list[Path]:
-    """Every configuration file that applies at `start`, lowest precedence first.
+def walked_directories(start: Path, home: Path) -> list[Path]:
+    """The directories whose `.projector.toml` the walk reads, nearest first.
 
-    Only paths that exist are returned, so the result doubles as the list of
-    files a value could have come from.
+    When the starting directory is outside the home directory, its ancestors
+    are outside the user's own space too, so the walk covers only the
+    starting directory itself.
     """
 
     start = start.resolve()
     home = home.resolve()
-    found: list[Path] = []
-
-    user = user_config_path(environ)
-    if user.is_file():
-        # Resolved like the walked paths, so every path this returns is
-        # comparable with every other one -- including for the deduplication
-        # below, which depends on the two spellings matching.
-        found.append(user.resolve())
-
-    # When the starting directory is outside the home directory, its ancestors
-    # are outside the user's own space too, so the walk covers only the
-    # starting directory itself. Checked once: it cannot change as we climb.
     climb = _within(start, home)
-
-    # Collect the walk from `start` upward, then reverse: the nearest file has
-    # the highest precedence and must be merged last.
-    walked: list[Path] = []
-    directory = start
-    while True:
-        candidate = directory / CONFIG_NAME
-        if candidate.is_file():
-            walked.append(candidate)
-        if not climb or directory == home or directory == directory.parent:
-            break
-        directory = directory.parent
-
-    # The home directory is both the user layer and the top of the walk, so a
-    # repository under it finds the same file twice. Reading it twice would be
-    # harmless for values but would misreport provenance and list the path
-    # twice, so keep the first occurrence, which already has the lowest
-    # precedence.
-    for path in reversed(walked):
-        if path not in found:
-            found.append(path)
-    return found
+    directories = [start]
+    while climb and directories[-1] != home and directories[-1] != directories[-1].parent:
+        directories.append(directories[-1].parent)
+    return directories
 
 
 def read_config_file(path: Path) -> dict[str, Any]:
+    return parse_config(path.read_bytes(), str(path))
+
+
+def parse_config(data: bytes, label: str) -> dict[str, Any]:
     try:
-        with path.open("rb") as handle:
-            return tomllib.load(handle)
+        return tomllib.loads(data.decode("utf-8"))
+    except UnicodeDecodeError as error:
+        raise ConfigError(f"{label}: invalid TOML: {error}") from error
     except tomllib.TOMLDecodeError as error:
-        raise ConfigError(f"{path}: invalid TOML: {error}") from error
+        raise ConfigError(f"{label}: invalid TOML: {error}") from error
+
+
+# Git
+
+ORIGIN_HEAD = "refs/remotes/origin/HEAD"
+OBJECT_ID = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+GIT_TIMEOUT = 30.0
+# The variables that point Git at another repository, index, or object store
+# than the one Projector names on the command line.
+GIT_LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX")
+
+
+@dataclass(frozen=True)
+class WorkingTree:
+    """One working tree of a repository: its top, its own Git directory, and the common directory every
+    worktree of the repository shares."""
+
+    top: Path
+    git_dir: Path
+    common: Path
+
+
+@dataclass(frozen=True)
+class DefaultBranch:
+    """The default branch as `refs/remotes/origin/HEAD` names it, such as `origin/main`, and its commit."""
+
+    name: str
+    commit: str
+
+
+def git_output(args: list[str], *, cwd: Optional[Path] = None, input: Optional[bytes] = None) -> bytes:
+    environment = {name: value for name, value in os.environ.items() if name not in GIT_LOCATION}
+    try:
+        done = run_bounded(["git", *args], cwd=cwd, input=input, env=environment, timeout=GIT_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ConfigError(f"cannot read the repository's configuration: git did not run: {error}") from None
+    if done.returncode:
+        problem = done.stderr.decode("utf-8", "replace").strip()
+        raise ConfigError(f"cannot read the repository's configuration: git {args[-1]} failed: {problem}")
+    return done.stdout
+
+
+def _text(path: Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _tree_at(top: Path) -> Optional[WorkingTree]:
+    """The working tree whose top is `top`, from its `.git` directory or `gitdir:` file, or from
+    `git rev-parse` when the layout is not one Git documents."""
+
+    dot_git = top / ".git"
+    if dot_git.is_dir():
+        git_dir = dot_git
+    elif dot_git.is_file():
+        pointer = _text(dot_git) or ""
+        git_dir = (top / pointer.removeprefix("gitdir:").strip()).resolve()
+        if not pointer.startswith("gitdir:") or not git_dir.is_dir():
+            return _rev_parse_tree(top)
+    else:
+        return None
+    common = _text(git_dir / "commondir")
+    return WorkingTree(top, git_dir, (git_dir / common.strip()).resolve() if common else git_dir)
+
+
+def _rev_parse_tree(top: Path) -> Optional[WorkingTree]:
+    # One path a run, because `git rev-parse` ends each path with a newline that a path can also hold.
+    found = []
+    for option in ("--show-toplevel", "--absolute-git-dir", "--git-common-dir"):
+        try:
+            output = git_output(["rev-parse", "--path-format=absolute", option], cwd=top)
+        except ConfigError:
+            return None
+        found.append(Path(os.fsdecode(output.removesuffix(b"\n"))).resolve())
+    return WorkingTree(*found)
+
+
+def working_tree(directory: Path) -> Optional[WorkingTree]:
+    """The working tree that holds `directory`, or None outside every repository."""
+
+    for top in (directory, *directory.parents):
+        if (top / ".git").exists():
+            return _tree_at(top)
+    return None
+
+
+def _packed_ref(common: Path, name: str) -> Optional[str]:
+    packed = _text(common / "packed-refs") or ""
+    at = packed.find(f" {name}\n")
+    if at < 0:
+        return None
+    return packed[packed.rfind("\n", 0, at) + 1:at]
+
+
+def resolve_ref(common: Path, name: str) -> Optional[str]:
+    """The object a ref names, from its loose file or `packed-refs`, or None when it has none."""
+
+    loose = _text(common / name)
+    found = loose.strip() if loose is not None else _packed_ref(common, name)
+    return found if found and OBJECT_ID.fullmatch(found) else None
+
+
+def default_branch(tree: WorkingTree) -> Optional[DefaultBranch]:
+    """The default branch of the repository `tree` belongs to, or None when it has no `origin/HEAD`."""
+
+    if (tree.common / "reftable").is_dir():
+        return _rev_parse_branch(tree)
+    head = _text(tree.common / ORIGIN_HEAD)
+    if head is None or not head.startswith("ref:"):
+        return None
+    target = head[len("ref:"):].strip()
+    commit = resolve_ref(tree.common, target)
+    return DefaultBranch(target.removeprefix("refs/remotes/"), commit) if commit else None
+
+
+def _rev_parse_branch(tree: WorkingTree) -> Optional[DefaultBranch]:
+    """The default branch read through Git, for a ref storage, such as reftable, that has no files to read."""
+
+    try:
+        target = os.fsdecode(git_output(["symbolic-ref", "-q", ORIGIN_HEAD], cwd=tree.top)).strip()
+        commit = os.fsdecode(git_output(["rev-parse", "-q", "--verify", f"{target}^{{commit}}"],
+                                        cwd=tree.top)).strip()
+    except ConfigError:
+        return None
+    return DefaultBranch(target.removeprefix("refs/remotes/"), commit) if OBJECT_ID.fullmatch(commit) else None
+
+
+def _trees(directories: list[Path]) -> list[Optional[WorkingTree]]:
+    """The working tree holding each of `directories`, an ancestor chain ordered nearest first."""
+
+    found: list[Optional[WorkingTree]] = []
+    current = working_tree(directories[-1])
+    for directory in reversed(directories):
+        if directory != directories[-1] and (directory / ".git").exists():
+            current = _tree_at(directory)
+        found.append(current)
+    return found[::-1]
+
+
+# The cache of what Git said, under the state directory
+
+CACHE_LIFETIME = 30 * 24 * 3600.0
+
+
+def cache_dir(environ: Optional[dict[str, str]] = None) -> Path:
+    return state_home(environ) / "config-cache"
+
+
+def _blob_name(commit: str, path: str) -> str:
+    return f"{commit}-{hashlib.sha256(path.encode('utf-8', 'surrogateescape')).hexdigest()[:16]}"
+
+
+def _store(path: Path, data: bytes) -> None:
+    """Write a cache file whole, or leave it out when the state directory cannot take it, since the cache only
+    saves a Git process."""
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+        os.replace(temporary, path)
+    except OSError:
+        pass
+
+
+def _prune(cache: Path) -> None:
+    """Remove the blobs no load has written for `CACHE_LIFETIME`, which are mostly those of commits the default
+    branch has moved past."""
+
+    cutoff = time.time() - CACHE_LIFETIME
+    try:
+        for path in cache.iterdir():
+            if path.suffix in (".toml", ".absent") and path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+SYMBOLIC_LINK = "120000"
+# What `git cat-file --batch --follow-symlinks` prints in place of an object, for a link it cannot follow to one.
+BROKEN_LINKS = {b"symlink": "leads outside the repository", b"dangling": "leads to no file",
+                b"loop": "leads into a loop of links", b"notdir": "leads through a file as though it were a folder"}
+
+
+def _listed_objects(common: Path, commit: str, paths: list[str], label: str) -> dict[str, str]:
+    """The object each of `paths` names on the commit `commit`, for the paths it holds as files, from one
+    `git ls-tree` that takes the paths as arguments and separates its entries with NUL, so any byte in a path
+    reads back exactly. A symbolic link among them is a configuration error, because only the batch, which
+    cannot name such a path, follows a link."""
+
+    listed = git_output(["--git-dir", str(common), "--literal-pathspecs", "ls-tree", "-z", "--full-tree", commit,
+                         "--", *paths])
+    found = {}
+    for entry in listed.split(b"\0"):
+        info, _, name = entry.partition(b"\t")
+        fields = info.decode("ascii", "replace").split(" ")
+        if len(fields) == 3 and fields[0] == SYMBOLIC_LINK:
+            raise ConfigError(f"{label}:{os.fsdecode(name)}: a symbolic link at a path with a newline cannot be "
+                              "followed; commit the file itself")
+        if len(fields) == 3 and fields[1] == "blob":
+            found[os.fsdecode(name)] = fields[2]
+    return found
+
+
+def default_blobs(common: Path, commit: str, paths: list[str], cache: Path, *, label: str
+                  ) -> dict[str, Optional[bytes]]:
+    """Each of `paths` as the commit `commit` holds it, or None where it holds no file, asking one
+    `git cat-file --batch` for the paths the cache lacks.
+
+    A symbolic link is followed within that commit's tree, never on disk, and one that leads to no file there
+    is a configuration error that names it as `<label>:<path>`."""
+
+    found: dict[str, Optional[bytes]] = {}
+    wanted = []
+    for path in paths:
+        name = _blob_name(commit, path)
+        try:
+            found[path] = (cache / f"{name}.toml").read_bytes()
+        except OSError:
+            if (cache / f"{name}.absent").exists():
+                found[path] = None
+            else:
+                wanted.append(path)
+    if not wanted:
+        return found
+    # Git's batch input is one name a line, so a path with a newline is asked for by the object `git ls-tree`
+    # finds at it, and one that names no file there is absent.
+    names = {path: f"{commit}:{path}" for path in wanted if "\n" not in path}
+    lined = [path for path in wanted if "\n" in path]
+    if lined:
+        names.update(_listed_objects(common, commit, lined, label))
+    asked = [path for path in wanted if path in names]
+    output = git_output(["--git-dir", str(common), "cat-file", "--batch", "--follow-symlinks"],
+                        input="".join(f"{names[path]}\n" for path in asked).encode("utf-8", "surrogateescape")
+                        ) if asked else b""
+    at = 0
+    contents: dict[str, Optional[bytes]] = {}
+    for path in asked:
+        end = output.index(b"\n", at)
+        header = output[at:end].split(b" ")
+        at = end + 1
+        content = None
+        # `<object> <type> <size>`, or `<problem> <size>` for a link it cannot follow, each before a body of that
+        # size; a name it cannot find ends `missing`, with no body.
+        if len(header) in (2, 3) and header[-1].isdigit():
+            size = int(header[-1])
+            body = output[at:at + size]
+            at += size + 1
+            if len(header) == 2 and header[0] in BROKEN_LINKS:
+                raise ConfigError(f"{label}:{path}: the symbolic link {BROKEN_LINKS[header[0]]} "
+                                  f"({body.decode('utf-8', 'replace')}); commit the file itself, or a link to a "
+                                  "file in the repository")
+            if header[1:2] == [b"blob"]:
+                content = body
+        contents[path] = content
+    for path in wanted:
+        content = contents.get(path)
+        found[path] = content
+        name = _blob_name(commit, path)
+        _store(cache / (f"{name}.absent" if content is None else f"{name}.toml"), content or b"")
+    _prune(cache)
+    return found
+
+
+def _signature(path: Path) -> Optional[list[int]]:
+    try:
+        found = path.stat()
+    except OSError:
+        return None
+    return [found.st_size, found.st_mtime_ns, found.st_ino]
+
+
+def tracked_paths(tree: WorkingTree, paths: list[str], cache: Path) -> set[str]:
+    """Which of `paths` the index of `tree` tracks, asking one `git ls-files` for the paths the cache lacks for
+    the index as it is now."""
+
+    index = tree.git_dir / "index"
+    signature = _signature(index)
+    if signature is None:
+        return set()
+    record_path = cache / "tracked.json"
+    try:
+        record = json.loads(record_path.read_bytes())
+    except (OSError, ValueError):
+        record = None
+    if not isinstance(record, dict) or record.get("schema_version") != 1 or not isinstance(record.get("indexes"),
+                                                                                          dict):
+        record = {"schema_version": 1, "indexes": {}}
+    indexes = record["indexes"]
+    entry = indexes.get(str(index))
+    known = entry["tracked"] if isinstance(entry, dict) and entry.get("signature") == signature else {}
+    wanted = [path for path in paths if path not in known]
+    if wanted:
+        listed = git_output(["--git-dir", str(tree.git_dir), "--work-tree", str(tree.top), "--literal-pathspecs",
+                             "ls-files", "-z", "--cached", "--", *wanted], cwd=tree.top)
+        found = {os.fsdecode(name) for name in listed.split(b"\0") if name}
+        known = {**known, **{path: path in found for path in wanted}}
+        indexes[str(index)] = {"signature": signature, "tracked": known}
+        for gone in [name for name in indexes if not Path(name).exists()]:
+            del indexes[gone]
+        _store(record_path, json.dumps(record, sort_keys=True).encode("utf-8"))
+    return {path for path in paths if known.get(path)}
 
 
 def merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -290,15 +591,32 @@ def _flatten(mapping: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     return flat
 
 
-class Config:
-    """A merged configuration plus where each value came from."""
+@dataclass(frozen=True)
+class Source:
+    """Where values came from: a file on disk, or, when `blob` names it, as `origin/main:.projector.toml` does,
+    the copy of the walked file at `path` on the default branch."""
 
-    def __init__(self, values: dict[str, Any], sources: dict[str, Path], paths: list[Path],
-                 ignored: Optional[list[tuple[Path, str]]] = None) -> None:
+    path: Path
+    blob: Optional[str] = None
+
+    def __str__(self) -> str:
+        return self.blob or str(self.path)
+
+
+class Config:
+    """A merged configuration, the sources it read lowest precedence first, where each value came from, the
+    user-only keys a walked file set, a note for each walked file whose working copy does not apply, and the
+    default branch each file in the repository waits on to change."""
+
+    def __init__(self, values: dict[str, Any], sources: dict[str, Source], paths: list[Source],
+                 ignored: Optional[list[tuple[Source, str]]] = None, notes: Optional[list[tuple[Path, str]]] = None,
+                 committed: Optional[dict[Path, str]] = None) -> None:
         self.values = values
         self.sources = sources
         self.paths = paths
         self.ignored = ignored or []
+        self.notes = notes or []
+        self.committed = committed or {}
 
     def get(self, key: str, default: Any = None) -> Any:
         """Look a value up by dotted key, so `review.username` reaches a table."""
@@ -321,11 +639,80 @@ class Config:
             raise ConfigError(f"{key} must be {expected}, not {type(value).__name__}")
         return value
 
-    def source(self, key: str) -> Optional[Path]:
+    def source(self, key: str) -> Optional[Source]:
         return self.sources.get(key)
 
     def flat(self) -> dict[str, Any]:
         return _flatten(self.values)
+
+
+@dataclass
+class _Walked:
+    """What one load learned about the walk: each source read with its values, lowest precedence first, and the
+    notes and default branches `Config` reports."""
+
+    layers: list[tuple[Source, dict[str, Any]]] = field(default_factory=list)
+    notes: list[tuple[Path, str]] = field(default_factory=list)
+    committed: dict[Path, str] = field(default_factory=dict)
+
+
+def _walk(start: Path, home: Path, user: Optional[Path], environ: dict[str, str]) -> _Walked:
+    directories = walked_directories(start, home)
+    trees = _trees(directories)
+    repository = trees[0]
+    branch = default_branch(repository) if repository is not None else None
+    # Each walked file, farthest first, with its path in the repository when it lies in one of its working trees.
+    candidates: list[tuple[Path, Optional[WorkingTree], Optional[str]]] = []
+    for directory, tree in zip(reversed(directories), reversed(trees)):
+        candidate = directory / CONFIG_NAME
+        if candidate == user:
+            continue
+        if branch is not None and tree is not None and repository is not None and tree.common == repository.common:
+            candidates.append((candidate, tree, candidate.relative_to(tree.top).as_posix()))
+        elif candidate.is_file():
+            candidates.append((candidate, None, None))
+
+    walked = _Walked()
+    if user is not None:
+        walked.layers.append((Source(user), read_config_file(user)))
+    if branch is None or repository is None:
+        walked.layers.extend((Source(path), read_config_file(path)) for path, _, _ in candidates)
+        return walked
+
+    cache = cache_dir(environ)
+    blobs = default_blobs(repository.common, branch.commit,
+                          list(dict.fromkeys(path for _, _, path in candidates if path is not None)), cache,
+                          label=branch.name)
+    tracked: set[tuple[Path, str]] = set()
+    for tree in {tree for _, tree, path in candidates if tree is not None}:
+        asked = [path for candidate, other, path in candidates
+                 if other == tree and path is not None and blobs[path] is None and candidate.is_file()]
+        if asked:
+            tracked.update((tree.top, path) for path in tracked_paths(tree, asked, cache))
+
+    for candidate, tree, path in candidates:
+        if tree is None or path is None:
+            walked.layers.append((Source(candidate), read_config_file(candidate)))
+            continue
+        blob = blobs[path]
+        if blob is not None:
+            source = Source(candidate, f"{branch.name}:{path}")
+            walked.committed[candidate] = branch.name
+            try:
+                working = candidate.read_bytes()
+            except OSError:
+                working = None
+            if working != blob:
+                walked.notes.append((candidate, f"working copy ignored until merged; {source} applies"))
+            # Two worktrees of one repository walk the same path on the default branch, and the nearer one wins.
+            walked.layers = [layer for layer in walked.layers if layer[0].blob != source.blob]
+            walked.layers.append((source, parse_config(blob, str(source))))
+        elif (tree.top, path) in tracked:
+            walked.committed[candidate] = branch.name
+            walked.notes.append((candidate, f"not on {branch.name} yet, so it is ignored until it merges"))
+        elif candidate.is_file():
+            walked.layers.append((Source(candidate), read_config_file(candidate)))
+    return walked
 
 
 def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, str]] = None) -> Config:
@@ -333,34 +720,36 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
     if home is None:
         home = Path(env.get("HOME") or Path.home())
 
-    paths = config_paths(start, home, env)
-    user = user_config_path(env)
-    user = user.resolve() if user.is_file() else None
+    found = user_config_path(env)
+    # Resolved like the walked paths, so the home directory's file, which is
+    # both the user layer and the top of the walk, is read once.
+    user = found.resolve() if found.is_file() else None
+    walked = _walk(start, home, user, env)
     values: dict[str, Any] = {}
-    sources: dict[str, Path] = {}
-    ignored: list[tuple[Path, str]] = []
-    for path in paths:
-        loaded = read_config_file(path)
-        if path != user:
+    sources: dict[str, Source] = {}
+    ignored: list[tuple[Source, str]] = []
+    for source, loaded in walked.layers:
+        if source.path != user:
             for key in sorted(USER_ONLY & set(_flatten(loaded))):
                 *tables, name = key.split(".")
                 table = loaded
                 for part in tables:
                     table = table[part]
                 del table[name]
-                ignored.append((path, key))
+                ignored.append((source, key))
         values = merge(values, loaded)
         # Recorded after merging so the last writer of each leaf wins, which is
         # the file whose value actually survived.
         for dotted in _flatten(loaded):
-            sources[dotted] = path
+            sources[dotted] = source
 
     # A later file can replace a scalar with a table, which leaves the scalar's
     # own dotted key attributed to a file that no longer supplies it. Drop any
     # key the merged result does not actually have.
     final = _flatten(values)
-    sources = {key: path for key, path in sources.items() if key in final}
-    return Config(values, sources, paths, ignored)
+    sources = {key: source for key, source in sources.items() if key in final}
+    return Config(values, sources, [source for source, _ in walked.layers], ignored, walked.notes,
+                  walked.committed)
 
 
 @dataclass(frozen=True)

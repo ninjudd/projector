@@ -175,6 +175,14 @@ def write_through(path: Path, content: str) -> None:
             os.unlink(temporary)
 
 
+def state_home(environ: Optional[dict] = None) -> Path:
+    """Projector's own folder under `$XDG_STATE_HOME`, or under `~/.local/state` without it."""
+    environ = os.environ if environ is None else environ
+    base = environ.get("XDG_STATE_HOME")
+    home = Path(environ["HOME"]) if environ.get("HOME") else Path.home()
+    return (Path(base) if base else home / ".local" / "state") / "projector"
+
+
 DISTRIBUTION = "projector-cli"
 
 
