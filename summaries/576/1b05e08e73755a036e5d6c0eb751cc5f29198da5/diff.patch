@@ -1,0 +1,103 @@
+diff --git a/.github/workflows/projector-review.yml b/.github/workflows/projector-review.yml
+new file mode 100644
+index 00000000..16b56d02
+--- /dev/null
++++ b/.github/workflows/projector-review.yml
+@@ -0,0 +1,84 @@
++# Written by `project init --ci-review`, which replaces this file while nobody has edited it.
++# projector-workflow sha256=83ae431387c1ecc9bcdac5c46931270c37d76040bb533fa1143d3612c47d51cc
++name: Projector review
++
++# Reviews each ready pull request whose head is in this repository with
++# `project review run`, one job for each agent, and publishes each review's
++# summary from a second job that runs no agent. `project review run` refuses a
++# fork's pull request and a draft however the workflow starts, so a manual run
++# cannot review either. Each agent's job reads the one credential secret that
++# is set for it: a subscription's or an API key. Secrets that are not set read
++# as empty.
++on:
++  pull_request:
++    types: [opened, reopened, synchronize, ready_for_review]
++  workflow_dispatch:
++    inputs:
++      pr:
++        description: The pull request to review
++        required: true
++      rereview:
++        description: Review a head this model already reviewed
++        type: boolean
++        default: false
++
++permissions: {}
++
++jobs:
++  review:
++    if: >-
++      github.event_name == 'workflow_dispatch' ||
++      (!github.event.pull_request.draft &&
++       github.event.pull_request.head.repo.full_name == github.repository)
++    permissions:
++      contents: read
++      pull-requests: write
++      issues: write
++      statuses: write
++      checks: read
++      actions: read
++      pages: read
++    strategy:
++      fail-fast: false
++      # An agent with no model runs the action's default for it.
++      matrix:
++        include:
++          - agent: claude
++    concurrency:
++      group: projector-review-${{ github.event.pull_request.number || inputs.pr }}-${{ matrix.agent }}
++      cancel-in-progress: true
++    runs-on: ubuntu-latest
++    timeout-minutes: 60
++    steps:
++      - uses: ninjudd/projector/actions/review@main
++        with:
++          agent: ${{ matrix.agent }}
++          model: ${{ matrix.model }}
++          pr: ${{ github.event.pull_request.number || inputs.pr }}
++          rereview: ${{ inputs.rereview || false }}
++          # The gate's hooks/typecheck.sh compiles against declarations only an interactive Claude Code session
++          # writes, and no CI job here runs `claude plugin test`, so a review on a runner runs the rest.
++          config: |
++            [override.50.review]
++            gate = 'claude plugin validate . && claude plugin validate skills && git diff --check "$2" HEAD'
++        env:
++          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
++          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
++
++  summary:
++    needs: review
++    if: ${{ !cancelled() && needs.review.result != 'skipped' }}
++    permissions:
++      contents: write
++      pull-requests: write
++      issues: write
++      pages: read
++    concurrency:
++      group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
++    runs-on: ubuntu-latest
++    timeout-minutes: 10
++    steps:
++      - uses: ninjudd/projector/actions/review@main
++        with:
++          step: summary
++          pr: ${{ github.event.pull_request.number || inputs.pr }}
+diff --git a/.projector.toml b/.projector.toml
+index 597fa461..a9cadbcf 100644
+--- a/.projector.toml
++++ b/.projector.toml
+@@ -4,3 +4,8 @@ require_check = true
+ gate_checks = "check"
+ # The steps of the gate in AGENTS.md that CI cannot run, run on the review's worktree against the merge base.
+ gate = 'claude plugin validate . && claude plugin validate skills && claude plugin test . && hooks/typecheck.sh && git diff --check "$2" HEAD'
++# Each pull request whose head is in this repository is reviewed in GitHub Actions by
++# .github/workflows/projector-review.yml, which posts as github-actions[bot].
++ci = true
++ci_agents = "claude"
++reviewers = "github-actions[bot]"
