@@ -1,0 +1,124 @@
+{
+ "version": 1,
+ "name": "Configuration trust",
+ "project": "config-trust",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 548,
+  "title": "Fetch each live checkout's default branch into Projector's own ref, so a merged policy applies within a full pass",
+  "head": "e2ec589d67de5374be769057bd41d82f313c87dd",
+  "headRef": "config-trust/watch-fetch",
+  "base": "7ea5e80f8edd667169f87bd2ce52bbe47d349b14",
+  "baseRef": "config-trust/destinations",
+  "basePr": 547
+ },
+ "overview": {
+  "summary": [
+   "Projector reads repository policy from the default branch. Until this change, that policy could remain stale until you fetched. The watch daemon now fetches each live registered checkout’s default branch on its worker pool, using a private Git ref instead of changing the remote-tracking refs you use.",
+   "Configuration reads the newer of the daemon’s fetched commit and your cached default branch. Your commit wins when the histories diverge. Fetch failures retain the previous commit and appear in watch status; <code>watch.fetch_default = false</code> disables the background fetch.",
+   "The inherited Git-location defect remains open: a fetch requested for one checkout can update another repository and report success. The new-head gate and focused tests pass, while the original two-checkout reproduction still demonstrates that failure."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation",
+    "html": "<ul class=\"tight\"><li>The configured gate and exact-head CI passed.</li><li>All 76 focused watch/configuration tests passed.</li><li>A temporary two-repository reproduction verified the fetch-target defect; no operator checkout was changed.</li></ul>"
+   },
+   {
+    "id": "scope",
+    "title": "Scope and completion",
+    "html": "<p>This is the last config-trust layer. It marks the project completed and records that only live sessions with an agent registration bring their checkout into background fetching.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "policy",
+   "title": "Choose the refreshed policy commit",
+   "kicker": "Keep policy current without using the checked-out branch.",
+   "intro": [
+    "The configuration reader finds both your <code>origin/HEAD</code> commit and the daemon’s <code>refs/projector/default/</code> commit. A merge-base comparison chooses the fetched commit when it descends from yours, and chooses yours for divergent histories.",
+    "The comparison result is cached by the commit pair, alongside the existing configuration blobs. Repeated reads of an unchanged pair therefore avoid another Git process."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds the opt-out setting, resolves the private ref, and caches ancestry comparisons.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused configuration/watch suite passed, including adopting a newly fetched policy and preferring the user’s fetch after a force-push."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "fetch",
+   "title": "Fetch on the daemon worker pool",
+   "kicker": "Schedule one repository fetch and report its result.",
+   "intro": [
+    "On each full pass, the daemon gathers the repositories of live registered sessions and deduplicates linked worktrees by their common Git directory. It skips repositories that opt out and submits the rest to the relay’s worker pool, so the network operation does not run on the event loop.",
+    "The fetch uses an empty <code>--refmap=</code>, disables tags and submodules, and writes only Projector’s private destination ref. Completion updates the per-checkout status; a failure preserves the previous policy commit. An outstanding fetch also keeps the daemon from exiting for idleness."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Schedules and collects background fetches, exposes status, and waits for running fetches before idle exit.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 808,
+       "text": "The fetch discovers the requested checkout using sanitized configuration helpers, but relay.git inherits Git-location variables. With GIT_DIR naming checkout A, a fetch requested for B reports success while writing A’s private ref and leaving B untouched. Filter config.GIT_LOCATION from the fetch environment."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Prints each checkout’s default-branch fetch state and error in watch status."
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Adds full-pass regressions for policy freshness, preserved user refs, force-push preference, failed fetches, and opting out.",
+     "collapsed": true,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All 76 focused tests passed. The merged-policy case checks that Projector’s ref advances while origin/main remains unchanged, then confirms an ordinary user fetch still succeeds."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Document the completed refresh contract",
+   "kicker": "Explain freshness, opt-out behavior, and the project outcome.",
+   "intro": [
+    "The CLI reference explains the two cached commits, the fetch flags, status output, and the opt-out setting. It distinguishes a running daemon from a checkout whose policy is only as current as the user’s last fetch.",
+    "The project outcome records the completed implementation and its registered-session boundary. The acceptance cases remain beside the design; the new tests cover this layer’s fetch behavior."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents policy freshness, the fetch setting, and default-branch status output.",
+     "collapsed": true
+    },
+    {
+     "path": "docs/projects/config-trust/readme.md",
+     "note": "Marks config-trust completed and records the fetch design and measured acceptance boundaries.",
+     "collapsed": true,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Project discovery identifies config-trust as completed, and project check reports valid metadata."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
