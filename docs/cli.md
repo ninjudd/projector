@@ -2749,8 +2749,11 @@ cancelled run's start comment, `PROJECTOR_REREVIEW`, `PROJECTOR_SCRATCH`, a
 folder for the files it writes, and `PROJECTOR_RUN_REPORT`, a file for the
 question it would have asked.
 
-When the agent exits with no new verdict on the head, or runs out of its
-`--timeout` minutes, 45 by default, the command runs
+A verdict counts when the agent published it during the run, on the head
+or on a newer one: when a push lands while the agent reviews, the skill
+moves the review to the new head and publishes there. When the agent exits
+with no new verdict, or runs out of its `--timeout` minutes, 45 by default,
+the command runs
 `project review finish --force`, which deletes the start comment and takes
 `reviewing` off. It then posts one comment on the pull request that names
 the head, the report file's text or why there is none, and the Actions run

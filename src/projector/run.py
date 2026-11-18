@@ -137,12 +137,12 @@ def refusal(pr: dict, repo: str) -> Optional[str]:
     return None
 
 
-def verdicts_on(reviews: list[dict], head: str, model: str) -> list[dict]:
-    """The reviewer's Projector verdicts by `model` on `head` among `reviews`, as `reviewer_reviews` lists them,
-    newest first."""
+def verdicts_on(reviews: list[dict], head: Optional[str], model: str) -> list[dict]:
+    """The reviewer's Projector verdicts by `model` on `head`, or on any head when `head` is None, among
+    `reviews`, as `reviewer_reviews` lists them, newest first."""
     found = [posted for posted in reviews
              if (marker := review.verdict_marker(posted.get("body") or "")) is not None
-             and marker.sha == head and review.identity(marker.model) == review.identity(model)]
+             and head in (None, marker.sha) and review.identity(marker.model) == review.identity(model)]
     return sorted(found, key=lambda posted: posted.get("at") or "", reverse=True)
 
 
@@ -201,7 +201,7 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
         environ: Optional[dict[str, str]] = None) -> int:
     """Review the head of pull request `number` in the repository of `checkout` with an agent, as
     docs/projects/review-in-ci/readme.md § 2.1 step 6 describes. Returns the exit code: 0 once a verdict on the
-    head stands, and 1 when the agent published none."""
+    head stands, or the run published one on a head pushed while it ran, and 1 when the agent published none."""
     review.model_key(model)
     review.valid_loop(loop)
     if mode not in MODES:
@@ -250,9 +250,10 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
         for path in invocation.written:
             path.unlink(missing_ok=True)
 
-    # A verdict counts only when the run posted it, which no clock can tell as surely as a review id can.
-    seen = {posted["id"] for posted in earlier}
-    published = [posted for posted in verdicts_on(review.reviewer_reviews(repo, number, reviewer), head, model)
+    # A verdict counts only when the run posted it, which no clock can tell as surely as a review id can. It
+    # may name a newer head than `head`, because the agent moves its review to a head pushed while it runs.
+    seen = {posted["id"] for posted in reviews}
+    published = [posted for posted in verdicts_on(review.reviewer_reviews(repo, number, reviewer), None, model)
                  if posted["id"] not in seen]
     if published:
         print(f"published {published[0].get('url')}")

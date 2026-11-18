@@ -107,7 +107,8 @@ author's sessions and the site, count that account's reviews.
       (§ 2.2), and `--timeout`, 45 minutes by default.
    4. **Check the verdict.** When the agent exits, the command reads the
       reviewer's reviews. It succeeds when a Projector verdict by this model
-      names the head and was submitted after the run started. Otherwise it
+      was submitted after the run started, on the head or on one pushed
+      while the agent ran (§ 9). Otherwise it
       runs `project review finish --force` for the pull request, which
       deletes the start comment and takes `reviewing` off. It then posts one
       comment that names the head, the reason the agent gave in its report
@@ -857,11 +858,13 @@ These tests fail before the change, and each catches the bug it names:
 - **The effort marker.** The run sets no `CLAUDE_EFFORT`. Claude Code sets
   it for its own Bash tool, and Codex reports no effort, so a value the run
   set could only disagree with the host.
-- **A run's own verdict.** The run notes the reviewer's verdicts by the
-  model on the head before the agent starts, and counts only a verdict with
-  a new review id afterwards. A time comparison would depend on the
-  runner's clock agreeing with GitHub's, and a re-review of the same head
-  makes an earlier verdict look like this run's.
+- **A run's own verdict.** The run notes the ids of the reviewer's
+  Projector reviews before the agent starts, and counts only a verdict by
+  the model with a new review id afterwards. A time comparison would depend
+  on the runner's clock agreeing with GitHub's, and a re-review of the same
+  head makes an earlier verdict look like this run's. The verdict may name
+  a newer head than the one the run started on, because the skill moves an
+  unpublished review to a head pushed while it runs.
 - **Asking before a run.** `project review run` starts another agent with
   its own credential, or the command `review.runner` names. Claude Code
   asks before it through `Bash(project review run *)`, and Codex's rules

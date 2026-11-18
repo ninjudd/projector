@@ -162,6 +162,21 @@ class RunTests(unittest.TestCase):
         self.assertEqual(1, self.review_run(rereview=True))
         self.assertEqual("1", self.seen()["env"]["PROJECTOR_REREVIEW"])
 
+    def test_a_verdict_on_a_head_pushed_during_the_run_passes(self) -> None:
+        # The skill moves an unpublished review to a head pushed while it runs, so the agent publishes on the
+        # newer head; a run that looked only at the head it started on failed a review that stood.
+        newer = "b" * 40
+        with mock.patch.dict(os.environ, {"HEAD_SHA": newer}):
+            self.assertEqual(0, self.review_run())
+        self.assertEqual([], self.github.posted)
+
+        # A verdict on that newer head from before the run is still not this run's.
+        self.setUp()
+        self.github.reviews.append({"id": 900, "url": "https://example.test/900", "at": "2026-11-18T10:00:00Z",
+                                    "body": verdict_body(newer)})
+        self.behave("nothing")
+        self.assertEqual(1, self.review_run())
+
     def test_run_replaces_a_cancelled_runs_start_comment(self) -> None:
         at = review.now().strftime("%Y-%m-%dT%H:%M:%SZ")
         for comment_id, sha, model in ((301, HEAD, MODEL), (302, "b" * 40, MODEL), (303, HEAD, "gpt-5.5")):
