@@ -875,6 +875,14 @@ These tests fail before the change, and each catches the bug it names:
   names the run's loop and appeared during the run, when the agent wrote
   no state, is a `setup` stopped partway, and the run removes it so the
   cached state does not refuse the next run.
+- **The cleanup checks the lock as it deletes.** The watch daemon can
+  clear the run's lock and the new owner's `setup` take its own before it
+  rewrites the state, so the state alone cannot show who owns the review.
+  The run's `finish` passes its loop as `holder`. Under `review_mutex`,
+  the mutex the daemon clears a lock under, `finish` checks that the head's
+  lock names that loop, as `publish` and `move` do. It takes the state and
+  that loop's locks off disk before it changes anything on GitHub, and it
+  refuses once ownership has moved.
 - **Asking before a run.** `project review run` starts another agent with
   its own credential, or the command `review.runner` names. Claude Code
   asks before it through `Bash(project review run *)`, and Codex's rules

@@ -237,6 +237,21 @@ class RunTests(unittest.TestCase):
 
                 self.assertEqual([], [path for path in files if Path(path).exists()], why)
 
+    def test_a_failed_run_leaves_a_review_handed_over_during_it_alone(self) -> None:
+        # The watch daemon cleared the run's lock and the new owner's setup took its own before writing the state,
+        # so the state still names the run's loop; cleaning up from the state alone deleted the new owner's lock.
+        paths = review.Paths(self.tmp / "state" / "projector" / "reviews", REPO, 1, MODEL)
+        files = self.review_files("run", 501)
+        files[str(paths.lock(HEAD))]["loop"] = "laptop"
+        (self.agent / "setup.json").write_text(json.dumps(files))
+        self.behave("nothing")
+
+        self.assertEqual(1, self.review_run())
+
+        self.assertEqual(list(files), [path for path in files if Path(path).exists()],
+                         "the new owner keeps its lock and the state it is about to rewrite")
+        self.assertEqual([], self.github.deleted)
+
     def test_a_failed_run_leaves_another_loops_live_review_alone(self) -> None:
         # Another loop holds this pull request and model's lock, so the agent's setup is refused and it publishes
         # nothing; cleaning up regardless deleted that loop's state, lock, and worktrees from under it.

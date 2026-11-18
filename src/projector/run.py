@@ -286,13 +286,16 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
         reason = report_text(report) or f"the agent exited {code} and published no verdict"
     try:
         if set_up_here(before, stored(paths), loop):
-            review.finish(root, number, repo, model, True, checkout, labels)
+            # The watch daemon can hand the review over while the run reads the state, so `finish` checks that
+            # the lock still names the run's loop as it deletes anything.
+            review.finish(root, number, repo, model, True, checkout, labels, holder=loop)
         else:
             # A setup stopped between taking its lock and writing the state, as a timeout can stop it, leaves
             # only the lock, which would refuse the next run's setup for a day.
-            for path in paths.locks():
-                if path not in held and (lock := review.read_lock(path)) is not None and lock.loop == loop:
-                    path.unlink(missing_ok=True)
+            with review.review_mutex(paths.folder):
+                for path in paths.locks():
+                    if path not in held and (lock := review.read_lock(path)) is not None and lock.loop == loop:
+                        path.unlink(missing_ok=True)
             if before is not None:
                 print(f"project: left the review state of {repo}#{number} by {model} alone, because the agent did "
                       "not set it up", file=sys.stderr)

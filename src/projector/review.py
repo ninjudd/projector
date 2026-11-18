@@ -1415,13 +1415,18 @@ def remove_worktree(checkout: Optional[str], path: Path, folder: Path) -> None:
 
 
 def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], force: bool, cwd: Path,
-           labels: bool = True) -> dict:
+           labels: bool = True, holder: Optional[str] = None) -> dict:
     """`review finish`: end one model's review of the pull request on this machine. As the reviewer, delete
     the review's start comment and every other start comment of the model's that `is_live` no longer
     counts; with `labels`, remove `reviewing` once no start comment means a review in progress; remove every
     scratch worktree the state lists; clear the locks; and delete the state, keeping the loop's record.
     Refuses while the review is unpublished unless `force`, and succeeds when there is nothing to clean, so
     a second run changes nothing.
+
+    With `holder`, finish ends the review only while the lock on its head names that loop. It checks the
+    lock and takes the state and that loop's locks off disk together, under the `review_mutex` the watch
+    daemon clears a lock under, before it changes anything on GitHub. A review handed over to another loop
+    keeps its state, lock, worktrees, and start comment, and finish refuses.
 
     The repository is `repo`, else the origin of the checkout `cwd` is in, never one taken from review state,
     so a run in one repository cannot end another's review of a pull request with the same number. Every
@@ -1446,6 +1451,20 @@ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], f
         recorded = (state.get("start_comment") or {}).get("id")
         if recorded and not force:
             raise ReviewError(unfinished(state, recorded))
+        if holder is not None:
+            with review_mutex(paths.folder):
+                if stored_state(paths) != state:
+                    raise ReviewError(f"the review state of {repo}#{number} by model {model} changed while finish "
+                                      "read it, so finish leaves it to the review that wrote it")
+                check_lock(paths, state["sha"], holder)
+                held = [lock for lock in paths.locks()
+                        if (found := read_lock(lock)) is not None and found.loop == holder]
+                for lock in held:
+                    lock.unlink(missing_ok=True)
+                result["released"] = [str(lock) for lock in held]
+                paths.request.unlink(missing_ok=True)
+                paths.state.unlink(missing_ok=True)
+                result["state"] = True
         result["comments"] = finished_starts(state, recorded)
         if result["comments"] or labels:
             token = reviewer_token(state["reviewer"])
@@ -1454,11 +1473,12 @@ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], f
             if labels:
                 result["labels"] = clear_reviewing(repo, number, state["reviewer"], token)
         result["worktrees"] = remove_worktrees(paths, state)
-    result["released"] = [str(lock) for lock in release(paths)]
-    paths.request.unlink(missing_ok=True)
-    if state is not None:
-        paths.state.unlink(missing_ok=True)
-        result["state"] = True
+    if holder is None:
+        result["released"] = [str(lock) for lock in release(paths)]
+        paths.request.unlink(missing_ok=True)
+        if state is not None:
+            paths.state.unlink(missing_ok=True)
+            result["state"] = True
     with suppress(OSError):
         paths.folder.rmdir()
     return result

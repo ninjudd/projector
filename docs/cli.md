@@ -2757,8 +2757,10 @@ the command runs
 `project review finish --force` for the review the agent set up, which
 deletes the start comment and takes `reviewing` off. A review another loop
 holds, which refused the agent's `setup`, keeps its state, lock, and
-worktrees, and a lock the agent's `setup` took and left with no state is
-removed. The command then posts one comment on the pull request that names
+worktrees, and so does a review the watch daemon handed to another loop
+while the run ended: the cleanup goes ahead only while the head's lock
+still names the run's loop. A lock the agent's `setup` took and left with
+no state is removed. The command then posts one comment on the pull request that names
 the head, the report file's text or why there is none, and the Actions run
 when there is one, and exits 1.
 
