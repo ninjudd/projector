@@ -1,0 +1,134 @@
+{
+ "version": 1,
+ "name": "Inbox quote references",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 543,
+  "title": "Quote an inbox item's number before its subject, so two items that share a subject are told apart",
+  "head": "137d75ad462def5eaa510bf3ba09a532631fc068",
+  "headRef": "inbox-quote-ref",
+  "base": "0c945a8321f9deaf6432c8c313fb913c0cb9a0ce",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s panel lets the person answer questions, finish requests, and discuss items posted by agents. Several items can have the same subject, so a subject-only quote can select the wrong one.",
+   "Generated quotes now start with the item’s number, such as <code>[3] \"Test the build\"</code>. A matching number limits answer, reply, and unclear parsing to that item. A missing number, or a number that names no item with that subject, retains subject-only matching.",
+   "The panel retains stale proposals separately for each item reference. Choosing identical words in a second drawer no longer revives a pick made before the first item was revised."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation and review outcome",
+    "html": "<ul class=\"tight\"><li><b>Earlier finding:</b> verified fixed. Other references retain their stale proposals, and the regression confirms the revised item remains unanswered.</li><li><b>Hook tests:</b> all 268 pass, including the new stale-pick regression and its subsequent valid answer to the second item.</li><li><b>Focused Python tests:</b> the unchanged instruction, inbox, and console paths passed all 196 tests on the earlier reviewed head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "quote-contract",
+   "title": "Recognize item references in quotes",
+   "kicker": "The prompt format and its shared parser",
+   "intro": [
+    "A prompt quote identifies the inbox item the person is answering or discussing. The item number now precedes the quoted subject, so identical subjects can be distinguished without relying on which drawer was used last.",
+    "The shared parser finds each known subject and reads a valid bracketed number before it. It applies that number to answers, request outcomes, replies, and unclear marks, while retaining the existing fallback for quotes without a matching number. The next quote’s bracket also ends the preceding answer."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Build bracketed quotes and share reference-aware lookup across answer, reply, and unclear parsing.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Traced every quote producer and parser caller. The passing hook suite exercises multi-digit references, duplicate subjects, resolved items, and subject-only fallback."
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Exercise named-item routing, fallback, multi-quote boundaries, and the revised prompt text.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "panel-integration",
+   "title": "Keep drawer state attached to its item",
+   "kicker": "Prompt submission, proposal cleanup, and routing to agents",
+   "intro": [
+    "The panel remembers what each drawer placed in the composer as a proposal. That record prevents an old choice from resolving an item after the agent revises it.",
+    "Prompt submission uses the reference-aware lookup when closing drawers and clearing proposals. Recording a new pick also preserves stale proposals from every other item reference, so a saved numbered quote still finds its own revision guard."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Use referenced quotes for prompt cleanup and generated request text while preserving subject-only display text.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 454,
+       "text": "The new proposal predicate retains stale records from other references. The panel regression selects item 1, revises it, selects identical text in item 2, and confirms the old [1] quote records no answer."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Check numbered prompts, independent proposal cleanup, and revision safety when another drawer chooses identical words.",
+     "collapsed": true,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The new regression also submits item 2’s own numbered quote afterward, proving that refusing the stale first pick does not discard the valid second pick."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs-and-instructions",
+   "title": "Document the numbered prompt contract",
+   "kicker": "User reference, agent instructions, and template compatibility",
+   "intro": [
+    "The user reference now shows the bracketed item number and explains how it selects between matching subjects. The agent instructions describe the same prompt shape, so an agent receiving the prompt can identify which request it concerns.",
+    "The generated instruction block advances to version 32 and gains a matching content hash. That version lets instruction checking distinguish the new shipped text from a repository edit."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describe the question-and-option prompt with its bracketed reference.",
+     "collapsed": true
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Show numbered examples and explain precedence and subject-only fallback.",
+     "collapsed": true
+    },
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Teach agents the numbered request quote and advance the generated block version.",
+     "collapsed": true
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "Regenerate this repository’s Projector block from version 32 of the template.",
+     "collapsed": true
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pin the version-32 template hash so shipped text and version remain consistent.",
+     "collapsed": true,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused instruction tests pass with the version-32 hash and generated block."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
