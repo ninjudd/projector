@@ -385,3 +385,32 @@ full pass, which transfers only commits this clone lacks.
 - **Measured cost.** On this repository a warm load takes about 1.1 ms,
   against 0.4 ms before, almost all of it `pathlib`, and `project list --json`
   shows no difference beyond run-to-run noise of about 0.4 s either way.
+
+### 8.2 Overrides
+
+- **Write shape.** `config set --override <priority>` writes the setting
+  under its dotted name in an existing `[override.<priority>]` table, after
+  that table's last setting, and adds the table at the end of the file when
+  it is missing, as the example in step 4 is written. Output names the table,
+  as `set review.gate = make under [override.2] in <file>`, and `--json`
+  gains `override`, `null` without the option.
+- **Source shape.** A value's source prints as `<file> (override 2)` in
+  `config list` and in the stderr reports of `set` and `unset`. The JSON keeps
+  `source` a file or blob, and gives the priority beside it: `override` in
+  `config get --json`, `null` for an ordinary value, and `overrides`, by key,
+  in `config list --json`.
+- **A whole number means its plain spelling.** `[override.01]` is refused
+  with the rest, so one priority has one spelling. `override = 1`, a value
+  rather than tables, is refused too.
+- **The user layer alone.** `config.user_value`, which reads
+  `~/.projector.toml` by itself for `agent.key`, reads that file through the
+  same merge, which drops a user-only key from its overrides, as the next
+  note says.
+- **No user-only key under an override.** Every key in `USER_ONLY`, which is
+  `agent.key`, is dropped from every `[override.<priority>]` table with a
+  warning, in `~/.projector.toml` as in every walked file. Overriding it gains
+  nothing, because only the user layer supplies it already, and
+  `agent key remove`, `key join --replace`, and `config unset` edit only the
+  ordinary key, so an override's copy would outlive a removal or
+  replacement. `config unset agent.key --override <priority>` still removes a
+  copy that is there.

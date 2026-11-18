@@ -816,6 +816,48 @@ merges` instead. `config list --json` gives the same notes under `notes`, and
 `config paths` lists `origin/main:.projector.toml` for a file it reads from
 the default branch.
 
+### Override a setting from an outer file
+
+The nearest file wins, so a repository's own value beats every file above it.
+To overrule a nearer file, put the setting in an `[override.<priority>]`
+table, where the priority is a whole number from 1 to 99. The table holds
+settings under their usual dotted names:
+
+```toml
+# ~/work/.projector.toml, for a company
+[override.1]
+review.gate_checks = "ci"
+
+# ~/work/acme/web-team/.projector.toml, for a team that needs its own checks
+[override.2]
+review.gate_checks = "ci, e2e"
+```
+
+Every override beats every ordinary value, wherever the ordinary value comes
+from. Among overrides of one setting, the higher priority wins. At equal
+priority, the farthest file wins, and `~/.projector.toml` counts as farther
+than every walked file. In the example, the team's checks win because the
+team chose 2. Had both chosen 1, the company's would win. An override in
+`~/.projector.toml` beats every other file's override at its priority, and
+you can always choose a higher one.
+
+A key under `override` that is not a whole number from 1 to 99, such as
+`[override.0]` or `[override.x]`, makes every command that reads
+configuration exit 78 and name the file. `agent.key` under an override is
+ignored with a warning in every file, `~/.projector.toml` included, because
+Projector reads it only as an ordinary setting there, where
+`project agent key remove` and `key join --replace` change it.
+`config list` and `config get --json` name an override's source with its
+priority:
+
+```console
+$ project config list
+review.gate_checks = ci, e2e  # /Users/you/work/acme/web-team/.projector.toml (override 2)
+```
+
+`get --json` gives the priority as `override`, which is `null` for an
+ordinary value, and `list --json` gives it under `overrides`, by key.
+
 Tables merge key by key, so a nearer file overrides one setting without
 discarding the rest:
 
@@ -867,6 +909,7 @@ project config get review.summarize --json
 ```json
 {
   "key": "review.summarize",
+  "override": null,
   "schema_version": 2,
   "source": "/Users/you/ninjudd/.projector.toml",
   "value": false
@@ -959,6 +1002,19 @@ another file with one of these options:
 Outside a Git repository, the default has no file to change, so `set` and
 `unset` exit 69 unless you pass `--user` or `--file`.
 
+Add `--override <priority>` to set or remove the key under
+`[override.<priority>]` in the chosen file, as
+[Override a setting from an outer file](#override-a-setting-from-an-outer-file)
+describes. A new key joins the table's other settings under their dotted
+names, and a missing table is added at the end of the file:
+
+```console
+$ project config set review.gate_checks "ci, e2e" --override 2 --file ~/work/acme/web-team/.projector.toml
+set review.gate_checks = ci, e2e under [override.2] in /Users/you/work/acme/web-team/.projector.toml
+```
+
+A priority that is not a whole number from 1 to 99 exits 2.
+
 `set` takes `true` or `false` for a boolean key, a whole number for a
 whole-number key, and any text for a string key. It refuses any other value
 with exit code 2, as it does a whole number below 30 for `watch.interval` or
@@ -1028,8 +1084,8 @@ project: /Users/you/work/repo/.projector.toml sets watch.auto_start = true, whic
 Setting a key to the value it already has changes nothing, and the command
 reports it as `unchanged`. With `--json`, each command prints the `action`,
 which is `set`, `unset`, or `unchanged`. It also prints the `key`, the
-`old` value and the `new` value, each `null` when the file has none, and
-the `file` it changed:
+`old` value and the `new` value, each `null` when the file has none, the
+`file` it changed, and the `override` priority, `null` without `--override`:
 
 ```json
 {
@@ -1038,6 +1094,7 @@ the `file` it changed:
   "key": "watch.auto_start",
   "new": false,
   "old": true,
+  "override": null,
   "schema_version": 2
 }
 ```
@@ -3834,9 +3891,10 @@ with `join` and whose fingerprint matches.
 | `key show` | Prints the key's ID, its public key, and where it is stored |
 | `key remove` | Deletes `agent.key` and the keychain item it names, which turns the relay off on this machine. The daemon then deletes this machine's agents' refs |
 
-Projector reads `agent.key` only from `~/.projector.toml`. A checkout's
-`.projector.toml` that sets it is ignored with a warning, so a repository
-cannot plant a key its author knows. Projector refuses an inline key in a
+Projector reads `agent.key` only from `~/.projector.toml`, and never from an
+`[override.<priority>]` table. A checkout's `.projector.toml` that sets it,
+or an override in any file, is ignored with a warning, so a repository
+cannot plant a key its author knows and a removed key stays removed. Projector refuses an inline key in a
 file other accounts can read or change, and names the `chmod` that fixes it.
 `project config set agent.key` refuses and names `key join`. Every other
 command shows an inline key as `<redacted, key ID <id>>`, including
