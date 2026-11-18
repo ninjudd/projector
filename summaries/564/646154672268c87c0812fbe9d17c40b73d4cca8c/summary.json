@@ -1,0 +1,187 @@
+{
+ "version": 1,
+ "name": "Shared relay locations",
+ "project": "agent-messages/shared-relay",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 564,
+  "title": "Relay through a repository agent.relay names, and let agents message each other across repositories",
+  "head": "646154672268c87c0812fbe9d17c40b73d4cca8c",
+  "headRef": "shared-relay/locations",
+  "base": "3cc077fe2d986eb447ec034989decd31c54437cd",
+  "baseRef": "stack-fixer/event-names",
+  "basePr": 559
+ },
+ "overview": {
+  "summary": [
+   "The relay carries encrypted agent registrations and messages between your machines through hidden Git refs. It currently uses the repository each session works in, which prevents sessions in different repositories from finding each other.",
+   "This layer adds <code>agent.relay</code>, so a team directory or your own configuration can select one shared relay repository. Sessions retain their work repository for display and privacy notices while the daemon groups transport work by the selected location.",
+   "The next layer shares the repository inbox by location. This layer keeps peer inbox sends in their existing work repository and refuses them when the registered relay location differs."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used here",
+    "html": "<ul class=\"tight\"><li><b>Work repository:</b> the GitHub repository the session works in.</li><li><b>Relay location:</b> the repository that holds encrypted presence and message refs.</li><li><b>Presence:</b> a registration with an expiry time, so other machines can find the session.</li><li><b>Outbox:</b> local ref updates waiting for the daemon to push.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review result",
+    "html": "Both review findings are fixed and this head is clean. Moving the last local session removes its old presence, while messages withheld by a known-public relay remain queued after that session leaves. Independently reran both failure sequences with temporary repositories. The exact-head gate and all 16 focused shared-relay and crossing tests passed."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "configuration",
+   "title": "Choose and approve a location",
+   "kicker": "The destination setting follows the existing configuration trust boundary.",
+   "intro": [
+    "A relay location is either <code>origin</code>, the current work repository, or <code>github:owner/repo</code>. Making <code>agent.relay</code> a destination means a committed configuration value is read from the default branch and requires the person to allow it before records leave the machine."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Traced the new setting through Config.setting, default-branch configuration loading, NotAllowed handling, and registration admission in the initial review. Configuration behavior is unchanged in the follow-up; its required CI check passes."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds the destination setting and validates its supported value forms."
+    },
+    {
+     "path": "tests/test_config.py",
+     "note": "Exercises accepted and refused setting forms through the CLI.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "transport",
+   "title": "Run one job per relay location",
+   "kicker": "The daemon separates where records travel from where the session works.",
+   "intro": [
+    "A relay job now serves every local session that selects the same location. It prefers a checkout of that location and otherwise creates a bare Git repository under local state, so the work repository receives no shared-relay refs.",
+    "Configured locations must be private or internal and writable. Bare-repository commands use GitHub CLI credentials, fetch only relay refs, and preserve global Git hooks. The location cache deliberately retains its last successful privacy and permission answer when a later API lookup fails.",
+    "Existing bare clones remain available for queued work after the last registration moves away. The location’s privacy and write-permission refusal remains active then, so cleanup deletions proceed while sealed records queued outside a checkout of the location stay behind."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Traced check_location, withholds, queue writers, and push filtering: an existing configured clone retains its privacy/write check without registrations, deletes old refs, and holds sealed records from external work checkouts. The origin-only path still starts no bare clone."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/relay.py",
+     "note": "Groups transport, caches, remote sessions, and review targets by location while preserving each presence’s work repository.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The original migration cleanup is fixed. Independently reran the temporary-repository sequence: the moved session’s old presence and old outbox are empty, and its new origin presence exists."
+      },
+      {
+       "kind": "verify",
+       "line": 965,
+       "text": "The public-relay refusal now survives the last registration leaving. Independently queued a real send, let a full pass find PUBLIC and off, then moved the last local registration to origin. The old presence was deleted, the message stayed queued, and no message ref was published."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_relay.py",
+     "note": "Covers shared transport, approval, refusal, credentials, hooks, legacy records, last-session cleanup, and withheld-message preservation after migration.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "messages",
+   "title": "Keep each message’s source",
+   "kicker": "Registrations carry their location, and messages carry their work repository.",
+   "intro": [
+    "An agent registration records both its work repository and the location used to relay it. A registration that awaits approval remains local until the daemon sees the approval.",
+    "A message that crosses work repositories names its source. If that source is private, internal, or unknown, the event line and read output warn the receiving agent to keep private details out of anything it writes in the other repository. Messages queued by older versions with neither source field retain their previous delivery behavior."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The current focused run passed all 16 SharedRelayTests and CrossingTests, covering private-source notices, originless sessions, source validation, legacy delivery, and both migration regressions."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/agents.py",
+     "note": "Resolves registration locations, admits approved sessions, preserves message source metadata, and renders crossing notices."
+    },
+    {
+     "path": "tests/test_agents.py",
+     "note": "Checks the notice seen by each reader and validates complete and legacy source records.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "commands",
+   "title": "Expose the relay state",
+   "kicker": "CLI output reports the location and explains waiting or refused transport.",
+   "intro": [
+    "The new <code>project agent relay show</code> command explains the directory’s effective location, the configuration that selected it, and the last transport result. Existing agent and watch output now includes waiting approval, location visibility, write permission, and bare-clone use.",
+    "Peer inbox transport remains deferred in this layer. Its send path rejects registrations that use another repository as the relay location."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The focused permission tests passed for project agent relay show; traced agent read JSON and text output and the existing watch status adapter."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds location inspection, source notices, status reporting, and the temporary inbox guard."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Allows the read-only relay inspection command in Codex rules."
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Verifies command permission behavior through the generated host rules.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "guidance",
+   "title": "Document configuration and crossings",
+   "kicker": "User and agent guidance explain the transport boundary and private sources.",
+   "intro": [
+    "The command guide explains where to put <code>agent.relay</code>, how the person allows committed destinations, and why external locations must be private or internal. The message skill tells agents to preserve source confidentiality and leave destination approval to the person.",
+    "The shared-relay plan moves to in-progress and records this layer’s decisions in section 8. The repository inbox and the real two-machine acceptance run remain for later work."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Section 8 deliberately retains the last successful privacy/permission answer after a failed location lookup. It also records that existing-clone cleanup keeps a configured location’s refusal after registrations leave; a known-public destination continues to hold sealed updates."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents relay settings, approval, source notices, and privacy checks during queued cleanup after registrations leave.",
+     "collapsed": true
+    },
+    {
+     "path": "skills/message/SKILL.md",
+     "note": "Updates agent routing guidance and the private-source handling rules.",
+     "collapsed": true
+    },
+    {
+     "path": "docs/projects/agent-messages/shared-relay/readme.md",
+     "note": "Records the two-layer rollout and section 8’s existing-clone cleanup and refusal rules.",
+     "collapsed": true
+    }
+   ]
+  }
+ ]
+}
