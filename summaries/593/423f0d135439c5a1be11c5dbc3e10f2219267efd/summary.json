@@ -1,0 +1,104 @@
+{
+ "version": 1,
+ "name": "Committed review settings in watch",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 593,
+  "title": "Read review settings from GitHub's default branch when no live session has a checkout, so CI-reviewed pull requests hear no UNREVIEWED",
+  "head": "423f0d135439c5a1be11c5dbc3e10f2219267efd",
+  "headRef": "watch-ci-settings",
+  "base": "d245c04bf9af2ddd86ea758e4d6967dceb9852b7",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The watch daemon is the background process that polls every pull request a session subscribes to, and announces events such as <code>UNREVIEWED</code>. That event says that a ready pull request's head isn't signed off and that no session will review it. Two settings decide whether the event fires: <code>review.ci</code> says GitHub Actions reviews the repository's own pull requests, and <code>review.reviewers</code> names extra logins, such as a CI app's <code>[bot]</code> account, whose Projector verdicts count toward sign-off.",
+   "The daemon used to read those settings only from a checkout of the repository that a live session works in. For a repository a session watches but has no checkout of, it found neither setting. So its ready pull requests heard <code>UNREVIEWED</code> even though <code>review.ci = true</code> was committed and CI reviewed every head.",
+   "With this change, when no live checkout covers a repository, the daemon reads the <code>.projector.toml</code> committed on its default branch through GitHub's contents API. It layers that file under your <code>~/.projector.toml</code> and caches the result per repository for 10 minutes. A live checkout still wins whenever one exists."
+  ],
+  "cards": [
+   {
+    "id": "sources",
+    "title": "Where the settings come from",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Case</th><th>Source</th><th>How often</th></tr></thead><tbody><tr><td>A live session has a checkout</td><td>That checkout's configuration</td><td>Every pass</td></tr><tr><td>No live checkout</td><td>The default branch's <code>.projector.toml</code> on GitHub, under <code>~/.projector.toml</code></td><td>At most every 10 minutes</td></tr><tr><td>GitHub answers 404</td><td>Only <code>~/.projector.toml</code></td><td>At most every 10 minutes</td></tr><tr><td>The read fails</td><td>The settings the last read found, or none</td><td>Retried after 10 minutes</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "config",
+   "title": "Loading a committed configuration",
+   "kicker": "A config loader for a file that came from GitHub rather than from disk",
+   "intro": [
+    "<code>config.load</code> walks from a checkout up to your home directory and layers each <code>.projector.toml</code> it finds. The daemon has no checkout to walk here, so the new <code>load_committed</code> builds the same <code>Config</code> from two layers: your user file, then the bytes GitHub returned. It reuses <code>parse_config</code> and <code>layered</code>, so overrides, user-only keys, and setting types behave the same way they do in a checkout."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds <code>load_committed</code>, which layers the user file and then the committed file's bytes.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The user layer comes first, which is lowest precedence, matching <code>load</code>. The committed file's relative <code>Source</code> path can't equal the resolved user path, so user-only keys are still read only from your own file. Checked by reading <code>layered</code>.",
+       "line": 1053
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "daemon",
+   "title": "Reading and caching the settings in the daemon",
+   "kicker": "Where the daemon decides between a live checkout and GitHub",
+   "intro": [
+    "<code>Pass.settings_of</code> fills its map from live checkouts once per pass, as before. For a repository that isn't in that map, it now asks <code>Daemon.committed_settings</code>, which calls <code>gh api repos/&lt;repo&gt;/contents/.projector.toml</code> with no ref, so it reads only the default branch and never a pull request's head.",
+    "The daemon keeps the result in <code>Daemon.committed</code>, keyed by the lowercased repository and stamped with its monotonic clock. This cache lives across passes, so a pass over many pull requests makes at most one request per repository every 10 minutes."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The settings change which verdicts count and whether <code>UNREVIEWED</code> fires. A repository's committed default branch already takes write access to change, which is the same trust a checkout's committed file carries."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Adds <code>committed_settings</code> and its cache, factors out <code>review_settings</code>, and makes <code>settings_of</code> fall back to GitHub.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "A 404 applies only the user layer. A base64 200 is decoded and parsed. A failed call, a body that isn't JSON, a directory listing, or another encoding logs and keeps the last settings. A <code>ConfigError</code> or a base64 padding error is caught. Checked by reading every branch.",
+       "line": 1287
+      },
+      {
+       "kind": "verify",
+       "text": "A live checkout's entry is in <code>repo_settings</code> before the GitHub fallback runs, so the checkout always wins. <code>test_a_live_checkouts_review_settings_win_over_githubs</code> covers this.",
+       "line": 1755
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Tests and documentation",
+   "kicker": "Fake contents API, six regression tests, and the updated reference rows",
+   "intro": [
+    "The fake <code>gh</code> in <code>tests/test_watch.py</code> now serves the contents API, with a 404 when a repository commits no file. Every watch test points <code>HOME</code> at a scratch directory, so the runner's own <code>~/.projector.toml</code> can't leak into the committed-settings layering. The new tests cover reading the settings, a 404, the 10-minute cache, a failed read, your user layer, and checkout precedence.",
+    "<code>docs/cli.md</code> now describes both sources in the <code>review.reviewers</code> and <code>review.ci</code> rows and in the <code>UNREVIEWED</code> event."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_watch.py"
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The two configuration rows and the <code>UNREVIEWED</code> event row now name the GitHub fallback."
+    }
+   ]
+  }
+ ]
+}
