@@ -1050,6 +1050,21 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
     return config
 
 
+def load_committed(data: Optional[bytes], label: str, environ: Optional[dict[str, str]] = None) -> Config:
+    """What `load` reads at the top of a checkout of a repository you have no checkout of: the user layer, then
+    `data`, the `.projector.toml` its default branch commits, which `label` names, or nothing when it has none."""
+
+    env = os.environ if environ is None else environ
+    found = user_config_path(env)
+    user = found.resolve() if found.is_file() else None
+    layers = [(Source(user), read_config_file(user))] if user is not None else []
+    if data is not None:
+        layers.append((Source(Path(CONFIG_NAME), label), parse_config(data, label)))
+    config = layered(layers, user)
+    config.approvals = allowed_path(env)
+    return config
+
+
 def _overrides(source: Source, loaded: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
     """Take the `[override.<priority>]` tables out of a file's values, refusing a priority outside 1 to 99."""
 

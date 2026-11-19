@@ -9,6 +9,7 @@ by patching `review_locks`, `clear_lock`, and `copy_published` on the review mod
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import hashlib
 import io
@@ -153,6 +154,13 @@ class FakeGitHub:
         self.repository(repo)["pulls"][number] = {"node": found, "requested": list(requested),
                                                   "teams": list(teams), "reviews": list(reviews),
                                                   "contexts": list(contexts), "fork": fork}
+
+    def committed(self, text, repo="acme/app") -> None:
+        """The `.projector.toml` the repository's default branch commits, which the contents API serves."""
+        self.repository(repo)["config"] = text
+
+    def config_reads(self) -> list[str]:
+        return [call[-1] for call in self.calls if call[:1] == ["api"] and "/contents/" in call[-1]]
 
     def stack(self, number, *layers, repo="acme/app", open_layers=None, is_open=True) -> None:
         """A GitHub stack of the pull requests `layers`, bottom first, of which `open_layers` are open."""
@@ -316,6 +324,12 @@ class FakeGitHub:
             if tail[2:] == ["reviews"] and set(query) == {"per_page", "page"} and query["per_page"] == "100":
                 page = int(query["page"])
                 return self.answer(200, pull["reviews"][(page - 1) * 100:page * 100], include, etag)
+        if tail == ["contents", ".projector.toml"] and not query:
+            if repo.get("config") is None:
+                return self.answer(404, {"message": "Not Found"}, include, etag)
+            content = base64.encodebytes(repo["config"].encode()).decode()
+            return self.answer(200, {"name": ".projector.toml", "encoding": "base64", "content": content},
+                               include, etag)
         if tail[:3] == ["git", "ref", "heads"] and not query:
             branch = unquote("/".join(tail[3:]))
             sha = repo["branches"].get(branch)
@@ -380,6 +394,10 @@ class WatchCase(unittest.TestCase):
         self.scratch = Path(scratch.name)
         self.root = self.scratch / "state" / "projector" / "watch"
         self.review_root = self.scratch / "reviews"
+        # The daemon reads the user layer under a repository's committed configuration, so keep yours out of it.
+        environment = mock.patch.dict(os.environ, {"HOME": str(self.scratch / "home")})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.github = FakeGitHub()
         self.clock = Clock()
         self.settings = watch.Settings()
@@ -504,10 +522,10 @@ def label(change: str, number: int = 1, head: str = SHA_A) -> str:
     return f"LABEL acme/app#{number} {change} head={head[:8]}: {meaning}"
 
 
-def unreviewed(number: int, head: str = SHA_A, relayed: bool = False) -> str:
+def unreviewed(number: int, head: str = SHA_A, relayed: bool = False, repo: str = "acme/app") -> str:
     scope = f"this machine{RELAYED if relayed else ''}"
-    return (f"UNREVIEWED acme/app#{number} head={head[:8]}: ready for review, its head is not signed off, and no "
-            f"session on {scope} reviews it — tell the user that no session on {scope} reviews acme/app#{number}")
+    return (f"UNREVIEWED {repo}#{number} head={head[:8]}: ready for review, its head is not signed off, and no "
+            f"session on {scope} reviews it — tell the user that no session on {scope} reviews {repo}#{number}")
 
 
 class FixRoleTests(WatchCase):
@@ -613,6 +631,103 @@ class FixRoleTests(WatchCase):
 
         self.assertEqual([unreviewed(2)], events["fixer"],
                          "the workflow reviews #1's head and skips the fork's, which no one reviews")
+
+    def test_a_repository_no_live_session_works_in_reads_its_review_settings_from_github(self) -> None:
+        # Before the daemon read GitHub, a repository with no live checkout had no review.ci and no reviewers, so
+        # every ready pull request heard UNREVIEWED although GitHub Actions reviewed it.
+        self.github.committed('[review]\nci = true\nreviewers = "ci-app[bot]"\n')
+        self.github.pull_request(1, draft=False)
+        self.github.pull_request(2, draft=False, fork="outsider/app")
+        self.github.pull_request(3, draft=False, fork="outsider/app", verdicts=[
+            projector_verdict(SHA_A, "clean", who="ci-app[bot]", association="NONE")])
+        self.fixer("acme/app#1 fix", "acme/app#2 fix", "acme/app#3 fix")
+
+        events = self.cycle()
+
+        self.assertEqual([unreviewed(2)], events["fixer"],
+                         "review.ci covers #1, and review.reviewers counts the app's clean verdict on #3")
+        self.assertEqual(["repos/acme/app/contents/.projector.toml"], self.github.config_reads())
+
+    def test_a_repository_that_commits_no_projector_toml_still_hears_unreviewed(self) -> None:
+        self.github.pull_request(1, draft=False)
+        self.fixer("acme/app#1 fix")
+
+        events = self.cycle()
+
+        self.assertEqual([unreviewed(1)], events["fixer"])
+        self.assertEqual(["repos/acme/app/contents/.projector.toml"], self.github.config_reads(),
+                         "the daemon asked GitHub, and a 404 means the repository has no review settings")
+
+    def test_the_committed_review_settings_are_read_once_every_ten_minutes(self) -> None:
+        self.github.committed("[review]\nci = true\n")
+        self.github.pull_request(1, draft=False)
+        self.github.pull_request(2, draft=False)
+        self.fixer("acme/app#1 fix", "acme/app#2 fix")
+
+        self.cycle()
+        first = self.github.config_reads()
+        self.advance(599)
+        self.cycle()
+        within = self.github.config_reads()
+        self.advance(1)
+        self.cycle()
+        after = self.github.config_reads()
+
+        self.assertEqual(["repos/acme/app/contents/.projector.toml"], first,
+                         "one read for the repository, however many of its pull requests the pass covers")
+        self.assertEqual([], within)
+        self.assertEqual(["repos/acme/app/contents/.projector.toml"], after)
+
+    def test_a_failed_read_of_the_committed_review_settings_keeps_the_last_ones(self) -> None:
+        self.github.committed("[review]\nci = true\n")
+        self.github.pull_request(1, draft=False)
+        self.fixer("acme/app#1 fix")
+        before = self.cycle()["fixer"]
+        self.github.failing["repos/acme/app/contents/.projector.toml"] = None
+        self.github.pull_request(1, draft=False, head=SHA_B)
+        self.advance(600)
+        log = io.StringIO()
+        with redirect_stdout(log):
+            after = self.cycle()["fixer"]
+            self.advance(60)
+            later = self.cycle()["fixer"]
+
+        self.assertEqual([], [line for line in before + after + later if line.startswith("UNREVIEWED")],
+                         "the connection reset keeps review.ci from the read before it")
+        self.assertEqual(1, log.getvalue().count("could not read acme/app's .projector.toml from GitHub"),
+                         "the failure logs once and waits ten minutes before it asks again")
+
+    def test_your_own_review_reviewers_counts_on_a_repository_read_from_github(self) -> None:
+        home = self.scratch / "home"
+        home.mkdir()
+        (home / ".projector.toml").write_text('[review]\nreviewers = "ci-app[bot]"\n')
+        self.github.pull_request(1, draft=False, verdicts=[
+            projector_verdict(SHA_A, "clean", who="ci-app[bot]", association="NONE")])
+        self.fixer("acme/app#1 fix")
+
+        events = self.cycle()
+
+        self.assertEqual([], events["fixer"], "~/.projector.toml applies as it does in a checkout of the repository")
+
+    def test_a_live_checkouts_review_settings_win_over_githubs(self) -> None:
+        home = self.scratch / "home"
+        checkout = home / "app"
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+        subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", "https://github.com/acme/app.git"],
+                       check=True)
+        (checkout / ".projector.toml").write_text("[review]\nci = false\n")
+        self.github.committed("[review]\nci = true\n")
+        self.github.committed("[review]\nci = true\n", repo="acme/other")
+        self.github.pull_request(1, draft=False)
+        self.github.pull_request(1, repo="acme/other", draft=False)
+        self.fixer("acme/app#1 fix", "acme/other#1 fix")
+        write_json(self.folder("fixer") / "agent.json", {"schema_version": 1, "cwd": str(checkout)})
+
+        events = self.cycle()
+
+        self.assertEqual([unreviewed(1)], events["fixer"],
+                         "the live checkout's review.ci = false wins for acme/app, and GitHub's covers acme/other")
+        self.assertEqual(["repos/acme/other/contents/.projector.toml"], self.github.config_reads())
 
     def test_a_ready_pull_request_another_session_reviews_asks_the_fixer_for_nothing(self) -> None:
         self.github.pull_request(1, draft=False)
