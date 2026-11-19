@@ -27,5 +27,8 @@ os.environ.update({"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "maintenance.aut
                    "GIT_CONFIG_KEY_1": "gc.auto", "GIT_CONFIG_VALUE_1": "0"})
 
 # Claude Code sets this for every command it runs, and project review names it in
-# the signatures it writes, so a test that expects an effort sets one itself.
+# the signatures it writes, so a test that expects an effort sets one itself. The
+# review action sets the version a review names, and a review's gate can run
+# these tests on a runner, so a test that expects one sets it itself.
 os.environ.pop("CLAUDE_EFFORT", None)
+os.environ.pop("PROJECTOR_VERSION", None)

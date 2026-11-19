@@ -82,8 +82,12 @@ runs:
         printf '#!/bin/sh\nPYTHONPATH=%s/src exec python3 -P -m projector "$@"\n' "$(printf '%q' "$root")" > "$bin/project"
         chmod +x "$bin/project"
         echo "$bin" >> "$GITHUB_PATH"
+        # Reviews name the Projector version that made them, and this source tree is installed as no distribution.
+        version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' \
+          "$root/.claude-plugin/plugin.json")
         {
           echo "PROJECTOR_ROOT=$root"
+          echo "PROJECTOR_VERSION=$version"
           echo "XDG_STATE_HOME=$RUNNER_TEMP/projector-state"
         } >> "$GITHUB_ENV"
         git remote set-head origin --auto

@@ -100,7 +100,10 @@ number. Each job:
 4. **Runs the agent** with `project review run`, in a permission mode that
    never waits for a prompt, as
    [Review a head with no session](cli.md#review-a-head-with-no-session)
-   describes.
+   describes. The action runs Projector from the source at the ref the
+   workflow names, not from an installed package, so it sets
+   `PROJECTOR_VERSION` from that source's `.claude-plugin/plugin.json`. The
+   review names that version in its start comment and its signature.
 5. **Fails loudly.** When the agent publishes no verdict, the job deletes
    the start comment, takes `reviewing` off, posts one comment that says
    why, and fails.
