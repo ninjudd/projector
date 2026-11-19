@@ -122,7 +122,8 @@ number. Each job:
    review names that version in its start comment and its signature. For
    Claude, it also adds that source as a plugin marketplace and installs the
    plugins Projector's plugin depends on, at the versions the marketplace
-   pins. Claude Code loads no plugin whose dependency is missing, so without
+   pins, updating a copy that a self-hosted runner kept from an earlier
+   job. Claude Code loads no plugin whose dependency is missing, so without
    them the agent would have no `review-pr` skill. Once its own checks pass,
    and before the agent starts, the command adds the `reviewing` label. In a
    measured run, the pull request showed the review 17 seconds after the

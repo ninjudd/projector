@@ -155,10 +155,11 @@ runs:
           claude)
             installed claude "$CLAUDE_VERSION" || npm install --global "@anthropic-ai/claude-code@$CLAUDE_VERSION"
             # Claude Code loads no plugin whose dependency is missing, and without Projector the agent has no
-            # review-pr skill. This tree's marketplace pins each dependency, and both commands are no-ops on a
-            # runner that already has them.
+            # review-pr skill. This tree's marketplace pins each dependency. A runner that keeps ~/.claude between
+            # jobs already has the plugin, which install leaves as it is, so update brings it to this tree's pin.
             claude plugin marketplace add "$PROJECTOR_ROOT"
             claude plugin install gh-stack@projector
+            claude plugin update gh-stack@projector
             ;;
           codex)
             installed codex "$CODEX_VERSION" || npm install --global "@openai/codex@$CODEX_VERSION"

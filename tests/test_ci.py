@@ -380,7 +380,10 @@ class ActionTests(unittest.TestCase):
         for dependency in manifest["dependencies"]:
             with self.subTest(dependency=dependency):
                 self.assertIn(dependency, listed, "the marketplace the action adds must carry the dependency")
-                self.assertIn(f"claude plugin install {dependency}@{marketplace['name']}", calls)
+                plugin = f"{dependency}@{marketplace['name']}"
+                # install leaves a kept copy at an older pin, so a persistent runner needs update after it.
+                self.assertLess(calls.index(f"claude plugin install {plugin}"),
+                                calls.index(f"claude plugin update {plugin}"))
         self.assertLess(calls.index(f"claude plugin marketplace add {root}"),
                         calls.index(f"claude plugin install {manifest['dependencies'][0]}@{marketplace['name']}"))
 
