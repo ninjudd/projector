@@ -1,0 +1,223 @@
+{
+ "version": 1,
+ "name": "Push service for the phone",
+ "project": "console/phone",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 594,
+  "title": "Build the push service that wakes the iPhone app, with its library apart from its public handlers",
+  "head": "25d75b3981f98a29fdb627b54c323ca8ed6b5d2e",
+  "headRef": "push-service",
+  "base": "d245c04bf9af2ddd86ea758e4d6967dceb9852b7",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's planned iPhone app needs a way to wake up when an agent posts an item for you. Apple delivers that wake-up only through its push service (APNs), and only when a server holding the app publisher's push key asks. This pull request builds that small server, <code>services/push/</code>, ahead of the app, because it depends only on Apple and not on the questions that still block the app.",
+   "The service has two calls. <code>POST /v1/register</code> takes the phone's device token, Apple's address for one app on one phone, and returns a <b>push ID</b>: the same token encrypted with AES-256-GCM under the service's secret key. <code>POST /v1/push</code> takes a push ID and a notification that the daemon has already encrypted for the phone, decrypts the push ID back to the token, and forwards the notification to Apple. Because the push ID carries the token, the service stores nothing and needs no database.",
+   "The handlers ask for no credential beyond a push ID, so the encryption and the forwarder live in a separate library, <code>src/lib.ts</code>. A hosted deployment that serves many people imports the library and puts its own account check and shared rate limit in front, and mounts neither handler. The plan's § 3 and § 2.3 change to say so, and a new § 8 records what the build settled.",
+   "Nothing has been deployed to Vercel or sent through Apple's real push service yet. That waits for an Apple push key and a Vercel project."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Device token</b>: Apple's address for one app install on one phone.</li><li><b>Push ID</b>: the device token sealed under the service's key; only the service can open it.</li><li><b>Provider token</b>: the ES256 JWT that proves to Apple the request comes from the push key's owner.</li><li><b>Sealed notification</b>: text the daemon encrypted for the phone; the service forwards it unread.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first Projector review, of <code>58e2275</code>, requested changes with two findings, both on the plan document:</p><ul class=\"tight\"><li>The § 2.3 call table said the rate limit is per push ID, while the code and the paragraph below it count per phone.</li><li>Two edited plan lines were not rewrapped to the file's width.</li></ul><p>The second commit, <code>25d75b3</code>, changes only the plan to fix both, and the review of that head verified the fixes and found nothing new.</p><p class=\"note\">The service code, its 38 tests, and CI passed in both reviews.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "library",
+   "title": "The library: push IDs, settings, and the forwarder to Apple",
+   "kicker": "The code that holds Apple's key and touches device tokens, which any deployment imports",
+   "intro": [
+    "These files are everything a deployment needs to seal and open push IDs and send to Apple. <code>lib.ts</code> re-exports them and nothing else, so importing it never loads the public handlers or their rate limit.",
+    "The forwarder keeps one HTTP/2 connection to Apple per function instance and one provider token for 50 minutes, because Apple refuses tokens refreshed more often than every 20 minutes and rejects any older than an hour."
+   ],
+   "files": [
+    {
+     "path": "services/push/src/push-id.ts",
+     "note": "Seals and opens push IDs: a version byte (also the authenticated data), a random 12-byte nonce, the encrypted token, and a 16-byte tag, in unpadded base64url.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "An ID that does not re-encode to itself is refused, so stray base64url bits cannot make a second spelling of one ID. The test suite's tampering and re-spelling tests pass at this head.",
+       "line": 58
+      }
+     ]
+    },
+    {
+     "path": "services/push/src/env.ts",
+     "note": "Reads the settings from environment variables, and names a missing or malformed variable in its error without its value."
+    },
+    {
+     "path": "services/push/src/apns.ts",
+     "note": "Builds the ES256 provider token and forwards one notification to Apple, mapping Apple's answer to sent, unregistered, or failed.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A request that fails before Apple answers, on a connection that sat idle, gets one retry on a fresh connection. A failure on a fresh connection is not retried.",
+       "line": 149
+      },
+      {
+       "kind": "verify",
+       "text": "Only Apple's one-word reasons, such as <code>BadDeviceToken</code>, survive <code>reasonOf</code>, so a log line can carry nothing else from Apple's body. Checked by reading and by the test suite's reason test.",
+       "line": 176
+      }
+     ]
+    },
+    {
+     "path": "services/push/src/lib.ts",
+     "note": "The library's public surface: re-exports only, and imports neither handler nor the limit."
+    }
+   ]
+  },
+  {
+   "id": "handlers",
+   "title": "The public handlers and their rate limit",
+   "kicker": "The two Vercel Functions an operator's own instance mounts",
+   "intro": [
+    "The handlers validate the JSON body, enforce the 2 KiB notification limit in UTF-8 bytes, and answer <code>404</code> for a push ID the instance did not seal. The rate limit allows 60 notifications per phone per sliding hour, counted in each function instance's memory, so it is a best-effort cap, not a shared one.",
+    "Each handler reads its settings on first request and answers <code>500</code> while one is missing, so registering works with only <code>PUSH_ID_KEY</code> set."
+   ],
+   "files": [
+    {
+     "path": "services/push/src/handlers.ts",
+     "note": "The register and push handlers, the body reader that stops at 16 KiB, and the wrappers that read settings from the environment.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The limit is keyed by the device token a push ID opens to, so registering again for a new push ID buys no more notifications.",
+       "line": 59
+      }
+     ]
+    },
+    {
+     "path": "services/push/src/limit.ts",
+     "note": "A sliding-window counter per key, which forgets keys that sent nothing in the last window."
+    },
+    {
+     "path": "services/push/api/v1/push.ts",
+     "note": "Vercel's entry point for <code>POST /v1/push</code>."
+    },
+    {
+     "path": "services/push/api/v1/register.ts",
+     "note": "Vercel's entry point for <code>POST /v1/register</code>."
+    }
+   ]
+  },
+  {
+   "id": "config",
+   "title": "Packaging and deployment configuration",
+   "kicker": "How the service builds, deploys, and stays out of Projector's own packages",
+   "intro": [
+    "The service is TypeScript on Node 24 with only TypeScript and the Node types as development dependencies. <code>vercel.json</code> routes <code>/v1/*</code> to the functions, and <code>.vercelignore</code> keeps a local <code>.env</code> out of a deployment."
+   ],
+   "files": [
+    {
+     "path": "services/push/package.json",
+     "note": "Scripts for <code>check</code> and <code>test</code>; the tests compile to <code>dist/</code> and run with <code>node --test</code> and a 10-second timeout each."
+    },
+    {
+     "path": "services/push/package-lock.json"
+    },
+    {
+     "path": "services/push/tsconfig.json",
+     "note": "Strict NodeNext settings over <code>api</code>, <code>src</code>, and <code>test</code>."
+    },
+    {
+     "path": "services/push/vercel.json",
+     "note": "Rewrites <code>/v1/:call</code> to the functions under <code>api/v1/</code>."
+    },
+    {
+     "path": "services/push/.vercelignore",
+     "note": "Keeps <code>.env</code> files and the tests out of a deployment."
+    },
+    {
+     "path": "services/push/.gitignore"
+    },
+    {
+     "path": "services/push/.env.example",
+     "note": "Lists every setting with what it holds."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests and CI",
+   "kicker": "The service's tests, its workflow, and the packaging guard",
+   "intro": [
+    "The service's tests run against a local HTTP/2 server that stands in for Apple. Their files are named <code>test/&lt;name&gt;.ts</code> rather than <code>*.test.ts</code>, because <code>claude plugin test .</code> at the repository root would run any such file as a test of Projector's hooks module. A new packaging test pins that, and checks that neither the wheel nor a plugin manifest reaches into <code>services/</code> or <code>ios/</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The <code>push-service</code> CI job, which runs <code>npm ci</code>, <code>npm run check</code>, and <code>npm test</code> in <code>services/push/</code>, passes at this head, as do the repository's <code>check</code> job and the 38 tests the first review ran."
+    }
+   ],
+   "files": [
+    {
+     "path": ".github/workflows/push-service.yml",
+     "note": "Runs the service's check and tests when <code>services/push/</code> or the workflow changes, with read-only permissions and no secrets."
+    },
+    {
+     "path": "tests/test_packaging.py"
+    },
+    {
+     "path": "services/push/test/apns.ts"
+    },
+    {
+     "path": "services/push/test/handlers.ts"
+    },
+    {
+     "path": "services/push/test/lib.ts"
+    },
+    {
+     "path": "services/push/test/limit.ts"
+    },
+    {
+     "path": "services/push/test/push-id.ts"
+    },
+    {
+     "path": "services/push/test/support/fakes.ts"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The README and the phone plan",
+   "kicker": "How to run your own instance, and the plan's record of what the build settled",
+   "intro": [
+    "The README covers the calls, how to deploy your own instance on Vercel with your own Apple team, and how a hosted deployment imports the library instead of the handlers. The phone plan stays a draft. Its § 2.3 and § 3 change so the hosted instance no longer runs the handlers unchanged, and its new § 8 records the push ID's format, the settings, the token caching, the retry, the payload, and the library split."
+   ],
+   "files": [
+    {
+     "path": "services/push/README.md",
+     "note": "The service's calls, deploy steps, and library use."
+    },
+    {
+     "path": "docs/projects/console/phone/readme.md",
+     "note": "§ 2.3 and § 3 revised for the library split; new § 8 records the build's decisions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "§ 2.3's call table now caps <code>POST /v1/push</code> for one phone, counted by the device token, matching this paragraph, § 8, and <code>RateLimit.take(token.toString(\"hex\"))</code> in <code>src/handlers.ts</code>. Checked by reading the plan and the handler at this head.",
+       "line": 173
+      },
+      {
+       "kind": "context",
+       "text": "This paragraph and the § 3 bullet around line 285 are rewrapped to the plan's width of about 76 columns, which the first review asked for.",
+       "line": 181
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

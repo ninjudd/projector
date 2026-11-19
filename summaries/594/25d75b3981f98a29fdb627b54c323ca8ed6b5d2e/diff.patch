@@ -1,0 +1,1674 @@
+diff --git a/.github/workflows/push-service.yml b/.github/workflows/push-service.yml
+new file mode 100644
+index 00000000..238f63bc
+--- /dev/null
++++ b/.github/workflows/push-service.yml
+@@ -0,0 +1,23 @@
++name: Push service
++on:
++  pull_request:
++    paths: ['services/push/**', .github/workflows/push-service.yml]
++  push:
++    branches: [main]
++    paths: ['services/push/**', .github/workflows/push-service.yml]
++permissions:
++  contents: read
++jobs:
++  push-service:
++    runs-on: ubuntu-latest
++    defaults:
++      run:
++        working-directory: services/push
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: '24'
++      - run: npm ci
++      - run: npm run check
++      - run: npm test
+diff --git a/docs/projects/console/phone/readme.md b/docs/projects/console/phone/readme.md
+index 613b1bb7..7bb67338 100644
+--- a/docs/projects/console/phone/readme.md
++++ b/docs/projects/console/phone/readme.md
+@@ -161,27 +161,32 @@ the HTTP/2 client that Apple's push service requires and the ES256 signing
+ its tokens use, so it has no runtime dependencies at all. It deploys on its
+ own, apart from the `projector.bot` site in `web/`, as a Vercel project
+ whose root directory is `services/push/`. Its two calls are Vercel
+-Functions on the Node runtime. The app uses this hosted instance by
+-default.
++Functions on the Node runtime. The App Store build registers through the
++hosted instance's own registration, which authenticates the account, and
++never calls these handlers. A build its operator signs registers with
++`POST /v1/register` on the instance it was built for, which its build
++settings name.
+ 
+ | Call | Sent by | Body | What the service does |
+ | --- | --- | --- | --- |
+ | `POST /v1/register` | The app | Apple's device token | Encrypts the token with the service's own secret key and returns the result as the push ID |
+-| `POST /v1/push` | The daemon | The push ID and the sealed notification, at most 2 KiB | Decrypts the push ID to the device token and forwards the sealed text to it through Apple's push service, and answers `202`. It answers `404` for a push ID it cannot decrypt or that Apple reports as unregistered, and `429` past 60 notifications an hour for one push ID |
++| `POST /v1/push` | The daemon | The push ID and the sealed notification, at most 2 KiB | Decrypts the push ID to the device token and forwards the sealed text to it through Apple's push service, and answers `202`. It answers `404` for a push ID it cannot decrypt or that Apple reports as unregistered, and `429` past 60 notifications an hour for one phone, counted by the device token, so registering again does not reset it |
+ 
+ A push ID is the device token itself, encrypted and authenticated so that
+ only the service can read it and no one can forge one. So the service keeps
+ no table and needs no database, and losing its host loses nothing but its
+ secret key and Apple's push key, both from its environment. It stores no
+-notification and logs no body. It counts each push ID's notifications in
+-memory for the rate limit. Vercel runs and retires function instances as
+-traffic comes and goes, so that count is a best-effort cap for each
+-instance, not a shared one. Vercel's Runtime Cache can make it shared
+-later, still without a database. A push ID reaches the
+-daemon only inside `project agent phone add`, so knowing one is the only
+-credential `POST /v1/push` asks for, and the rate limit caps what a leaked
+-ID can do. `phone.push_url` in `~/.projector.toml` names the service, so
+-anyone can run their own.
++notification and logs no body. It counts each phone's notifications in
++memory for the rate limit, by the device token a push ID opens to, so a
++phone that registers again for a new push ID gets no more. Vercel runs
++and retires function instances as traffic comes and goes, so that count
++is a best-effort cap for each instance, not a shared one. Vercel's
++Runtime Cache can make it shared later, still without a database. A push
++ID reaches the daemon only inside `project agent phone add`, so knowing
++one is the only credential `POST /v1/push` asks for, and the rate limit
++caps what a leaked ID can do. `phone.push_url` in `~/.projector.toml`
++names the service the daemon posts to, so anyone can run their own. It is
++the daemon's setting only: the app takes its instance from its build.
+ 
+ ### 2.4 Changes by repository
+ 
+@@ -267,15 +272,20 @@ anyone can run their own.
+ - **One push service, hosted or your own.** Apple accepts a notification
+   only when it is signed with a push key of the team that owns the app's
+   bundle ID. So no instance but the publisher's can wake the App Store app.
+-  The hosted instance runs this repository's `services/push/` unchanged,
+-  with the publisher's push key in its environment, rather than a second
+-  service of its own. Someone who wants no hosted service builds the app
+-  under their own bundle ID and team, sets those in their instance's
+-  environment, and installs that build; the README in `services/push/`
+-  says how. A build installed from Xcode is development-signed, and Apple's
+-  production endpoint rejects its device token, so that instance sets its
+-  push environment to `sandbox`. TestFlight and App Store builds use
+-  `production`.
++  The hosted instance does not mount `services/push/`'s two handlers,
++  because they ask for no credential beyond a push ID and would let anyone
++  push through the publisher's key. A hosted deployment imports the
++  service's library instead, the push ID's encryption and the forwarder to
++  Apple's push service, and puts its own account check and shared rate
++  limit in front of it, with the publisher's push key in its environment.
++  So the code that holds the key and touches the device token is this
++  repository's, not a second copy. Someone who wants no hosted service
++  builds the app under their own bundle ID and team, sets those in their
++  instance's environment, and installs that build; the README in
++  `services/push/` says how. A build installed from Xcode is
++  development-signed, and Apple's production endpoint rejects its device
++  token, so that instance sets its push environment to `sandbox`.
++  TestFlight and App Store builds use `production`.
+ - **One repository.** The daemon, the app, and the service share one
+   protocol and one set of test vectors. Separate repositories would make
+   each protocol change a pair of pull requests that have to land in step,
+@@ -369,3 +379,70 @@ CLI has no runtime dependencies. Apple's CryptoKit provides X25519 and
+ ChaCha20-Poly1305, but not the relay's ChaCha20-and-HMAC construction, so
+ the app implements that construction itself and checks it against the
+ shared fixtures.
++
++## 8. The push service, built ahead of the app
++
++`services/push/` is built before the rest of the project, because it
++depends only on Apple's push service and not on the open questions in § 6.
++The plan stays a draft, because those questions still block the app. The
++build settled these choices:
++
++- **The push ID.** It is AES-256-GCM, from `node:crypto`, under the
++  service's 32-byte secret key in `PUSH_ID_KEY`. The bytes are a version
++  byte, which is also the additional authenticated data, a random 12-byte
++  nonce, the encrypted device token, and the 16-byte tag, in unpadded
++  base64url: 82 characters for a 32-byte token. A random nonce needs no
++  counter, which a service with no storage could not keep, and the service
++  seals once per registration, far inside GCM's bound of 2^32 random
++  nonces under one key. ChaCha20-Poly1305 would serve as well; GCM is
++  hardware-accelerated almost everywhere. An ID that does not re-encode to
++  itself is refused, so no ID has a second spelling. A new key voids every
++  push ID.
++- **The settings.** `APNS_KEY` holds the `.p8` file's contents,
++  `APNS_KEY_ID`, `APNS_TEAM_ID`, and `APNS_BUNDLE_ID` the rest of Apple's
++  identity, and `APNS_ENVIRONMENT` is `production` or `sandbox`, with no
++  default. A missing or malformed setting answers `500` and logs the
++  variable's name, never its value.
++- **The provider token.** It is an ES256 JWT, with `alg` and `kid` in its
++  header, `iss` and `iat` in its claims, and a raw 64-byte signature. Each
++  function instance makes one and reuses it for 50 minutes, inside Apple's
++  rule of no more often than every 20 minutes and no older than an hour,
++  and makes a new one early after Apple answers `ExpiredProviderToken`.
++- **The forwarder.** Each instance keeps one HTTP/2 connection to Apple and
++  opens a new one once Apple closes it. A request that fails on a reused
++  connection before Apple answers gets one retry on a new connection,
++  because a suspended instance can wake to a dead one. Each request times
++  out after 10 seconds. It reports `sent`, `unregistered` for Apple's `410`
++  and `400 BadDeviceToken`, or `failed` with Apple's one-word reason.
++- **The payload.** The service sends an alert with `mutable-content` set,
++  the sealed text unchanged under the payload's `sealed` key, and "An agent
++  needs you." as the text the lock screen shows if the extension cannot
++  open it. The app's notification service extension reads `sealed`.
++- **The calls.** The bodies are JSON: `{"token"}` for `register`, which
++  answers `{"push_id"}`, and `{"push_id", "notification"}` for `push`. The
++  2 KiB limit counts the notification's UTF-8 bytes and answers `413`. A
++  refusal from Apple for any reason but an unregistered device answers
++  `502`.
++- **The rate limit.** It is a sliding hour, counted by the device token
++  rather than the push ID, so registering again does not reset it, and its
++  `429` carries `Retry-After`.
++- **The library.** `services/push/src/lib.ts` exports the push ID's seal
++  and open, the forwarder, and the functions that read the settings. The
++  two handlers and their rate limit sit outside it and import it, and a
++  test walks the library's imports to keep them out. That is what lets a
++  hosted deployment mount neither handler, as § 3 describes.
++- **The tests and the workflow.** The tests run with `node --test` against
++  a local HTTP/2 server that stands in for Apple. Their files do not end in
++  `.test.ts`, because `claude plugin test .` runs every such file under the
++  repository root, and `tests/test_packaging.py` pins that. The
++  `Push service` workflow runs on changes to `services/push/` and to
++  itself. It leaves out `tests/fixtures/`, which § 2.4 names, until the
++  service reads a fixture.
++- **What ships.** The wheel maps nothing from `services/`, and neither
++  plugin's manifest or hooks module names a path in it. Both hosts install
++  the plugin from the repository root, so their plugin caches hold a copy
++  of `services/` as inert files, as they already hold `web/`.
++
++A deploy to Vercel and a notification through Apple's real push service
++wait for an Apple push key and a Vercel project, which come with the
++domain question in § 6.
+diff --git a/services/push/.env.example b/services/push/.env.example
+new file mode 100644
+index 00000000..51f19ea5
+--- /dev/null
++++ b/services/push/.env.example
+@@ -0,0 +1,13 @@
++# The contents of Apple's .p8 push key file, from BEGIN to END.
++APNS_KEY=
++# The push key's 10-character key ID.
++APNS_KEY_ID=
++# The Apple developer team ID that owns the push key and the app.
++APNS_TEAM_ID=
++# The bundle ID of the build this instance wakes.
++APNS_BUNDLE_ID=
++# production for TestFlight and App Store builds, sandbox for an Xcode-installed build.
++APNS_ENVIRONMENT=
++# The service's secret key, which seals push IDs: 32 random bytes in base64,
++# as `openssl rand -base64 32` prints. Changing it voids every push ID.
++PUSH_ID_KEY=
+diff --git a/services/push/.gitignore b/services/push/.gitignore
+new file mode 100644
+index 00000000..14a76b70
+--- /dev/null
++++ b/services/push/.gitignore
+@@ -0,0 +1,5 @@
++dist/
++.vercel/
++.env
++.env.*
++!.env.example
+diff --git a/services/push/.vercelignore b/services/push/.vercelignore
+new file mode 100644
+index 00000000..254a06c5
+--- /dev/null
++++ b/services/push/.vercelignore
+@@ -0,0 +1,7 @@
++# A project with no build serves its other files as static files, so a local
++# .env must never reach a deployment. Its settings belong in the project's
++# environment variables.
++.env
++.env.*
++dist
++test
+diff --git a/services/push/README.md b/services/push/README.md
+new file mode 100644
+index 00000000..de27f2a3
+--- /dev/null
++++ b/services/push/README.md
+@@ -0,0 +1,130 @@
++# Projector push service
++
++The push service wakes Projector's iPhone app when an agent needs you. The
++daemon on your machine seals each notification to your phone's push key,
++and the service forwards the sealed text to Apple's push service without
++being able to read it. The service stores nothing: a push ID is the phone's
++device token, encrypted under the service's secret key, so the service needs
++no database and loses no registration when you redeploy it.
++
++The service is a few hundred lines of TypeScript on Node 24 with no runtime
++dependencies, so you can read all of it before you trust it with Apple's
++push key. The app and the daemon side are still being built;
++[the phone plan](../../docs/projects/console/phone/readme.md) describes
++them.
++
++## Calls
++
++Both calls take and return JSON.
++
++| Call | Body | Answer |
++| --- | --- | --- |
++| `POST /v1/register` | `{"token": "<hex>"}`, Apple's device token | `200` with `{"push_id": "<id>"}`, or `400` for a token that is not hex |
++| `POST /v1/push` | `{"push_id": "<id>", "notification": "<sealed text>"}`, with the notification at most 2 KiB | `202` once Apple takes it, `404` for a push ID this instance did not issue or that Apple reports as unregistered, `413` for a notification over 2 KiB, `429` past 60 notifications an hour for one phone, and `502` when Apple refuses it for another reason |
++
++The service sends Apple an alert with `mutable-content` set and the sealed
++text unchanged under the payload's `sealed` key. The app's notification
++service extension opens it on the phone. If the extension cannot, the lock
++screen shows "An agent needs you."
++
++Knowing a push ID is the only credential `POST /v1/push` asks for, so treat
++one like a password. The rate limit caps what a leaked ID can do. Each
++function instance counts in its own memory, so the limit is best-effort
++rather than shared across instances.
++
++The service logs no request body, push ID, or device token. It logs a
++missing setting by its name, and a refusal from Apple by Apple's one-word
++reason, such as `403 InvalidProviderToken`.
++
++## Deploy your own instance
++
++An instance can wake only a build of the app signed by the Apple developer
++team whose push key it holds. Apple grants push only to teams in the paid
++Apple Developer Program. So the hosted instance wakes the App Store app, and
++your instance wakes a build you sign with your own team and bundle ID.
++
++1. In your Apple developer account, under **Certificates, Identifiers &
++   Profiles**, give your app's bundle ID the Push Notifications capability.
++   Then, under **Keys**, create a key with Apple Push Notifications service
++   enabled. Download its `.p8` file, which Apple lets you download only
++   once, and note its key ID. Your team ID is on the **Membership details**
++   page.
++2. Create a Vercel project from your copy of this repository, and set its
++   root directory to `services/push`. Vercel deploys the two calls as
++   functions on the Node runtime, and `vercel.json` routes `/v1/*` to them.
++   From the command line, `vercel link` in `services/push/` does the same.
++3. Set the project's environment variables, for the Production environment
++   only. `.env.example` lists them.
++
++   | Variable | Value |
++   | --- | --- |
++   | `APNS_KEY` | The contents of the `.p8` file |
++   | `APNS_KEY_ID` | The push key's key ID |
++   | `APNS_TEAM_ID` | Your team ID |
++   | `APNS_BUNDLE_ID` | The bundle ID of the build this instance wakes |
++   | `APNS_ENVIRONMENT` | `sandbox` for a build you install from Xcode, `production` for a TestFlight or App Store build |
++   | `PUSH_ID_KEY` | The service's secret key, 32 random bytes in base64 |
++
++   For example, from `services/push/`:
++
++   ```sh
++   vercel env add APNS_KEY production < AuthKey_ABC123DEFG.p8
++   openssl rand -base64 32 | vercel env add PUSH_ID_KEY production
++   ```
++
++4. Deploy with `vercel deploy --prod`, and check that the service answers:
++
++   ```sh
++   curl -s https://<your-instance>/v1/register \
++     -H 'content-type: application/json' \
++     -d '{"token": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"}'
++   ```
++
++   It prints a push ID. A `500` answer means a variable is missing or
++   malformed, and the function's log names it. Registering reads only
++   `PUSH_ID_KEY`; the first push reads the `APNS_` variables.
++
++Pick `APNS_ENVIRONMENT` for the build you install. A build installed from
++Xcode is development-signed, and its device token works only with Apple's
++sandbox, so Apple refuses it in production as `BadDeviceToken`, which the
++service answers as `404`. TestFlight and App Store builds need `production`.
++Run one instance for each environment you use.
++
++Keep `PUSH_ID_KEY` once you set it. A new key voids every push ID the old
++one sealed, so each phone must register again.
++
++## Import the library instead of the handlers
++
++`src/lib.ts` exports the pieces apart from the two public handlers and their
++rate limit: `sealPushId` and `openPushId` for the push ID, `createForwarder`
++for Apple's push service, and the functions that read the variables above.
++A deployment that authenticates its callers and keeps a shared limit
++imports this module, puts its own checks in front, and mounts neither
++handler, which ask for nothing beyond a push ID.
++
++```ts
++import { apnsConfigFromEnv, createForwarder, openPushId, pushIdKeyFromEnv } from "./src/lib.js";
++
++const key = pushIdKeyFromEnv();
++const forwarder = createForwarder(apnsConfigFromEnv());
++
++const device = openPushId(pushId, key);
++const outcome = device && (await forwarder.send(device, notification));
++// outcome.status is "sent", "unregistered", or "failed".
++```
++
++## Develop
++
++Run these in `services/push/` with Node 24:
++
++```sh
++npm ci
++npm run check
++npm test
++```
++
++`npm run check` type-checks the service and its tests. `npm test` compiles
++them to `dist/` and runs them with `node --test`, against a local HTTP/2
++server that stands in for Apple's push service. The test files do not end
++in `.test.ts`, because `claude plugin test .` at the repository root runs
++every such file as a test of Projector's hooks module.
+diff --git a/services/push/api/v1/push.ts b/services/push/api/v1/push.ts
+new file mode 100644
+index 00000000..a7687edc
+--- /dev/null
++++ b/services/push/api/v1/push.ts
+@@ -0,0 +1,3 @@
++import { pushFromEnv } from "../../src/handlers.js";
++
++export const POST = pushFromEnv();
+diff --git a/services/push/api/v1/register.ts b/services/push/api/v1/register.ts
+new file mode 100644
+index 00000000..8d2f20f9
+--- /dev/null
++++ b/services/push/api/v1/register.ts
+@@ -0,0 +1,3 @@
++import { registerFromEnv } from "../../src/handlers.js";
++
++export const POST = registerFromEnv();
+diff --git a/services/push/package-lock.json b/services/push/package-lock.json
+new file mode 100644
+index 00000000..dc0dea2c
+--- /dev/null
++++ b/services/push/package-lock.json
+@@ -0,0 +1,49 @@
++{
++  "name": "projector-push",
++  "lockfileVersion": 3,
++  "requires": true,
++  "packages": {
++    "": {
++      "name": "projector-push",
++      "license": "MIT",
++      "devDependencies": {
++        "@types/node": "24.19.2",
++        "typescript": "6.0.3"
++      },
++      "engines": {
++        "node": "24.x"
++      }
++    },
++    "node_modules/@types/node": {
++      "version": "24.19.2",
++      "resolved": "https://registry.npmjs.org/@types/node/-/node-24.19.2.tgz",
++      "integrity": "sha512-93d49wCWJkCyN87MxLpNN6KXPCwFw7bVUg79mGUV1OS40JGWwVCr8n61DXCSqz7CV6/VfPkb7xec7uP2M+QHWQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "undici-types": ">=7.24.0 <7.24.7"
++      }
++    },
++    "node_modules/typescript": {
++      "version": "6.0.3",
++      "resolved": "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz",
++      "integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "bin": {
++        "tsc": "bin/tsc",
++        "tsserver": "bin/tsserver"
++      },
++      "engines": {
++        "node": ">=14.17"
++      }
++    },
++    "node_modules/undici-types": {
++      "version": "7.24.6",
++      "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-7.24.6.tgz",
++      "integrity": "sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==",
++      "dev": true,
++      "license": "MIT"
++    }
++  }
++}
+diff --git a/services/push/package.json b/services/push/package.json
+new file mode 100644
+index 00000000..470c4a33
+--- /dev/null
++++ b/services/push/package.json
+@@ -0,0 +1,19 @@
++{
++  "name": "projector-push",
++  "private": true,
++  "type": "module",
++  "description": "Projector's push service: wakes the iPhone app through Apple's push service without seeing what a notification says.",
++  "license": "MIT",
++  "engines": {
++    "node": "24.x"
++  },
++  "scripts": {
++    "check": "tsc --noEmit",
++    "pretest": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
++    "test": "tsc && node --test --test-timeout=10000 --test-force-exit \"dist/test/*.js\""
++  },
++  "devDependencies": {
++    "@types/node": "24.19.2",
++    "typescript": "6.0.3"
++  }
++}
+diff --git a/services/push/src/apns.ts b/services/push/src/apns.ts
+new file mode 100644
+index 00000000..6a8981b9
+--- /dev/null
++++ b/services/push/src/apns.ts
+@@ -0,0 +1,184 @@
++import { sign, type KeyObject } from "node:crypto";
++import { connect as connectHttp2, constants, type ClientHttp2Session } from "node:http2";
++
++export type Environment = "production" | "sandbox";
++
++/** Apple's push service for each environment. An Xcode-installed build's token works only in the sandbox. */
++export const APNS_ORIGINS: Readonly<Record<Environment, string>> = {
++  production: "https://api.push.apple.com",
++  sandbox: "https://api.sandbox.push.apple.com",
++};
++
++export interface ApnsConfig {
++  /** Apple's push key, the .p8 file's P-256 private key. */
++  key: KeyObject;
++  keyId: string;
++  teamId: string;
++  /** The app's bundle ID, which Apple calls the topic. */
++  bundleId: string;
++  environment: Environment;
++}
++
++export type Outcome = { status: "sent" } | { status: "unregistered" } | { status: "failed"; reason: string };
++
++export interface Forwarder {
++  /** Sends one sealed notification to one device and reports what Apple said. It never rejects. */
++  send(token: Buffer, notification: string): Promise<Outcome>;
++  close(): void;
++}
++
++export interface ForwarderOptions {
++  connect?: (origin: string) => ClientHttp2Session;
++  now?: () => number;
++  timeoutMs?: number;
++}
++
++export interface ProviderToken {
++  get(): string;
++  invalidate(): void;
++}
++
++// Apple rejects a provider token older than an hour and refuses new ones made
++// more often than every 20 minutes, so one token serves 50 minutes.
++const TOKEN_LIFETIME_MS = 50 * 60 * 1000;
++const TIMEOUT_MS = 10_000;
++// What the lock screen shows if the app's notification service extension
++// cannot open the sealed text in time.
++const FALLBACK_ALERT = { title: "Projector", body: "An agent needs you." };
++const REASON = /^[A-Za-z]+$/;
++
++/** Makes the ES256 JWT that authenticates the service to Apple, and reuses it for its lifetime. */
++export function providerToken(config: Pick<ApnsConfig, "key" | "keyId" | "teamId">, now: () => number = Date.now): ProviderToken {
++  let token = "";
++  let madeAt = -Infinity;
++  return {
++    get() {
++      const at = now();
++      if (at - madeAt >= TOKEN_LIFETIME_MS) {
++        const header = base64url({ alg: "ES256", kid: config.keyId });
++        const claims = base64url({ iss: config.teamId, iat: Math.floor(at / 1000) });
++        const signature = sign("sha256", Buffer.from(`${header}.${claims}`), { key: config.key, dsaEncoding: "ieee-p1363" });
++        token = `${header}.${claims}.${signature.toString("base64url")}`;
++        madeAt = at;
++      }
++      return token;
++    },
++    invalidate() {
++      madeAt = -Infinity;
++    },
++  };
++}
++
++/**
++ * Forwards sealed notifications to Apple's push service over one HTTP/2
++ * connection, which it opens on first use and reopens once Apple closes it.
++ */
++export function createForwarder(config: ApnsConfig, options: ForwarderOptions = {}): Forwarder {
++  const origin = APNS_ORIGINS[config.environment];
++  const connect = options.connect ?? connectHttp2;
++  const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
++  const token = providerToken(config, options.now);
++  let session: ClientHttp2Session | undefined;
++
++  function open(): { session: ClientHttp2Session; reused: boolean } {
++    if (session && !session.closed && !session.destroyed) return { session, reused: true };
++    const opened = connect(origin);
++    const forget = () => {
++      if (session === opened) session = undefined;
++    };
++    // A session error also fails its open streams, which report it to send.
++    opened.on("error", forget);
++    opened.on("goaway", forget);
++    opened.on("close", forget);
++    session = opened;
++    return { session: opened, reused: false };
++  }
++
++  function attempt(current: ClientHttp2Session, device: Buffer, payload: string): Promise<Outcome | "transport"> {
++    return new Promise((resolve) => {
++      let settled = false;
++      const settle = (outcome: Outcome | "transport") => {
++        if (!settled) {
++          settled = true;
++          resolve(outcome);
++        }
++      };
++      const request = current.request({
++        ":method": "POST",
++        ":path": `/3/device/${device.toString("hex")}`,
++        authorization: `bearer ${token.get()}`,
++        "apns-topic": config.bundleId,
++        "apns-push-type": "alert",
++        "apns-priority": "10",
++        "content-type": "application/json",
++      });
++      let status = 0;
++      const chunks: Buffer[] = [];
++      request.setTimeout(timeoutMs, () => {
++        request.close(constants.NGHTTP2_CANCEL);
++        settle({ status: "failed", reason: "timeout" });
++      });
++      request.on("response", (headers) => {
++        status = Number(headers[":status"]);
++      });
++      request.on("data", (chunk: Buffer) => chunks.push(chunk));
++      request.on("end", () => {
++        settle(status === 0 ? "transport" : outcome(status, Buffer.concat(chunks)));
++      });
++      request.on("error", () => {
++        settle(status === 0 ? "transport" : { status: "failed", reason: `${status}` });
++      });
++      request.end(payload);
++    });
++  }
++
++  function outcome(status: number, body: Buffer): Outcome {
++    if (status === 200) return { status: "sent" };
++    const reason = reasonOf(body);
++    if (status === 410 || (status === 400 && reason === "BadDeviceToken")) return { status: "unregistered" };
++    if (status === 403 && reason === "ExpiredProviderToken") token.invalidate();
++    return { status: "failed", reason: reason ? `${status} ${reason}` : `${status}` };
++  }
++
++  return {
++    async send(device, notification) {
++      const payload = JSON.stringify({ aps: { alert: FALLBACK_ALERT, "mutable-content": 1 }, sealed: notification });
++      // A connection that sat idle can be dead without the client knowing,
++      // as when a function instance is suspended between requests. A request
++      // that fails on it before Apple answers gets one fresh connection.
++      for (let tries = 0; tries < 2; tries++) {
++        let current: { session: ClientHttp2Session; reused: boolean };
++        try {
++          current = open();
++        } catch {
++          return { status: "failed", reason: "connect" };
++        }
++        const result = await attempt(current.session, device, payload);
++        if (result !== "transport") return result;
++        current.session.destroy();
++        if (!current.reused) break;
++      }
++      return { status: "failed", reason: "connection" };
++    },
++    close() {
++      session?.close();
++      session = undefined;
++    },
++  };
++}
++
++function base64url(value: object): string {
++  return Buffer.from(JSON.stringify(value)).toString("base64url");
++}
++
++// Apple's reasons are single words such as BadDeviceToken. Keeping only
++// those means a log line can never carry anything else the body held.
++function reasonOf(body: Buffer): string {
++  try {
++    const parsed: unknown = JSON.parse(body.toString("utf8"));
++    const reason = typeof parsed === "object" && parsed !== null ? (parsed as { reason?: unknown }).reason : undefined;
++    return typeof reason === "string" && REASON.test(reason) ? reason : "";
++  } catch {
++    return "";
++  }
++}
+diff --git a/services/push/src/env.ts b/services/push/src/env.ts
+new file mode 100644
+index 00000000..7f4ee931
+--- /dev/null
++++ b/services/push/src/env.ts
+@@ -0,0 +1,49 @@
++import { createPrivateKey, type KeyObject } from "node:crypto";
++import type { ApnsConfig } from "./apns.js";
++import { pushIdKey } from "./push-id.js";
++
++/** A setting that is missing or malformed. Its message names the variable and never its value. */
++export class ConfigError extends Error {}
++
++export type Env = Readonly<Record<string, string | undefined>>;
++
++/** Reads the service's secret key from `PUSH_ID_KEY`. */
++export function pushIdKeyFromEnv(env: Env = process.env): KeyObject {
++  const value = required(env, "PUSH_ID_KEY");
++  try {
++    return pushIdKey(value);
++  } catch {
++    throw new ConfigError("PUSH_ID_KEY must be 32 random bytes in base64");
++  }
++}
++
++/** Reads Apple's push settings from the `APNS_` variables. */
++export function apnsConfigFromEnv(env: Env = process.env): ApnsConfig {
++  const pem = required(env, "APNS_KEY");
++  let key: KeyObject;
++  try {
++    key = createPrivateKey(pem);
++  } catch {
++    throw new ConfigError("APNS_KEY must hold the contents of Apple's .p8 push key");
++  }
++  if (key.asymmetricKeyDetails?.namedCurve !== "prime256v1") {
++    throw new ConfigError("APNS_KEY must be a P-256 key, as Apple's .p8 push keys are");
++  }
++  const environment = required(env, "APNS_ENVIRONMENT");
++  if (environment !== "production" && environment !== "sandbox") {
++    throw new ConfigError("APNS_ENVIRONMENT must be production or sandbox");
++  }
++  return {
++    key,
++    keyId: required(env, "APNS_KEY_ID"),
++    teamId: required(env, "APNS_TEAM_ID"),
++    bundleId: required(env, "APNS_BUNDLE_ID"),
++    environment,
++  };
++}
++
++function required(env: Env, name: string): string {
++  const value = env[name]?.trim();
++  if (!value) throw new ConfigError(`${name} is not set`);
++  return value;
++}
+diff --git a/services/push/src/handlers.ts b/services/push/src/handlers.ts
+new file mode 100644
+index 00000000..594c1cf7
+--- /dev/null
++++ b/services/push/src/handlers.ts
+@@ -0,0 +1,141 @@
++import type { KeyObject } from "node:crypto";
++import {
++  ConfigError,
++  apnsConfigFromEnv,
++  createForwarder,
++  deviceToken,
++  openPushId,
++  pushIdKeyFromEnv,
++  sealPushId,
++  type Env,
++  type Forwarder,
++} from "./lib.js";
++import { RateLimit } from "./limit.js";
++
++export const MAX_NOTIFICATION_BYTES = 2048;
++export const HOURLY_LIMIT = 60;
++const HOUR_MS = 60 * 60 * 1000;
++// Room for the push ID and a notification whose every character JSON escapes.
++const MAX_BODY_BYTES = 16 * 1024;
++
++export type Handler = (request: Request) => Promise<Response>;
++export type Log = (line: string) => void;
++
++export interface RegisterDeps {
++  key: KeyObject;
++}
++
++export interface PushDeps {
++  key: KeyObject;
++  forwarder: Forwarder;
++  limit: RateLimit;
++  log: Log;
++}
++
++/** `POST /v1/register`: seals Apple's device token into a push ID. */
++export async function register(request: Request, deps: RegisterDeps): Promise<Response> {
++  const body = await readJson(request);
++  if (body instanceof Response) return body;
++  const token = typeof body["token"] === "string" ? deviceToken(body["token"]) : null;
++  if (!token) return problem(400, "token must be Apple's device token in hex");
++  return Response.json({ push_id: sealPushId(token, deps.key) });
++}
++
++/** `POST /v1/push`: forwards one sealed notification to the device a push ID names. */
++export async function push(request: Request, deps: PushDeps): Promise<Response> {
++  const body = await readJson(request);
++  if (body instanceof Response) return body;
++  const pushId = body["push_id"];
++  const notification = body["notification"];
++  if (typeof pushId !== "string" || typeof notification !== "string" || notification === "") {
++    return problem(400, "push_id and notification must be strings");
++  }
++  if (Buffer.byteLength(notification) > MAX_NOTIFICATION_BYTES) {
++    return problem(413, `notification must be at most ${MAX_NOTIFICATION_BYTES} bytes`);
++  }
++  const token = openPushId(pushId, deps.key);
++  if (!token) return problem(404, "unknown push ID");
++  // Counted by device, so registering again for a new push ID buys no more.
++  const wait = deps.limit.take(token.toString("hex"));
++  if (wait > 0) {
++    return problem(429, `at most ${HOURLY_LIMIT} notifications an hour`, { "retry-after": String(Math.ceil(wait / 1000)) });
++  }
++  const outcome = await deps.forwarder.send(token, notification);
++  switch (outcome.status) {
++    case "sent":
++      return new Response(null, { status: 202 });
++    case "unregistered":
++      return problem(404, "unknown push ID");
++    case "failed":
++      deps.log(`push: Apple's push service failed: ${outcome.reason}`);
++      return problem(502, "Apple's push service did not take the notification");
++  }
++}
++
++/** The register handler, with its key from the environment. */
++export function registerFromEnv(env: Env = process.env, log: Log = console.error): Handler {
++  let deps: RegisterDeps | undefined;
++  return async (request) => {
++    try {
++      deps ??= { key: pushIdKeyFromEnv(env) };
++    } catch (error) {
++      return unconfigured(error, log);
++    }
++    return register(request, deps);
++  };
++}
++
++/** The push handler, with its settings from the environment and its own in-memory limit. */
++export function pushFromEnv(env: Env = process.env, log: Log = console.error): Handler {
++  let deps: PushDeps | undefined;
++  return async (request) => {
++    try {
++      deps ??= {
++        key: pushIdKeyFromEnv(env),
++        forwarder: createForwarder(apnsConfigFromEnv(env)),
++        limit: new RateLimit(HOURLY_LIMIT, HOUR_MS),
++        log,
++      };
++    } catch (error) {
++      return unconfigured(error, log);
++    }
++    return push(request, deps);
++  };
++}
++
++function unconfigured(error: unknown, log: Log): Response {
++  if (!(error instanceof ConfigError)) throw error;
++  log(`push: ${error.message}`);
++  return problem(500, "the push service is not configured");
++}
++
++// Reads at most MAX_BODY_BYTES, so an oversized body costs no more than that.
++async function readJson(request: Request): Promise<Record<string, unknown> | Response> {
++  const chunks: Uint8Array[] = [];
++  let size = 0;
++  if (request.body) {
++    const reader = request.body.getReader();
++    for (let read = await reader.read(); !read.done; read = await reader.read()) {
++      size += read.value.byteLength;
++      if (size > MAX_BODY_BYTES) {
++        await reader.cancel();
++        return problem(413, "body too large");
++      }
++      chunks.push(read.value);
++    }
++  }
++  let parsed: unknown;
++  try {
++    parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
++  } catch {
++    return problem(400, "body must be JSON");
++  }
++  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
++    return problem(400, "body must be a JSON object");
++  }
++  return parsed as Record<string, unknown>;
++}
++
++function problem(status: number, error: string, headers: Record<string, string> = {}): Response {
++  return Response.json({ error }, { status, headers });
++}
+diff --git a/services/push/src/lib.ts b/services/push/src/lib.ts
+new file mode 100644
+index 00000000..3cec9ad0
+--- /dev/null
++++ b/services/push/src/lib.ts
+@@ -0,0 +1,18 @@
++// The service's library: the push ID's encryption and the forwarder to
++// Apple's push service, apart from the public handlers and their rate limit.
++// A deployment that puts its own authentication and its own limit in front
++// imports this module and mounts neither handler, because the handlers ask
++// for no credential beyond the push ID.
++export { deviceToken, openPushId, pushIdKey, sealPushId } from "./push-id.js";
++export {
++  APNS_ORIGINS,
++  createForwarder,
++  providerToken,
++  type ApnsConfig,
++  type Environment,
++  type Forwarder,
++  type ForwarderOptions,
++  type Outcome,
++  type ProviderToken,
++} from "./apns.js";
++export { ConfigError, apnsConfigFromEnv, pushIdKeyFromEnv, type Env } from "./env.js";
+diff --git a/services/push/src/limit.ts b/services/push/src/limit.ts
+new file mode 100644
+index 00000000..c3f1d7d7
+--- /dev/null
++++ b/services/push/src/limit.ts
+@@ -0,0 +1,39 @@
++/**
++ * Caps how many notifications one device gets in a sliding window. It counts
++ * in this process's memory, so each function instance keeps its own count and
++ * the cap is best-effort, not shared.
++ */
++export class RateLimit {
++  private readonly sent = new Map<string, number[]>();
++  private sweptAt: number;
++
++  constructor(
++    private readonly limit: number,
++    private readonly windowMs: number,
++    private readonly now: () => number = Date.now,
++  ) {
++    this.sweptAt = now();
++  }
++
++  /** Counts one notification for `key`, or returns how many milliseconds remain until `key` may send again. */
++  take(key: string): number {
++    const now = this.now();
++    const since = now - this.windowMs;
++    if (now - this.sweptAt >= this.windowMs) this.sweep(since, now);
++    const times = (this.sent.get(key) ?? []).filter((time) => time > since);
++    this.sent.set(key, times);
++    const [oldest] = times;
++    if (oldest !== undefined && times.length >= this.limit) return oldest + this.windowMs - now;
++    times.push(now);
++    return 0;
++  }
++
++  // Forgets the devices that sent nothing in the window, so memory stays
++  // proportional to the devices that sent recently.
++  private sweep(since: number, now: number): void {
++    for (const [key, times] of this.sent) {
++      if ((times.at(-1) ?? -Infinity) <= since) this.sent.delete(key);
++    }
++    this.sweptAt = now;
++  }
++}
+diff --git a/services/push/src/push-id.ts b/services/push/src/push-id.ts
+new file mode 100644
+index 00000000..9d9a57a7
+--- /dev/null
++++ b/services/push/src/push-id.ts
+@@ -0,0 +1,72 @@
++import { createCipheriv, createDecipheriv, createSecretKey, randomBytes, type KeyObject } from "node:crypto";
++
++// A push ID is Apple's device token sealed with AES-256-GCM under the
++// service's secret key, so the service can read it back and no one else can
++// read or forge one, and the service stores nothing. GCM is node:crypto's
++// AEAD on every platform Node runs on, and AES is hardware-accelerated almost
++// everywhere. Its nonce is random, because a service with no storage cannot
++// keep a counter: a random 96-bit nonce stays within NIST SP 800-38D's bound
++// for 2^32 seals under one key, and the service seals once per registration.
++//
++// The bytes are: one version byte, the 12-byte nonce, the encrypted token,
++// and the 16-byte tag, in unpadded base64url. The version byte is also the
++// additional authenticated data, so a later format can change everything
++// after it and an ID can never be read as the wrong version.
++const VERSION = 1;
++const NONCE_BYTES = 12;
++const TAG_BYTES = 16;
++const KEY_BYTES = 32;
++// Apple documents device tokens as variable length, so this accepts any
++// length a token plausibly has rather than the 32 bytes tokens have today.
++const MIN_TOKEN_BYTES = 8;
++const MAX_TOKEN_BYTES = 100;
++const DEVICE_TOKEN = /^(?:[0-9a-fA-F]{2})+$/;
++const BASE64URL = /^[A-Za-z0-9_-]+$/;
++const MAX_PUSH_ID_LENGTH = Math.ceil(((1 + NONCE_BYTES + MAX_TOKEN_BYTES + TAG_BYTES) * 4) / 3);
++
++/** Parses Apple's device token from the hex the app sends, or returns null. */
++export function deviceToken(hex: string): Buffer | null {
++  if (!DEVICE_TOKEN.test(hex)) return null;
++  const token = Buffer.from(hex, "hex");
++  return token.length >= MIN_TOKEN_BYTES && token.length <= MAX_TOKEN_BYTES ? token : null;
++}
++
++/** Makes the service's secret key from its base64 encoding, which must hold exactly 32 bytes. */
++export function pushIdKey(base64: string): KeyObject {
++  const bytes = Buffer.from(base64, "base64");
++  if (bytes.length !== KEY_BYTES) {
++    throw new RangeError(`the push ID key must be ${KEY_BYTES} bytes in base64`);
++  }
++  return createSecretKey(bytes);
++}
++
++/** Seals a device token into a push ID that only `key` opens. */
++export function sealPushId(token: Buffer, key: KeyObject): string {
++  const header = Buffer.of(VERSION);
++  const nonce = randomBytes(NONCE_BYTES);
++  const cipher = createCipheriv("aes-256-gcm", key, nonce, { authTagLength: TAG_BYTES });
++  cipher.setAAD(header);
++  const sealed = Buffer.concat([cipher.update(token), cipher.final()]);
++  return Buffer.concat([header, nonce, sealed, cipher.getAuthTag()]).toString("base64url");
++}
++
++/** Opens a push ID to its device token, or returns null for any ID that `key` did not seal. */
++export function openPushId(pushId: string, key: KeyObject): Buffer | null {
++  if (pushId.length > MAX_PUSH_ID_LENGTH || !BASE64URL.test(pushId)) return null;
++  const bytes = Buffer.from(pushId, "base64url");
++  // Base64url decoding ignores stray trailing bits, so an ID that does not
++  // re-encode to itself is a second spelling of another ID, not this one.
++  if (bytes.toString("base64url") !== pushId) return null;
++  const tokenBytes = bytes.length - 1 - NONCE_BYTES - TAG_BYTES;
++  if (bytes[0] !== VERSION || tokenBytes < MIN_TOKEN_BYTES || tokenBytes > MAX_TOKEN_BYTES) return null;
++  const nonce = bytes.subarray(1, 1 + NONCE_BYTES);
++  const sealed = bytes.subarray(1 + NONCE_BYTES, bytes.length - TAG_BYTES);
++  const decipher = createDecipheriv("aes-256-gcm", key, nonce, { authTagLength: TAG_BYTES });
++  decipher.setAAD(bytes.subarray(0, 1));
++  decipher.setAuthTag(bytes.subarray(bytes.length - TAG_BYTES));
++  try {
++    return Buffer.concat([decipher.update(sealed), decipher.final()]);
++  } catch {
++    return null;
++  }
++}
+diff --git a/services/push/test/apns.ts b/services/push/test/apns.ts
+new file mode 100644
+index 00000000..f14ac0c8
+--- /dev/null
++++ b/services/push/test/apns.ts
+@@ -0,0 +1,197 @@
++import assert from "node:assert/strict";
++import { generateKeyPairSync, verify } from "node:crypto";
++import { connect, type ClientHttp2Session } from "node:http2";
++import { test } from "node:test";
++import { APNS_ORIGINS, apnsConfigFromEnv, ConfigError, createForwarder, providerToken, type ApnsConfig } from "../src/lib.js";
++import { appleKey, config, fakeApns, token, type Answer } from "./support/fakes.js";
++
++async function withApns(answer: (index: number) => Answer, run: (forwarder: ReturnType<typeof createForwarder>, apns: Awaited<ReturnType<typeof fakeApns>>) => Promise<void>, settings: ApnsConfig = config()) {
++  const apns = await fakeApns((_, index) => answer(index));
++  const forwarder = createForwarder(settings, { connect: () => connect(apns.url), timeoutMs: 200 });
++  try {
++    await run(forwarder, apns);
++  } finally {
++    forwarder.close();
++    await apns.close();
++  }
++}
++
++function decode(part: string | undefined): Record<string, unknown> {
++  return JSON.parse(Buffer.from(part ?? "", "base64url").toString("utf8")) as Record<string, unknown>;
++}
++
++test("a notification reaches the device's path with the bundle ID as topic and the sealed text unchanged", async () => {
++  const settings = config();
++  await withApns(() => ({ status: 200 }), async (forwarder, apns) => {
++    const device = token();
++    const notification = "c2VhbGVk+/=\"\\é";
++    assert.deepEqual(await forwarder.send(device, notification), { status: "sent" });
++    const [received] = apns.received;
++    assert.ok(received);
++    assert.equal(received.headers[":method"], "POST");
++    assert.equal(received.headers[":path"], `/3/device/${device.toString("hex")}`);
++    assert.equal(received.headers["apns-topic"], settings.bundleId);
++    assert.equal(received.headers["apns-push-type"], "alert");
++    const payload = JSON.parse(received.body) as { aps: Record<string, unknown>; sealed: string };
++    assert.equal(payload.sealed, notification);
++    assert.equal(payload.aps["mutable-content"], 1);
++  }, settings);
++});
++
++test("the provider token is an ES256 JWT that Apple's push key verifies, with the key ID and team ID", async () => {
++  const { privateKey, publicKey } = appleKey();
++  const settings = config({ key: privateKey });
++  await withApns(() => ({ status: 200 }), async (forwarder, apns) => {
++    const before = Math.floor(Date.now() / 1000);
++    await forwarder.send(token(), "sealed");
++    const authorization = String(apns.received[0]?.headers.authorization);
++    assert.match(authorization, /^bearer [\w-]+\.[\w-]+\.[\w-]+$/);
++    const [header, claims, signature] = authorization.slice("bearer ".length).split(".");
++    assert.deepEqual(decode(header), { alg: "ES256", kid: settings.keyId });
++    const { iss, iat } = decode(claims);
++    assert.equal(iss, settings.teamId);
++    assert.ok(typeof iat === "number" && iat >= before && iat <= Date.now() / 1000);
++    const signed = Buffer.from(`${header}.${claims}`);
++    const raw = Buffer.from(signature ?? "", "base64url");
++    assert.equal(raw.length, 64, "a JWT signature is raw r and s, not DER");
++    assert.ok(verify("sha256", signed, { key: publicKey, dsaEncoding: "ieee-p1363" }, raw));
++  }, settings);
++});
++
++test("one provider token serves 50 minutes, so a token made per request or kept past an hour is caught", () => {
++  let now = 1_700_000_000_000;
++  const tokens = providerToken(config(), () => now);
++  const first = tokens.get();
++  now += 49 * 60 * 1000;
++  assert.equal(tokens.get(), first);
++  now += 60 * 1000;
++  const second = tokens.get();
++  assert.notEqual(second, first);
++  assert.equal(decode(second.split(".")[1]).iat, Math.floor(now / 1000));
++});
++
++test("one forwarder reuses its provider token across notifications", async () => {
++  await withApns(() => ({ status: 200 }), async (forwarder, apns) => {
++    await forwarder.send(token(), "one");
++    await forwarder.send(token(), "two");
++    const [first, second] = apns.received.map((received) => received.headers.authorization);
++    assert.ok(first);
++    assert.equal(second, first);
++  });
++});
++
++test("Apple's ExpiredProviderToken answer makes the next notification carry a new token", async () => {
++  await withApns((index) => (index === 0 ? { status: 403, reason: "ExpiredProviderToken" } : { status: 200 }), async (forwarder, apns) => {
++    assert.deepEqual(await forwarder.send(token(), "one"), { status: "failed", reason: "403 ExpiredProviderToken" });
++    assert.deepEqual(await forwarder.send(token(), "two"), { status: "sent" });
++    const [first, second] = apns.received.map((received) => received.headers.authorization);
++    assert.notEqual(second, first);
++  });
++});
++
++test("Apple's 410 and BadDeviceToken answers report the device unregistered", async () => {
++  const answers: Answer[] = [{ status: 410, reason: "Unregistered" }, { status: 400, reason: "BadDeviceToken" }];
++  await withApns((index) => answers[index] ?? { status: 200 }, async (forwarder) => {
++    assert.deepEqual(await forwarder.send(token(), "one"), { status: "unregistered" });
++    assert.deepEqual(await forwarder.send(token(), "two"), { status: "unregistered" });
++  });
++});
++
++test("any other answer reports failure with Apple's reason, and only a one-word reason", async () => {
++  const answers: Answer[] = [
++    { status: 500, reason: "InternalServerError" },
++    { status: 400, reason: "BadTopic" },
++    { status: 500, reason: "the device token is abcdef" },
++  ];
++  await withApns((index) => answers[index] ?? { status: 200 }, async (forwarder) => {
++    assert.deepEqual(await forwarder.send(token(), "one"), { status: "failed", reason: "500 InternalServerError" });
++    assert.deepEqual(await forwarder.send(token(), "two"), { status: "failed", reason: "400 BadTopic" });
++    assert.deepEqual(await forwarder.send(token(), "three"), { status: "failed", reason: "500" });
++  });
++});
++
++test("a notification Apple never answers fails after the timeout instead of hanging the call", async () => {
++  await withApns(() => "hang", async (forwarder) => {
++    assert.deepEqual(await forwarder.send(token(), "sealed"), { status: "failed", reason: "timeout" });
++  });
++});
++
++test("a request that fails on a reused connection before Apple answers gets one fresh connection", async () => {
++  const apns = await fakeApns((_, index) => (index === 1 ? "reset" : { status: 200 }));
++  const sessions: ClientHttp2Session[] = [];
++  const forwarder = createForwarder(config(), {
++    connect: () => {
++      const session = connect(apns.url);
++      sessions.push(session);
++      return session;
++    },
++  });
++  try {
++    assert.deepEqual(await forwarder.send(token(), "one"), { status: "sent" });
++    assert.deepEqual(await forwarder.send(token(), "two"), { status: "sent" });
++    assert.equal(sessions.length, 2);
++    assert.deepEqual(apns.received.map((received) => JSON.parse(received.body).sealed), ["one", "two", "two"]);
++  } finally {
++    forwarder.close();
++    await apns.close();
++  }
++});
++
++test("a request that fails on a fresh connection is not retried, so a dead host costs one attempt", async () => {
++  await withApns(() => "reset", async (forwarder, apns) => {
++    assert.deepEqual(await forwarder.send(token(), "sealed"), { status: "failed", reason: "connection" });
++    assert.equal(apns.received.length, 1);
++  });
++});
++
++test("a connection that refuses new requests reports failure, so send never rejects", async () => {
++  const apns = await fakeApns();
++  const forwarder = createForwarder(config(), {
++    connect: () => {
++      const session = connect(apns.url);
++      session.close();
++      return session;
++    },
++  });
++  try {
++    assert.deepEqual(await forwarder.send(token(), "sealed"), { status: "failed", reason: "connection" });
++  } finally {
++    forwarder.close();
++    await apns.close();
++  }
++});
++
++test("APNS_ENVIRONMENT picks Apple's sandbox or production host, and nothing else", async () => {
++  const apns = await fakeApns();
++  try {
++    const pem = appleKey().privateKey.export({ type: "pkcs8", format: "pem" }).toString();
++    const env = { APNS_KEY: pem, APNS_KEY_ID: "KEY1234567", APNS_TEAM_ID: "TEAM123456", APNS_BUNDLE_ID: "bot.projector.example" };
++    for (const [environment, host] of [["sandbox", "https://api.sandbox.push.apple.com"], ["production", "https://api.push.apple.com"]] as const) {
++      const origins: string[] = [];
++      const forwarder = createForwarder(apnsConfigFromEnv({ ...env, APNS_ENVIRONMENT: environment }), {
++        connect: (origin) => {
++          origins.push(origin);
++          return connect(apns.url);
++        },
++      });
++      await forwarder.send(token(), "sealed");
++      forwarder.close();
++      assert.deepEqual(origins, [host]);
++      assert.equal(APNS_ORIGINS[environment], host);
++    }
++    for (const environment of ["development", "Production", ""]) {
++      assert.throws(() => apnsConfigFromEnv({ ...env, APNS_ENVIRONMENT: environment }), ConfigError);
++    }
++  } finally {
++    await apns.close();
++  }
++});
++
++test("a push key that is not P-256 is refused when the service starts, not at Apple", () => {
++  const env = { APNS_KEY_ID: "KEY1234567", APNS_TEAM_ID: "TEAM123456", APNS_BUNDLE_ID: "bot.projector.example", APNS_ENVIRONMENT: "sandbox" };
++  for (const pair of [generateKeyPairSync("ec", { namedCurve: "P-384" }), generateKeyPairSync("ed25519")]) {
++    const pem = pair.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
++    assert.throws(() => apnsConfigFromEnv({ ...env, APNS_KEY: pem }), /APNS_KEY must be a P-256 key/);
++  }
++  assert.throws(() => apnsConfigFromEnv({ ...env, APNS_KEY: "not a key" }), /APNS_KEY must hold/);
++});
+diff --git a/services/push/test/handlers.ts b/services/push/test/handlers.ts
+new file mode 100644
+index 00000000..3c1983b3
+--- /dev/null
++++ b/services/push/test/handlers.ts
+@@ -0,0 +1,178 @@
++import assert from "node:assert/strict";
++import { randomBytes } from "node:crypto";
++import { test } from "node:test";
++import { HOURLY_LIMIT, MAX_NOTIFICATION_BYTES, push, pushFromEnv, register, registerFromEnv, type PushDeps } from "../src/handlers.js";
++import { RateLimit } from "../src/limit.js";
++import { openPushId, pushIdKey, sealPushId, type Outcome } from "../src/lib.js";
++import { appleKey, fakeForwarder, token } from "./support/fakes.js";
++
++const HOUR = 60 * 60 * 1000;
++const key = pushIdKey(randomBytes(32).toString("base64"));
++
++function post(body: unknown): Request {
++  return new Request("https://push.example/v1/push", {
++    method: "POST",
++    headers: { "content-type": "application/json" },
++    body: typeof body === "string" ? body : JSON.stringify(body),
++  });
++}
++
++function deps(outcome?: Outcome, now: () => number = Date.now) {
++  const { forwarder, sent } = fakeForwarder(outcome);
++  const logs: string[] = [];
++  const pushDeps: PushDeps = { key, forwarder, limit: new RateLimit(HOURLY_LIMIT, HOUR, now), log: (line) => logs.push(line) };
++  return { deps: pushDeps, sent, logs };
++}
++
++test("register answers a push ID that opens to the phone's device token", async () => {
++  const device = token();
++  const response = await register(post({ token: device.toString("hex") }), { key });
++  assert.equal(response.status, 200);
++  const { push_id: pushId } = (await response.json()) as { push_id: string };
++  assert.deepEqual(openPushId(pushId, key), device);
++});
++
++test("register refuses a token that is not hex, so junk never becomes a push ID", async () => {
++  assert.equal((await register(post({ token: "not a token" }), { key })).status, 400);
++  assert.equal((await register(post({}), { key })).status, 400);
++  assert.equal((await register(post("not json"), { key })).status, 400);
++});
++
++test("push forwards the sealed notification unchanged to the push ID's device, and answers 202", async () => {
++  const { deps: pushDeps, sent } = deps();
++  const device = token();
++  const notification = "c2VhbGVk.bm90aWZpY2F0aW9u+/=";
++  const response = await push(post({ push_id: sealPushId(device, key), notification }), pushDeps);
++  assert.equal(response.status, 202);
++  assert.deepEqual(sent, [{ token: device, notification }]);
++});
++
++test("a tampered push ID gets 404 and nothing is forwarded, so a forged ID reaches no device", async () => {
++  const { deps: pushDeps, sent } = deps();
++  const pushId = sealPushId(token(), key);
++  const tampered = (pushId.startsWith("A") ? "B" : "A") + pushId.slice(1);
++  const response = await push(post({ push_id: tampered, notification: "sealed" }), pushDeps);
++  assert.equal(response.status, 404);
++  assert.deepEqual(sent, []);
++});
++
++test("a push ID another instance sealed gets 404 and nothing is forwarded", async () => {
++  const { deps: pushDeps, sent } = deps();
++  const foreign = sealPushId(token(), pushIdKey(randomBytes(32).toString("base64")));
++  const response = await push(post({ push_id: foreign, notification: "sealed" }), pushDeps);
++  assert.equal(response.status, 404);
++  assert.deepEqual(sent, []);
++});
++
++test("push logs neither the notification, the push ID, nor the device token, even when Apple fails", async (t) => {
++  const printed: string[] = [];
++  for (const method of ["log", "info", "warn", "error", "debug"] as const) {
++    t.mock.method(console, method, (...args: unknown[]) => printed.push(args.map(String).join(" ")));
++  }
++  const { deps: pushDeps, logs } = deps({ status: "failed", reason: "500 InternalServerError" });
++  const device = token();
++  const pushId = sealPushId(device, key);
++  const notification = "sealed-notification-text";
++  assert.equal((await push(post({ push_id: pushId, notification }), pushDeps)).status, 502);
++  const lines = [...logs, ...printed];
++  assert.ok(lines.length > 0, "the failure is logged");
++  for (const line of lines) {
++    for (const secret of [notification, pushId, device.toString("hex"), device.toString("base64")]) {
++      assert.ok(!line.includes(secret), `logged ${JSON.stringify(line)}`);
++    }
++  }
++});
++
++test("a notification over 2 KiB gets 413 and is not forwarded, and one of exactly 2 KiB is sent", async () => {
++  const { deps: pushDeps, sent } = deps();
++  const pushId = sealPushId(token(), key);
++  const over = await push(post({ push_id: pushId, notification: "x".repeat(MAX_NOTIFICATION_BYTES + 1) }), pushDeps);
++  assert.equal(over.status, 413);
++  assert.deepEqual(sent, []);
++  const exact = await push(post({ push_id: pushId, notification: "x".repeat(MAX_NOTIFICATION_BYTES) }), pushDeps);
++  assert.equal(exact.status, 202);
++});
++
++test("the 2 KiB limit counts UTF-8 bytes, so a limit that counts characters is caught", async () => {
++  const { deps: pushDeps, sent } = deps();
++  const notification = "é".repeat(MAX_NOTIFICATION_BYTES / 2 + 1);
++  assert.ok(notification.length <= MAX_NOTIFICATION_BYTES);
++  const response = await push(post({ push_id: sealPushId(token(), key), notification }), pushDeps);
++  assert.equal(response.status, 413);
++  assert.deepEqual(sent, []);
++});
++
++test("a body far larger than any push is refused without being parsed", async () => {
++  const { deps: pushDeps, sent } = deps();
++  const response = await push(post("x".repeat(64 * 1024)), pushDeps);
++  assert.equal(response.status, 413);
++  assert.deepEqual(sent, []);
++});
++
++test("a push ID Apple reports as unregistered gets 404, so the daemon can drop it", async () => {
++  const { deps: pushDeps } = deps({ status: "unregistered" });
++  const response = await push(post({ push_id: sealPushId(token(), key), notification: "sealed" }), pushDeps);
++  assert.equal(response.status, 404);
++});
++
++test("the 61st push in an hour for one push ID gets 429, and another push ID still sends", async () => {
++  let now = 1_000_000;
++  const { deps: pushDeps, sent } = deps(undefined, () => now);
++  const pushId = sealPushId(token(), key);
++  for (let index = 0; index < HOURLY_LIMIT; index++) {
++    assert.equal((await push(post({ push_id: pushId, notification: "sealed" }), pushDeps)).status, 202, `push ${index + 1}`);
++    now += 1000;
++  }
++  const limited = await push(post({ push_id: pushId, notification: "sealed" }), pushDeps);
++  assert.equal(limited.status, 429);
++  assert.equal(limited.headers.get("retry-after"), String(HOUR / 1000 - HOURLY_LIMIT));
++  assert.equal(sent.length, HOURLY_LIMIT);
++  const other = await push(post({ push_id: sealPushId(token(), key), notification: "sealed" }), pushDeps);
++  assert.equal(other.status, 202);
++});
++
++test("registering the same phone again gives a new push ID but no more notifications", async () => {
++  const { deps: pushDeps } = deps(undefined, () => 1_000_000);
++  const device = token();
++  for (let index = 0; index < HOURLY_LIMIT; index++) {
++    await push(post({ push_id: sealPushId(device, key), notification: "sealed" }), pushDeps);
++  }
++  const fresh = sealPushId(device, key);
++  assert.equal((await push(post({ push_id: fresh, notification: "sealed" }), pushDeps)).status, 429);
++});
++
++test("the hour slides: a push ID at the limit gets one more push as each old one turns an hour old", async () => {
++  const start = 1_000_000;
++  let now = start;
++  const { deps: pushDeps } = deps(undefined, () => now);
++  const pushId = sealPushId(token(), key);
++  for (let index = 0; index < HOURLY_LIMIT; index++) {
++    await push(post({ push_id: pushId, notification: "sealed" }), pushDeps);
++    now += 1000;
++  }
++  assert.equal((await push(post({ push_id: pushId, notification: "sealed" }), pushDeps)).status, 429);
++  now = start + HOUR;
++  assert.equal((await push(post({ push_id: pushId, notification: "sealed" }), pushDeps)).status, 202);
++  assert.equal((await push(post({ push_id: pushId, notification: "sealed" }), pushDeps)).status, 429);
++});
++
++test("an unconfigured service answers 500 and logs the variable's name, never a value", async () => {
++  const logs: string[] = [];
++  const unregistered = await registerFromEnv({}, (line) => logs.push(line))(post({ token: token().toString("hex") }));
++  assert.equal(unregistered.status, 500);
++  assert.deepEqual(logs, ["push: PUSH_ID_KEY is not set"]);
++
++  const pem = appleKey().privateKey.export({ type: "pkcs8", format: "pem" }).toString();
++  logs.length = 0;
++  const env = {
++    PUSH_ID_KEY: randomBytes(32).toString("base64"),
++    APNS_KEY: pem,
++    APNS_KEY_ID: "KEY1234567",
++    APNS_TEAM_ID: "TEAM123456",
++    APNS_BUNDLE_ID: "bot.projector.example",
++    APNS_ENVIRONMENT: "development",
++  };
++  const pushed = await pushFromEnv(env, (line) => logs.push(line))(post({ push_id: "x", notification: "sealed" }));
++  assert.equal(pushed.status, 500);
++  assert.deepEqual(logs, ["push: APNS_ENVIRONMENT must be production or sandbox"]);
++});
+diff --git a/services/push/test/lib.ts b/services/push/test/lib.ts
+new file mode 100644
+index 00000000..d5a4c1f1
+--- /dev/null
++++ b/services/push/test/lib.ts
+@@ -0,0 +1,43 @@
++import assert from "node:assert/strict";
++import { readFileSync } from "node:fs";
++import { dirname, join, relative, resolve } from "node:path";
++import { test } from "node:test";
++import { fileURLToPath } from "node:url";
++import * as lib from "../src/lib.js";
++
++// The tests run from dist/test/, and the import graph is the source's.
++const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
++const IMPORT = /(?:^|\n)\s*(?:import|export)\b[^;]*?\bfrom\s*"([^"]+)"|\bimport\s*\(\s*"([^"]+)"\s*\)/g;
++
++/** Every source file `entry` reaches through relative imports, relative to the service's root. */
++function reached(entry: string): Set<string> {
++  const seen = new Set<string>();
++  const visit = (file: string) => {
++    const name = relative(ROOT, file);
++    if (seen.has(name)) return;
++    seen.add(name);
++    for (const match of readFileSync(file, "utf8").matchAll(IMPORT)) {
++      const specifier = match[1] ?? match[2] ?? "";
++      if (specifier.startsWith(".")) visit(resolve(dirname(file), specifier.replace(/\.js$/, ".ts")));
++    }
++  };
++  visit(join(ROOT, entry));
++  return seen;
++}
++
++test("the library exports the push ID's seal and open and the forwarder to Apple", () => {
++  for (const name of ["sealPushId", "openPushId", "pushIdKey", "deviceToken", "createForwarder", "apnsConfigFromEnv", "pushIdKeyFromEnv"] as const) {
++    assert.equal(typeof lib[name], "function", name);
++  }
++});
++
++test("the library imports neither handler nor their rate limit, so a deployment can import it and mount neither", () => {
++  assert.deepEqual([...reached("src/lib.ts")].sort(), ["src/apns.ts", "src/env.ts", "src/lib.ts", "src/push-id.ts"]);
++});
++
++test("the import walk follows imports, so the check above cannot pass by reading nothing", () => {
++  const fromHandler = reached("api/v1/push.ts");
++  assert.ok(fromHandler.has("src/handlers.ts"));
++  assert.ok(fromHandler.has("src/limit.ts"));
++  assert.ok(fromHandler.has("src/lib.ts"));
++});
+diff --git a/services/push/test/limit.ts b/services/push/test/limit.ts
+new file mode 100644
+index 00000000..e37edc3b
+--- /dev/null
++++ b/services/push/test/limit.ts
+@@ -0,0 +1,15 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { RateLimit } from "../src/limit.js";
++
++const HOUR = 60 * 60 * 1000;
++
++test("a device silent for an hour is forgotten, so a long-lived instance's memory tracks only recent senders", () => {
++  let now = 0;
++  const limit = new RateLimit(60, HOUR, () => now);
++  for (let device = 0; device < 100; device++) limit.take(`device-${device}`);
++  assert.equal(limit["sent"].size, 100);
++  now = HOUR;
++  limit.take("recent");
++  assert.deepEqual([...limit["sent"].keys()], ["recent"]);
++});
+diff --git a/services/push/test/push-id.ts b/services/push/test/push-id.ts
+new file mode 100644
+index 00000000..31c0bb89
+--- /dev/null
++++ b/services/push/test/push-id.ts
+@@ -0,0 +1,56 @@
++import assert from "node:assert/strict";
++import { randomBytes } from "node:crypto";
++import { test } from "node:test";
++import { deviceToken, openPushId, pushIdKey, sealPushId } from "../src/lib.js";
++import { token } from "./support/fakes.js";
++
++const key = pushIdKey(randomBytes(32).toString("base64"));
++
++test("a push ID opens to the device token it sealed, so a seal and an open that disagree are caught", () => {
++  const device = token();
++  assert.deepEqual(openPushId(sealPushId(device, key), key), device);
++});
++
++test("every byte of a push ID is authenticated, so encryption without a tag is caught", () => {
++  const bytes = Buffer.from(sealPushId(token(), key), "base64url");
++  for (let index = 0; index < bytes.length; index++) {
++    const tampered = Buffer.from(bytes);
++    tampered[index] = (tampered[index] ?? 0) ^ 0x01;
++    assert.equal(openPushId(tampered.toString("base64url"), key), null, `byte ${index}`);
++  }
++});
++
++test("a push ID sealed under another key is refused, so one instance cannot accept another's IDs", () => {
++  const other = pushIdKey(randomBytes(32).toString("base64"));
++  assert.equal(openPushId(sealPushId(token(), other), key), null);
++});
++
++test("two seals of one token differ, so a fixed nonce is caught", () => {
++  const device = token();
++  assert.notEqual(sealPushId(device, key), sealPushId(device, key));
++});
++
++test("a push ID is one spelling only, so stray base64url bits cannot make a second ID", () => {
++  const pushId = sealPushId(token(), key);
++  // 61 bytes leave four unused bits in the last character.
++  const last = pushId.at(-1) ?? "";
++  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
++  const respelled = pushId.slice(0, -1) + alphabet.charAt(alphabet.indexOf(last) ^ 0x01);
++  assert.deepEqual(Buffer.from(respelled, "base64url"), Buffer.from(pushId, "base64url"));
++  assert.equal(openPushId(respelled, key), null);
++});
++
++test("a device token must be hex of a plausible length, so junk never becomes a push ID", () => {
++  assert.deepEqual(deviceToken("ab".repeat(32)), Buffer.alloc(32, 0xab));
++  assert.equal(deviceToken("zz".repeat(32)), null);
++  // Node's hex decoder stops at the first bad pair rather than refusing.
++  assert.equal(deviceToken("ab".repeat(16) + "zz".repeat(16)), null);
++  assert.equal(deviceToken("abc"), null);
++  assert.equal(deviceToken("ab".repeat(7)), null);
++  assert.equal(deviceToken("ab".repeat(101)), null);
++});
++
++test("the secret key must be 32 bytes, so a short key is refused rather than padded", () => {
++  assert.throws(() => pushIdKey(randomBytes(16).toString("base64")), RangeError);
++  assert.throws(() => pushIdKey(""), RangeError);
++});
+diff --git a/services/push/test/support/fakes.ts b/services/push/test/support/fakes.ts
+new file mode 100644
+index 00000000..29249dfa
+--- /dev/null
++++ b/services/push/test/support/fakes.ts
+@@ -0,0 +1,83 @@
++import { generateKeyPairSync, randomBytes, type KeyObject } from "node:crypto";
++import { constants, createServer, type IncomingHttpHeaders, type ServerHttp2Session } from "node:http2";
++import type { AddressInfo } from "node:net";
++import type { ApnsConfig, Forwarder, Outcome } from "../../src/lib.js";
++
++export function appleKey(): { privateKey: KeyObject; publicKey: KeyObject } {
++  return generateKeyPairSync("ec", { namedCurve: "P-256" });
++}
++
++export function config(overrides: Partial<ApnsConfig> = {}): ApnsConfig {
++  return {
++    key: appleKey().privateKey,
++    keyId: "KEY1234567",
++    teamId: "TEAM123456",
++    bundleId: "bot.projector.example",
++    environment: "sandbox",
++    ...overrides,
++  };
++}
++
++export function token(): Buffer {
++  return randomBytes(32);
++}
++
++export interface Received {
++  headers: IncomingHttpHeaders;
++  body: string;
++}
++
++// "reset" refuses the stream before answering, as a connection that died does.
++export type Answer = { status: number; reason?: string } | "hang" | "reset";
++
++/** A cleartext HTTP/2 server that records each request and answers as `answer` says. */
++export async function fakeApns(answer: (received: Received, index: number) => Answer = () => ({ status: 200 })) {
++  const received: Received[] = [];
++  const sessions = new Set<ServerHttp2Session>();
++  const server = createServer();
++  server.on("session", (session) => {
++    sessions.add(session);
++    session.on("close", () => sessions.delete(session));
++  });
++  server.on("stream", (stream, headers) => {
++    const chunks: Buffer[] = [];
++    stream.on("data", (chunk: Buffer) => chunks.push(chunk));
++    stream.on("end", () => {
++      const request = { headers, body: Buffer.concat(chunks).toString("utf8") };
++      const reply = answer(request, received.length);
++      received.push(request);
++      if (reply === "hang") return;
++      if (reply === "reset") {
++        // Closing with an error code also reports it on this side's stream.
++        stream.on("error", () => {});
++        stream.close(constants.NGHTTP2_REFUSED_STREAM);
++        return;
++      }
++      stream.respond({ ":status": reply.status });
++      stream.end(reply.reason === undefined ? "" : JSON.stringify({ reason: reply.reason }));
++    });
++  });
++  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
++  const { port } = server.address() as AddressInfo;
++  return {
++    url: `http://127.0.0.1:${port}`,
++    received,
++    async close() {
++      for (const session of sessions) session.destroy();
++      await new Promise((resolve) => server.close(resolve));
++    },
++  };
++}
++
++/** A forwarder that records what it was asked to send and answers `outcome`. */
++export function fakeForwarder(outcome: Outcome = { status: "sent" }) {
++  const sent: { token: Buffer; notification: string }[] = [];
++  const forwarder: Forwarder = {
++    send(device, notification) {
++      sent.push({ token: device, notification });
++      return Promise.resolve(outcome);
++    },
++    close() {},
++  };
++  return { forwarder, sent };
++}
+diff --git a/services/push/tsconfig.json b/services/push/tsconfig.json
+new file mode 100644
+index 00000000..d8472115
+--- /dev/null
++++ b/services/push/tsconfig.json
+@@ -0,0 +1,22 @@
++{
++  "compilerOptions": {
++    "target": "ES2024",
++    "lib": ["ES2024"],
++    "module": "NodeNext",
++    "moduleResolution": "NodeNext",
++    "types": ["node"],
++    "strict": true,
++    "noUncheckedIndexedAccess": true,
++    "exactOptionalPropertyTypes": true,
++    "noImplicitOverride": true,
++    "noFallthroughCasesInSwitch": true,
++    "noUnusedLocals": true,
++    "noUnusedParameters": true,
++    "noImplicitReturns": true,
++    "verbatimModuleSyntax": true,
++    "newLine": "lf",
++    "rootDir": ".",
++    "outDir": "dist"
++  },
++  "include": ["api", "src", "test"]
++}
+diff --git a/services/push/vercel.json b/services/push/vercel.json
+new file mode 100644
+index 00000000..d7e6e2ef
+--- /dev/null
++++ b/services/push/vercel.json
+@@ -0,0 +1,4 @@
++{
++  "$schema": "https://openapi.vercel.sh/vercel.json",
++  "rewrites": [{ "source": "/v1/:call", "destination": "/api/v1/:call" }]
++}
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index 9a20d69c..edbe5cba 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -179,6 +179,28 @@ def test_every_python_package_is_listed_for_the_wheel(self) -> None:
+         self.assertEqual("site/assets", setuptools["package-dir"]["projector.site.assets"])
+         self.assertTrue((ROOT / "site" / "assets" / "site.js").is_file())
+ 
++    def test_neither_the_wheel_nor_a_plugin_ships_ios_or_services(self) -> None:
++        # The app and the push service deploy on their own. The wheel maps
++        # only src/ and site/assets, and each plugin loads only the paths its
++        # manifest and hooks module name, so neither may reach into them.
++        apart = ("ios", "services")
++        setuptools = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["setuptools"]
++        for package, directory in setuptools["package-dir"].items():
++            self.assertNotIn(Path(directory).parts[0], apart, package)
++        loaded = [self.manifest("claude")["skills"], self.manifest("claude")["types"], self.manifest("codex")["skills"]]
++        loaded += [f"hooks/{module}" for module in json.loads((ROOT / "hooks" / "hooks.json").read_text())["modules"]]
++        for path in loaded:
++            self.assertNotIn(Path(path).parts[0], apart, path)
++        for directory in apart:
++            files = [path for path in (ROOT / directory).rglob("*") if "node_modules" not in path.parts]
++            # A plugin root or skill in here would be published with Projector,
++            # and `claude plugin test .` runs every *.test.ts under the root as
++            # a test of the hooks module, so the service names its tests otherwise.
++            for path in files:
++                self.assertNotIn(path.name, {"plugin.json", "SKILL.md", "hooks.json"}, path)
++                self.assertFalse(path.name.endswith((".test.ts", ".test.tsx")), path)
++        self.assertTrue((ROOT / "services" / "push" / "src" / "lib.ts").is_file())
++
+     def test_the_installed_command_is_project(self) -> None:
+         project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+ 
