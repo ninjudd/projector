@@ -553,7 +553,7 @@ file:
 | `src/projector/config.py` | `review.reviewers`, `review.runner`, `review.ci_agents`, and `review.context_repos`, all strings, and `review.ci`, a boolean |
 | `src/projector/templates/review-workflow.yml` | New. The workflow `init --ci-review` writes and `review ci-workflow` prints |
 | `actions/review/action.yml` | New. The composite action (§ 2.8) |
-| `.github/workflows/projector-review.yml` | New. Projector's own review workflow, at `@main` |
+| `.github/workflows/projector-review.yml` | New. Projector's own review workflow, running the action from the pull request's checkout, as § 9 records |
 | `.projector.toml` | `reviewers = "github-actions[bot]"`, and an override for the gate in the workflow's `config` input, since `hooks/typecheck.sh` cannot run in CI |
 | `skills/review-pr/SKILL.md` | "Review without a session" (§ 2.2) |
 | `docs/review-in-ci.md` | New. How to set a repository up with `project init --ci-review`, the inputs, the secrets, and what the review can and cannot do |
