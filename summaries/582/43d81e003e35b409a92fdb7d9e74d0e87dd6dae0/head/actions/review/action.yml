@@ -1,0 +1,218 @@
+name: Projector review
+description: Review a pull request's head with an agent and no session through `project review run`, or publish the summaries a run's reviews handed off, as docs/review-in-ci.md describes.
+inputs:
+  step:
+    description: "`review` runs the agent. `summary` publishes the run's summary artifacts and runs no agent."
+    default: review
+  pr:
+    description: The pull request to review.
+    default: ${{ github.event.pull_request.number }}
+  agent:
+    description: "`claude`, `codex`, or `command`, which runs the command the repository's review.runner names."
+    default: claude
+  model:
+    description: The model the agent runs, which names its review. Defaults to claude-opus-5-5 for claude; codex and command need one.
+    default: ''
+  effort:
+    description: The reasoning effort the agent runs at.
+    default: high
+  permission-mode:
+    description: "`auto` has the agent's own judgment decide what no rule covers; `allowlist` refuses it."
+    default: auto
+  rereview:
+    description: Review a head this model already reviewed.
+    default: 'false'
+  config:
+    description: TOML for $HOME/.projector.toml, where `[override.<priority>]` tables can replace a committed setting for CI, such as a review.gate step a runner cannot run.
+    default: ''
+  timeout-minutes:
+    description: The agent's time limit. Give the job 15 minutes more.
+    default: '45'
+  claude-code-version:
+    description: The version of Claude Code the claude agent runs.
+    default: 2.1.327
+  codex-version:
+    description: The version of Codex the codex agent runs.
+    default: 0.169.0
+  app-id:
+    description: Post the review as this GitHub App, with app-private-key. Empty posts as github-actions[bot].
+    default: ''
+  app-private-key:
+    description: The private key of the app app-id names, from the PROJECTOR_APP_PRIVATE_KEY secret. Only the step that mints the app's token reads it.
+    default: ''
+runs:
+  using: composite
+  steps:
+    # Exactly one credential for the agent, so a review never draws on API credits that were meant to stay
+    # unused when a subscription token is set too.
+    - name: Check the agent's credentials
+      if: inputs.step == 'review'
+      shell: bash
+      env:
+        AGENT: ${{ inputs.agent }}
+      run: |
+        case "$AGENT" in
+          claude) subscription=CLAUDE_CODE_OAUTH_TOKEN key=ANTHROPIC_API_KEY ;;
+          codex) subscription=CODEX_AUTH_JSON key=OPENAI_API_KEY ;;
+          command) exit 0 ;;
+          *) echo "::error::agent $AGENT is not claude, codex, or command"; exit 1 ;;
+        esac
+        if [ -n "${!subscription:-}" ] && [ -n "${!key:-}" ]; then
+          echo "::error::both $subscription and $key are set for $AGENT; delete the secret you do not mean to use"
+          exit 1
+        fi
+        if [ -z "${!subscription:-}${!key:-}" ]; then
+          echo "::error::neither $subscription nor $key is set for $AGENT; run \`project init --ci-review\` to set one"
+          exit 1
+        fi
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    # -P keeps the caller's checkout, the working directory, off sys.path, so a repository with its own top-level
+    # projector module cannot shadow this one. The agent runs `project` by name, so the shim goes on PATH.
+    - name: Set up Projector
+      shell: bash
+      env:
+        ACTION_ROOT: ${{ github.action_path }}/../..
+        CONFIG: ${{ inputs.config }}
+      run: |
+        root=$(cd "$ACTION_ROOT" && pwd)
+        bin="$RUNNER_TEMP/projector-bin"
+        mkdir -p "$bin"
+        printf '#!/bin/sh\nPYTHONPATH=%s/src exec python3 -P -m projector "$@"\n' "$(printf '%q' "$root")" > "$bin/project"
+        chmod +x "$bin/project"
+        echo "$bin" >> "$GITHUB_PATH"
+        # Reviews name the Projector version that made them, and this source tree is installed as no distribution.
+        # -I keeps the caller's checkout, the working directory, off sys.path, as -P does for the shim.
+        version=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' \
+          "$root/.claude-plugin/plugin.json")
+        {
+          echo "PROJECTOR_ROOT=$root"
+          echo "PROJECTOR_VERSION=$version"
+          echo "XDG_STATE_HOME=$RUNNER_TEMP/projector-state"
+        } >> "$GITHUB_ENV"
+        git remote set-head origin --auto
+        git config user.name 'github-actions[bot]'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+        if [ -n "$CONFIG" ]; then
+          printf '%s\n' "$CONFIG" >> "$HOME/.projector.toml"
+        fi
+    # The app's token reaches only this repository, with the review's permissions. The key is an input, not a
+    # caller's env, which would reach every step: a composite action's inputs set no environment variable, so
+    # only this step, which reads the input, receives the key.
+    - name: Mint the app's token
+      id: app
+      if: inputs.app-id != ''
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.app-private-key }}
+        permission-contents: read
+        permission-pull-requests: write
+        permission-issues: write
+        permission-statuses: write
+        permission-checks: read
+        permission-actions: read
+        permission-pages: read
+    - name: Restore the review state
+      if: inputs.step == 'review'
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ${{ runner.temp }}/projector-state/projector/reviews/loops
+          ${{ runner.temp }}/projector-state/projector/reviews/prs
+          !${{ runner.temp }}/projector-state/projector/reviews/prs/**/*.lock
+        key: projector-review-${{ inputs.pr }}-${{ inputs.agent }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: projector-review-${{ inputs.pr }}-${{ inputs.agent }}-
+    - name: Install the agent
+      if: inputs.step == 'review'
+      shell: bash
+      env:
+        AGENT: ${{ inputs.agent }}
+        CLAUDE_VERSION: ${{ inputs.claude-code-version }}
+        CODEX_VERSION: ${{ inputs.codex-version }}
+      run: |
+        case "$AGENT" in
+          claude)
+            npm install --global "@anthropic-ai/claude-code@$CLAUDE_VERSION"
+            ;;
+          codex)
+            npm install --global "@openai/codex@$CODEX_VERSION"
+            home="$RUNNER_TEMP/codex-home"
+            mkdir -p "$home"
+            ln -s "$PROJECTOR_ROOT/skills" "$home/skills"
+            echo "CODEX_HOME=$home" >> "$GITHUB_ENV"
+            if [ -n "${CODEX_AUTH_JSON:-}" ]; then
+              (umask 077 && printf '%s' "$CODEX_AUTH_JSON" > "$home/auth.json")
+            else
+              printf '%s' "$OPENAI_API_KEY" | CODEX_HOME="$home" codex login --with-api-key
+            fi
+            ;;
+        esac
+    - name: Review the pull request
+      if: inputs.step == 'review'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
+        # Only the review step hands its summary off; the summary job's publish pushes it.
+        PROJECTOR_SUMMARY_HANDOFF: ${{ runner.temp }}/projector-summary
+        PR: ${{ inputs.pr }}
+        AGENT: ${{ inputs.agent }}
+        MODEL: ${{ inputs.model }}
+        EFFORT: ${{ inputs.effort }}
+        MODE: ${{ inputs.permission-mode }}
+        REREVIEW: ${{ inputs.rereview }}
+        TIMEOUT: ${{ inputs.timeout-minutes }}
+      run: |
+        if [ -z "$MODEL" ] && [ "$AGENT" = claude ]; then
+          MODEL=claude-opus-5-5
+        fi
+        if [ -z "$MODEL" ]; then
+          echo "::error::the $AGENT agent needs the model input"
+          exit 1
+        fi
+        rereview=()
+        if [ "$REREVIEW" = true ]; then
+          rereview=(--rereview)
+        fi
+        project review run "$PR" --agent "$AGENT" --model "$MODEL" --effort "$EFFORT" --permission-mode "$MODE" \
+          --timeout "$TIMEOUT" --loop actions --plugin-dir "$PROJECTOR_ROOT" "${rereview[@]}"
+    - name: Save the review state
+      if: always() && inputs.step == 'review'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ${{ runner.temp }}/projector-state/projector/reviews/loops
+          ${{ runner.temp }}/projector-state/projector/reviews/prs
+          !${{ runner.temp }}/projector-state/projector/reviews/prs/**/*.lock
+        key: projector-review-${{ inputs.pr }}-${{ inputs.agent }}-${{ github.run_id }}-${{ github.run_attempt }}
+    - name: Hand the summary to the summary job
+      if: success() && inputs.step == 'review'
+      uses: actions/upload-artifact@v4
+      with:
+        name: projector-summary-${{ inputs.pr }}-${{ inputs.agent }}
+        path: ${{ runner.temp }}/projector-summary
+        retention-days: 1
+        if-no-files-found: ignore
+    - name: Download the summaries
+      if: inputs.step == 'summary'
+      uses: actions/download-artifact@v4
+      with:
+        pattern: projector-summary-${{ inputs.pr }}-*
+        path: ${{ runner.temp }}/projector-summaries
+    - name: Publish the summaries
+      if: inputs.step == 'summary'
+      shell: bash
+      # The links post as the app when there is one. Its token cannot push, so the summaries ref goes up with the
+      # checkout's own credentials and the site's rebuild event with the workflow's token.
+      env:
+        GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
+        PROJECTOR_DISPATCH_TOKEN: ${{ github.token }}
+        PR: ${{ inputs.pr }}
+      run: |
+        for folder in "$RUNNER_TEMP"/projector-summaries/*/; do
+          [ -f "$folder/summary.json" ] || continue
+          project summary publish --summary "$folder/summary.json" --diff "$folder/diff.patch" --pr "$PR"
+        done
