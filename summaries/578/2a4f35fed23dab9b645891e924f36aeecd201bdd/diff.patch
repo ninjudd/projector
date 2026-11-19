@@ -1,0 +1,569 @@
+diff --git a/.github/workflows/projector-review.yml b/.github/workflows/projector-review.yml
+index 308b59c1..52c2bf2a 100644
+--- a/.github/workflows/projector-review.yml
++++ b/.github/workflows/projector-review.yml
+@@ -60,6 +60,8 @@ jobs:
+           model: ${{ matrix.model }}
+           pr: ${{ github.event.pull_request.number || inputs.pr }}
+           rereview: ${{ inputs.rereview || false }}
++          app-id: '5827721'
++          app-private-key: ${{ secrets.PROJECTOR_APP_PRIVATE_KEY }}
+           # The gate's hooks/typecheck.sh compiles against declarations only an interactive Claude Code session
+           # writes, so a review on a runner runs the rest of the gate without it.
+           config: |
+diff --git a/.projector.toml b/.projector.toml
+index a9cadbcf..f83d1681 100644
+--- a/.projector.toml
++++ b/.projector.toml
+@@ -5,7 +5,9 @@ gate_checks = "check"
+ # The steps of the gate in AGENTS.md that CI cannot run, run on the review's worktree against the merge base.
+ gate = 'claude plugin validate . && claude plugin validate skills && claude plugin test . && hooks/typecheck.sh && git diff --check "$2" HEAD'
+ # Each pull request whose head is in this repository is reviewed in GitHub Actions by
+-# .github/workflows/projector-review.yml, which posts as github-actions[bot].
++# .github/workflows/projector-review.yml, which posts as the Projector Review app.
+ ci = true
+ ci_agents = "claude"
+-reviewers = "github-actions[bot]"
++ci_app = "projector-review"
++ci_app_id = 5827721
++reviewers = "projector-review[bot]"
+diff --git a/actions/review/action.yml b/actions/review/action.yml
+index 0b293f96..0c8cd157 100644
+--- a/actions/review/action.yml
++++ b/actions/review/action.yml
+@@ -34,6 +34,12 @@ inputs:
+   codex-version:
+     description: The version of Codex the codex agent runs.
+     default: 0.169.0
++  app-id:
++    description: Post the review as this GitHub App, with app-private-key. Empty posts as github-actions[bot].
++    default: ''
++  app-private-key:
++    description: The private key of the app app-id names, from the PROJECTOR_APP_PRIVATE_KEY secret. Only the step that mints the app's token reads it.
++    default: ''
+ runs:
+   using: composite
+   steps:
+@@ -86,6 +92,23 @@ runs:
+         if [ -n "$CONFIG" ]; then
+           printf '%s\n' "$CONFIG" >> "$HOME/.projector.toml"
+         fi
++    # The app's token reaches only this repository, with the review's permissions. The key is an input, not a
++    # caller's env, which would reach every step: a composite action's inputs set no environment variable, so
++    # only this step, which reads the input, receives the key.
++    - name: Mint the app's token
++      id: app
++      if: inputs.step == 'review' && inputs.app-id != ''
++      uses: actions/create-github-app-token@v2
++      with:
++        app-id: ${{ inputs.app-id }}
++        private-key: ${{ inputs.app-private-key }}
++        permission-contents: read
++        permission-pull-requests: write
++        permission-issues: write
++        permission-statuses: write
++        permission-checks: read
++        permission-actions: read
++        permission-pages: read
+     - name: Restore the review state
+       if: inputs.step == 'review'
+       uses: actions/cache/restore@v4
+@@ -125,8 +148,8 @@ runs:
+       if: inputs.step == 'review'
+       shell: bash
+       env:
+-        GH_TOKEN: ${{ github.token }}
+-        PROJECTOR_TOKEN_LOGIN: github-actions[bot]
++        GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
++        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
+         # Only the review step hands its summary off; the summary job's publish pushes it.
+         PROJECTOR_SUMMARY_HANDOFF: ${{ runner.temp }}/projector-summary
+         PR: ${{ inputs.pr }}
+diff --git a/docs/cli.md b/docs/cli.md
+index a5ed3854..1dc2e94a 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -611,9 +611,16 @@ a recorded answer, `init` asks nothing and changes nothing. A yes writes
+ the agents, `claude` by default, each as `agent=<model>` to name the model it
+ runs, such as `claude,codex=<model>`. `codex` needs a model, so `init`
+ refuses it without one. `--ci-credential` picks the kind of secret `init`
+-asks for. Once `review.ci` is `true`, every later `init`
++asks for. `--ci-app <slug>` posts the reviews as that public GitHub App:
++`init` looks the app's ID up on GitHub, records the slug as `review.ci_app`
++and the ID as `review.ci_app_id`, adds `<slug>[bot]` to `review.reviewers`
++in place of `github-actions[bot]`, and asks for the app's private key file,
++as
++[Post as a GitHub App](review-in-ci.md#post-as-a-github-app) describes.
++Once `review.ci` is `true`, every later `init`
+ refreshes the workflow, replacing one nobody edited and keeping an edited
+-one. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
++one. A refresh takes the app's ID from `review.ci_app_id`, so it needs no
++network; only `--ci-app` looks an app up. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
+ setup, the credentials, and what each job does.
+ 
+ ## Browse projects
+@@ -1065,6 +1072,8 @@ reads, which are these:
+ | `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
+ | `review.ci` | boolean | none | `init`, as your answer to whether the repository's pull requests get a review in GitHub Actions: none asks at a terminal, `true` refreshes the workflow, and `false` asks no more; `init` writes it when you answer, as [Review pull requests in GitHub Actions](#review-pull-requests-in-github-actions) describes |
+ | `review.ci_agents` | string | `claude` | `init` and `project review ci-workflow`, as the agents the CI review workflow runs, separated by commas, from `claude` and `codex`, each as `agent=<model>` to name the model its job runs, which `codex` needs, such as `claude, codex=<model>` |
++| `review.ci_app` | string | none | `init` and `project review ci-workflow`, as the public GitHub App the CI reviews post as, by its slug; none posts as `github-actions[bot]` |
++| `review.ci_app_id` | whole number | none | `init` and `project review ci-workflow`, as the ID of the app `review.ci_app` names, which `init --ci-app` looks up and records so a later refresh needs no lookup; set both with `init --ci-app` |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
+ | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
+@@ -2607,8 +2616,9 @@ edited, as [Require a clean review before merge](#require-a-clean-review-before-
+ describes. It writes nothing, takes no pull request, and runs from any
+ directory. `ci-workflow` prints the `.github/workflows/projector-review.yml`
+ that `init --ci-review` writes, for `--agents`, then `review.ci_agents`, then
+-`claude`, at `--action-ref`, `v0` by default, so you can compare it with a
+-copy you edited.
++`claude`, at `--action-ref`, `v0` by default, and posting as the app
++`--app`, then `review.ci_app`, names, so you can compare it with a copy you
++edited.
+ 
+ No command takes a SHA: each comes from GitHub or the state file. `setup` works
+ from the checkout containing the working directory, or `--checkout`, and
+diff --git a/docs/projects/review-in-ci/readme.md b/docs/projects/review-in-ci/readme.md
+index f12b3845..5f9894db 100644
+--- a/docs/projects/review-in-ci/readme.md
++++ b/docs/projects/review-in-ci/readme.md
+@@ -941,3 +941,26 @@ These tests fail before the change, and each catches the bug it names:
+   of `@main`, so each pull request is reviewed by the action it carries and
+   CI review works on the pull requests that build the action. A repository
+   that `init` sets up calls the action at a release ref, as § 2.8 says.
++- **The app input ships before context repositories.** `--ci-app <slug>`,
++  `review.ci_app`, and the action's `app-id` input post the reviews as a
++  public GitHub App, from its private key in the `PROJECTOR_APP_PRIVATE_KEY`
++  secret. `actions/create-github-app-token` mints a token limited to the
++  job's repository and the review's permissions. The workflow passes the key
++  as the `app-private-key` input § 2.4 names, never as `env`: a caller's
++  `env` reaches every step of a composite action, while an input sets no
++  environment variable there, so only the step that mints the token
++  receives the key. `init --ci-app` records the app's ID as
++  `review.ci_app_id` beside the slug, so a later refresh needs no GitHub
++  lookup, while `--ci-app` still looks the app up and refuses one GitHub
++  does not show publicly. The ID in the workflow was rejected as the source,
++  because an edited, kept, or deleted workflow would need the lookup again.
++  An app takes `github-actions[bot]`'s place
++  in `review.reviewers`, so a workflow posting with its own token no longer
++  counts. Context repositories stay deferred to § 6 step 4.
++- **Projector's own reviews post as Projector Review.** Its workflow passes
++  `app-id: '5827721'` for `projector-review`, and the app's key is a secret
++  of this repository until a hosted token service replaces it. Until then the app stays installed on the owner's repositories
++  only, because the key carries the app's authority over every installation.
++- **A runner fact checked on 2026-11-19:** `actions/download-artifact`
++  succeeds when no artifact matches its pattern. The summary job of Projector's
++  own review passed with nothing to publish.
+diff --git a/docs/review-in-ci.md b/docs/review-in-ci.md
+index 9f06742d..7a6ca720 100644
+--- a/docs/review-in-ci.md
++++ b/docs/review-in-ci.md
+@@ -125,6 +125,42 @@ change the code it reviews. The agent's own rules refuse `git push`,
+ `git commit`, `gh pr merge`, `gh pr ready`, and every command that changes
+ the repository's settings.
+ 
++## Post as a GitHub App
++
++By default the reviews post as `github-actions[bot]`. To post them under an
++app's name, register a GitHub App, make it public so it installs on your
++account, and pass its slug to `init`:
++
++```sh
++project init --ci-review --ci-app projector-review
++```
++
++`init` looks the app's ID up with `gh api apps/<slug>`, which answers only
++for a public app, and refuses an app GitHub does not show. It writes the ID
++into the workflow as the action's `app-id` input, passes the
++`PROJECTOR_APP_PRIVATE_KEY` secret as its `app-private-key` input, records
++`review.ci_app` and `review.ci_app_id`, and adds `<slug>[bot]` to
++`review.reviewers`. A later `init` rebuilds the workflow from the recorded
++ID without asking GitHub, so it works offline. At a terminal
++it asks for the path of the private key file you generated in the app's
++settings, and has `gh` set it as the `PROJECTOR_APP_PRIVATE_KEY` secret from
++that file. Delete the file once the secret holds it.
++
++In each review job, the action's **Mint the app's token** step creates an
++installation token with `actions/create-github-app-token`. The token reaches
++only the repository the job runs in, with the review's permissions in the
++table above, and the review posts as `<slug>[bot]` with it. The app needs
++those same permissions, and it must be installed on the repository. The
++summary job keeps the workflow's own token, because it pushes
++`refs/projector/summaries`.
++
++The private key carries the app's full authority over every repository it is
++installed on, so the workflow passes it as an input and never as `env`. A
++caller's `env` reaches every step of a composite action, the steps that run
++the agent and its install scripts included. An input sets no environment
++variable in a composite action, so only the step that mints the token, the
++one step that reads `app-private-key`, receives the key.
++
+ ## Override a setting for CI
+ 
+ The review job runs `review.gate` on a trusted head, as a session does. When
+@@ -160,3 +196,5 @@ replaces.
+ | `config` | Empty | TOML for the runner's `~/.projector.toml` |
+ | `timeout-minutes` | `45` | The agent's time limit. The job's own limit is 15 minutes longer. |
+ | `claude-code-version`, `codex-version` | The versions Projector tests | The CLI version the agent runs |
++| `app-id` | Empty | Post as this GitHub App. Empty posts as `github-actions[bot]`. |
++| `app-private-key` | Empty | The private key of the app `app-id` names, from the `PROJECTOR_APP_PRIVATE_KEY` secret. Pass it here, never as `env`, so that only the step that mints the token receives it. |
+diff --git a/src/projector/ci.py b/src/projector/ci.py
+index 7af98577..5b88e3b9 100644
+--- a/src/projector/ci.py
++++ b/src/projector/ci.py
+@@ -6,6 +6,7 @@
+ import hashlib
+ import re
+ from importlib import resources
++from typing import Optional
+ 
+ from .core import UsageError
+ 
+@@ -28,6 +29,9 @@
+     "CODEX_AUTH_JSON": "Projector passes gh the auth.json that `codex login` wrote",
+     "OPENAI_API_KEY": "paste an API key from the OpenAI platform",
+ }
++# The secret holding a GitHub App's private key. The workflow passes it as the action's `app-private-key` input,
++# never as `env`, which would reach every step of the action, so only the step that mints the app's token gets it.
++APP_KEY = "PROJECTOR_APP_PRIVATE_KEY"
+ HEADER = "# Written by `project init --ci-review`, which replaces this file while nobody has edited it.\n"
+ DIGEST = re.compile(r"\A" + re.escape(HEADER) + r"# projector-workflow sha256=([0-9a-f]{64})\n")
+ 
+@@ -67,19 +71,24 @@ def format_agents(agents: dict[str, str]) -> str:
+     return ", ".join(f"{name}={model}" if model else name for name, model in agents.items())
+ 
+ 
+-def body(action_ref: str, agents: dict[str, str]) -> str:
++def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None) -> str:
+     template = resources.files("projector").joinpath("templates/review-workflow.yml").read_text(encoding="utf-8")
+     matrix = "\n".join(f"          - agent: {name}" + (f"\n            model: {model}" if model else "")
+                        for name, model in agents.items())
++    app = ""
++    if app_id is not None:
++        app = f"          app-id: '{app_id}'\n          app-private-key: ${{{{ secrets.{APP_KEY} }}}}\n"
+     env = "\n".join(f"          {name}: ${{{{ secrets.{name} }}}}"
+                     for agent in agents for name in CREDENTIALS[agent].values())
+-    return template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@ENV@", env)
++    return (template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@APP@", app)
++            .replace("@ENV@", env))
+ 
+ 
+-def workflow_text(action_ref: str, agents: dict[str, str]) -> str:
+-    """The review workflow for `agents`, calling the action at `action_ref`. Its second line records a digest of
+-    the rest, so a later `init` can tell a file nobody edited, which it replaces, from one somebody did."""
+-    text = body(action_ref, agents)
++def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None) -> str:
++    """The review workflow for `agents`, calling the action at `action_ref`, and posting as the GitHub App
++    `app_id` names when it is given. Its second line records a digest of the rest, so a later `init` can tell a
++    file nobody edited, which it replaces, from one somebody did."""
++    text = body(action_ref, agents, app_id)
+     return f"{HEADER}# projector-workflow sha256={hashlib.sha256(text.encode()).hexdigest()}\n{text}"
+ 
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 3bb27ac2..dc3bfc0f 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -620,6 +620,9 @@ def parser() -> argparse.ArgumentParser:
+     init.add_argument("--ci-agents", help="the agents that review in GitHub Actions, separated by commas, from "
+                                           f"{', '.join(ci.AGENTS)}, each as agent=model to name its model, which "
+                                           "codex needs (default: review.ci_agents, then claude)")
++    init.add_argument("--ci-app", metavar="SLUG",
++                      help="post CI reviews as this public GitHub App, whose private key init asks for as the "
++                           f"{ci.APP_KEY} secret (default: review.ci_app, then github-actions[bot])")
+     init.add_argument("--ci-credential", choices=ci.KINDS,
+                       help="the credential secret init asks for when an agent has none (default: subscription for "
+                            "claude, api-key for codex)")
+@@ -846,6 +849,8 @@ def parser() -> argparse.ArgumentParser:
+                                                      "name its model (default: review.ci_agents, then claude)")
+     review_ci_workflow.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow "
+                                                                        "runs (default: v0)")
++    review_ci_workflow.add_argument("--app", metavar="SLUG", help="the public GitHub App the reviews post as "
++                                                                  "(default: review.ci_app, then github-actions[bot])")
+     review_status = review_commands.add_parser(
+         "status", help="report the newest Projector verdict on a pull request's current head"
+     )
+@@ -2514,8 +2519,10 @@ def run_review(arguments: argparse.Namespace) -> int:
+         print(review.clean_workflow_text(), end="")
+         return 0
+     if arguments.review_command == "ci-workflow":
+-        agents = arguments.agents or load_config(discover_git_root(Path.cwd())).get("review.ci_agents") or "claude"
+-        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents)), end="")
++        config = load_config(discover_git_root(Path.cwd()))
++        agents = arguments.agents or config.get("review.ci_agents") or "claude"
++        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents), ci_app(config, arguments.app)[1]),
++              end="")
+         return 0
+     if arguments.review_command in ("hold", "ready"):
+         return review_draft(arguments)
+@@ -3630,15 +3637,34 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
+             record_setting(root, "review.ci", False)
+             return
+     agents = ci.parse_agents(arguments.ci_agents or config.get("review.ci_agents") or "claude")
+-    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents)))
++    try:
++        slug, app = ci_app(config, arguments.ci_app)
++    except UsageError as error:
++        if arguments.ci_app:
++            raise InitError(str(error), files) from None
++        # A refresh needs GitHub only for an app recorded without its ID, and like init's other GitHub calls it
++        # warns and goes on rather than failing init.
++        print(f"project: {error}; left the CI review as it is, and `project init --ci-app "
++              f"{config.get('review.ci_app')}` records the app's ID so a refresh needs no lookup", file=sys.stderr)
++        return
++    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents, app)))
+     if recorded is not True:
+         record_setting(root, "review.ci", True)
+     if config.get("review.ci_agents") != ci.format_agents(agents):
+         record_setting(root, "review.ci_agents", ci.format_agents(agents))
+-    reviewers = review.extra_reviewers(config.get("review.reviewers"))
+-    if CI_REVIEWER not in {login.lower() for login in reviewers}:
+-        record_setting(root, "review.reviewers", ", ".join((*reviewers, CI_REVIEWER)))
+-    set_ci_secrets(repo, agents, arguments.ci_credential)
++    if slug and config.get("review.ci_app") != slug:
++        record_setting(root, "review.ci_app", slug)
++    if app is not None and config.get("review.ci_app_id") != app:
++        record_setting(root, "review.ci_app_id", app)
++    # An app replaces github-actions[bot], so a workflow posting with its own token no longer counts as a reviewer.
++    reviewer = f"{slug}[bot]" if slug else CI_REVIEWER
++    listed = review.extra_reviewers(config.get("review.reviewers"))
++    kept = [login for login in listed if not (slug and login.lower() == CI_REVIEWER)]
++    if reviewer.lower() not in {login.lower() for login in kept}:
++        kept.append(reviewer)
++    if kept != list(listed):
++        record_setting(root, "review.reviewers", ", ".join(kept))
++    set_ci_secrets(repo, agents, arguments.ci_credential, slug)
+     site, why = summary.push_decision(repo)
+     if site is None:
+         print(f"project: CI reviews publish no summaries until the site is set up, because {why}", file=sys.stderr)
+@@ -3679,11 +3705,63 @@ def run_interactive(argv: list[str], source: Optional[Path] = None) -> int:
+         return subprocess.call(argv, stdin=handle)
+ 
+ 
+-def set_ci_secrets(repo: str, agents: dict[str, str], kind: Optional[str]) -> None:
+-    """Report each agent's credential secret, and at a terminal have `gh` set a missing one, so the workflow can
+-    start the agent."""
++def ci_app(config: Config, flag: Optional[str]) -> tuple[Optional[str], Optional[int]]:
++    """The slug and ID of the app the CI reviews post as. The app `flag` names is looked up on GitHub, which
++    refuses one it does not show publicly. Otherwise the recorded `review.ci_app` comes with the
++    `review.ci_app_id` init recorded beside it, so a refresh needs no network; only a slug recorded without its
++    ID is looked up."""
++    if flag:
++        return flag, app_id(flag)
++    slug = config.get("review.ci_app")
++    if not slug:
++        return None, None
++    recorded = config.get("review.ci_app_id")
++    return slug, recorded if recorded is not None else app_id(slug)
++
++
++def app_id(slug: str) -> int:
++    """The ID of the public GitHub App `slug` names. GitHub answers this only for a public app, and only a public
++    app installs on an account other than its owner's."""
++    try:
++        found = summary.gh_lookup("api", f"apps/{slug}", "--jq", ".id")
++    except summary.SummaryError as error:
++        raise UsageError(f"could not look up the GitHub App {slug}: {error}") from error
++    if not (found or "").strip().isdigit():
++        raise UsageError(f"GitHub has no public app named {slug}; make the app public in its settings, under "
++                         "Advanced, so it can be installed on this repository's account")
++    return int(found.strip())
++
++
++def set_app_key(repo: str, slug: str, listed: set[str]) -> None:
++    """Report the app's private key secret, and at a terminal have `gh` set it from the key file GitHub
++    downloaded, whose path is not secret."""
++    command = f"gh secret set {ci.APP_KEY} --repo {repo} < <key file>"
++    if ci.APP_KEY in listed:
++        print(f"project: {ci.APP_KEY} is set for the {slug} app", file=sys.stderr)
++        return
++    if not sys.stdin.isatty():
++        print(f"project: posting as {slug} needs its private key as {ci.APP_KEY}; generate one in the app's "
++              f"settings and run `{command}`", file=sys.stderr)
++        return
++    print(f"project: posting as {slug} needs its private key; generate one in the app's settings, then give the "
++          "path of the .pem file GitHub downloaded: ", end="", file=sys.stderr, flush=True)
++    source = Path(sys.stdin.readline().strip()).expanduser()
++    if not source.is_file():
++        print(f"project: {source} is not a file; run `{command}` once you have the key", file=sys.stderr)
++    elif run_interactive(["gh", "secret", "set", ci.APP_KEY, "--repo", repo], source):
++        print(f"project: could not set {ci.APP_KEY}; setting a secret takes admin access, so an admin of {repo} "
++              f"can run `{command}`", file=sys.stderr)
++    else:
++        print(f"project: set {ci.APP_KEY}; delete {source} now that the secret holds it", file=sys.stderr)
++
++
++def set_ci_secrets(repo: str, agents: dict[str, str], kind: Optional[str], app: Optional[str] = None) -> None:
++    """Report each agent's credential secret, and the app's private key when `app` names one, and at a terminal
++    have `gh` set a missing one, so the workflow can start the agent and post as the app."""
+     wanted = {agent: ci.CREDENTIALS[agent][kind or ci.DEFAULT_KIND[agent]] for agent in agents}
+     commands = [f"gh secret set {name} --repo {repo}" for name in wanted.values()]
++    if app:
++        commands.append(f"gh secret set {ci.APP_KEY} --repo {repo} < <key file>")
+     try:
+         listed = {found["name"] for found in json.loads(summary.gh("secret", "list", "--repo", repo, "--json", "name"))}
+     except (summary.SummaryError, ValueError) as error:
+@@ -3714,6 +3792,8 @@ def set_ci_secrets(repo: str, agents: dict[str, str], kind: Optional[str]) -> No
+             if run_interactive(["gh", "secret", "set", name, "--repo", repo], source):
+                 print(f"project: could not set {name}; setting a secret takes admin access, so an admin of {repo} "
+                       f"can run `{command}`", file=sys.stderr)
++    if app:
++        set_app_key(repo, app, listed)
+ 
+ 
+ def write_clean_workflow(root: Path) -> FileAction:
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 9b217aeb..285a2d9d 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -102,6 +102,8 @@
+     "review.runner": str,
+     "review.ci": bool,
+     "review.ci_agents": str,
++    "review.ci_app": str,
++    "review.ci_app_id": int,
+     "fix.resolve_human_threads": bool,
+     "watch.auto_start": bool,
+     "watch.interval": int,
+diff --git a/src/projector/templates/review-workflow.yml b/src/projector/templates/review-workflow.yml
+index c24220be..72d7274b 100644
+--- a/src/projector/templates/review-workflow.yml
++++ b/src/projector/templates/review-workflow.yml
+@@ -54,7 +54,7 @@ jobs:
+           model: ${{ matrix.model }}
+           pr: ${{ github.event.pull_request.number || inputs.pr }}
+           rereview: ${{ inputs.rereview || false }}
+-        env:
++@APP@        env:
+ @ENV@
+ 
+   summary:
+diff --git a/tests/test_ci.py b/tests/test_ci.py
+index 57818da1..5a78ac97 100644
+--- a/tests/test_ci.py
++++ b/tests/test_ci.py
+@@ -37,6 +37,18 @@ def setUp(self) -> None:
+         self.set: list[tuple[list[str], Path | None]] = []
+         self.enterContext(mock.patch.object(cli, "run_interactive",
+                                             side_effect=lambda argv, source=None: self.set.append((argv, source)) or 0))
++        # The public apps GitHub answers for; a private app reads as missing, as it does to another account.
++        self.apps = {"projector-review": 5827721}
++        self.offline = False
++        self.enterContext(mock.patch.object(summary, "gh_lookup", side_effect=self.lookup))
++
++    def lookup(self, *args: str) -> str | None:
++        if args[0] == "api" and args[1].startswith("apps/"):
++            if self.offline:
++                raise summary.SummaryError("the gh CLI is not installed")
++            found = self.apps.get(args[1].removeprefix("apps/"))
++            return f"{found}\n" if found else None
++        raise AssertionError(f"unexpected gh call: {args}")
+ 
+     def gh(self, *args: str) -> str:
+         self.gh_calls.append(args)
+@@ -125,6 +137,66 @@ def test_an_agent_the_action_has_no_model_for_is_refused_before_anything_is_writ
+         self.assertEqual(([], None, None), (self.set, self.recorded().get("ci"), self.recorded().get("ci_agents")),
+                          "no secret is set and nothing is recorded")
+ 
++    def test_an_app_posts_the_reviews_and_a_later_init_keeps_it(self) -> None:
++        (self.root / ".projector.toml").write_text('[review]\nreviewers = "someone, github-actions[bot]"\n')
++
++        code, _, err = self.init("--ci-review", "--ci-app", "projector-review")
++        again, out_again, _ = self.init()
++
++        self.assertEqual((0, 0), (code, again), err)
++        self.assertEqual(ci.workflow_text("v0", {"claude": ""}, 5827721), self.workflow().read_text())
++        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again,
++                      "the recorded app rebuilds the same workflow, so the reviews never fall back to the bot")
++        self.assertEqual(("projector-review", 5827721, "someone, projector-review[bot]"),
++                         (self.recorded()["ci_app"], self.recorded()["ci_app_id"], self.recorded()["reviewers"]),
++                         "the app takes github-actions[bot]'s place, and every other reviewer stays")
++        self.assertIn(f"gh secret set {ci.APP_KEY} --repo acme/app < <key file>", err)
++
++    def test_a_later_init_refreshes_the_app_workflow_without_github_but_ci_app_still_asks_it(self) -> None:
++        self.assertEqual(0, self.init("--ci-review", "--ci-app", "projector-review")[0])
++        self.offline = True
++
++        code, out, err = self.init()
++        named, _, named_err = self.init("--ci-app", "projector-review")
++
++        self.assertEqual(0, code, err)
++        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out, "the recorded ID rebuilds the workflow with no lookup")
++        self.assertNotEqual(0, named, "--ci-app always asks GitHub, so it can refuse an app GitHub does not show")
++        self.assertIn("could not look up the GitHub App projector-review", named_err)
++
++    def test_an_app_recorded_without_its_id_is_left_as_it_is_when_github_cannot_answer(self) -> None:
++        (self.root / ".projector.toml").write_text('[review]\nci = true\nci_app = "projector-review"\n')
++        self.offline = True
++
++        code, _, err = self.init()
++
++        self.assertEqual(0, code, err)
++        self.assertIn("left the CI review as it is", err)
++        self.assertFalse(self.workflow().exists(), "a workflow without the app would post as github-actions[bot]")
++        self.assertNotIn("ci_app_id", self.recorded())
++
++    def test_an_app_github_does_not_show_is_refused_before_anything_is_written(self) -> None:
++        code, _, err = self.init("--ci-review", "--ci-app", "private-app")
++
++        self.assertNotEqual(0, code)
++        self.assertIn("make the app public", err)
++        self.assertFalse(self.workflow().exists())
++        self.assertNotIn("ci", self.recorded())
++
++    def test_init_sets_the_app_key_from_the_file_you_name_without_reading_it(self) -> None:
++        self.at_a_terminal()
++        self.secrets = ["CLAUDE_CODE_OAUTH_TOKEN"]
++        key = self.root.parent / "projector-review.pem"
++        key.write_text("not a real key\n")
++
++        with mock.patch("sys.stdin.readline", return_value=f"{key}\n"):
++            code, _, err = self.init("--ci-review", "--ci-app", "projector-review")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([(["gh", "secret", "set", ci.APP_KEY, "--repo", "acme/app"], key)], self.set,
++                         "gh reads the key from the file, so it is on no command line")
++        self.assertIn(f"delete {key}", err)
++
+     def test_without_a_terminal_or_a_flag_init_adds_no_ci_review(self) -> None:
+         code, _, err = self.init()
+ 
+@@ -248,6 +320,38 @@ def test_every_step_that_runs_project_with_the_workflow_token_names_the_login_it
+             with self.subTest(step=step.splitlines()[0]):
+                 self.assertIn(f"        {review.TOKEN_LOGIN}: {cli.CI_REVIEWER}\n", step)
+ 
++    def test_an_app_workflow_gives_the_action_the_app_and_its_key(self) -> None:
++        with_app, without = ci.workflow_text("v0", {"claude": ""}, 5827721), ci.workflow_text("v0", {"claude": ""})
++
++        self.assertEqual([("'5827721'", f"${{{{ secrets.{ci.APP_KEY} }}}}")],
++                         [(job.get("app-id"), job.get("app-private-key")) for job in review_jobs(with_app)],
++                         "the app and its key are both inputs of the action")
++        self.assertTrue(ci.unedited(with_app))
++        self.assertEqual(([None], False), ([job.get("app-id") for job in review_jobs(without)], ci.APP_KEY in without))
++
++    def test_the_app_key_reaches_only_the_step_that_mints_its_token(self) -> None:
++        # A caller's env reaches every step of a composite action, the agent's and npm's install scripts included,
++        # and a composite action's inputs set no environment variable. So the workflow passes the key only as an
++        # input, and only the step that mints the token reads that input.
++        own = Path(__file__).parents[1] / ".github" / "workflows" / "projector-review.yml"
++        for name, workflow in (("generated", ci.workflow_text("v0", {"claude": ""}, 5827721)), ("own", own.read_text())):
++            with self.subTest(workflow=name):
++                self.assertEqual([f"app-private-key: ${{{{ secrets.{ci.APP_KEY} }}}}"],
++                                 [line.strip() for line in workflow.splitlines() if ci.APP_KEY in line],
++                                 "the key is in no job's or step's env")
++        steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
++        self.assertEqual(["Mint the app's token"],
++                         [name for name, step in steps.items() if "app-private-key" in step or ci.APP_KEY in step])
++        self.assertIn("private-key: ${{ inputs.app-private-key }}\n", steps["Mint the app's token"])
++
++    def test_the_review_posts_as_the_app_whose_token_it_uses(self) -> None:
++        # The token and the login must come from the same step, or the review posts as one account and names another.
++        steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
++        minted = re.search(r"\n      id: (\S+)\n", steps["Mint the app's token"]).group(1)
++        review_step = steps["Review the pull request"]
++        self.assertIn(f"GH_TOKEN: ${{{{ steps.{minted}.outputs.token || github.token }}}}", review_step)
++        self.assertIn(f"format('{{0}}[bot]', steps.{minted}.outputs.app-slug)", review_step)
++
+     def test_only_the_review_step_hands_its_summary_off(self) -> None:
+         # The summary job's publish must push; a handoff there would publish nothing.
+         text = ACTION.read_text()
