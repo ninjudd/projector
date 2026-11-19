@@ -603,8 +603,12 @@ role are these:
 - **`MERGED`** and **`CLOSED`** report that the pull request merged or
   closed, as
   `MERGED acme/app#74 into main at 2026-10-23T01:36:44Z (merge commit ea9a364a)`
-  or `CLOSED acme/app#80 without merging`. The daemon removes the
-  subscription itself. Act as the next section describes.
+  or `CLOSED acme/app#80 without merging`. For an upper layer of a stack,
+  `MERGED acme/app#75 with its stack into main` means its change reached
+  the default branch with the layers below it, and
+  `MERGED acme/app#75 into layer-74 at 2026-10-23T01:36:44Z, which is not in main yet`
+  means it did not. The daemon removes the subscription itself. Act as the next section
+  describes.
 - **`MISSING`** reports that the pull request does not exist or that the
   operator cannot see it, and that the daemon removed the subscription.
   Tell the user.

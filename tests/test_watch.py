@@ -162,12 +162,16 @@ class FakeGitHub:
     def config_reads(self) -> list[str]:
         return [call[-1] for call in self.calls if call[:1] == ["api"] and "/contents/" in call[-1]]
 
-    def stack(self, number, *layers, repo="acme/app", open_layers=None, is_open=True) -> None:
-        """A GitHub stack of the pull requests `layers`, bottom first, of which `open_layers` are open."""
+    def stack(self, number, *layers, repo="acme/app", open_layers=None, merged=None, is_open=True,
+              base="main") -> None:
+        """A GitHub stack of the pull requests `layers`, bottom first, on `base`, each with the head branch
+        `layer-<number>`, of which `open_layers` are open and `merged` maps each merged one to when it merged."""
         still = set(layers if open_layers is None else open_layers)
         self.repository(repo).setdefault("stacks", []).append({
-            "number": number, "open": is_open, "base": {"ref": "main"},
-            "pull_requests": [{"number": layer, "state": "open" if layer in still else "closed"} for layer in layers]})
+            "number": number, "open": is_open, "base": {"ref": base},
+            "pull_requests": [{"number": layer, "state": "open" if layer in still else "closed",
+                               "merged_at": (merged or {}).get(layer), "head": {"ref": f"layer-{layer}"}}
+                              for layer in layers]})
 
     def stack_lookups(self) -> list[str]:
         return [call[-1] for call in self.calls if call[:1] == ["api"] and "/stacks?" in call[-1]]
@@ -244,7 +248,7 @@ class FakeGitHub:
         if pull["contexts"]:
             found = {**found, "commits": {"nodes": [{"commit": self.rollup(pull["contexts"], fields["query"])}]}}
         data = {"rateLimit": {"cost": 1}, "repository": {"visibility": repo["visibility"], "nameWithOwner": repo["name"],
-                                                         "pullRequest": found}}
+                                                         "defaultBranchRef": {"name": "main"}, "pullRequest": found}}
         return watch.GhResult(0, json.dumps({"data": data}))
 
     @staticmethod
@@ -294,10 +298,15 @@ class FakeGitHub:
         tail = parts[3:]
         open_pulls = [(number, pull) for number, pull in sorted(repo["pulls"].items(), reverse=True)
                       if pull["node"]["state"] == "OPEN"]
-        if tail == ["pulls"] and set(query) == {"head", "state"}:
+        if tail == ["pulls"] and set(query) == {"head", "state"} and query["state"] in ("open", "all"):
             branch = query["head"].split(":", 1)[1]
-            return self.answer(200, [{"number": number} for number, pull in open_pulls
-                                     if pull["node"]["headRefName"] == branch], include, etag)
+            listed = open_pulls if query["state"] == "open" else sorted(repo["pulls"].items(), reverse=True)
+            return self.answer(200, [{"number": number, "state": "open" if pull["node"]["state"] == "OPEN" else "closed",
+                                      "merged_at": pull["node"]["mergedAt"] or (LATER if pull["node"]["state"] == "MERGED"
+                                                                                else None),
+                                      "base": {"ref": pull["node"]["baseRefName"]}}
+                                     for number, pull in listed if pull["node"]["headRefName"] == branch],
+                               include, etag)
         if tail == ["pulls"] and query == {"state": "open", "per_page": "100", "page": query.get("page", "")}:
             page = int(query["page"])
             listed = [{"number": number, "user": {"login": pull["node"]["author"]["login"]},
@@ -2406,6 +2415,135 @@ class StackFixerTests(WatchCase):
 
         self.assertEqual(["MERGED acme/app#5 into main — send subagent fix-stack-5 no more work for acme/app#5, and "
                           "finish it once no layer of its stack is open"], events)
+
+    # When the stack merges: GitHub merges its layers one second apart, from the bottom up.
+    MERGED_AT = ("2026-11-16T22:01:00Z", "2026-11-16T22:01:01Z", "2026-11-16T22:01:02Z")
+    ACTION = ("send subagent fix-stack-5 no more work for acme/app#{}, and finish it once no layer of its stack is "
+              "open")
+
+    def merge(self, *numbers: int, base: str = "main", times: tuple[str, ...] = MERGED_AT) -> dict[int, str]:
+        """Merge the chained layers `numbers` at `times`, the first into `base` and each other into the one below
+        it, and answer when each merged."""
+        for number, at in zip(numbers, times):
+            self.github.pull_request(number, ref=f"layer-{number}", base=base, state="MERGED", merged_at=at)
+            base = f"layer-{number}"
+        return dict(zip(numbers, times))
+
+    def merge_stack(self, *numbers: int, **times) -> None:
+        """Merge GitHub's stack of the chained layers `numbers`."""
+        self.github.repository()["stacks"] = []
+        self.github.stack(20, *numbers, open_layers=(), merged=self.merge(*numbers, **times), is_open=False)
+
+    def head_lookups(self) -> list[str]:
+        return [call[-1] for call in self.github.calls if call[:1] == ["api"] and "pulls?head=" in call[-1]]
+
+    def test_an_upper_layer_that_merged_with_its_stack_names_main_not_the_branch_below(self) -> None:
+        self.github.stack(20, 5, 6, 7)
+        self.layers(5, 6, 7)
+        self.live("fixer", "acme/app#5 fix", "acme/app#6 fix", "acme/app#7 fix")
+        self.cycle()
+
+        self.merge_stack(5, 6, 7)
+        events = self.cycle()["fixer"]
+
+        five, six, seven = self.MERGED_AT
+        self.assertEqual([f"MERGED acme/app#5 into main at {five} — {self.ACTION.format(5)}",
+                          f"MERGED acme/app#6 with its stack into main at {six} — {self.ACTION.format(6)}",
+                          f"MERGED acme/app#7 with its stack into main at {seven} — {self.ACTION.format(7)}"],
+                         sorted(events))
+
+    def test_a_merged_stack_costs_one_stack_lookup_for_all_its_layers_events_and_fixers(self) -> None:
+        self.github.stack(20, 5, 6, 7)
+        self.layers(5, 6, 7)
+        self.live("fixer", "acme/app#5 fix", "acme/app#6 fix", "acme/app#7 fix")
+        self.cycle()
+
+        self.merge_stack(5, 6, 7)
+        self.advance(self.settings.renotify)
+        self.github.calls.clear()
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(3, len(events))
+        self.assertEqual(1, len(self.github.stack_lookups()))
+        self.assertEqual([], self.head_lookups())
+
+    def test_a_layer_merged_by_hand_into_an_open_layer_says_its_base_is_not_in_main_yet(self) -> None:
+        self.github.stack(20, 5, 6)
+        self.layers(5, 6)
+        self.live("fixer", "acme/app#6 fix")
+        self.cycle()
+
+        self.github.repository()["stacks"] = []
+        self.github.stack(20, 5, 6, open_layers=(5,), merged={6: LATER})
+        self.github.pull_request(6, ref="layer-6", base="layer-5", state="MERGED", merged_at=LATER)
+        events = self.cycle()["fixer"]
+
+        self.assertEqual([f"MERGED acme/app#6 into layer-5 at {LATER}, which is not in main yet — "
+                          f"{self.ACTION.format(6)}"], events)
+
+    def test_a_layer_merged_into_a_layer_that_had_already_merged_into_main_says_it_is_not_in_main_yet(self) -> None:
+        self.github.stack(20, 5, 6)
+        self.layers(5, 6)
+        self.live("fixer", "acme/app#6 fix")
+        self.cycle()
+
+        self.merge_stack(5, 6, times=("2026-11-16T22:01:00Z", "2026-11-16T23:00:00Z"))
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(["MERGED acme/app#6 into layer-5 at 2026-11-16T23:00:00Z, which is not in main yet — "
+                          f"{self.ACTION.format(6)}"], events)
+
+    def test_a_layer_merged_by_hand_into_a_merged_branch_of_a_chain_says_it_is_not_in_main_yet(self) -> None:
+        self.layers(5, 6)
+        self.live("fixer", "acme/app#6 fix")
+        self.cycle()
+
+        self.merge(5, 6, times=("2026-11-16T22:01:00Z", "2026-11-16T23:00:00Z"))
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(["MERGED acme/app#6 into layer-5 at 2026-11-16T23:00:00Z, which is not in main yet — "
+                          f"{self.ACTION.format(6)}"], events)
+
+    def test_a_layer_merged_with_its_retargeted_parent_after_the_bottom_merged_alone_reached_main(self) -> None:
+        self.github.stack(20, 5, 6, 7)
+        self.layers(5, 6, 7)
+        self.live("fixer", "acme/app#7 fix")
+        self.cycle()
+
+        times = {5: "2026-11-16T22:01:00Z", 6: "2026-11-16T23:00:00Z", 7: "2026-11-16T23:00:01Z"}
+        self.github.repository()["stacks"] = []
+        self.github.stack(20, 5, 6, 7, open_layers=(), merged=times, is_open=False)
+        self.github.pull_request(5, ref="layer-5", state="MERGED", merged_at=times[5])
+        self.github.pull_request(6, ref="layer-6", state="MERGED", merged_at=times[6])
+        self.github.pull_request(7, ref="layer-7", base="layer-6", state="MERGED", merged_at=times[7])
+        events = self.cycle()["fixer"]
+
+        self.assertEqual([f"MERGED acme/app#7 with its stack into main at {times[7]} — {self.ACTION.format(7)}"],
+                         events)
+        self.assertEqual(["repos/acme/app/pulls?head=acme:layer-6&state=all"], self.head_lookups())
+
+    def test_a_chain_that_github_records_no_stack_for_says_its_merged_upper_layer_reached_main(self) -> None:
+        self.layers(5, 6)
+        self.live("fixer", "acme/app#6 fix")
+        self.cycle()
+
+        self.merge(5, 6)
+        events = self.cycle()["fixer"]
+
+        self.assertEqual([f"MERGED acme/app#6 with its stack into main at {self.MERGED_AT[1]} — "
+                          f"{self.ACTION.format(6)}"], events)
+
+    def test_a_pull_request_merged_into_main_reads_no_stack_and_names_main(self) -> None:
+        self.github.pull_request(1)
+        self.live("fixer", "acme/app#1 fix")
+        self.cycle()
+
+        self.github.calls.clear()
+        self.github.pull_request(1, state="MERGED")
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(["MERGED acme/app#1 into main — finish subagent fix-1"], events)
+        self.assertEqual(([], []), (self.github.stack_lookups(), self.head_lookups()))
 
     def merge_the_bottom_and_refresh(self) -> list[str]:
         """Merge layer 5, retarget layer 6 to main, and run the pass after the next full pass's lookup."""

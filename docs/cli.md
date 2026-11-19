@@ -3831,6 +3831,40 @@ after the bottom layer merges keeps the name. `MOVED`,
 and `CLOSED` tell the session to send the subagent no more work for that
 layer and to finish it once no layer of its stack is open.
 
+GitHub records each upper layer of a stack as merged into the branch of the
+layer below it, even when the whole stack merged into the default branch as
+a unit. So when a pull request whose base is not the default branch merges,
+the daemon checks whether that base reached the default branch, and words
+`MERGED` to say so:
+
+```text
+MERGED acme/app#13 with its stack into main at 2026-11-19T18:02:11Z (merge commit 4be1c2d9) — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
+MERGED acme/app#13 into layer-12 at 2026-11-19T18:02:11Z (merge commit 4be1c2d9), which is not in main yet — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
+```
+
+The daemon walks down the chain of base branches. At each step it takes the
+pull request whose head is the base, from the pull request's GitHub stack
+or, where GitHub records none, from the pull requests with that head. That
+pull request carried the change only when it merged no earlier than the one
+above it did, less 10 seconds, because GitHub merges a stack's layers about
+a second apart from the bottom up. The first form means that every step
+carried the change down to a pull request that merged into the default
+branch. The second form means that a pull request below it is still open,
+or that one merged before the change reached it, as when someone merges a
+layer by hand into a layer that already merged.
+
+The check asks GitHub once for the stack, and that answer covers every layer
+that merges in the same pass and each layer's fixer name. The stack does not
+record each layer's base, so the daemon takes it to be the head of the layer
+below. When a step shows that a layer merged well after the layer below it,
+as when the bottom layer merged alone and the next layer was retargeted to
+the default branch, the daemon reads that layer's real base with
+`gh api "repos/<owner>/<repo>/pulls?head=<owner>:<branch>&state=all"`. It
+reads each branch of a chain that GitHub records no stack for the same way,
+once a pass. When GitHub says neither, and for a pull request based on the
+default branch, which costs no request, `MERGED` names the base as GitHub
+records it.
+
 | Kind | Role | Reports |
 | --- | --- | --- |
 | `FINDING` | `fix` | An unresolved review thread |
@@ -3844,7 +3878,7 @@ layer and to finish it once no layer of its stack is open.
 | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
 | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
 | `MOVED` | any | Another session owns the role now |
-| `MERGED`, `CLOSED` | any | The pull request merged or closed |
+| `MERGED`, `CLOSED` | any | The pull request merged or closed; `MERGED` says whether a layer's base reached the default branch |
 | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
 
 A `LABEL` line is not work. The review commands set the `clean` and
