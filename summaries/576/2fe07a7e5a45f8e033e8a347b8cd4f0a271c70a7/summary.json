@@ -20,12 +20,12 @@
    {
     "id": "rollout",
     "title": "Complete the credential-backed rollout",
-    "html": "<ul class=\"tight\"><li>The local action now starts from this pull request’s checkout; it no longer needs the action on <code>main</code> first.</li><li>The <a href=\"https://github.com/ninjudd/projector/actions/runs/44401166196/job/135144237540\">hosted review job</a> resolved the action, then stopped because neither Claude credential secret is set.</li><li>Configure exactly one of <code>CLAUDE_CODE_OAUTH_TOKEN</code> or <code>ANTHROPIC_API_KEY</code> to complete the hosted-agent check. This review read or changed no credential secret.</li><li>The first credential-backed run still needs to verify the hosted-runner facts in the plan.</li></ul>"
+    "html": "<ul class=\"tight\"><li>The local action starts from this pull request’s checkout, so it does not need the action on <code>main</code> first.</li><li>A credential secret is now set: the hosted review job runs the agent and posts its verdict as <code>github-actions[bot]</code>.</li><li>The hosted-runner facts that § 7 of the plan lists still need recording from these first runs.</li></ul>"
    },
    {
     "id": "validation",
     "title": "Review evidence",
-    "html": "<ul class=\"tight\"><li>The unchanged layer is now based on <code>main</code> after its dependencies merged. Its complete tree matches the last clean head.</li><li>The current clean incremental review builds on the full review of <code>197b02b2</code>.</li><li>The configured gate and exact-head <code>check</code> workflow passed, including 256 hook tests, plugin validation, type-checking, and the diff check.</li><li>The full review verified four focused action checks and an independent local-action setup fixture. No finding or suggestion remains on this layer.</li></ul>"
+    "html": "<ul class=\"tight\"><li>The hosted review of <code>2fe07a7</code> ran the workflow’s gate override: both plugin validations and the whitespace check passed, and the exact-head <code>check</code> workflow passed.</li><li>That review also ran <code>claude plugin test .</code> on the runner: all 256 hook tests passed without the interactive session’s declarations.</li><li>It requested changes on one finding: the override’s gate leaves out the hook tests, which no other CI job runs. See the flag under the workflow’s gate line.</li></ul>"
    }
   ]
  },
@@ -61,7 +61,7 @@
     "The review job runs for ready pull requests whose heads are in this repository and can also be started manually. Each job checks the repository out before using <code>./actions/review</code>, which loads the action from the workspace. A pull-request run therefore exercises the action in its checked-out result. Each new head cancels the older review for the same pull request and agent.",
     "Each matrix entry names an agent and can name its model. This repository’s single Claude entry leaves the model empty, so the action supplies <code>claude-opus-5-5</code>. The updated workflow forwards the model field through to the action instead of leaving per-agent model choices behind.",
     "The agent’s job can post reviews and statuses but cannot push code. A second job, which runs no agent, holds the write permission needed to publish summaries. The runner also refuses drafts and fork heads, so a manual trigger does not bypass that boundary.",
-    "The local review gate normally runs hook tests and a type-check that depends on declarations from an interactive Claude Code session. The workflow supplies a configuration override that runs plugin validation and the whitespace check on a hosted runner; the existing <code>check</code> workflow still supplies the suite and project checks."
+    "A review’s gate is the shell command <code>.projector.toml</code> names in <code>review.gate</code>, run on the head before a review signs it off. Projector’s local gate runs the plugin validations, the hook tests, a type-check that needs declarations only an interactive Claude Code session writes, and a whitespace check. The workflow’s <code>config</code> input writes an <code>[override.50.review]</code> table to the runner’s <code>~/.projector.toml</code>, which replaces that gate with one that runs the plugin validations and the whitespace check. The existing <code>check</code> workflow still supplies the Python suite, the site’s lint, and the plan check."
    ],
    "checks": [],
    "files": [
@@ -87,7 +87,12 @@
       {
        "kind": "verify",
        "line": 67,
-       "text": "The workflow adds two deliberate changes to the generator: local checkout/action steps in both jobs and the five-line gate override. The override keeps review.gate_checks=check, and the edited digest makes init preserve the workflow."
+       "text": "The workflow differs from the generator’s output only by the local checkout and action steps in both jobs and the five-line gate override. On the runner, <code>project config get review.gate</code> returns the override, <code>review.gate_checks</code> still waits for <code>check</code>, and the edited file keeps <code>init</code> from replacing it."
+      },
+      {
+       "kind": "flag",
+       "line": 67,
+       "text": "The override’s gate leaves out <code>claude plugin test .</code> as well as <code>hooks/typecheck.sh</code>, but only the type-check needs the interactive session’s declarations. The hook tests run and pass on the hosted runner, and no other CI job runs them, so a bot verdict could sign off a head whose hook tests fail. Add <code>claude plugin test .</code> to the override."
       },
       {
        "kind": "context",
