@@ -624,8 +624,12 @@ def parser() -> argparse.ArgumentParser:
                       help="post CI reviews as this public GitHub App, whose private key init asks for as the "
                            f"{ci.APP_KEY} secret (default: review.ci_app, then github-actions[bot])")
     init.add_argument("--ci-credential", choices=ci.KINDS,
-                      help="the credential secret init asks for when an agent has none (default: subscription for "
-                           "claude, api-key for codex)")
+                      help="the credential secret init asks for when an agent has none, or runner, for a "
+                           "credential your own runner holds, which the workflow passes no secret for (default: "
+                           "review.ci_credential, then subscription for claude and api-key for codex)")
+    init.add_argument("--ci-runs-on", metavar="LABELS",
+                      help="run the CI reviews on your own runners with these labels, separated by commas, such as "
+                           f"self-hosted,linux (default: review.ci_runs_on, then {ci.HOSTED})")
     rule_choice = init.add_mutually_exclusive_group()
     rule_choice.add_argument(
         "--publish-rule",
@@ -851,6 +855,12 @@ def parser() -> argparse.ArgumentParser:
                                                                        "runs (default: v0)")
     review_ci_workflow.add_argument("--app", metavar="SLUG", help="the public GitHub App the reviews post as "
                                                                   "(default: review.ci_app, then github-actions[bot])")
+    review_ci_workflow.add_argument("--runs-on", metavar="LABELS",
+                                    help="the labels of the runners the reviews run on, separated by commas "
+                                         f"(default: review.ci_runs_on, then {ci.HOSTED})")
+    review_ci_workflow.add_argument("--credential", choices=ci.KINDS,
+                                    help="runner passes no credential secret, for a runner that holds its own "
+                                         "(default: review.ci_credential)")
     review_status = review_commands.add_parser(
         "status", help="report the newest Projector verdict on a pull request's current head"
     )
@@ -2521,7 +2531,8 @@ def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "ci-workflow":
         config = load_config(discover_git_root(Path.cwd()))
         agents = arguments.agents or config.get("review.ci_agents") or "claude"
-        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents), ci_app(config, arguments.app)[1]),
+        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents), ci_app(config, arguments.app)[1],
+                               ci_runs_on(config, arguments.runs_on), ci_credential(config, arguments.credential)),
               end="")
         return 0
     if arguments.review_command in ("hold", "ready"):
@@ -3637,6 +3648,8 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
             record_setting(root, "review.ci", False)
             return
     agents = ci.parse_agents(arguments.ci_agents or config.get("review.ci_agents") or "claude")
+    runs_on = ci_runs_on(config, arguments.ci_runs_on)
+    credential = ci_credential(config, arguments.ci_credential)
     try:
         slug, app = ci_app(config, arguments.ci_app)
     except UsageError as error:
@@ -3647,11 +3660,15 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
         print(f"project: {error}; left the CI review as it is, and `project init --ci-app "
               f"{config.get('review.ci_app')}` records the app's ID so a refresh needs no lookup", file=sys.stderr)
         return
-    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents, app)))
+    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents, app, runs_on, credential)))
     if recorded is not True:
         record_setting(root, "review.ci", True)
     if config.get("review.ci_agents") != ci.format_agents(agents):
         record_setting(root, "review.ci_agents", ci.format_agents(agents))
+    if runs_on and config.get("review.ci_runs_on") != ci.format_runs_on(runs_on):
+        record_setting(root, "review.ci_runs_on", ci.format_runs_on(runs_on))
+    if credential and config.get("review.ci_credential") != credential:
+        record_setting(root, "review.ci_credential", credential)
     if slug and config.get("review.ci_app") != slug:
         record_setting(root, "review.ci_app", slug)
     if app is not None and config.get("review.ci_app_id") != app:
@@ -3664,11 +3681,14 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
         kept.append(reviewer)
     if kept != list(listed):
         record_setting(root, "review.reviewers", ", ".join(kept))
-    set_ci_secrets(repo, agents, arguments.ci_credential, slug)
+    set_ci_secrets(repo, agents, credential, slug)
     site, why = summary.push_decision(repo)
     if site is None:
         print(f"project: CI reviews publish no summaries until the site is set up, because {why}", file=sys.stderr)
-    if config.get("review.gate"):
+    if config.get("review.gate") and runs_on:
+        print("project: CI reviews run review.gate on your runner, so install every tool the gate runs there",
+              file=sys.stderr)
+    elif config.get("review.gate"):
         print("project: CI reviews run review.gate on a hosted runner; for a step the runner cannot run, give the "
               "workflow's review step a config input with an `[override.50.review]` table that sets a gate it can "
               "run", file=sys.stderr)
@@ -3719,6 +3739,22 @@ def ci_app(config: Config, flag: Optional[str]) -> tuple[Optional[str], Optional
     return slug, recorded if recorded is not None else app_id(slug)
 
 
+def ci_runs_on(config: Config, flag: Optional[str]) -> Optional[list[str]]:
+    """The labels of the runners the CI reviews run on, from `flag`, then `review.ci_runs_on`, or None for a
+    GitHub-hosted runner."""
+    text = flag if flag is not None else config.get("review.ci_runs_on")
+    return None if text is None else ci.parse_runs_on(text)
+
+
+def ci_credential(config: Config, flag: Optional[str]) -> Optional[str]:
+    """The kind of credential the CI reviews read, from `flag`, then `review.ci_credential`, or None for each
+    agent's default kind."""
+    kind = flag or config.get("review.ci_credential")
+    if kind is not None and kind not in ci.KINDS:
+        raise UsageError(f"review.ci_credential must be {', '.join(ci.KINDS)}; got {kind!r}")
+    return kind
+
+
 def app_id(slug: str) -> int:
     """The ID of the public GitHub App `slug` names. GitHub answers this only for a public app, and only a public
     app installs on an account other than its owner's."""
@@ -3757,7 +3793,15 @@ def set_app_key(repo: str, slug: str, listed: set[str]) -> None:
 
 def set_ci_secrets(repo: str, agents: dict[str, str], kind: Optional[str], app: Optional[str] = None) -> None:
     """Report each agent's credential secret, and the app's private key when `app` names one, and at a terminal
-    have `gh` set a missing one, so the workflow can start the agent and post as the app."""
+    have `gh` set a missing one, so the workflow can start the agent and post as the app. A `runner` kind sets
+    no credential secret, and says what each agent needs on the runner instead."""
+    if kind == ci.RUNNER:
+        for agent in agents:
+            print(f"project: the {agent} review reads its credential from your runner: {ci.ON_RUNNER[agent]}",
+                  file=sys.stderr)
+        if not app:
+            return
+        agents = {}
     wanted = {agent: ci.CREDENTIALS[agent][kind or ci.DEFAULT_KIND[agent]] for agent in agents}
     commands = [f"gh secret set {name} --repo {repo}" for name in wanted.values()]
     if app:

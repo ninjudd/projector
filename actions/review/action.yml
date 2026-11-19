@@ -61,8 +61,21 @@ runs:
           echo "::error::both $subscription and $key are set for $AGENT; delete the secret you do not mean to use"
           exit 1
         fi
+        # A self-hosted runner can keep a Codex login of its own, which Codex refreshes in place.
+        login="${CODEX_HOME:-$HOME/.codex}/auth.json"
+        if [ "$AGENT" = codex ] && [ -z "${!subscription:-}" ] && [ -f "$login" ]; then
+          if [ -n "${!key:-}" ]; then
+            echo "::error::both $key and the Codex login in $login are on the runner; remove the one you do not mean to use"
+            exit 1
+          fi
+          exit 0
+        fi
         if [ -z "${!subscription:-}${!key:-}" ]; then
-          echo "::error::neither $subscription nor $key is set for $AGENT; run \`project init --ci-review\` to set one"
+          case "$AGENT" in
+            claude) runner="set $subscription or $key in the runner's environment" ;;
+            codex) runner="run \`codex login\` as the runner's user, or set $key in its environment" ;;
+          esac
+          echo "::error::neither $subscription nor $key is set for $AGENT; run \`project init --ci-review\` to set one as a secret, or on a self-hosted runner, $runner"
           exit 1
         fi
     - uses: actions/checkout@v4
@@ -132,20 +145,35 @@ runs:
         CLAUDE_VERSION: ${{ inputs.claude-code-version }}
         CODEX_VERSION: ${{ inputs.codex-version }}
       run: |
+        # A self-hosted runner can have the CLI installed already, where npm may not write.
+        installed() {
+          local found
+          found=$("$1" --version 2>/dev/null | tr -s '[:space:]' ' ') || return 1
+          [[ " $found " == *" $2 "* ]]
+        }
         case "$AGENT" in
           claude)
-            npm install --global "@anthropic-ai/claude-code@$CLAUDE_VERSION"
+            installed claude "$CLAUDE_VERSION" || npm install --global "@anthropic-ai/claude-code@$CLAUDE_VERSION"
             ;;
           codex)
-            npm install --global "@openai/codex@$CODEX_VERSION"
-            home="$RUNNER_TEMP/codex-home"
-            mkdir -p "$home"
-            ln -s "$PROJECTOR_ROOT/skills" "$home/skills"
-            echo "CODEX_HOME=$home" >> "$GITHUB_ENV"
-            if [ -n "${CODEX_AUTH_JSON:-}" ]; then
-              (umask 077 && printf '%s' "$CODEX_AUTH_JSON" > "$home/auth.json")
+            installed codex "$CODEX_VERSION" || npm install --global "@openai/codex@$CODEX_VERSION"
+            if [ -z "${CODEX_AUTH_JSON:-}${OPENAI_API_KEY:-}" ]; then
+              # The runner's own login, which the credential check found. Codex refreshes it in place, so the
+              # job uses that home rather than a copy, and adds Projector's skills beside the runner's own.
+              home="${CODEX_HOME:-$HOME/.codex}"
+              mkdir -p "$home/skills"
+              ln -sfn "$PROJECTOR_ROOT/skills" "$home/skills/projector"
+              echo "CODEX_HOME=$home" >> "$GITHUB_ENV"
             else
-              printf '%s' "$OPENAI_API_KEY" | CODEX_HOME="$home" codex login --with-api-key
+              home="$RUNNER_TEMP/codex-home"
+              mkdir -p "$home"
+              ln -s "$PROJECTOR_ROOT/skills" "$home/skills"
+              echo "CODEX_HOME=$home" >> "$GITHUB_ENV"
+              if [ -n "${CODEX_AUTH_JSON:-}" ]; then
+                (umask 077 && printf '%s' "$CODEX_AUTH_JSON" > "$home/auth.json")
+              else
+                printf '%s' "$OPENAI_API_KEY" | CODEX_HOME="$home" codex login --with-api-key
+              fi
             fi
             ;;
         esac

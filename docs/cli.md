@@ -611,7 +611,16 @@ a recorded answer, `init` asks nothing and changes nothing. A yes writes
 the agents, `claude` by default, each as `agent=<model>` to name the model it
 runs, such as `claude,codex=<model>`. `codex` needs a model, so `init`
 refuses it without one. `--ci-credential` picks the kind of secret `init`
-asks for. `--ci-app <slug>` posts the reviews as that public GitHub App:
+asks for, and `init` records it as `review.ci_credential`. Its `runner` kind
+says that your own runner holds the credential, so `init` sets no secret
+and the workflow passes none. `--ci-runs-on <labels>` runs both jobs on your
+own runners, those with every label in the comma-separated list, such as
+`self-hosted,linux,projector`, and `init` records the labels as
+`review.ci_runs_on`; without it the jobs run on `ubuntu-latest`. `init`
+refuses `runner` without labels, because a hosted runner holds no
+credential of yours, as
+[Run reviews on your own runners](self-hosted-runners.md) describes.
+`--ci-app <slug>` posts the reviews as that public GitHub App:
 `init` looks the app's ID up on GitHub, records the slug as `review.ci_app`
 and the ID as `review.ci_app_id`, adds `<slug>[bot]` to `review.reviewers`
 in place of `github-actions[bot]`, and asks for the app's private key file,
@@ -619,8 +628,10 @@ as
 [Post as a GitHub App](review-in-ci.md#post-as-a-github-app) describes.
 Once `review.ci` is `true`, every later `init`
 refreshes the workflow, replacing one nobody edited and keeping an edited
-one. A refresh takes the app's ID from `review.ci_app_id`, so it needs no
-network; only `--ci-app` looks an app up. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
+one. A refresh takes the app's ID from `review.ci_app_id`, the runner
+labels from `review.ci_runs_on`, and the credential kind from
+`review.ci_credential`, so it needs no network; only `--ci-app` looks an
+app up. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
 setup, the credentials, and what each job does.
 
 ## Browse projects
@@ -1074,6 +1085,8 @@ reads, which are these:
 | `review.ci_agents` | string | `claude` | `init` and `project review ci-workflow`, as the agents the CI review workflow runs, separated by commas, from `claude` and `codex`, each as `agent=<model>` to name the model its job runs, which `codex` needs, such as `claude, codex=<model>` |
 | `review.ci_app` | string | none | `init` and `project review ci-workflow`, as the public GitHub App the CI reviews post as, by its slug; none posts as `github-actions[bot]` |
 | `review.ci_app_id` | whole number | none | `init` and `project review ci-workflow`, as the ID of the app `review.ci_app` names, which `init --ci-app` looks up and records so a later refresh needs no lookup; set both with `init --ci-app` |
+| `review.ci_runs_on` | string | none | `init` and `project review ci-workflow`, as the labels of your own runners the CI review jobs run on, separated by commas, such as `self-hosted, linux, projector`; none runs them on `ubuntu-latest`; set it with `init --ci-runs-on` |
+| `review.ci_credential` | string | none | `init` and `project review ci-workflow`, as the kind of credential the CI reviews read: `subscription` or `api-key` picks the secret `init` asks for, and `runner` sets no secret and has the workflow pass none, for a runner that holds the credential itself; none asks for a subscription for `claude` and an API key for `codex`; set it with `init --ci-credential` |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
 | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
@@ -2619,8 +2632,10 @@ describes. It writes nothing, takes no pull request, and runs from any
 directory. `ci-workflow` prints the `.github/workflows/projector-review.yml`
 that `init --ci-review` writes, for `--agents`, then `review.ci_agents`, then
 `claude`, at `--action-ref`, `v0` by default, and posting as the app
-`--app`, then `review.ci_app`, names, so you can compare it with a copy you
-edited.
+`--app`, then `review.ci_app`, names, on the runners `--runs-on`, then
+`review.ci_runs_on`, labels, and passing no credential secret when
+`--credential`, then `review.ci_credential`, is `runner`, so you can compare
+it with a copy you edited.
 
 No command takes a SHA: each comes from GitHub or the state file. `setup` works
 from the checkout containing the working directory, or `--checkout`, and

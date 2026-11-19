@@ -12,7 +12,9 @@ from .core import UsageError
 
 WORKFLOW_PATH = ".github/workflows/projector-review.yml"
 AGENTS = ("claude", "codex")
-KINDS = ("subscription", "api-key")
+# `runner` means a self-hosted runner holds the agent's credential, so the workflow passes no secret for it.
+RUNNER = "runner"
+KINDS = ("subscription", "api-key", RUNNER)
 # Each agent's credential secrets, by kind. The workflow passes both, and the action refuses a job that has
 # both or neither.
 CREDENTIALS = {
@@ -29,6 +31,13 @@ WHERE = {
     "CODEX_AUTH_JSON": "Projector passes gh the auth.json that `codex login` wrote",
     "OPENAI_API_KEY": "paste an API key from the OpenAI platform",
 }
+ON_RUNNER = {
+    "claude": "set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the runner's environment, such as its .env file",
+    "codex": "run `codex login` as the runner's user, or set OPENAI_API_KEY in the runner's environment",
+}
+HOSTED = "ubuntu-latest"
+# A runner label as a plain YAML scalar in a flow sequence can carry it.
+LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 # The secret holding a GitHub App's private key. The workflow passes it as the action's `app-private-key` input,
 # never as `env`, which would reach every step of the action, so only the step that mints the app's token gets it.
 APP_KEY = "PROJECTOR_APP_PRIVATE_KEY"
@@ -71,24 +80,54 @@ def format_agents(agents: dict[str, str]) -> str:
     return ", ".join(f"{name}={model}" if model else name for name, model in agents.items())
 
 
-def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None) -> str:
+def parse_runs_on(text: str) -> list[str]:
+    """The runner labels a comma-separated list names, in order and once each. Refuses a list with none, and a
+    label the workflow could not write unquoted."""
+    labels: list[str] = []
+    for label in (part.strip() for part in text.split(",")):
+        if label and not LABEL.match(label):
+            raise UsageError(f"{label!r} in {text!r} is not a runner label")
+        if label and label not in labels:
+            labels.append(label)
+    if not labels:
+        raise UsageError(f"the CI review runner needs at least one label, separated by commas; got {text!r}")
+    return labels
+
+
+def format_runs_on(labels: list[str]) -> str:
+    """`labels` as `review.ci_runs_on` records them, which `parse_runs_on` reads back."""
+    return ", ".join(labels)
+
+
+def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
+         runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
+    if credential == RUNNER and not runs_on:
+        raise UsageError("a GitHub-hosted runner holds no credential of yours, so the runner credential needs "
+                         "your own runner's labels, from --ci-runs-on or review.ci_runs_on")
     template = resources.files("projector").joinpath("templates/review-workflow.yml").read_text(encoding="utf-8")
     matrix = "\n".join(f"          - agent: {name}" + (f"\n            model: {model}" if model else "")
                        for name, model in agents.items())
     app = ""
     if app_id is not None:
         app = f"          app-id: '{app_id}'\n          app-private-key: ${{{{ secrets.{APP_KEY} }}}}\n"
-    env = "\n".join(f"          {name}: ${{{{ secrets.{name} }}}}"
-                    for agent in agents for name in CREDENTIALS[agent].values())
+    # A secret that is not set reads as empty, which would hide the credential a runner's environment holds.
+    env = ""
+    if credential != RUNNER:
+        env = "        env:\n" + "".join(f"          {name}: ${{{{ secrets.{name} }}}}\n"
+                                         for agent in agents for name in CREDENTIALS[agent].values())
+    labels = runs_on or [HOSTED]
+    runner = labels[0] if len(labels) == 1 else f"[{', '.join(labels)}]"
     return (template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@APP@", app)
-            .replace("@ENV@", env))
+            .replace("@ENV@", env).replace("@RUNS_ON@", runner))
 
 
-def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None) -> str:
-    """The review workflow for `agents`, calling the action at `action_ref`, and posting as the GitHub App
-    `app_id` names when it is given. Its second line records a digest of the rest, so a later `init` can tell a
-    file nobody edited, which it replaces, from one somebody did."""
-    text = body(action_ref, agents, app_id)
+def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
+                  runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
+    """The review workflow for `agents`, calling the action at `action_ref`, posting as the GitHub App `app_id`
+    names when it is given, on the runners `runs_on` labels or a GitHub-hosted one, and passing no credential
+    secret when `credential` is `runner`. Its second line records a digest of the rest, so a later `init` can
+    tell a file nobody edited, which it replaces, from one somebody did."""
+    text = body(action_ref, agents, app_id, runs_on, credential)
     return f"{HEADER}# projector-workflow sha256={hashlib.sha256(text.encode()).hexdigest()}\n{text}"
 
 
