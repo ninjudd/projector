@@ -1065,6 +1065,17 @@ These tests fail before the change, and each catches the bug it names:
   The Claude preset adds each with `--add-dir` and denies `Edit` and
   `Write` in it, because auto mode can pass an edit in a working folder that
   no rule covers.
+- **The run adds `reviewing` before the agent starts.** In a measured run,
+  GitHub created the job at 0:00, `project review run` started the agent at
+  0:17, and the agent's `setup` added the label at 1:09, because the agent
+  reads the skill and the repository first. So once its refusal checks pass,
+  the run adds the label itself, through the same `change_labels` that
+  `setup` uses, and `setup` then finds it present and changes nothing. The
+  start comment stays with `setup`. When the agent publishes no verdict and
+  never set a review up, as when it cannot start or times out first, the
+  run takes the label off with `clear_reviewing`, which keeps it while a
+  live start comment, such as another loop's, means a review is in
+  progress.
 
 ## 10. Self-hosted runners
 

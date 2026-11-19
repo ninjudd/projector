@@ -1008,6 +1008,15 @@ def change_labels(repo: str, number: int, present: set[str], add: set[str], remo
     return {"added": added, "removed": removed, "warning": None}
 
 
+def label_lines(labeled: Optional[dict]) -> list[str]:
+    """What a review command did to the labels, and a warning when GitHub refused the change."""
+    if not labeled:
+        return []
+    lines = [f"added the {name} label" for name in labeled["added"]]
+    lines += [f"removed the {name} label" for name in labeled["removed"]]
+    return lines + ([f"warning: {labeled['warning']}"] if labeled["warning"] else [])
+
+
 def reviews_in_progress(repo: str, number: int, reviewer: str, reviews: list[dict],
                         exclude: Optional[int] = None) -> bool:
     """Whether a start comment of the reviewer's on the pull request, other than `exclude`, still means a review

@@ -2500,15 +2500,6 @@ def labels_enabled(checkout: Path) -> bool:
         return True
 
 
-def label_lines(labeled: Optional[dict]) -> list[str]:
-    """What a review command did to the labels, and a warning when GitHub refused the change."""
-    if not labeled:
-        return []
-    lines = [f"added the {name} label" for name in labeled["added"]]
-    lines += [f"removed the {name} label" for name in labeled["removed"]]
-    return lines + ([f"warning: {labeled['warning']}"] if labeled["warning"] else [])
-
-
 def review_run(arguments: argparse.Namespace) -> int:
     """`review run`: one head's review by an agent, in the state the agent's own review commands use."""
     checkout = review.checkout_root(arguments.checkout or Path.cwd())
@@ -2630,7 +2621,7 @@ def run_review(arguments: argparse.Namespace) -> int:
                 print(f"{result['sha'][:7]} is {'signed off' if result['signed_off'] else 'not signed off'}")
                 if result["status"]:
                     print(f"posted {review.REVIEW_CONTEXT} {result['status']} on {result['sha'][:7]}")
-                for line in label_lines(result["labels"]):
+                for line in review.label_lines(result["labels"]):
                     print(line, file=sys.stderr if line.startswith("warning: ") else sys.stdout)
                 if result["dismissed"]:
                     print("dismissed change request " + ", ".join(map(str, result["dismissed"])))
@@ -2668,7 +2659,7 @@ def run_review(arguments: argparse.Namespace) -> int:
         print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
         if command == "setup" and arguments.replace is not None:
             print(f"deleted start comment {arguments.replace}, which this review replaces")
-        for line in label_lines(state.get("labels")):
+        for line in review.label_lines(state.get("labels")):
             print(line, file=sys.stderr if line.startswith("warning: ") else sys.stdout)
         for path in state["removed"]:
             print(f"removed the earlier head's worktree {path}")

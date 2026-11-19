@@ -2771,16 +2771,25 @@ was published:
 ```console
 $ project review run 66 --model claude-opus-5-5
 reviewing owner/example#66 at 3f2a91c as github-actions[bot] with claude-opus-5-5 through claude
+added the reviewing label
 published https://github.com/owner/example/pull/66#pullrequestreview-2211
 ```
 
 Before it starts anything, the command reads the pull request. It refuses
-a pull request whose head is in a fork, and a draft, however the run was
-started. When the reviewer already has a verdict by this model on the head,
-it prints that review's address and exits 0, so a rerun of a finished job
-posts nothing. Pass `--rereview` to review the head again. A live start
-comment by this reviewer and model on the head can only be a cancelled
-run's, so the agent's `setup` replaces it.
+a pull request whose head is in a fork, a draft, and a closed pull request,
+however the run was started. When the reviewer already has a verdict by
+this model on the head, it prints that review's address and exits 0, so a
+rerun of a finished job posts nothing. Pass `--rereview` to review the head
+again. A live start comment by this reviewer and model on the head can only
+be a cancelled run's, so the agent's `setup` replaces it.
+
+Once those checks pass, the command adds the `reviewing` label to the pull
+request and then starts the agent. The agent takes a minute or so to reach
+its `setup`, which posts the start comment and finds the label already
+there. `review.labels = false` turns the label off here as it does for
+every review command. The command creates the label when the repository
+lacks it, and when GitHub refuses the change, it prints a warning and
+starts the agent anyway.
 
 `--agent` picks how the agent starts, and `review.runner` sets the default:
 
@@ -2839,6 +2848,10 @@ while the run ended: the cleanup goes ahead only while the head's lock
 still names the run's loop. It removes the review's worktrees before it
 lets go of that lock, so a review set up on the head right after keeps its
 own. A lock the agent's `setup` took and left with no state is removed.
+When the agent set no review up, because it could not start or stopped
+before its `setup`, the command takes `reviewing` off itself, unless a live
+start comment, such as another loop's, means a review is in progress. It
+does the same when it is interrupted while the agent runs.
 The command then posts one comment on the pull request that names the
 head, the report file's text or why there is none, and the Actions run
 when there is one, and exits 1.

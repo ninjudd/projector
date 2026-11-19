@@ -63,6 +63,11 @@ class FakeGitHub:
         self.starts: list[dict] = []
         self.posted: list[str] = []
         self.deleted: list[str] = []
+        # The labels the repository has, each `gh pr edit` with whether the agent had started by then, and whether
+        # GitHub refuses every edit.
+        self.repo_labels: set[str] = set()
+        self.edits: list[tuple[str, bool]] = []
+        self.refuse_edits = False
         # Called when the run's cleanup lists start comments, after the agent ran.
         self.on_cleanup: Optional[Callable[[], None]] = None
 
@@ -94,6 +99,20 @@ class FakeGitHub:
         if args[:3] == ["api", "-X", "DELETE"]:
             self.deleted.append(args[3])
             return ""
+        if args[:2] == ["pr", "edit"]:
+            add = [args[i + 1] for i, arg in enumerate(args) if arg == "--add-label"]
+            remove = {args[i + 1] for i, arg in enumerate(args) if arg == "--remove-label"}
+            if self.refuse_edits:
+                raise ReviewError("HTTP 403: Resource not accessible by integration")
+            if any(name not in self.repo_labels for name in add):
+                raise ReviewError(f"'{add[0]}' not found")
+            self.edits.append((" ".join(args[5:]), (self.agent_folder / "seen.json").exists()))
+            kept = [label for label in self.pr.get("labels") or [] if label["name"] not in remove]
+            self.pr["labels"] = kept + [{"name": name} for name in add]
+            return ""
+        if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/labels"]:
+            self.repo_labels.add(args[5].removeprefix("name="))
+            return "{}"
         raise AssertionError(f"unexpected gh call: {args}")
 
 
@@ -123,7 +142,8 @@ class RunTests(unittest.TestCase):
     def review_run(self, **options: object) -> int:
         settings = dict(model=MODEL, agent="command", configured_runner=self.runner)
         settings.update(options)
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        self.out, self.err = io.StringIO(), io.StringIO()
+        with redirect_stdout(self.out), redirect_stderr(self.err):
             return run.run(self.tmp / "state" / "projector" / "reviews", 1, self.checkout, **settings)
 
     def seen(self) -> dict:
@@ -324,6 +344,89 @@ class RunTests(unittest.TestCase):
         self.assertEqual(["taskkill", "/F", "/T", "/PID", "4242"], taskkill.call_args.args[0],
                          "the agent's whole process tree ends, not only the agent")
         process.wait.assert_called_once()
+
+    def labels(self) -> list[str]:
+        return [label["name"] for label in self.github.pr.get("labels") or []]
+
+    def test_run_labels_the_pull_request_reviewing_before_the_agent_starts(self) -> None:
+        # Only the agent's `setup` added `reviewing`, about a minute into the job, once the agent had read the skill
+        # and the repository, so the pull request read as idle until then.
+        self.assertEqual(0, self.review_run())
+
+        self.assertEqual([("--add-label reviewing", False)], self.github.edits,
+                         "the label goes on before the agent process starts")
+        self.assertIn("added the reviewing label", self.out.getvalue())
+        self.assertIn("reviewing", self.github.repo_labels, "a repository without the label gets it created")
+
+    def test_a_refused_run_adds_no_label(self) -> None:
+        # A run that labeled before its refusal checks would mark a fork, a draft, a closed pull request, or a head
+        # it already reviewed as in progress, with no review coming to take the label off.
+        refusals = ((lambda: self.github.pr["head"].update(repo={"full_name": "outsider/app"}), "a fork"),
+                    (lambda: self.github.pr.update(draft=True), "a draft"),
+                    (lambda: self.github.pr.update(state="closed"), "a closed pull request"),
+                    (lambda: self.github.reviews.append({"id": 900, "url": "https://example.test/900",
+                                                         "at": "2026-11-18T10:00:00Z", "body": verdict_body(HEAD)}),
+                     "a head already reviewed"))
+        for change, why in refusals:
+            with self.subTest(why=why):
+                self.setUp()
+                change()
+
+                try:
+                    self.assertEqual(0, self.review_run())
+                except ReviewError:
+                    pass
+
+                self.assertEqual([], self.github.edits, why)
+                self.assertFalse(self.started())
+
+    def test_review_labels_false_keeps_the_run_off_the_labels(self) -> None:
+        # The early label ignored `review.labels = false`, which turns every review command's labels off.
+        for behavior in ("publish", "nothing"):
+            with self.subTest(behavior=behavior):
+                self.setUp()
+                self.behave(behavior)
+
+                self.review_run(labels=False)
+
+                self.assertEqual([], self.github.edits)
+                self.assertTrue(self.started())
+
+    def test_a_label_github_refuses_warns_and_the_agent_still_starts(self) -> None:
+        # The labels are a view, so a refusal that failed the run would cost the review itself.
+        self.github.refuse_edits = True
+
+        self.assertEqual(0, self.review_run())
+
+        self.assertIn("warning: left the labels on acme/app#1 as they were", self.err.getvalue())
+        self.assertTrue(self.started())
+
+    def test_every_run_that_publishes_no_verdict_takes_reviewing_off(self) -> None:
+        # Only `finish` of a review the agent set up took `reviewing` off, so once the run added it before the agent's
+        # `setup`, a launch failure, a timeout or an exit before setup, or a crash left the pull request reading as
+        # reviewing with nothing reviewing it.
+        def set_up_and_exit() -> dict:
+            (self.agent / "setup.json").write_text(json.dumps(self.review_files("run", 501)))
+            self.behave("nothing")
+            return {}
+
+        cases = (("the agent could not start", lambda: {"configured_runner": str(self.tmp / "missing-agent")}),
+                 ("the agent exited before its setup", lambda: self.behave("nothing") or {}),
+                 ("the agent set up and exited with no verdict", set_up_and_exit),
+                 ("the agent ran out of time", lambda: self.behave("sleep") or {"timeout_minutes": 0.02}))
+        for why, prepare in cases:
+            with self.subTest(why=why):
+                self.setUp()
+
+                self.assertEqual(1, self.review_run(**prepare()))
+
+                self.assertEqual("--add-label reviewing", self.github.edits[0][0])
+                self.assertEqual([], self.labels(), why)
+
+        self.setUp()
+        with mock.patch.object(run, "start", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            self.review_run()
+        self.assertEqual([], self.labels(), "a run interrupted before the agent's setup takes the label off")
 
     def test_runner_takes_the_agent_then_review_runner_then_claude(self) -> None:
         self.assertEqual(("claude", None), run.runner(None, None))
