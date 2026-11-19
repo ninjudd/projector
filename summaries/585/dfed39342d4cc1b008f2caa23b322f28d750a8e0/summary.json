@@ -1,0 +1,66 @@
+{
+ "version": 1,
+ "name": "iPhone push service scope",
+ "project": "console/phone",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 585,
+  "title": "Say which builds of the iPhone app a push service can wake, and that the hosted instance runs the same service",
+  "head": "dfed39342d4cc1b008f2caa23b322f28d750a8e0",
+  "headRef": "phone-push-team",
+  "base": "09edb83e92d7fca2f3e823e6c8e718135da0d847",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The <code>console/phone</code> plan describes a Projector iPhone app and a small push service in <code>services/push/</code>. The service wakes the phone when an agent needs you, and it never sees what the notification says. The plan is a draft with priority <code>later</code>, so it makes no claim that it is ready to build.",
+   "The plan already said that you can run the push service yourself. It did not say what a service you run can actually do. Apple delivers a notification only when it is signed with a push key that belongs to the Apple developer team that owns the app's bundle ID, the identifier Apple uses for an app. So a push service can wake only a build of the app signed by the team whose key it holds.",
+   "This change records three consequences:",
+   "<ul class=\"tight\"><li>Only the publisher's instance can wake the App Store app.</li><li>The instance Projector hosts runs this repository's <code>services/push/</code> unchanged, with the publisher's push key in its environment. There is no second, hosted-only service.</li><li>To go without the hosted service, you build the app under your own bundle ID and team, set those in your own instance's environment, and install that build.</li></ul>",
+   "The design itself doesn't change: § 2.4 already has the service read the push key, key ID, team ID, and bundle ID from its environment."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Push key</b>: the key Apple issues to a developer team for signing push notifications.</li><li><b>Bundle ID</b>: the identifier that names an app to Apple, owned by one developer team.</li><li><b>Hosted instance</b>: the push service Projector runs, which the app uses by default.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>One Projector review of <code>dfed393</code>: clean, no finding threads. It lists one suggestion, to name Apple's push environment (sandbox or production) among the service's environment variables.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The phone plan",
+   "kicker": "What a push service you run can wake, and what the hosted one runs",
+   "intro": [
+    "Two edits to <code>docs/projects/console/phone/readme.md</code>. A sentence at the end of the opening of § 2 states the constraint: a push service can wake only builds signed by the team whose push key it holds. A new bullet in § 3 explains why there is one push service, run either as the hosted instance or as your own, and how to go without the hosted one.",
+    "No section is renumbered, and the plan's status and priority are unchanged."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/console/phone/readme.md",
+     "note": "The plan for the iPhone app. Adds the push key constraint to § 2 and the “One push service, hosted or your own” bullet to § 3.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "§ 2.4 already lists Apple's push key, key ID, team ID, and the app's bundle ID among the service's environment variables, so the new bullet needs no other design change. Checked by reading § 2.3 and § 2.4 at the head.",
+       "line": 267
+      },
+      {
+       "kind": "context",
+       "text": "A build you install from Xcode is development-signed and gets a device token for Apple's sandbox push endpoint. The plan does not yet name which endpoint an instance uses, so the self-built path may need one more environment setting.",
+       "line": 273
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

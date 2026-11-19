@@ -1,0 +1,32 @@
+diff --git a/docs/projects/console/phone/readme.md b/docs/projects/console/phone/readme.md
+index a287169c..b60aceb0 100644
+--- a/docs/projects/console/phone/readme.md
++++ b/docs/projects/console/phone/readme.md
+@@ -64,7 +64,10 @@ The app, in `ios/`, and the push service, in `services/push/`, live in this
+ repository beside the protocol they share, so one pull request changes the
+ daemon, the app, and their test vectors together. Being open source, they
+ let anyone read the code that holds their GitHub token and their keys, and
+-run the push service themselves.
++run the push service themselves. A push service can wake only a build of
++the app signed by the Apple developer team whose push key it holds, so the
++instance Projector hosts serves the App Store app, and an instance you run
++serves a build you sign with your own team.
+ 
+ ### 2.1 Flow
+ 
+@@ -261,6 +264,15 @@ anyone can run their own.
+   GitHub token, your relay key, and the key that answers for you, and the
+   service sees when you are notified. Users can trust them only if they can
+   read them, build the app, and run the service themselves.
++- **One push service, hosted or your own.** Apple accepts a notification
++  only when it is signed with a push key of the team that owns the app's
++  bundle ID. So no instance but the publisher's can wake the App Store app.
++  The hosted instance runs this repository's `services/push/` unchanged,
++  with the publisher's push key in its environment, rather than a second
++  service of its own. Someone who wants no hosted service builds the app
++  under their own bundle ID and team, sets those in their instance's
++  environment, and installs that build; the README in `services/push/`
++  says how.
+ - **One repository.** The daemon, the app, and the service share one
+   protocol and one set of test vectors. Separate repositories would make
+   each protocol change a pair of pull requests that have to land in step,
