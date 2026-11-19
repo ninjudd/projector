@@ -366,9 +366,9 @@ runs the CLI from its own checkout with `PYTHONPATH` set to the action's
 Secrets reach the action as `env`. `project init --ci-review` (§ 2.10)
 writes `.github/workflows/projector-review.yml`, which calls the action at
 `@v0`. Projector's own copy runs it from the pull request's checkout
-instead, as § 9 records. `project review ci-workflow` prints the workflow `init` would write,
-so you can compare it with yours, as `project review workflow` does for the
-`clean` label workflow:
+instead, as § 9 records. `project review ci-workflow` prints the workflow
+`init` would write, so you can compare it with yours, as
+`project review workflow` does for the `clean` label workflow:
 
 ```yaml
 name: Projector review
