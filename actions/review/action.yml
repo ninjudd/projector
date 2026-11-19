@@ -110,9 +110,24 @@ runs:
         if [ -n "$CONFIG" ]; then
           printf '%s\n' "$CONFIG" >> "$HOME/.projector.toml"
         fi
-    # The app's token reaches only this repository, with the review's permissions. The key is an input, not a
-    # caller's env, which would reach every step: a composite action's inputs set no environment variable, so
-    # only this step, which reads the input, receives the key.
+    # A review that reads context repositories needs the app's token to reach them too, and an installation token
+    # reaches one account's repositories. The list comes from the committed .projector.toml as Projector reads
+    # it, from the default branch, so a pull request cannot widen its own review's token.
+    - name: Read the context repositories
+      id: context
+      if: inputs.step == 'review' && inputs.app-id != ''
+      shell: bash
+      run: |
+        listed=$(project config get review.context_repos --default '')
+        names=$(PYTHONPATH="$PROJECTOR_ROOT/src" python3 -P -c \
+          'import sys; from projector import run; print(",".join(run.token_repositories(*sys.argv[1:])))' \
+          "$GITHUB_REPOSITORY" "$listed")
+        echo "repositories=$names" >> "$GITHUB_OUTPUT"
+    # The app's token reaches only this repository, and the context repositories when there are any, with the
+    # review's permissions. It sets no `owner`, which defaults to this repository's: an owner with no
+    # repositories would reach every repository the installation covers. The key is an input, not a caller's
+    # env, which would reach every step: a composite action's inputs set no environment variable, so only this
+    # step, which reads the input, receives the key.
     - name: Mint the app's token
       id: app
       if: inputs.app-id != ''
@@ -120,6 +135,7 @@ runs:
       with:
         app-id: ${{ inputs.app-id }}
         private-key: ${{ inputs.app-private-key }}
+        repositories: ${{ steps.context.outputs.repositories }}
         permission-contents: read
         permission-pull-requests: write
         permission-issues: write
@@ -185,6 +201,8 @@ runs:
         PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
         # Only the review step hands its summary off; the summary job's publish pushes it.
         PROJECTOR_SUMMARY_HANDOFF: ${{ runner.temp }}/projector-summary
+        # Outside /tmp, which Codex's sandbox lets the agent write.
+        PROJECTOR_CONTEXT_DIR: ${{ runner.temp }}/context
         PR: ${{ inputs.pr }}
         AGENT: ${{ inputs.agent }}
         MODEL: ${{ inputs.model }}

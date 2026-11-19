@@ -1088,6 +1088,7 @@ reads, which are these:
 | `review.ci_app_id` | whole number | none | `init` and `project review ci-workflow`, as the ID of the app `review.ci_app` names, which `init --ci-app` looks up and records so a later refresh needs no lookup; set both with `init --ci-app` |
 | `review.ci_runs_on` | string | none | `init` and `project review ci-workflow`, as the labels of your own runners the CI review jobs run on, separated by commas, such as `self-hosted, linux, projector`; none runs them on `ubuntu-latest`; set it with `init --ci-runs-on` |
 | `review.ci_credential` | string | none | `init` and `project review ci-workflow`, as the kind of credential the CI reviews read: `subscription` or `api-key` picks the secret `init` asks for, and `runner` sets no secret and has the workflow pass none, for a runner that holds the credential itself; none asks for a subscription for `claude` and an API key for `codex`; set it with `init --ci-credential` |
+| `review.context_repos` | string | none | `project review run` and the review action, as the repositories, each `owner/name` and separated by commas, that a review reads as context; the action reads it from the default branch, and a review keeps only those of the reviewed repository's owner whose visibility allows it, as [Give a review other repositories to read](review-in-ci.md#give-a-review-other-repositories-to-read) describes |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
 | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
@@ -2805,6 +2806,22 @@ session" section reads: `PROJECTOR_HEADLESS`, `PROJECTOR_LOOP` from
 cancelled run's start comment, `PROJECTOR_REREVIEW`, `PROJECTOR_SCRATCH`, a
 folder for the files it writes, and `PROJECTOR_RUN_REPORT`, a file for the
 question it would have asked.
+
+Before the agent starts, the command clones the repositories
+`review.context_repos` lists that the review may read, and the prompt names
+their folders as context to read, never as code under review. It keeps a
+repository only when it shares the reviewed repository's owner and, by a
+visibility check that succeeded, is public, or is private or internal beside
+a private or internal reviewed repository. Under the workflow's own token,
+`PROJECTOR_TOKEN_LOGIN` set to `github-actions[bot]`, it keeps none. Each
+repository it leaves out is a warning, not a failure. It clones each one at
+its default branch, depth 1, into `PROJECTOR_CONTEXT_DIR/<owner>/<name>`,
+or into a temporary folder it removes once the agent exits. The `claude`
+preset adds each folder with `--add-dir` and denies `Edit` and `Write` in
+it. Codex's sandbox reads every folder, and the action puts the clones
+outside every folder it writes, as
+[Give a review other repositories to read](review-in-ci.md#give-a-review-other-repositories-to-read)
+describes.
 
 A verdict counts when the agent published it during the run, on the head
 or on a newer one: when a push lands while the agent reviews, the skill

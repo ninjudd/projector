@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -527,6 +528,69 @@ class ActionTests(unittest.TestCase):
         review_step = text[text.index("    - name: Review the pull request"):text.index("    - name: Save the review")]
         self.assertEqual(1, text.count("PROJECTOR_SUMMARY_HANDOFF"))
         self.assertIn("PROJECTOR_SUMMARY_HANDOFF", review_step)
+
+    def context_token(self, listed: str) -> str:
+        """The `repositories` the action's context step hands the step that mints the app's token, when the
+        repository's setting lists `listed`."""
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (tmp / "project").write_text(f"#!/bin/sh\nprintf '%s\\n' '{listed}'\n")
+        (tmp / "project").chmod(0o755)
+        output = tmp / "output"
+        output.write_text("")
+        environment = {"PATH": f"{tmp}{os.pathsep}{os.environ['PATH']}", "GITHUB_REPOSITORY": "acme/app",
+                       "GITHUB_OUTPUT": str(output), "PROJECTOR_ROOT": str(Path(__file__).parents[1])}
+        result = subprocess.run(["bash", "-eo", "pipefail", "-c", step_script("Read the context repositories")],
+                                cwd=tmp, env=environment, capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        return dict(line.partition("=")[::2] for line in output.read_text().splitlines())["repositories"]
+
+    def test_the_apps_token_reaches_the_reviewed_repository_and_its_owners_context_repositories(self) -> None:
+        # A token without the context repositories cannot clone them, and one without the reviewed repository
+        # cannot post the review.
+        self.assertEqual("app,docs,lib", self.context_token("acme/docs, other/x, acme/app, acme/lib"))
+        self.assertEqual("", self.context_token(""), "no context keeps the token on the reviewed repository")
+        self.assertEqual("", self.context_token("other/docs"))
+
+        steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
+        context = re.search(r"\n      id: (\S+)\n", steps["Read the context repositories"]).group(1)
+        mint = steps["Mint the app's token"]
+        self.assertIn(f"repositories: ${{{{ steps.{context}.outputs.repositories }}}}\n", mint)
+        # With an owner and no repositories, the token would reach every repository the installation covers.
+        self.assertNotIn("owner:", mint)
+        self.assertIn("permission-contents: read\n", mint)
+
+    def test_a_pull_request_cannot_add_a_context_repository_to_its_own_review(self) -> None:
+        # The step that sets the token's reach reads the setting with `project config get`, which must take a
+        # tracked .projector.toml from the default branch, not from the pull request's head. It finds the default
+        # branch through origin/HEAD, which only the action's setup sets in a fresh checkout.
+        steps = [step.splitlines()[0] for step in ACTION.read_text().split("\n    - ")[1:]]
+        self.assertIn("git remote set-head origin --auto\n", step_script("Set up Projector"))
+        self.assertLess(steps.index("name: Set up Projector"), steps.index("name: Read the context repositories"))
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        environment = {**os.environ, "HOME": str(tmp / "home"), "XDG_STATE_HOME": str(tmp / "state"),
+                       "PYTHONPATH": str(Path(__file__).parents[1] / "src"), "GIT_CONFIG_GLOBAL": os.devnull}
+        (tmp / "home").mkdir()
+
+        def git(*args: str, cwd: Path = tmp / "checkout") -> None:
+            subprocess.run(["git", *args], cwd=cwd, env=environment, check=True, capture_output=True)
+
+        git("init", "-q", "--bare", "-b", "main", str(tmp / "origin.git"), cwd=tmp)
+        git("clone", "-q", str(tmp / "origin.git"), str(tmp / "checkout"), cwd=tmp)
+        git("config", "user.name", "Test")
+        git("config", "user.email", "test@example.com")
+        (tmp / "checkout" / ".projector.toml").write_text('[review]\ncontext_repos = "acme/docs"\n')
+        git("add", ".projector.toml")
+        git("commit", "-qm", "Read the docs")
+        git("push", "-q", "origin", "HEAD:main")
+        git("remote", "set-head", "origin", "--auto")
+        git("checkout", "-qb", "widen")
+        (tmp / "checkout" / ".projector.toml").write_text('[review]\ncontext_repos = "acme/docs, acme/secrets"\n')
+        git("commit", "-qam", "Read the secrets too")
+
+        found = subprocess.run([sys.executable, "-m", "projector", "config", "get", "review.context_repos",
+                                "--default", ""], cwd=tmp / "checkout", env=environment, capture_output=True,
+                               text=True, check=True).stdout
+        self.assertEqual("acme/docs", found.strip())
 
 
 if __name__ == "__main__":

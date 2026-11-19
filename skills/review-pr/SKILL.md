@@ -44,6 +44,9 @@ differences:
   `PROJECTOR_TOKEN_LOGIN` where the token belongs to no user.
 - **Do not subscribe.** Skip the subscription step. The workflow runs again
   on the next head.
+- **Read context folders only as context.** When the prompt names folders
+  of other repositories, read them to judge the change, such as an API it
+  calls, but review only the pull request, and change nothing in them.
 - **Ask nobody.** Wherever this skill says to ask the user, write the
   question and what you found to the file `$PROJECTOR_RUN_REPORT`, and stop
   without publishing. `project review run` posts that text on the pull

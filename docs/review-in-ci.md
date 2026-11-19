@@ -168,7 +168,9 @@ that file. Delete the file once the secret holds it.
 In each review job and in the summary job, the action's **Mint the app's
 token** step creates an installation token with
 `actions/create-github-app-token`. The token reaches only the repository the
-job runs in, with the review's permissions in the table above, and the
+job runs in, and in a review job the context repositories
+[Give a review other repositories to read](#give-a-review-other-repositories-to-read)
+describes, with the review's permissions in the table above, and the
 review, the summary's comment, and the link in the description post as
 `<slug>[bot]` with it. The app needs those same permissions, and it must be
 installed on the repository.
@@ -186,6 +188,58 @@ caller's `env` reaches every step of a composite action, the steps that run
 the agent and its install scripts included. An input sets no environment
 variable in a composite action, so only the step that mints the token, the
 one step that reads `app-private-key`, receives the key.
+
+## Give a review other repositories to read
+
+A change often makes sense only beside code in another repository, such as
+the service whose API it calls or the library it upgrades. List those
+repositories in the committed `.projector.toml`, and each review clones them
+and reads them as context:
+
+```toml
+[review]
+context_repos = "acme/api, acme/design-system"
+```
+
+The review never reviews them. The prompt names their folders as context
+for the change, and the review judges only the pull request.
+
+A context repository needs three things:
+
+- **An app.** The workflow's own token reaches only the repository it runs
+  in, so a review that posts as `github-actions[bot]` reads no context
+  repository and says so in the job log. Post the reviews as a GitHub App,
+  as [Post as a GitHub App](#post-as-a-github-app) describes, and install the
+  app on every context repository too.
+- **The same owner.** An app's installation token reaches one account's
+  repositories, so the review leaves out a repository of another owner, with
+  a warning that says why.
+- **A visibility that lets the code through.** A review must not carry a
+  private repository's code to readers who cannot see it. Before it clones
+  anything, the review checks each repository's visibility with
+  `gh repo view --json visibility`, and keeps a context repository only when
+  it is public, or when both it and the reviewed repository are private or
+  internal. A check that fails proves nothing: the review leaves out a
+  context repository whose own check fails, and every private or internal
+  one when the reviewed repository's check fails.
+
+Each repository the review leaves out is a warning in the job log, and the
+review goes on without it.
+
+The action reads `review.context_repos` from the default branch, as
+Projector reads every committed setting, before it mints the app's token.
+It mints the token for the reviewed repository and the context repositories
+of the same owner, with the review's permissions in [Tokens](#tokens), so a
+pull request that edits `.projector.toml` cannot widen its own review's
+token. Those permissions reach the context repositories too, so the agent
+could comment on their pull requests and issues, though not push to them.
+List only repositories whose reviewers would accept that.
+
+`project review run` clones each repository it keeps at its default branch,
+depth 1, into `$RUNNER_TEMP/context/<owner>/<name>`. The `claude` preset
+adds each folder with `--add-dir` and refuses `Edit` and `Write` there.
+Codex's sandbox reads every folder and writes only its writable roots, which
+leave the folders out.
 
 ## Override a setting for CI
 

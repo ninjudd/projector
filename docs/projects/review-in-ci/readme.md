@@ -766,7 +766,8 @@ These tests fail before the change, and each catches the bug it names:
    other repositories.
 4. **Add the app inputs and context repositories** in a later pull request.
    Neither works with the workflow's token, so neither blocks the first
-   three steps.
+   three steps. Done: the app inputs shipped first, and context
+   repositories after them, as § 9 records.
 
 ## 7. Open questions
 
@@ -1011,6 +1012,37 @@ These tests fail before the change, and each catches the bug it names:
   writes passes no `config`, so § 10 has a self-hosted runner keep its
   overrides in that file itself; a per-job configuration file is left for a
   repository that needs both.
+- **Context repositories ship as § 2.9 designs them.** `review.context_repos`
+  is a committed setting. `project review run` reads it through Projector's
+  configuration, which takes a tracked `.projector.toml` from the default
+  branch, and leaves out with a warning an entry that is not `owner/name`,
+  the reviewed repository itself, and a repository of another owner. Under
+  the workflow's own token, which `PROJECTOR_TOKEN_LOGIN` names as
+  `github-actions[bot]`, it leaves every one out with a warning that an app
+  is needed. The same-owner rule holds for a run on a laptop too, so a
+  review reads the same context wherever it runs.
+- **The token's reach comes from the default branch.** The action's
+  **Read the context repositories** step runs after **Set up Projector**,
+  whose `git remote set-head origin --auto` gives Projector the default
+  branch to read, and hands the **Mint the app's token** step the reviewed
+  repository and the same-owner context repositories as `repositories`. It
+  reuses `run.token_repositories`, so the token and the run filter the list
+  alike. The mint step sets no `owner`: it defaults to the reviewed
+  repository's, and an owner with an empty list would reach every
+  repository the installation covers. With no context repositories, the
+  list is empty and the token reaches the reviewed repository alone, as
+  before. The permissions stay as they were, and they reach the context
+  repositories too, which `docs/review-in-ci.md` says.
+- **The clones live outside every writable folder.** The action sets
+  `PROJECTOR_CONTEXT_DIR` to `$RUNNER_TEMP/context`, outside `/tmp`, which
+  Codex's `workspace-write` sandbox lets the agent write. Elsewhere the run
+  clones into a temporary folder and removes it once the agent exits.
+  Codex 0.169.0's `--add-dir` makes a folder writable, so the Codex preset
+  passes none for context: its sandbox reads every folder, as
+  `codex sandbox` showed on 2026-11-18, and the prompt names the folders.
+  The Claude preset adds each with `--add-dir` and denies `Edit` and
+  `Write` in it, because auto mode can pass an edit in a working folder that
+  no rule covers.
 
 ## 10. Self-hosted runners
 

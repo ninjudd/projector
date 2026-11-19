@@ -2519,7 +2519,7 @@ def review_run(arguments: argparse.Namespace) -> int:
                         configured_reviewer=username if isinstance(username, str) and username else None,
                         effort=arguments.effort, mode=arguments.permission_mode, timeout_minutes=arguments.timeout,
                         rereview=arguments.rereview, loop=arguments.loop, plugin_dir=arguments.plugin_dir,
-                        labels=labels_enabled(checkout))
+                        labels=labels_enabled(checkout), context_listed=config.get("review.context_repos"))
 
 
 def run_review(arguments: argparse.Namespace) -> int:
@@ -3617,7 +3617,7 @@ def record_required_check(root: Path, value: bool) -> None:
 
 
 CI_REVIEW_QUESTION = "Review this repository's pull requests in GitHub Actions? [y/N] "
-CI_REVIEWER = "github-actions[bot]"
+CI_REVIEWER = headless.WORKFLOW_LOGIN
 
 
 def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAction]) -> None:
