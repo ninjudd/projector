@@ -1,0 +1,148 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index a5ed3854..680d13d2 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1063,7 +1063,7 @@ reads, which are these:
+ | `review.require_check` | boolean | none | `init`, as your answer to whether the repository relies on Projector alone to sign off pull requests: none asks at a terminal, `true` keeps the ruleset and the label workflow in place, and `false` asks no more; `init` writes it when you answer, as [Require a clean review before merge](#require-a-clean-review-before-merge) describes |
+ | `review.reviewers` | string | none | `project review status`, `suggestions`, `setup`, and `publish`, and the watch daemon from the configuration of a checkout a live session works in, as the logins whose Projector verdicts count beside the reviewer's and those of the repository's owner, members, and collaborators, separated by commas, as `github-actions[bot]`. On a public repository a review from any other account does not count, so name an account here, such as the one a CI review posts as, only when you trust every review it posts |
+ | `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
+-| `review.ci` | boolean | none | `init`, as your answer to whether the repository's pull requests get a review in GitHub Actions: none asks at a terminal, `true` refreshes the workflow, and `false` asks no more; `init` writes it when you answer, as [Review pull requests in GitHub Actions](#review-pull-requests-in-github-actions) describes |
++| `review.ci` | boolean | none | the watch daemon, from the configuration of a checkout a live session works in, which announces no `UNREVIEWED` for a head from the repository's own branches while it is `true`, and `init`, as your answer to whether the repository's pull requests get a review in GitHub Actions: none asks at a terminal, `true` refreshes the workflow, and `false` asks no more; `init` writes it when you answer, as [Review pull requests in GitHub Actions](#review-pull-requests-in-github-actions) describes |
+ | `review.ci_agents` | string | `claude` | `init` and `project review ci-workflow`, as the agents the CI review workflow runs, separated by commas, from `claude` and `codex`, each as `agent=<model>` to name the model its job runs, which `codex` needs, such as `claude, codex=<model>` |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
+@@ -3737,7 +3737,7 @@ layer and to finish it once no layer of its stack is open.
+ | `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped, nor a failed check run of a cancelled workflow run that started at or after the cancel, as an `if: always()` job that gathers the others does, or that a newer run of the same workflow on the head tests again, by still running or by running a check of the same name rather than skipping or cancelling it. The cancel is when the first of the run's check runs that concluded `CANCELLED` ended |
+ | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
+ | `LABEL` | `fix` | A `clean` or `reviewing` label added or removed since the owner last saw the pull request, as `+clean` or `-reviewing` |
+-| `UNREVIEWED` | `fix`, when no session the daemon can see reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, that no live session of the operator's on another machine reviews through the relay, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head. The line says `no session on this machine`, or, while the relay is on and has polled the repository within the last hour, `no session on this machine or on your other machines that share this repository's relay`; see [What a presence carries](#what-a-presence-carries) |
++| `UNREVIEWED` | `fix`, when no session the daemon can see reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, that no live session of the operator's on another machine reviews through the relay, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head. A pull request whose head is in a repository whose `review.ci` is `true` gets none, because GitHub Actions reviews that head and a failed review there arrives as a failed check; a fork's pull request still does, because the workflow skips it. The line says `no session on this machine`, or, while the relay is on and has polled the repository within the last hour, `no session on this machine or on your other machines that share this repository's relay`; see [What a presence carries](#what-a-presence-carries) |
+ | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed; under a repository subscription, only once the pull request is ready for review |
+ | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
+ | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index a1dd0b1c..26945cef 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -118,7 +118,7 @@
+   repository(owner:$o,name:$r){ visibility nameWithOwner
+     pullRequest(number:$n){
+       number title url body state isDraft reviewDecision mergeable updatedAt mergedAt mergeCommit { oid }
+-      headRefOid headRefName baseRefName author { login }
++      headRefOid headRefName baseRefName isCrossRepository author { login }
+       additions deletions changedFiles
+       labels(first:20){ nodes{ name color } }
+       commits(last:1){ nodes{ commit{ status{ context(name:%s){ state } }
+@@ -1325,8 +1325,9 @@ def __init__(self, daemon: Daemon, now: float, now_mono: float,
+         # By repository, its open pull requests, and by pull request, the subagent that fixes it.
+         self.listings: dict[str, object] = {}
+         self.fixers: dict[tuple[str, int], str] = {}
+-        # By repository, lowercased, the logins `review.reviewers` names in a live checkout of it.
+-        self.logins: Optional[dict[str, tuple[str, ...]]] = None
++        # By repository, lowercased, the logins `review.reviewers` names in a live checkout of it, and whether its
++        # `review.ci` says GitHub Actions reviews its pull requests.
++        self.repo_settings: Optional[dict[str, tuple[tuple[str, ...], bool]]] = None
+ 
+     def tell(self, session: str, *lines: str) -> None:
+         self.outbox.setdefault(session, []).extend(lines)
+@@ -1702,19 +1703,30 @@ def gain(self, session: str, pull: tuple[str, int], name: str) -> None:
+         else:
+             state["review"].pop(role_label(pull, name), None)
+ 
+-    def counted_logins(self, repo: str) -> tuple[str, ...]:
+-        """The logins whose verdicts count on `repo` beside the operator's, as `project review status` counts
+-        them there: those `review.reviewers` names in a checkout of it that a live session works in, read once
+-        a pass. A repository no live session works in counts none."""
+-        if self.logins is None:
+-            self.logins = {}
++    def settings_of(self, repo: str) -> tuple[tuple[str, ...], bool]:
++        """`repo`'s `review.reviewers` and `review.ci`, from a checkout of it that a live session works in, read
++        once a pass. A repository no live session works in names no reviewers and no CI review."""
++        if self.repo_settings is None:
++            self.repo_settings = {}
+             for top in live_checkouts(self.root, self.daemon.live).values():
+                 try:
+                     named = review.origin_repo(top).lower()
+-                    self.logins[named] = review.extra_reviewers(load_config(top).setting("review.reviewers"))
++                    found = load_config(top)
++                    self.repo_settings[named] = (review.extra_reviewers(found.setting("review.reviewers")),
++                                                 found.setting("review.ci") is True)
+                 except (ProjectorError, ConfigError) as error:
+-                    self.daemon.log(f"could not read review.reviewers in {top}: {error}")
+-        return self.logins.get(repo.lower(), ())
++                    self.daemon.log(f"could not read the review settings in {top}: {error}")
++        return self.repo_settings.get(repo.lower(), ((), False))
++
++    def counted_logins(self, repo: str) -> tuple[str, ...]:
++        """The logins whose verdicts count on `repo` beside the operator's, as `project review status` counts
++        them there: those `review.reviewers` names."""
++        return self.settings_of(repo)[0]
++
++    def reviewed_in_ci(self, repo: str, pr: dict) -> bool:
++        """Whether GitHub Actions reviews the pull request: `review.ci` is on in its repository, and its head is in
++        that repository, since the workflow skips a fork's. A failed review there arrives as a failed check."""
++        return self.settings_of(repo)[1] and not pr.get("isCrossRepository")
+ 
+     def locks_for(self, repo: str, number: int) -> list:
+         pull = (repo.lower(), number)
+@@ -1789,7 +1801,9 @@ def standing(key: str, first: str, again: Optional[str], revision: object = None
+         # This machine sees its own sessions, and, through the relay, the review targets of the operator's sessions
+         # on other machines. A review running anywhere else shows only as its live start comment, and the event
+         # says nothing about a machine it cannot see. Anyone can comment on a public repository, so only an account
+-        # whose review would count can hold the event back. Held back, the head keeps its key, so it is still
++        # whose review would count can hold the event back. A repository whose `review.ci` is on reviews each of
++        # its own heads in GitHub Actions, and a failed review there arrives as a failed check, so a head from a
++        # branch of that repository waits on no session. Held back, the head keeps its key, so it is still
+         # announced only once. A draft waits on its author, not on a review.
+         unreviewed = f"unreviewed:{number}:{head}"
+         if not pr.get("isDraft") and not reviewers \
+@@ -1798,7 +1812,7 @@ def standing(key: str, first: str, again: Optional[str], revision: object = None
+             starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
+                       for comment, _ in self.live_starts(pr, head)]
+             if review.counted_reviews(starts, self.daemon.operator or "", visibility, self.counted_logins(repo)) \
+-                    or self.reviewed_remotely(repo, number):
++                    or self.reviewed_remotely(repo, number) or self.reviewed_in_ci(repo, pr):
+                 if unreviewed in announced:
+                     kept[unreviewed] = announced[unreviewed]
+             else:
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index 33f7acfb..21c31cd8 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -149,7 +149,8 @@ def pull_request(self, number, *, repo="acme/app", reviews=(), requested=(), tea
+         """A pull request, with `contexts` its head's whole rollup, which the GraphQL queries page through as
+         GitHub does, and `fork` the repository its head branch is in when that is not `repo`. The REST pull
+         request does not show `contexts`, so only a full pass sees them change."""
+-        self.repository(repo)["pulls"][number] = {"node": node(number, repo=repo, **fields), "requested": list(requested),
++        found = dict(node(number, repo=repo, **fields), isCrossRepository=fork is not None)
++        self.repository(repo)["pulls"][number] = {"node": found, "requested": list(requested),
+                                                   "teams": list(teams), "reviews": list(reviews),
+                                                   "contexts": list(contexts), "fork": fork}
+ 
+@@ -593,6 +594,26 @@ def test_a_verdict_by_a_login_review_reviewers_names_signs_the_head_off(self) ->
+         self.assertEqual([unreviewed(2)], events["fixer"],
+                          "the live checkout's review.reviewers counts the bot's verdict, and only the bot's")
+ 
++    def test_a_repository_reviewed_in_ci_announces_only_a_forks_unreviewed_head(self) -> None:
++        home = self.scratch / "home"
++        checkout = home / "app"
++        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
++        subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", "https://github.com/acme/app.git"],
++                       check=True)
++        (checkout / ".projector.toml").write_text("[review]\nci = true\n")
++        environment = mock.patch.dict(os.environ, {"HOME": str(home)})
++        environment.start()
++        self.addCleanup(environment.stop)
++        self.github.pull_request(1, draft=False)
++        self.github.pull_request(2, draft=False, fork="outsider/app")
++        self.fixer("acme/app#1 fix", "acme/app#2 fix")
++        write_json(self.folder("fixer") / "agent.json", {"schema_version": 1, "cwd": str(checkout)})
++
++        events = self.cycle()
++
++        self.assertEqual([unreviewed(2)], events["fixer"],
++                         "the workflow reviews #1's head and skips the fork's, which no one reviews")
++
+     def test_a_ready_pull_request_another_session_reviews_asks_the_fixer_for_nothing(self) -> None:
+         self.github.pull_request(1, draft=False)
+         self.fixer("acme/app#1 fix")

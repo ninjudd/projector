@@ -1,0 +1,109 @@
+{
+ "version": 1,
+ "name": "Review pull requests in GitHub Actions",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 579,
+  "title": "Announce no unreviewed head that GitHub Actions reviews",
+  "head": "c477c7392eb9ca8a36e50fcd8128eb9f67f2a6af",
+  "headRef": "watch-ci-reviewed",
+  "base": "2e029bf9c0500335170836d89afc785eaf36d99f",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The <b>watch daemon</b> is the background process that polls GitHub for each pull request a session subscribes to and tells that session what changed, as one-line events. One event, <code>UNREVIEWED</code>, goes to the session that fixes a pull request. It says the pull request is ready for review, its head is not signed off, and the daemon can see no review running.",
+   "A repository can also have its pull requests reviewed by a GitHub Actions job, which <code>project init --ci-review</code> sets up and records as <code>review.ci = true</code> in <code>.projector.toml</code>. In such a repository, <code>UNREVIEWED</code> fired when it should not. While the job waits in the queue there is no start comment yet. After a review that requests changes, the start comment is gone and the head is still not signed off. So the fixer heard that nobody reviewed the pull request even though the workflow does.",
+   "This change makes the daemon hold <code>UNREVIEWED</code> back for a head from the repository's own branches when <code>review.ci</code> is <code>true</code>. A failed CI review already arrives as a failed check through the <code>CHECKS</code> event, so nothing is lost. A fork's pull request still gets the notice, because the review workflow skips forks."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Live checkout</b>: a checkout of the repository that a running agent session works in. The daemon reads repository settings only from one of these.</li><li><b>Pass</b>: one round of the daemon's polling, which reads each live checkout's settings once.</li><li><b>Fork head</b>: a pull request whose head branch lives in another repository, which GitHub reports as <code>isCrossRepository</code>.</li></ul>"
+   },
+   {
+    "id": "when",
+    "title": "When UNREVIEWED fires now",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Head</th><th><code>review.ci</code></th><th>Notice</th></tr></thead><tbody><tr><td>Own branch</td><td>unset or <code>false</code></td><td class=\"r\">As before</td></tr><tr><td>Own branch</td><td><code>true</code></td><td class=\"r\">None</td></tr><tr><td>Fork</td><td>any</td><td class=\"r\">As before</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "The daemon's decision",
+   "kicker": "Reading review.ci with review.reviewers, and asking GitHub whether a head is a fork",
+   "intro": [
+    "The daemon already read <code>review.reviewers</code> from each live checkout once a pass, to know which accounts' verdicts count. This change reads <code>review.ci</code> in the same loop, so each checkout's configuration is loaded once, and keeps both in one table keyed by repository.",
+    "<code>route_fix</code>, which decides the events a fixing session hears, now skips <code>UNREVIEWED</code> when <code>reviewed_in_ci</code> says GitHub Actions reviews the head. To tell a fork's head apart, the daemon's GraphQL query for each pull request now asks for <code>isCrossRepository</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The rule matches <code>.github/workflows/projector-review.yml</code>, whose review job runs on every non-draft pull request whose head is in the repository, including one marked ready later. <code>UNREVIEWED</code> already ignores drafts."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "<code>settings_of</code> replaces the reviewers-only lookup, <code>reviewed_in_ci</code> is the new test, and <code>route_fix</code> calls it beside the other reasons to hold the notice back.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The query result is cached on disk between full queries. An entry cached by an older release lacks <code>isCrossRepository</code>, so it reads as a same-repository head, which can hold back a fork's notice once after an upgrade, until the next full query, at most <code>watch.full_every</code> (600 seconds).",
+       "line": 121
+      },
+      {
+       "kind": "context",
+       "text": "One <code>try</code> covers both settings, so a mistyped <code>review.ci</code>, such as the string <code>\"true\"</code>, raises <code>ConfigError</code> and drops that repository's <code>review.reviewers</code> as well. The review lists this as a suggestion.",
+       "line": 1714
+      },
+      {
+       "kind": "verify",
+       "text": "Every caller of the old <code>Pass.logins</code> table goes through <code>counted_logins</code>, which now reads <code>settings_of</code>; a search of <code>src/</code> finds no other reader.",
+       "line": 1721
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Test and documentation",
+   "kicker": "One pass over an own-branch and a fork pull request, and the two reference rows",
+   "intro": [
+    "The test sets up a live checkout whose <code>.projector.toml</code> sets <code>review.ci = true</code>, then runs a pass over two ready pull requests: one from the repository's own branch and one from a fork. It expects the notice for the fork only. The fake GitHub now sets <code>isCrossRepository</code> on every pull request from whether the test named a fork.",
+    "The reference rows for <code>review.ci</code> and <code>UNREVIEWED</code> in <code>docs/cli.md</code> now say the daemon reads the setting and when the notice is held back."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>PYTHONPATH=src python3 -m unittest tests.test_watch</code> ran 159 tests, <code>OK</code>, at this head, and the review's gate passed."
+    },
+    {
+     "kind": "context",
+     "text": "<code>skills/fix-pr/SKILL.md</code> lists the cases that hold <code>UNREVIEWED</code> back and does not name <code>review.ci</code> yet. The review lists this as a suggestion."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_watch.py",
+     "note": "The new test fails if the daemon ignores <code>review.ci</code>, because both pull requests would get the notice, and fails if it ignores forks, because neither would.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Every fake pull request now carries <code>isCrossRepository</code>, so the existing tests run against the field too.",
+       "line": 152
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The <code>review.ci</code> setting row and the <code>UNREVIEWED</code> event row."
+    }
+   ]
+  }
+ ]
+}
