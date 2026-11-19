@@ -119,11 +119,16 @@ number. Each job:
    describes. The action runs Projector from the source at the ref the
    workflow names, not from an installed package, so it sets
    `PROJECTOR_VERSION` from that source's `.claude-plugin/plugin.json`. The
-   review names that version in its start comment and its signature. Once
-   its own checks pass, and before the agent starts, the command adds the
-   `reviewing` label. In a measured run, the pull request showed the
-   review 17 seconds after the push, rather than at 70 seconds, when the
-   agent's `setup` posts the start comment.
+   review names that version in its start comment and its signature. For
+   Claude, it also adds that source as a plugin marketplace and installs the
+   plugins Projector's plugin depends on, at the versions the marketplace
+   pins, updating a copy that a self-hosted runner kept from an earlier
+   job. Claude Code loads no plugin whose dependency is missing, so without
+   them the agent would have no `review-pr` skill. Once its own checks pass,
+   and before the agent starts, the command adds the `reviewing` label. In a
+   measured run, the pull request showed the review 17 seconds after the
+   push, rather than at 70 seconds, when the agent's `setup` posts the start
+   comment.
 5. **Fails loudly.** When the agent publishes no verdict, whether it could
    not start, ran out of time, or exited, the job deletes the start
    comment, takes `reviewing` off, posts one comment that says why, and
