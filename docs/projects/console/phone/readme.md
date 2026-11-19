@@ -64,7 +64,10 @@ The app, in `ios/`, and the push service, in `services/push/`, live in this
 repository beside the protocol they share, so one pull request changes the
 daemon, the app, and their test vectors together. Being open source, they
 let anyone read the code that holds their GitHub token and their keys, and
-run the push service themselves.
+run the push service themselves. A push service can wake only a build of
+the app signed by the Apple developer team whose push key it holds, so the
+instance Projector hosts serves the App Store app, and an instance you run
+serves a build you sign with your own team.
 
 ### 2.1 Flow
 
@@ -193,7 +196,7 @@ anyone can run their own.
 | `tests/fixtures/relay/` | New. Sealed and signed records with their plaintexts, which the Python tests and the app's tests both check |
 | `docs/cli.md` | Describes the phone records, the commands, and what a leaked key exposes |
 | `ios/` | New. The SwiftUI app: GitHub sign-in, key join, the phone's keys, push registration, the notification service extension, ref reading and writing through GitHub's API, the seal, the row model, the home list, the panels, and background refresh. Its tests read `tests/fixtures/rows/` and `tests/fixtures/relay/` in place |
-| `services/push/` | New. The two calls as Vercel Functions on the Node runtime, Apple's push key, key ID, team ID, and the app's bundle ID, and the service's secret key, all from production-only environment variables, its tests, and a README that says how to deploy your own instance |
+| `services/push/` | New. The two calls as Vercel Functions on the Node runtime, Apple's push key, key ID, team ID, the app's bundle ID, and Apple's push environment (`production` or `sandbox`), and the service's secret key, all from production-only environment variables, its tests, and a README that says how to deploy your own instance |
 | `.github/workflows/` | A workflow for `ios/` on a macOS runner and one for `services/push/`, each run only when its directory or `tests/fixtures/` changes. The `check` job keeps its current scope |
 | `tests/test_packaging.py` | Pins that neither the wheel nor either plugin ships `ios/` or `services/` |
 
@@ -261,6 +264,18 @@ anyone can run their own.
   GitHub token, your relay key, and the key that answers for you, and the
   service sees when you are notified. Users can trust them only if they can
   read them, build the app, and run the service themselves.
+- **One push service, hosted or your own.** Apple accepts a notification
+  only when it is signed with a push key of the team that owns the app's
+  bundle ID. So no instance but the publisher's can wake the App Store app.
+  The hosted instance runs this repository's `services/push/` unchanged,
+  with the publisher's push key in its environment, rather than a second
+  service of its own. Someone who wants no hosted service builds the app
+  under their own bundle ID and team, sets those in their instance's
+  environment, and installs that build; the README in `services/push/`
+  says how. A build installed from Xcode is development-signed, and Apple's
+  production endpoint rejects its device token, so that instance sets its
+  push environment to `sandbox`. TestFlight and App Store builds use
+  `production`.
 - **One repository.** The daemon, the app, and the service share one
   protocol and one set of test vectors. Separate repositories would make
   each protocol change a pair of pull requests that have to land in step,
