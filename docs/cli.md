@@ -2050,12 +2050,14 @@ the change, `setup` prints a `warning:` line on stderr and the review stays
 set up. With `review.labels` set to `false`, `setup` leaves the labels alone.
 
 The start comment and the review's signature line name the head under review
-by its short SHA, the Projector version that `project version` reports, the
-model from `--model`, and the reasoning effort from `CLAUDE_EFFORT` in the
-environment, which Claude Code sets for the Bash tool and keeps current
-through a mid-session `/effort` change. When `CLAUDE_EFFORT` is unset or
-empty, as on Codex or on a model without effort support, they leave the
-effort out rather than guess it.
+by its short SHA, the Projector version, the model from `--model`, and the
+reasoning effort from `CLAUDE_EFFORT` in the environment. The version is
+`PROJECTOR_VERSION` when the environment sets it, as the CI review action
+does because it runs Projector from source, and otherwise the version that
+`project version` reports. Claude Code sets `CLAUDE_EFFORT` for the Bash
+tool and keeps it current through a mid-session `/effort` change. When
+`CLAUDE_EFFORT` is unset or empty, as on Codex or on a model without effort
+support, they leave the effort out rather than guess it.
 
 `move` follows a head that moved mid-review: it creates a worktree for the new
 head, rechecks trust, edits the start comment in place to name it, re-reads the

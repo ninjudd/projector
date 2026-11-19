@@ -699,10 +699,12 @@ A review whose signature misstates what produced it is worse than an unlabeled
 one: a reader weighs a finding by what reviewed it.
 
 The version segment and `projector=` name the version of the `project`
-command that wrote them, as `project version` reports it, so a reader can
-tell which release of this method produced a review. `project review` reads
-the version itself; a command run from a checkout that was never installed
-reports `unknown`.
+command that wrote them, so a reader can tell which release of this method
+produced a review. `project review` reads the version itself: the
+`PROJECTOR_VERSION` the environment sets, as the CI review action does
+because it runs Projector from source, or else the version `project version`
+reports. A command run from a checkout that was never installed, with no
+`PROJECTOR_VERSION`, reports `unknown`.
 
 The effort segment and `effort=` come only from the host's live value, never
 from your own estimate: on Claude Code that is `$CLAUDE_EFFORT`, which follows a

@@ -276,6 +276,20 @@ def review_jobs(workflow: str) -> list[dict[str, str]]:
 
 @unittest.skipIf(shutil.which("bash") is None, "the action's steps run in bash")
 class ActionTests(unittest.TestCase):
+    def test_the_action_names_its_reviews_by_its_source_trees_version(self) -> None:
+        # The runner installs no distribution, so a review names the version only through this variable.
+        script = step_script("Set up Projector")
+        read = re.search(r"^version=\$\(.*?plugin\.json\"\)$", script, re.M | re.S).group(0)
+        self.assertIn(f'echo "{review.PRODUCER_VERSION}=$version"', script)
+        root = Path(__file__).parents[1]
+        # The step runs in the caller's checkout, whose own top-level json.py must not replace the standard one.
+        with tempfile.TemporaryDirectory() as caller:
+            Path(caller, "json.py").write_text("def load(file):\n    return {'version': 'hijacked'}\n")
+            found = subprocess.run(["bash", "-c", f'{read}\nprintf %s "$version"'], cwd=caller,
+                                   env={**os.environ, "root": str(root)}, capture_output=True, text=True,
+                                   check=True).stdout
+        self.assertEqual(json.loads((root / ".claude-plugin" / "plugin.json").read_text())["version"], found)
+
     def check(self, agent: str, **secrets: str) -> subprocess.CompletedProcess:
         environment = {"PATH": os.environ["PATH"], "AGENT": agent, **secrets}
         return subprocess.run(["bash", "-c", step_script("Check the agent's credentials")], env=environment,

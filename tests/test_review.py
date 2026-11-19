@@ -1467,6 +1467,17 @@ class PublishRefusalTests(PublishCase):
         self.assertIn("· `unknown` · model `claude-opus-5-5` · **CLEAN** ·", signature)
         self.assertIn("verdict=clean projector=unknown model=claude-opus-5-5 sha=", marker)
 
+    def test_a_ci_runner_names_the_version_its_action_states(self) -> None:
+        # The action runs Projector from its source, which no distribution installs, so without the version it
+        # states every CI review names its version unknown.
+        with mock.patch.object(metadata, "version", side_effect=metadata.PackageNotFoundError), \
+                mock.patch.dict(os.environ, {review.PRODUCER_VERSION: "0.10.0"}):
+            start, signature, marker = self.written(None)
+
+        self.assertIn("· `0.10.0` · model `claude-opus-5-5` · reviewing ", start)
+        self.assertIn("· `0.10.0` · model `claude-opus-5-5` · **CLEAN** ·", signature)
+        self.assertIn("verdict=clean projector=0.10.0 model=claude-opus-5-5 sha=", marker)
+
     def test_the_review_names_no_effort_when_the_host_reports_only_whitespace(self) -> None:
         # No effort at all is the case every other test here publishes.
         for text in self.written("  "):

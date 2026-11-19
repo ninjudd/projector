@@ -811,6 +811,16 @@ def worktree_on_branch(checkout: Path, branch: str) -> Optional[Path]:
 
 # Start comments
 
+# The Projector version a review names when no distribution is installed, as on a CI runner, where the action runs
+# Projector from its source and sets this from the source's plugin manifest.
+PRODUCER_VERSION = "PROJECTOR_VERSION"
+
+
+def producer_version() -> str:
+    """The Projector version a review names: the one the CI action states, or the installed distribution's."""
+    return os.environ.get(PRODUCER_VERSION, "").strip() or distribution_version()
+
+
 def live_effort() -> str:
     """The reasoning effort the host reports for this session, or "" when it reports none.
 
@@ -828,7 +838,7 @@ def producer_segments(version: str, model: str, effort: str) -> str:
 
 def start_comment(model: str, sha: str, moved_from: Optional[str] = None) -> str:
     lines = [f"{MARK} **Projector review started** · "
-             f"{producer_segments(distribution_version(), model, live_effort())}reviewing `{sha[:7]}`", ""]
+             f"{producer_segments(producer_version(), model, live_effort())}reviewing `{sha[:7]}`", ""]
     if moved_from:
         lines += [f"The head moved from `{moved_from[:7]}` to `{sha[:7]}`; this review is being updated "
                   "for the new changes.", ""]
@@ -2052,7 +2062,7 @@ def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: boo
             raise Refused(f"the full review {full.get('review_id')} of {full['sha'][:7]} is missing from GitHub")
         result["review"] = earlier.get("url")
         marker = verdict_marker(earlier.get("body") or "")
-        mine = (distribution_version(), state["model"], live_effort() or None)
+        mine = (producer_version(), state["model"], live_effort() or None)
         if marker is None or marker.sha != full["sha"]:
             raise Refused(f"the full review of {full['sha'][:7]} carries no marker naming that head")
         if (marker.projector, marker.model, marker.effort) != mine:
@@ -2707,7 +2717,7 @@ def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime
     duration and `seconds=` cannot disagree."""
     seconds = elapsed(state["start_comment"]["created_at"], at)
     took = duration(seconds, state["heads"])
-    version, effort = distribution_version(), live_effort()
+    version, effort = producer_version(), live_effort()
     signature = (f"{MARK} **Projector review** of `{state['sha'][:7]}` · "
                  f"{producer_segments(version, state['model'], effort)}"
                  f"**{VERDICT_WORDS[verdict]}** · "

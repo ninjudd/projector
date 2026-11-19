@@ -253,8 +253,10 @@ def distribution_version() -> str:
 
     `install.sh status` compares this against the plugin manifest's version,
     which is the CLI's too, to tell a stale install from a current one, and
-    `project review` names it in the reviews it writes. A checkout that was
-    never installed has no distribution to report, which is itself the answer.
+    `project review` names it in the reviews it writes unless
+    `PROJECTOR_VERSION` names another, as the CI review action's does. A
+    checkout that was never installed has no distribution to report, which is
+    itself the answer.
     """
 
     try:
