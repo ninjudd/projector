@@ -149,7 +149,8 @@ class FakeGitHub:
         """A pull request, with `contexts` its head's whole rollup, which the GraphQL queries page through as
         GitHub does, and `fork` the repository its head branch is in when that is not `repo`. The REST pull
         request does not show `contexts`, so only a full pass sees them change."""
-        self.repository(repo)["pulls"][number] = {"node": node(number, repo=repo, **fields), "requested": list(requested),
+        found = dict(node(number, repo=repo, **fields), isCrossRepository=fork is not None)
+        self.repository(repo)["pulls"][number] = {"node": found, "requested": list(requested),
                                                   "teams": list(teams), "reviews": list(reviews),
                                                   "contexts": list(contexts), "fork": fork}
 
@@ -592,6 +593,26 @@ class FixRoleTests(WatchCase):
 
         self.assertEqual([unreviewed(2)], events["fixer"],
                          "the live checkout's review.reviewers counts the bot's verdict, and only the bot's")
+
+    def test_a_repository_reviewed_in_ci_announces_only_a_forks_unreviewed_head(self) -> None:
+        home = self.scratch / "home"
+        checkout = home / "app"
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+        subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", "https://github.com/acme/app.git"],
+                       check=True)
+        (checkout / ".projector.toml").write_text("[review]\nci = true\n")
+        environment = mock.patch.dict(os.environ, {"HOME": str(home)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.github.pull_request(1, draft=False)
+        self.github.pull_request(2, draft=False, fork="outsider/app")
+        self.fixer("acme/app#1 fix", "acme/app#2 fix")
+        write_json(self.folder("fixer") / "agent.json", {"schema_version": 1, "cwd": str(checkout)})
+
+        events = self.cycle()
+
+        self.assertEqual([unreviewed(2)], events["fixer"],
+                         "the workflow reviews #1's head and skips the fork's, which no one reviews")
 
     def test_a_ready_pull_request_another_session_reviews_asks_the_fixer_for_nothing(self) -> None:
         self.github.pull_request(1, draft=False)
