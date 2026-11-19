@@ -2464,11 +2464,12 @@ class StackFixerTests(WatchCase):
 
         self.github.repository()["stacks"] = []
         self.github.stack(20, 5, 6, open_layers=(5,), merged=(6,))
-        self.merge(6, base="layer-5")
+        self.github.pull_request(6, ref="layer-6", base="layer-5", state="MERGED", merged_at=LATER)
         events = self.cycle()["fixer"]
 
-        self.assertEqual(["MERGED acme/app#6 into layer-5, which is not in main yet — send subagent fix-stack-5 no "
-                          "more work for acme/app#6, and finish it once no layer of its stack is open"], events)
+        self.assertEqual([f"MERGED acme/app#6 into layer-5 at {LATER}, which is not in main yet — send subagent "
+                          "fix-stack-5 no more work for acme/app#6, and finish it once no layer of its stack is open"],
+                         events)
 
     def test_a_chain_that_github_records_no_stack_for_says_its_merged_upper_layer_reached_main(self) -> None:
         self.layers(5, 6)

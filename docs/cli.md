@@ -3819,7 +3819,7 @@ the daemon checks whether that base reached the default branch, and words
 
 ```text
 MERGED acme/app#13 with its stack into main at 2026-11-19T18:02:11Z (merge commit 4be1c2d9) — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
-MERGED acme/app#13 into layer-12, which is not in main yet at 2026-11-19T18:02:11Z (merge commit 4be1c2d9) — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
+MERGED acme/app#13 into layer-12 at 2026-11-19T18:02:11Z (merge commit 4be1c2d9), which is not in main yet — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
 ```
 
 The first form means that every layer below it in its GitHub stack merged

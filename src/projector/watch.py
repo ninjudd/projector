@@ -1668,9 +1668,9 @@ class Pass:
         base = pr.get("baseRefName") or "?"
         default = ((entry.get("repository") or {}).get("defaultBranchRef") or {}).get("name")
         landed = self.landed(repo, number, base, default) if default and base not in ("?", default) else None
-        into = f"with its stack into {default}" if landed else \
-            f"into {base}, which is not in {default} yet" if landed is False else f"into {base}"
-        return f"MERGED {ref} {into}{when}{commit}"
+        into = f"with its stack into {default}" if landed else f"into {base}"
+        behind = f", which is not in {default} yet" if landed is False else ""
+        return f"MERGED {ref} {into}{when}{commit}{behind}"
 
     def landed(self, repo: str, number: int, base: str, default: str) -> Optional[bool]:
         """Whether the merged pull request's base reached the default branch: True when every layer below it in
