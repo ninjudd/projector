@@ -125,6 +125,42 @@ change the code it reviews. The agent's own rules refuse `git push`,
 `git commit`, `gh pr merge`, `gh pr ready`, and every command that changes
 the repository's settings.
 
+## Post as a GitHub App
+
+By default the reviews post as `github-actions[bot]`. To post them under an
+app's name, register a GitHub App, make it public so it installs on your
+account, and pass its slug to `init`:
+
+```sh
+project init --ci-review --ci-app projector-review
+```
+
+`init` looks the app's ID up with `gh api apps/<slug>`, which answers only
+for a public app, and refuses an app GitHub does not show. It writes the ID
+into the workflow as the action's `app-id` input, passes the
+`PROJECTOR_APP_PRIVATE_KEY` secret as its `app-private-key` input, records
+`review.ci_app` and `review.ci_app_id`, and adds `<slug>[bot]` to
+`review.reviewers`. A later `init` rebuilds the workflow from the recorded
+ID without asking GitHub, so it works offline. At a terminal
+it asks for the path of the private key file you generated in the app's
+settings, and has `gh` set it as the `PROJECTOR_APP_PRIVATE_KEY` secret from
+that file. Delete the file once the secret holds it.
+
+In each review job, the action's **Mint the app's token** step creates an
+installation token with `actions/create-github-app-token`. The token reaches
+only the repository the job runs in, with the review's permissions in the
+table above, and the review posts as `<slug>[bot]` with it. The app needs
+those same permissions, and it must be installed on the repository. The
+summary job keeps the workflow's own token, because it pushes
+`refs/projector/summaries`.
+
+The private key carries the app's full authority over every repository it is
+installed on, so the workflow passes it as an input and never as `env`. A
+caller's `env` reaches every step of a composite action, the steps that run
+the agent and its install scripts included. An input sets no environment
+variable in a composite action, so only the step that mints the token, the
+one step that reads `app-private-key`, receives the key.
+
 ## Override a setting for CI
 
 The review job runs `review.gate` on a trusted head, as a session does. When
@@ -160,3 +196,5 @@ replaces.
 | `config` | Empty | TOML for the runner's `~/.projector.toml` |
 | `timeout-minutes` | `45` | The agent's time limit. The job's own limit is 15 minutes longer. |
 | `claude-code-version`, `codex-version` | The versions Projector tests | The CLI version the agent runs |
+| `app-id` | Empty | Post as this GitHub App. Empty posts as `github-actions[bot]`. |
+| `app-private-key` | Empty | The private key of the app `app-id` names, from the `PROJECTOR_APP_PRIVATE_KEY` secret. Pass it here, never as `env`, so that only the step that mints the token receives it. |

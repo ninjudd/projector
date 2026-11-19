@@ -611,9 +611,16 @@ a recorded answer, `init` asks nothing and changes nothing. A yes writes
 the agents, `claude` by default, each as `agent=<model>` to name the model it
 runs, such as `claude,codex=<model>`. `codex` needs a model, so `init`
 refuses it without one. `--ci-credential` picks the kind of secret `init`
-asks for. Once `review.ci` is `true`, every later `init`
+asks for. `--ci-app <slug>` posts the reviews as that public GitHub App:
+`init` looks the app's ID up on GitHub, records the slug as `review.ci_app`
+and the ID as `review.ci_app_id`, adds `<slug>[bot]` to `review.reviewers`
+in place of `github-actions[bot]`, and asks for the app's private key file,
+as
+[Post as a GitHub App](review-in-ci.md#post-as-a-github-app) describes.
+Once `review.ci` is `true`, every later `init`
 refreshes the workflow, replacing one nobody edited and keeping an edited
-one. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
+one. A refresh takes the app's ID from `review.ci_app_id`, so it needs no
+network; only `--ci-app` looks an app up. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
 setup, the credentials, and what each job does.
 
 ## Browse projects
@@ -1065,6 +1072,8 @@ reads, which are these:
 | `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
 | `review.ci` | boolean | none | the watch daemon, from the configuration of a checkout a live session works in, which announces no `UNREVIEWED` for a head from the repository's own branches while it is `true`, and `init`, as your answer to whether the repository's pull requests get a review in GitHub Actions: none asks at a terminal, `true` refreshes the workflow, and `false` asks no more; `init` writes it when you answer, as [Review pull requests in GitHub Actions](#review-pull-requests-in-github-actions) describes |
 | `review.ci_agents` | string | `claude` | `init` and `project review ci-workflow`, as the agents the CI review workflow runs, separated by commas, from `claude` and `codex`, each as `agent=<model>` to name the model its job runs, which `codex` needs, such as `claude, codex=<model>` |
+| `review.ci_app` | string | none | `init` and `project review ci-workflow`, as the public GitHub App the CI reviews post as, by its slug; none posts as `github-actions[bot]` |
+| `review.ci_app_id` | whole number | none | `init` and `project review ci-workflow`, as the ID of the app `review.ci_app` names, which `init --ci-app` looks up and records so a later refresh needs no lookup; set both with `init --ci-app` |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
 | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
@@ -2607,8 +2616,9 @@ edited, as [Require a clean review before merge](#require-a-clean-review-before-
 describes. It writes nothing, takes no pull request, and runs from any
 directory. `ci-workflow` prints the `.github/workflows/projector-review.yml`
 that `init --ci-review` writes, for `--agents`, then `review.ci_agents`, then
-`claude`, at `--action-ref`, `v0` by default, so you can compare it with a
-copy you edited.
+`claude`, at `--action-ref`, `v0` by default, and posting as the app
+`--app`, then `review.ci_app`, names, so you can compare it with a copy you
+edited.
 
 No command takes a SHA: each comes from GitHub or the state file. `setup` works
 from the checkout containing the working directory, or `--checkout`, and

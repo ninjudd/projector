@@ -34,6 +34,12 @@ inputs:
   codex-version:
     description: The version of Codex the codex agent runs.
     default: 0.169.0
+  app-id:
+    description: Post the review as this GitHub App, with app-private-key. Empty posts as github-actions[bot].
+    default: ''
+  app-private-key:
+    description: The private key of the app app-id names, from the PROJECTOR_APP_PRIVATE_KEY secret. Only the step that mints the app's token reads it.
+    default: ''
 runs:
   using: composite
   steps:
@@ -86,6 +92,23 @@ runs:
         if [ -n "$CONFIG" ]; then
           printf '%s\n' "$CONFIG" >> "$HOME/.projector.toml"
         fi
+    # The app's token reaches only this repository, with the review's permissions. The key is an input, not a
+    # caller's env, which would reach every step: a composite action's inputs set no environment variable, so
+    # only this step, which reads the input, receives the key.
+    - name: Mint the app's token
+      id: app
+      if: inputs.step == 'review' && inputs.app-id != ''
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.app-private-key }}
+        permission-contents: read
+        permission-pull-requests: write
+        permission-issues: write
+        permission-statuses: write
+        permission-checks: read
+        permission-actions: read
+        permission-pages: read
     - name: Restore the review state
       if: inputs.step == 'review'
       uses: actions/cache/restore@v4
@@ -125,8 +148,8 @@ runs:
       if: inputs.step == 'review'
       shell: bash
       env:
-        GH_TOKEN: ${{ github.token }}
-        PROJECTOR_TOKEN_LOGIN: github-actions[bot]
+        GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
         # Only the review step hands its summary off; the summary job's publish pushes it.
         PROJECTOR_SUMMARY_HANDOFF: ${{ runner.temp }}/projector-summary
         PR: ${{ inputs.pr }}

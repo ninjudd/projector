@@ -620,6 +620,9 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--ci-agents", help="the agents that review in GitHub Actions, separated by commas, from "
                                           f"{', '.join(ci.AGENTS)}, each as agent=model to name its model, which "
                                           "codex needs (default: review.ci_agents, then claude)")
+    init.add_argument("--ci-app", metavar="SLUG",
+                      help="post CI reviews as this public GitHub App, whose private key init asks for as the "
+                           f"{ci.APP_KEY} secret (default: review.ci_app, then github-actions[bot])")
     init.add_argument("--ci-credential", choices=ci.KINDS,
                       help="the credential secret init asks for when an agent has none (default: subscription for "
                            "claude, api-key for codex)")
@@ -846,6 +849,8 @@ def parser() -> argparse.ArgumentParser:
                                                      "name its model (default: review.ci_agents, then claude)")
     review_ci_workflow.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow "
                                                                        "runs (default: v0)")
+    review_ci_workflow.add_argument("--app", metavar="SLUG", help="the public GitHub App the reviews post as "
+                                                                  "(default: review.ci_app, then github-actions[bot])")
     review_status = review_commands.add_parser(
         "status", help="report the newest Projector verdict on a pull request's current head"
     )
@@ -2514,8 +2519,10 @@ def run_review(arguments: argparse.Namespace) -> int:
         print(review.clean_workflow_text(), end="")
         return 0
     if arguments.review_command == "ci-workflow":
-        agents = arguments.agents or load_config(discover_git_root(Path.cwd())).get("review.ci_agents") or "claude"
-        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents)), end="")
+        config = load_config(discover_git_root(Path.cwd()))
+        agents = arguments.agents or config.get("review.ci_agents") or "claude"
+        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents), ci_app(config, arguments.app)[1]),
+              end="")
         return 0
     if arguments.review_command in ("hold", "ready"):
         return review_draft(arguments)
@@ -3630,15 +3637,34 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
             record_setting(root, "review.ci", False)
             return
     agents = ci.parse_agents(arguments.ci_agents or config.get("review.ci_agents") or "claude")
-    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents)))
+    try:
+        slug, app = ci_app(config, arguments.ci_app)
+    except UsageError as error:
+        if arguments.ci_app:
+            raise InitError(str(error), files) from None
+        # A refresh needs GitHub only for an app recorded without its ID, and like init's other GitHub calls it
+        # warns and goes on rather than failing init.
+        print(f"project: {error}; left the CI review as it is, and `project init --ci-app "
+              f"{config.get('review.ci_app')}` records the app's ID so a refresh needs no lookup", file=sys.stderr)
+        return
+    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents, app)))
     if recorded is not True:
         record_setting(root, "review.ci", True)
     if config.get("review.ci_agents") != ci.format_agents(agents):
         record_setting(root, "review.ci_agents", ci.format_agents(agents))
-    reviewers = review.extra_reviewers(config.get("review.reviewers"))
-    if CI_REVIEWER not in {login.lower() for login in reviewers}:
-        record_setting(root, "review.reviewers", ", ".join((*reviewers, CI_REVIEWER)))
-    set_ci_secrets(repo, agents, arguments.ci_credential)
+    if slug and config.get("review.ci_app") != slug:
+        record_setting(root, "review.ci_app", slug)
+    if app is not None and config.get("review.ci_app_id") != app:
+        record_setting(root, "review.ci_app_id", app)
+    # An app replaces github-actions[bot], so a workflow posting with its own token no longer counts as a reviewer.
+    reviewer = f"{slug}[bot]" if slug else CI_REVIEWER
+    listed = review.extra_reviewers(config.get("review.reviewers"))
+    kept = [login for login in listed if not (slug and login.lower() == CI_REVIEWER)]
+    if reviewer.lower() not in {login.lower() for login in kept}:
+        kept.append(reviewer)
+    if kept != list(listed):
+        record_setting(root, "review.reviewers", ", ".join(kept))
+    set_ci_secrets(repo, agents, arguments.ci_credential, slug)
     site, why = summary.push_decision(repo)
     if site is None:
         print(f"project: CI reviews publish no summaries until the site is set up, because {why}", file=sys.stderr)
@@ -3679,11 +3705,63 @@ def run_interactive(argv: list[str], source: Optional[Path] = None) -> int:
         return subprocess.call(argv, stdin=handle)
 
 
-def set_ci_secrets(repo: str, agents: dict[str, str], kind: Optional[str]) -> None:
-    """Report each agent's credential secret, and at a terminal have `gh` set a missing one, so the workflow can
-    start the agent."""
+def ci_app(config: Config, flag: Optional[str]) -> tuple[Optional[str], Optional[int]]:
+    """The slug and ID of the app the CI reviews post as. The app `flag` names is looked up on GitHub, which
+    refuses one it does not show publicly. Otherwise the recorded `review.ci_app` comes with the
+    `review.ci_app_id` init recorded beside it, so a refresh needs no network; only a slug recorded without its
+    ID is looked up."""
+    if flag:
+        return flag, app_id(flag)
+    slug = config.get("review.ci_app")
+    if not slug:
+        return None, None
+    recorded = config.get("review.ci_app_id")
+    return slug, recorded if recorded is not None else app_id(slug)
+
+
+def app_id(slug: str) -> int:
+    """The ID of the public GitHub App `slug` names. GitHub answers this only for a public app, and only a public
+    app installs on an account other than its owner's."""
+    try:
+        found = summary.gh_lookup("api", f"apps/{slug}", "--jq", ".id")
+    except summary.SummaryError as error:
+        raise UsageError(f"could not look up the GitHub App {slug}: {error}") from error
+    if not (found or "").strip().isdigit():
+        raise UsageError(f"GitHub has no public app named {slug}; make the app public in its settings, under "
+                         "Advanced, so it can be installed on this repository's account")
+    return int(found.strip())
+
+
+def set_app_key(repo: str, slug: str, listed: set[str]) -> None:
+    """Report the app's private key secret, and at a terminal have `gh` set it from the key file GitHub
+    downloaded, whose path is not secret."""
+    command = f"gh secret set {ci.APP_KEY} --repo {repo} < <key file>"
+    if ci.APP_KEY in listed:
+        print(f"project: {ci.APP_KEY} is set for the {slug} app", file=sys.stderr)
+        return
+    if not sys.stdin.isatty():
+        print(f"project: posting as {slug} needs its private key as {ci.APP_KEY}; generate one in the app's "
+              f"settings and run `{command}`", file=sys.stderr)
+        return
+    print(f"project: posting as {slug} needs its private key; generate one in the app's settings, then give the "
+          "path of the .pem file GitHub downloaded: ", end="", file=sys.stderr, flush=True)
+    source = Path(sys.stdin.readline().strip()).expanduser()
+    if not source.is_file():
+        print(f"project: {source} is not a file; run `{command}` once you have the key", file=sys.stderr)
+    elif run_interactive(["gh", "secret", "set", ci.APP_KEY, "--repo", repo], source):
+        print(f"project: could not set {ci.APP_KEY}; setting a secret takes admin access, so an admin of {repo} "
+              f"can run `{command}`", file=sys.stderr)
+    else:
+        print(f"project: set {ci.APP_KEY}; delete {source} now that the secret holds it", file=sys.stderr)
+
+
+def set_ci_secrets(repo: str, agents: dict[str, str], kind: Optional[str], app: Optional[str] = None) -> None:
+    """Report each agent's credential secret, and the app's private key when `app` names one, and at a terminal
+    have `gh` set a missing one, so the workflow can start the agent and post as the app."""
     wanted = {agent: ci.CREDENTIALS[agent][kind or ci.DEFAULT_KIND[agent]] for agent in agents}
     commands = [f"gh secret set {name} --repo {repo}" for name in wanted.values()]
+    if app:
+        commands.append(f"gh secret set {ci.APP_KEY} --repo {repo} < <key file>")
     try:
         listed = {found["name"] for found in json.loads(summary.gh("secret", "list", "--repo", repo, "--json", "name"))}
     except (summary.SummaryError, ValueError) as error:
@@ -3714,6 +3792,8 @@ def set_ci_secrets(repo: str, agents: dict[str, str], kind: Optional[str]) -> No
             if run_interactive(["gh", "secret", "set", name, "--repo", repo], source):
                 print(f"project: could not set {name}; setting a secret takes admin access, so an admin of {repo} "
                       f"can run `{command}`", file=sys.stderr)
+    if app:
+        set_app_key(repo, app, listed)
 
 
 def write_clean_workflow(root: Path) -> FileAction:
