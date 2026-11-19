@@ -80,7 +80,23 @@ Keep these limits in mind:
 - **A Codex ChatGPT login goes stale on a hosted runner.** Codex refreshes
   its tokens and writes them back to `auth.json`, and a hosted runner
   throws that file away, so the secret gets older with every run. Use an
-  API key for `codex` on hosted runners.
+  API key for `codex` on hosted runners, or keep the login on a runner of
+  your own, as
+  [Run reviews on your own runners](self-hosted-runners.md#codex) describes.
+
+`--ci-credential runner` is a third kind, for a self-hosted runner that
+holds the agent's credential itself: `init` sets no secret, and the workflow
+passes none, so the job reads the runner's own environment and, for
+`codex`, the runner's own Codex login.
+
+## Run on your own runners
+
+The jobs run on `ubuntu-latest` unless you name your own runners' labels
+with `--ci-runs-on`, such as `--ci-runs-on self-hosted,linux,projector`.
+`init` records them as `review.ci_runs_on`, and both jobs run there.
+[Run reviews on your own runners](self-hosted-runners.md) describes what the
+runner needs, how it holds the agent's credential, how a review reaches your
+internal tools from it, and how to keep it safe.
 
 ## What a review job does
 
@@ -209,6 +225,6 @@ replaces.
 | `rereview` | `false` | Review a head this model already reviewed |
 | `config` | Empty | TOML for the runner's `~/.projector.toml` |
 | `timeout-minutes` | `45` | The agent's time limit. The job's own limit is 15 minutes longer. |
-| `claude-code-version`, `codex-version` | The versions Projector tests | The CLI version the agent runs |
+| `claude-code-version`, `codex-version` | The versions Projector tests | The CLI version the agent runs. The action installs it with `npm` unless the CLI on `PATH` already reports it. |
 | `app-id` | Empty | Post as this GitHub App. Empty posts as `github-actions[bot]`. |
 | `app-private-key` | Empty | The private key of the app `app-id` names, from the `PROJECTOR_APP_PRIVATE_KEY` secret. Pass it here, never as `env`, so that only the step that mints the token receives it. |
