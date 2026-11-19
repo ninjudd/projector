@@ -170,7 +170,7 @@ settings name.
 | Call | Sent by | Body | What the service does |
 | --- | --- | --- | --- |
 | `POST /v1/register` | The app | Apple's device token | Encrypts the token with the service's own secret key and returns the result as the push ID |
-| `POST /v1/push` | The daemon | The push ID and the sealed notification, at most 2 KiB | Decrypts the push ID to the device token and forwards the sealed text to it through Apple's push service, and answers `202`. It answers `404` for a push ID it cannot decrypt or that Apple reports as unregistered, and `429` past 60 notifications an hour for one push ID |
+| `POST /v1/push` | The daemon | The push ID and the sealed notification, at most 2 KiB | Decrypts the push ID to the device token and forwards the sealed text to it through Apple's push service, and answers `202`. It answers `404` for a push ID it cannot decrypt or that Apple reports as unregistered, and `429` past 60 notifications an hour for one phone, counted by the device token, so registering again does not reset it |
 
 A push ID is the device token itself, encrypted and authenticated so that
 only the service can read it and no one can forge one. So the service keeps
@@ -178,15 +178,15 @@ no table and needs no database, and losing its host loses nothing but its
 secret key and Apple's push key, both from its environment. It stores no
 notification and logs no body. It counts each phone's notifications in
 memory for the rate limit, by the device token a push ID opens to, so a
-phone that registers again for a new push ID gets no more. Vercel runs and retires function instances as
-traffic comes and goes, so that count is a best-effort cap for each
-instance, not a shared one. Vercel's Runtime Cache can make it shared
-later, still without a database. A push ID reaches the
-daemon only inside `project agent phone add`, so knowing one is the only
-credential `POST /v1/push` asks for, and the rate limit caps what a leaked
-ID can do. `phone.push_url` in `~/.projector.toml` names the service the
-daemon posts to, so anyone can run their own. It is the daemon's setting
-only: the app takes its instance from its build.
+phone that registers again for a new push ID gets no more. Vercel runs
+and retires function instances as traffic comes and goes, so that count
+is a best-effort cap for each instance, not a shared one. Vercel's
+Runtime Cache can make it shared later, still without a database. A push
+ID reaches the daemon only inside `project agent phone add`, so knowing
+one is the only credential `POST /v1/push` asks for, and the rate limit
+caps what a leaked ID can do. `phone.push_url` in `~/.projector.toml`
+names the service the daemon posts to, so anyone can run their own. It is
+the daemon's setting only: the app takes its instance from its build.
 
 ### 2.4 Changes by repository
 
@@ -282,10 +282,10 @@ only: the app takes its instance from its build.
   repository's, not a second copy. Someone who wants no hosted service
   builds the app under their own bundle ID and team, sets those in their
   instance's environment, and installs that build; the README in
-  `services/push/` says how. A build installed from Xcode is development-signed, and Apple's
-  production endpoint rejects its device token, so that instance sets its
-  push environment to `sandbox`. TestFlight and App Store builds use
-  `production`.
+  `services/push/` says how. A build installed from Xcode is
+  development-signed, and Apple's production endpoint rejects its device
+  token, so that instance sets its push environment to `sandbox`.
+  TestFlight and App Store builds use `production`.
 - **One repository.** The daemon, the app, and the service share one
   protocol and one set of test vectors. Separate repositories would make
   each protocol change a pair of pull requests that have to land in step,
