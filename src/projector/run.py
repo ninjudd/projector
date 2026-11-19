@@ -60,6 +60,12 @@ SHARED = ("PRIVATE", "INTERNAL")
 # Where the action has the run clone the context repositories. Elsewhere the run clones them into a temporary
 # folder it removes once the agent exits.
 CONTEXT_DIR = "PROJECTOR_CONTEXT_DIR"
+# A token that only reads the context repositories, which the action mints apart from the review's. The run
+# checks and clones them with it, and removes it from the agent's environment. Without it, `gh`'s own token does.
+CONTEXT_TOKEN = "PROJECTOR_CONTEXT_TOKEN"
+# The outcome of the action's step that mints that token, `failure` when GitHub refused it, as it does whenever
+# the app cannot reach one of the repositories it was asked for.
+CONTEXT_MINT = "PROJECTOR_CONTEXT_MINT"
 
 
 @dataclass
@@ -115,7 +121,9 @@ def codex_invocation(number: int, repo: str, model: str, effort: str, mode: str,
                      context: tuple[Path, ...] = ()) -> Invocation:
     """`codex exec` in its workspace-write sandbox, with network on so `gh` reaches GitHub, and the review
     state and the scratch folder writable beside the checkout. The sandbox reads every folder, so each
-    `context` folder needs only the prompt's mention, and stays unwritable because it is no writable root."""
+    `context` folder needs only the prompt's mention. It stays unwritable only where `PROJECTOR_CONTEXT_DIR`
+    puts it outside `/tmp` and `$TMPDIR`, which the sandbox writes and where the temporary folder a run uses
+    without that variable lies."""
     home = Path(environ.get("CODEX_HOME") or Path(environ.get("HOME") or Path.home()) / ".codex")
     rules = home / "rules" / CODEX_RULES_NAME
     approval = ["--approve-for-me"] if mode == "auto" else ["-c", 'approval_policy="never"']
@@ -149,20 +157,18 @@ def parse_context_repos(listed: object) -> list[str]:
 
 
 def token_repositories(repo: str, listed: object) -> list[str]:
-    """The names, without the owner, of the repositories an app token for reviewing `repo` must reach: `repo`
-    itself, then each context repository of the same owner, or none when there are no such repositories, so
-    the token keeps reaching `repo` alone."""
-    owner, _, name = repo.partition("/")
-    same = [entry.partition("/")[2] for entry in parse_context_repos(listed)
-            if entry.partition("/")[0].lower() == owner.lower() and entry.lower() != repo.lower()]
-    return [name, *same] if same else []
+    """The names, without the owner, of the context repositories a token for reviewing `repo` reads: each one
+    `listed` names of `repo`'s owner, other than `repo`."""
+    owner = repo.partition("/")[0].lower()
+    return [entry.partition("/")[2] for entry in parse_context_repos(listed)
+            if entry.partition("/")[0].lower() == owner and entry.lower() != repo.lower()]
 
 
-def visibility(repo: str) -> Optional[str]:
-    """`repo`'s visibility as GitHub reports it, `PUBLIC`, `PRIVATE`, or `INTERNAL`, or None when the check
-    fails, which proves nothing."""
+def visibility(repo: str, token: Optional[str] = None) -> Optional[str]:
+    """`repo`'s visibility as GitHub reports it to `token`, or to `gh`'s own token, `PUBLIC`, `PRIVATE`, or
+    `INTERNAL`, or None when the check fails, which proves nothing."""
     try:
-        found = review.run_gh(["repo", "view", repo, "--json", "visibility", "--jq", ".visibility"]).strip()
+        found = review.run_gh(["repo", "view", repo, "--json", "visibility", "--jq", ".visibility"], token).strip()
     except ReviewError:
         return None
     return found if found in VISIBILITIES else None
@@ -178,6 +184,11 @@ def context_repos(repo: str, listed: object, environ: dict[str, str]) -> list[st
         print(f"project: left out the context repositories {', '.join(names)}: the workflow's own token reaches "
               f"only {repo}, so the review needs a GitHub App whose installation covers them", file=sys.stderr)
         return []
+    if names and environ.get(CONTEXT_MINT) == "failure":
+        print(f"project: left out the context repositories {', '.join(names)}: GitHub refused a token for them, "
+              "because the app cannot reach one of them; check that the app is installed on each, or drop the "
+              "missing one from review.context_repos", file=sys.stderr)
+        return []
     owner = repo.partition("/")[0].lower()
     candidates = []
     for name in names:
@@ -192,7 +203,7 @@ def context_repos(repo: str, listed: object, environ: dict[str, str]) -> list[st
     own = visibility(repo) if candidates else None
     kept = []
     for name in candidates:
-        theirs = visibility(name)
+        theirs = visibility(name, environ.get(CONTEXT_TOKEN) or None)
         if theirs == "PUBLIC" or (theirs in SHARED and own in SHARED):
             kept.append(name)
         elif theirs is None:
@@ -207,16 +218,16 @@ def context_repos(repo: str, listed: object, environ: dict[str, str]) -> list[st
     return kept
 
 
-def clone_context(names: list[str], folder: Path) -> tuple[Path, ...]:
+def clone_context(names: list[str], folder: Path, token: Optional[str] = None) -> tuple[Path, ...]:
     """Clone each repository in `names` at its default branch, depth 1, into `folder`/<owner>/<name>, with
-    `gh`'s token, and return the folders that cloned, warning about each that did not."""
+    `token`, or `gh`'s own token, and return the folders that cloned, warning about each that did not."""
     cloned = []
     for name in names:
         target = folder / name
         shutil.rmtree(target, ignore_errors=True)
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            review.run_gh(["repo", "clone", name, str(target), "--", "--depth", "1", "--quiet"])
+            review.run_gh(["repo", "clone", name, str(target), "--", "--depth", "1", "--quiet"], token)
         except ReviewError as error:
             print(f"project: left {name} out of the context repositories: {error}", file=sys.stderr)
             continue
@@ -354,13 +365,15 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
     base = dict(os.environ if environ is None else environ)
     names = context_repos(repo, context_listed, base)
     folder = Path(base.get(CONTEXT_DIR) or tempfile.mkdtemp(prefix="projector-review-context-")) if names else None
-    context = clone_context(names, folder) if folder is not None else ()
+    context = clone_context(names, folder, base.get(CONTEXT_TOKEN) or None) if folder is not None else ()
     scratch = Path(tempfile.mkdtemp(prefix="projector-review-run-"))
     report = scratch / "report.md"
     environment = dict(base, PROJECTOR_HEADLESS="1", PROJECTOR_LOOP=loop, PROJECTOR_MODEL=model,
                        PROJECTOR_SCRATCH=str(scratch), PROJECTOR_RUN_REPORT=str(report),
                        PROJECTOR_REREVIEW="1" if rereview else "")
     environment.pop("PROJECTOR_REPLACE", None)
+    # The agent reads the clones; a token for their repositories would let it reach them some other way.
+    environment.pop(CONTEXT_TOKEN, None)
     if replace is not None:
         environment["PROJECTOR_REPLACE"] = str(replace)
     if chosen == "claude":

@@ -3685,7 +3685,7 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
     site, why = summary.push_decision(repo)
     if site is None:
         print(f"project: CI reviews publish no summaries until the site is set up, because {why}", file=sys.stderr)
-    if config.get("review.gate") and runs_on:
+    if config.get("review.gate") and not ci.hosted(runs_on):
         print("project: CI reviews run review.gate on your runner, so install every tool the gate runs there",
               file=sys.stderr)
     elif config.get("review.gate"):

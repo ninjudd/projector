@@ -110,9 +110,26 @@ runs:
         if [ -n "$CONFIG" ]; then
           printf '%s\n' "$CONFIG" >> "$HOME/.projector.toml"
         fi
-    # A review that reads context repositories needs the app's token to reach them too, and an installation token
-    # reaches one account's repositories. The list comes from the committed .projector.toml as Projector reads
-    # it, from the default branch, so a pull request cannot widen its own review's token.
+    # The app's token reaches only this repository, with the review's permissions. The key is an input, not a
+    # caller's env, which would reach every step: a composite action's inputs set no environment variable, so
+    # only this step, which reads the input, receives the key.
+    - name: Mint the app's token
+      id: app
+      if: inputs.app-id != ''
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.app-private-key }}
+        permission-contents: read
+        permission-pull-requests: write
+        permission-issues: write
+        permission-statuses: write
+        permission-checks: read
+        permission-actions: read
+        permission-pages: read
+    # The context repositories a review reads, from the committed .projector.toml as Projector reads it, from the
+    # default branch, so a pull request cannot widen what its own review's clone token reaches. An installation
+    # token reaches one account's repositories, so only those of this repository's owner are listed.
     - name: Read the context repositories
       id: context
       if: inputs.step == 'review' && inputs.app-id != ''
@@ -123,26 +140,21 @@ runs:
           'import sys; from projector import run; print(",".join(run.token_repositories(*sys.argv[1:])))' \
           "$GITHUB_REPOSITORY" "$listed")
         echo "repositories=$names" >> "$GITHUB_OUTPUT"
-    # The app's token reaches only this repository, and the context repositories when there are any, with the
-    # review's permissions. It sets no `owner`, which defaults to this repository's: an owner with no
-    # repositories would reach every repository the installation covers. The key is an input, not a caller's
-    # env, which would reach every step: a composite action's inputs set no environment variable, so only this
-    # step, which reads the input, receives the key.
-    - name: Mint the app's token
-      id: app
-      if: inputs.app-id != ''
+    # A token that only reads the context repositories, for `project review run` to check and clone them with. The
+    # run keeps it out of the agent's environment, so the agent holds no token for them. It sets no `owner`,
+    # which defaults to this repository's: an owner with no repositories would reach the whole installation.
+    # GitHub refuses the whole token when the app cannot reach one listed repository, so a failure here leaves
+    # the context out and the review goes on without it.
+    - name: Mint the context token
+      id: context-token
+      if: steps.context.outputs.repositories != ''
+      continue-on-error: true
       uses: actions/create-github-app-token@v2
       with:
         app-id: ${{ inputs.app-id }}
         private-key: ${{ inputs.app-private-key }}
         repositories: ${{ steps.context.outputs.repositories }}
         permission-contents: read
-        permission-pull-requests: write
-        permission-issues: write
-        permission-statuses: write
-        permission-checks: read
-        permission-actions: read
-        permission-pages: read
     - name: Restore the review state
       if: inputs.step == 'review'
       uses: actions/cache/restore@v4
@@ -203,6 +215,9 @@ runs:
         PROJECTOR_SUMMARY_HANDOFF: ${{ runner.temp }}/projector-summary
         # Outside /tmp, which Codex's sandbox lets the agent write.
         PROJECTOR_CONTEXT_DIR: ${{ runner.temp }}/context
+        # Read only, for the run's clones; the run removes it from the agent's environment.
+        PROJECTOR_CONTEXT_TOKEN: ${{ steps.context-token.outputs.token }}
+        PROJECTOR_CONTEXT_MINT: ${{ steps.context-token.outcome }}
         PR: ${{ inputs.pr }}
         AGENT: ${{ inputs.agent }}
         MODEL: ${{ inputs.model }}

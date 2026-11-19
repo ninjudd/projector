@@ -2816,7 +2816,10 @@ a private or internal reviewed repository. Under the workflow's own token,
 `PROJECTOR_TOKEN_LOGIN` set to `github-actions[bot]`, it keeps none. Each
 repository it leaves out is a warning, not a failure. It clones each one at
 its default branch, depth 1, into `PROJECTOR_CONTEXT_DIR/<owner>/<name>`,
-or into a temporary folder it removes once the agent exits. The `claude`
+or into a temporary folder it removes once the agent exits. It checks and
+clones the context repositories with `PROJECTOR_CONTEXT_TOKEN` when that is
+set, as the action sets it to a token that only reads them, and removes it
+from the agent's environment; otherwise `gh`'s own token does. The `claude`
 preset adds each folder with `--add-dir` and denies `Edit` and `Write` in
 it. Codex's sandbox reads every folder, and the action puts the clones
 outside every folder it writes, as

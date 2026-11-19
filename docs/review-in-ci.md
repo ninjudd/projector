@@ -168,9 +168,7 @@ that file. Delete the file once the secret holds it.
 In each review job and in the summary job, the action's **Mint the app's
 token** step creates an installation token with
 `actions/create-github-app-token`. The token reaches only the repository the
-job runs in, and in a review job the context repositories
-[Give a review other repositories to read](#give-a-review-other-repositories-to-read)
-describes, with the review's permissions in the table above, and the
+job runs in, with the review's permissions in the table above, and the
 review, the summary's comment, and the link in the description post as
 `<slug>[bot]` with it. The app needs those same permissions, and it must be
 installed on the repository.
@@ -226,14 +224,22 @@ A context repository needs three things:
 Each repository the review leaves out is a warning in the job log, and the
 review goes on without it.
 
-The action reads `review.context_repos` from the default branch, as
-Projector reads every committed setting, before it mints the app's token.
-It mints the token for the reviewed repository and the context repositories
-of the same owner, with the review's permissions in [Tokens](#tokens), so a
-pull request that edits `.projector.toml` cannot widen its own review's
-token. Those permissions reach the context repositories too, so the agent
-could comment on their pull requests and issues, though not push to them.
-List only repositories whose reviewers would accept that.
+The review's own token still reaches only the reviewed repository. For the
+context repositories, the action mints a second token from the app, with
+`contents: read` and nothing else, for the context repositories of the same
+owner. It reads `review.context_repos` from the default branch, as Projector
+reads every committed setting, so a pull request that edits
+`.projector.toml` cannot add a repository to its own review's token.
+`project review run` receives that token as `PROJECTOR_CONTEXT_TOKEN`,
+checks and clones the context repositories with it, and removes it from the
+agent's environment before the agent starts. The agent reads the clones and
+holds no token for their repositories.
+
+GitHub refuses that token outright when the app cannot reach any one of the
+repositories it lists, such as one that was renamed or that the app is not
+installed on. The review then leaves every context repository out, with one
+warning that says so, and goes on. Install the app on each listed
+repository, or drop the one it cannot reach.
 
 `project review run` clones each repository it keeps at its default branch,
 depth 1, into `$RUNNER_TEMP/context/<owner>/<name>`. The `claude` preset

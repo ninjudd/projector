@@ -342,9 +342,12 @@ class ContextGitHub:
     def __init__(self, visibilities: dict[str, str]) -> None:
         self.visibilities = visibilities
         self.calls: list[list[str]] = []
+        # The tokens each repository's calls used, by repository; None is gh's own.
+        self.tokens: dict[str, set[Optional[str]]] = {}
 
     def __call__(self, args: list[str], token: str | None = None) -> str:
         self.calls.append(args)
+        self.tokens.setdefault(args[2], set()).add(token)
         if args[:2] == ["repo", "view"] and args[3:] == ["--json", "visibility", "--jq", ".visibility"]:
             if args[2] not in self.visibilities:
                 raise ReviewError(f"gh repo view {args[2]} failed: HTTP 403")
@@ -397,14 +400,17 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(([], []), (found, github.calls))
         self.assertIn("needs a GitHub App whose installation covers them", err)
 
-    def test_the_token_reaches_the_reviewed_repository_and_its_owners_context_repositories(self) -> None:
-        # An empty list keeps the token on the reviewed repository alone; a list without it would lose it.
-        self.assertEqual(["app", "docs", "lib"], run.token_repositories(REPO, "acme/docs, other/x, acme/app, ACME/lib"))
+    def test_the_clone_token_reaches_only_the_owners_context_repositories(self) -> None:
+        # The reviewed repository has the review's token; listing it here would let the clone token read it too.
+        self.assertEqual(["docs", "lib"], run.token_repositories(REPO, "acme/docs, other/x, acme/app, ACME/lib"))
         for listed in ("", None, "other/docs", "acme/app"):
             with self.subTest(listed=listed), redirect_stderr(io.StringIO()):
                 self.assertEqual([], run.token_repositories(REPO, listed))
 
-    def test_a_run_clones_each_kept_repository_and_names_only_those_in_the_prompt(self) -> None:
+    def review_with_context(self, **given: str) -> tuple[Path, ContextGitHub, str]:
+        """Run a review of public acme/app that lists public acme/docs and private acme/secret as context, with
+        a clone token and the variables `given`, and return the agent's folder, the fake `gh` of the context
+        repositories, and what the run printed to standard error."""
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
         checkout = tmp / "checkout"
         subprocess.run(["git", "init", "-q", str(checkout)], check=True)
@@ -421,17 +427,43 @@ class ContextTests(unittest.TestCase):
         self.enterContext(mock.patch.dict(os.environ, {"HEAD_SHA": HEAD, "XDG_STATE_HOME": str(tmp / "state")}))
         folder = tmp / "context"
 
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
             code = run.run(tmp / "state" / "projector" / "reviews", 1, checkout, model=MODEL, agent="command",
                            configured_runner=shlex.join([sys.executable, str(agent / "agent.py"), str(agent)]),
                            context_listed="acme/docs, acme/secret",
-                           environ={**os.environ, run.CONTEXT_DIR: str(folder)})
+                           environ={**os.environ, run.CONTEXT_DIR: str(folder), run.CONTEXT_TOKEN: "clone-token",
+                                    **given})
+        self.assertEqual(0, code, err.getvalue())
+        return agent, context, err.getvalue()
 
-        self.assertEqual(0, code)
+    def test_a_refused_context_token_leaves_the_context_out_and_the_review_goes_on(self) -> None:
+        # GitHub refuses the whole token when the app cannot reach one listed repository. Failing the review
+        # then would stop every review in the repository over one stale entry.
+        agent, context, err = self.review_with_context(**{run.CONTEXT_TOKEN: "", run.CONTEXT_MINT: "failure"})
+
+        self.assertTrue((agent / "published.json").exists(), "the review still runs and publishes")
+        self.assertEqual([], context.calls, "nothing is checked or cloned")
+        self.assertNotIn("context", json.loads((agent / "seen.json").read_text())["stdin"])
+        self.assertIn("GitHub refused a token for them, because the app cannot reach one of them", err)
+
+    def test_a_run_clones_each_kept_repository_and_names_only_those_in_the_prompt(self) -> None:
+        agent, _, _ = self.review_with_context()
+        folder = Path(json.loads((agent / "seen.json").read_text())["env"][run.CONTEXT_DIR])
+
         stdin = json.loads((agent / "seen.json").read_text())["stdin"]
         self.assertIn(str(folder / "acme" / "docs"), stdin)
         self.assertNotIn("secret", stdin, "a private repository stays out of a public repository's review")
         self.assertEqual(["acme/docs"], [path.relative_to(folder).as_posix() for path in folder.glob("*/*")])
+
+    def test_a_run_clones_with_the_context_token_and_keeps_it_from_the_agent(self) -> None:
+        # The agent only reads the clones; a token for their repositories in its environment would let a pull
+        # request steer it to reach them some other way.
+        agent, context, _ = self.review_with_context()
+
+        self.assertNotIn(run.CONTEXT_TOKEN, json.loads((agent / "seen.json").read_text())["env"])
+        self.assertEqual({"acme/docs": {"clone-token"}, "acme/secret": {"clone-token"}, REPO: {None}},
+                         context.tokens, "the context repositories are checked and cloned with the clone token, "
+                         "and the reviewed repository with the review's")
 
 
 def matches(rule: str, command: str) -> bool:

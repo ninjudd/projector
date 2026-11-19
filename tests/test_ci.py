@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from projector import ci, cli, review, summary
+from projector import ci, cli, review, run, summary
 from projector.core import UsageError
 from tests.test_projector import RepositoryTestCase, RulesetGitHub
 
@@ -232,6 +232,17 @@ class InitCiReviewTests(RepositoryTestCase):
         self.assertEqual(0, named, named_err)
         self.assertEqual(["ubuntu-latest"] * 2, runs_on(self.workflow().read_text()),
                          "naming the hosted runner moves the reviews back to it")
+
+    def test_the_gate_note_names_the_runner_the_reviews_run_on(self) -> None:
+        # A hosted label told to install tools on "your runner" hides the advice a hosted runner needs.
+        (self.root / ".projector.toml").write_text("[review]\ngate = 'make check'\n")
+        notes = {}
+        for labels in ("ubuntu-latest", "self-hosted,linux"):
+            notes[labels] = self.init("--ci-review", "--ci-runs-on", labels)[2]
+
+        self.assertIn("on a hosted runner", notes["ubuntu-latest"])
+        self.assertNotIn("on your runner", notes["ubuntu-latest"])
+        self.assertIn("on your runner", notes["self-hosted,linux"])
 
     def test_a_runner_credential_passes_no_secret_and_sets_none(self) -> None:
         # An unset secret reads as empty, and an empty variable in the step's env hides the runner's own.
@@ -502,9 +513,12 @@ class ActionTests(unittest.TestCase):
                                  {line.strip() for line in workflow.splitlines() if ci.APP_KEY in line},
                                  "the key is in no job's or step's env, only each job's input")
         steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
-        self.assertEqual(["Mint the app's token"],
+        minting = ["Mint the app's token", "Mint the context token"]
+        self.assertEqual(minting,
                          [name for name, step in steps.items() if "app-private-key" in step or ci.APP_KEY in step])
-        self.assertIn("private-key: ${{ inputs.app-private-key }}\n", steps["Mint the app's token"])
+        for name in minting:
+            self.assertIn("private-key: ${{ inputs.app-private-key }}\n", steps[name])
+            self.assertIn("uses: actions/create-github-app-token@", steps[name])
 
     def test_the_review_and_its_summary_post_as_the_app_whose_token_they_use(self) -> None:
         # The token and the login must come from the same step, or a step posts as one account and names another;
@@ -530,7 +544,7 @@ class ActionTests(unittest.TestCase):
         self.assertIn("PROJECTOR_SUMMARY_HANDOFF", review_step)
 
     def context_token(self, listed: str) -> str:
-        """The `repositories` the action's context step hands the step that mints the app's token, when the
+        """The `repositories` the action's context step hands the step that mints the context token, when the
         repository's setting lists `listed`."""
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
         (tmp / "project").write_text(f"#!/bin/sh\nprintf '%s\\n' '{listed}'\n")
@@ -544,20 +558,34 @@ class ActionTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         return dict(line.partition("=")[::2] for line in output.read_text().splitlines())["repositories"]
 
-    def test_the_apps_token_reaches_the_reviewed_repository_and_its_owners_context_repositories(self) -> None:
-        # A token without the context repositories cannot clone them, and one without the reviewed repository
-        # cannot post the review.
-        self.assertEqual("app,docs,lib", self.context_token("acme/docs, other/x, acme/app, acme/lib"))
-        self.assertEqual("", self.context_token(""), "no context keeps the token on the reviewed repository")
+    def test_only_a_read_only_token_reaches_the_context_repositories_and_the_agent_never_gets_it(self) -> None:
+        # The review's token writes comments and statuses, so on a context repository a pull request could steer
+        # the agent to write there. Only a token that reads them may reach them, and only the run's clones use it.
+        self.assertEqual("docs,lib", self.context_token("acme/docs, other/x, acme/app, acme/lib"))
+        self.assertEqual("", self.context_token(""), "no context repositories mint no context token")
         self.assertEqual("", self.context_token("other/docs"))
 
         steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
-        context = re.search(r"\n      id: (\S+)\n", steps["Read the context repositories"]).group(1)
-        mint = steps["Mint the app's token"]
-        self.assertIn(f"repositories: ${{{{ steps.{context}.outputs.repositories }}}}\n", mint)
-        # With an owner and no repositories, the token would reach every repository the installation covers.
+        ids = {name: found.group(1) for name, step in steps.items()
+               if (found := re.search(r"\n      id: (\S+)\n", step))}
+        self.assertNotIn("repositories:", steps["Mint the app's token"], "the review's token reaches its repository")
+        mint = steps["Mint the context token"]
+        self.assertIn(f"if: steps.{ids['Read the context repositories']}.outputs.repositories != ''\n", mint)
+        self.assertIn(f"repositories: ${{{{ steps.{ids['Read the context repositories']}.outputs.repositories }}}}\n",
+                      mint)
+        self.assertEqual(["permission-contents: read"],
+                         [line.strip() for line in mint.splitlines() if line.strip().startswith("permission-")])
+        # With an owner and no repositories, a token would reach every repository the installation covers.
         self.assertNotIn("owner:", mint)
-        self.assertIn("permission-contents: read\n", mint)
+        self.assertIn(f"{run.CONTEXT_TOKEN}: ${{{{ steps.{ids['Mint the context token']}.outputs.token }}}}\n",
+                      steps["Review the pull request"])
+        self.assertEqual(1, ACTION.read_text().count(f"steps.{ids['Mint the context token']}.outputs.token"),
+                         "no other step gets the context token")
+        # GitHub refuses the whole token over one repository the app cannot reach; the review goes on without
+        # the context, which the run learns from the step's outcome.
+        self.assertIn("continue-on-error: true\n", mint)
+        self.assertIn(f"{run.CONTEXT_MINT}: ${{{{ steps.{ids['Mint the context token']}.outcome }}}}\n",
+                      steps["Review the pull request"])
 
     def test_a_pull_request_cannot_add_a_context_repository_to_its_own_review(self) -> None:
         # The step that sets the token's reach reads the setting with `project config get`, which must take a
