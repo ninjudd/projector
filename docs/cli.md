@@ -5011,8 +5011,9 @@ yours as unknown senders, beside the number of peers.
 A hosted Projector service runs the parts of Projector that need a server,
 such as posting CI reviews as its own app, for an account you sign in to with
 GitHub. `project hosted` signs you in, shows the account, subscribes it,
-claims an installation of the service's app for it, and signs you out. Every command talks to the service `hosted.url` names, which
-defaults to `https://api.projector.bot`. Set it to use another instance:
+claims an installation of the service's app for it, and signs you out.
+Every command talks to the service `hosted.url` names, which defaults to
+`https://api.projector.bot`. Set it to use another instance:
 
 ```sh
 project config set hosted.url https://projector.example.com
@@ -5048,10 +5049,15 @@ sends back only the 32 random bytes, which proves the machine holds the key
 without sending it. The same key opens your relay records, so the command
 refuses anything else the service seals to it, sends nothing back, and shows
 none of it: a service that passed off a relay record as a challenge learns
-nothing from the answer. A key belongs to one account, and the service refuses one that another
-account registered. Without `agent.key`, the command keeps the token and
-registers no key, and says why; run `project agent key init`, then
-`project hosted login` again.
+nothing from the answer. A key belongs to one account, and the service
+refuses one that another account registered. Without `agent.key`, the
+command keeps the token and registers no key, and says why; run
+`project agent key init`, then `project hosted login` again.
+
+The account token must be `pjh_` and 43 characters of base64url, the form the
+service issues. The command keeps nothing else in the keychain, because a
+token comes from a server, and the macOS keychain stores it through a script
+in which a space, quote, or newline could start another command.
 
 ### Show the account
 
