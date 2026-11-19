@@ -1,9 +1,9 @@
 """`project review run`: review one pull request's head with an agent and no session, as a CI job does.
 
-The command checks that the head may be reviewed here, starts the agent through a preset or a command the
-repository names, in a permission mode where nobody is asked, and checks once the agent exits that it
-published a verdict on the head. When it did not, the command cleans the review up, says why on the pull
-request, and fails. docs/projects/review-in-ci/readme.md § 2 describes the flow.
+The command checks that the head may be reviewed here, labels the pull request `reviewing`, starts the agent
+through a preset or a command the repository names, in a permission mode where nobody is asked, and checks
+once the agent exits that it published a verdict on the head. When it did not, the command cleans the review
+up, says why on the pull request, and fails. docs/projects/review-in-ci/readme.md § 2 describes the flow.
 """
 
 from __future__ import annotations
@@ -194,6 +194,11 @@ def report_text(path: Path) -> str:
     return text if len(text) <= REPORT_LIMIT else text[:REPORT_LIMIT] + "…"
 
 
+def print_labels(labeled: Optional[dict]) -> None:
+    for line in review.label_lines(labeled):
+        print(line, file=sys.stderr if line.startswith("warning: ") else sys.stdout)
+
+
 def start(invocation: Invocation, environ: dict[str, str], cwd: Path, timeout: float) -> tuple[Optional[int], bool]:
     """Run the agent in its own process group, so a run out of time ends with every process it started, on
     Windows too. Returns its exit code, or None when it could not start, and whether it ran out of time."""
@@ -240,6 +245,7 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
               "pass --rereview to review it again")
         return 0
     replace = stale_start(review.start_comments(repo, number, reviewer), reviews, head, model)
+    token = review.reviewer_token(reviewer)
 
     base = dict(os.environ if environ is None else environ)
     scratch = Path(tempfile.mkdtemp(prefix="projector-review-run-"))
@@ -265,7 +271,15 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
     paths = review.Paths(root, repo, number, model)
     before, held = stored(paths), set(paths.locks())
     try:
+        if labels:
+            # The agent's `setup` would add it too, but only after the agent has read the skill and the repository.
+            print_labels(review.change_labels(repo, number, review.label_names(pr), {review.REVIEWING_LABEL}, set(),
+                                              token))
         code, timed_out = start(invocation, environment, checkout, timeout_minutes * 60)
+    except BaseException:
+        if labels:
+            review.clear_reviewing(repo, number, reviewer, token)
+        raise
     finally:
         for path in invocation.written:
             path.unlink(missing_ok=True)
@@ -299,10 +313,13 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
             if before is not None:
                 print(f"project: left the review state of {repo}#{number} by {model} alone, because the agent did "
                       "not set it up", file=sys.stderr)
+            if labels:
+                # The run added `reviewing` itself, and no `finish` takes it off a review the agent never set up.
+                # A live start comment, such as another loop's, keeps it.
+                print_labels(review.clear_reviewing(repo, number, reviewer, token))
     except ReviewError as error:
         print(f"project: could not clean the review up: {error}", file=sys.stderr)
     review.run_gh(["api", f"repos/{repo}/issues/{number}/comments",
-                   "-f", f"body={failure_body(head, model, reason, run_link(base))}"],
-                  review.reviewer_token(reviewer))
+                   "-f", f"body={failure_body(head, model, reason, run_link(base))}"], token)
     print(f"project: {repo}#{number} at {head[:7]} has no verdict by {model}: {reason}", file=sys.stderr)
     return 1
