@@ -1,0 +1,382 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index c7725bb6..a8e9863d 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2770,16 +2770,25 @@ was published:
+ ```console
+ $ project review run 66 --model claude-opus-5-5
+ reviewing owner/example#66 at 3f2a91c as github-actions[bot] with claude-opus-5-5 through claude
++added the reviewing label
+ published https://github.com/owner/example/pull/66#pullrequestreview-2211
+ ```
+ 
+ Before it starts anything, the command reads the pull request. It refuses
+-a pull request whose head is in a fork, and a draft, however the run was
+-started. When the reviewer already has a verdict by this model on the head,
+-it prints that review's address and exits 0, so a rerun of a finished job
+-posts nothing. Pass `--rereview` to review the head again. A live start
+-comment by this reviewer and model on the head can only be a cancelled
+-run's, so the agent's `setup` replaces it.
++a pull request whose head is in a fork, a draft, and a closed pull request,
++however the run was started. When the reviewer already has a verdict by
++this model on the head, it prints that review's address and exits 0, so a
++rerun of a finished job posts nothing. Pass `--rereview` to review the head
++again. A live start comment by this reviewer and model on the head can only
++be a cancelled run's, so the agent's `setup` replaces it.
++
++Once those checks pass, the command adds the `reviewing` label to the pull
++request and then starts the agent. The agent takes a minute or so to reach
++its `setup`, which posts the start comment and finds the label already
++there. `review.labels = false` turns the label off here as it does for
++every review command. The command creates the label when the repository
++lacks it, and when GitHub refuses the change, it prints a warning and
++starts the agent anyway.
+ 
+ `--agent` picks how the agent starts, and `review.runner` sets the default:
+ 
+@@ -2819,6 +2828,10 @@ while the run ended: the cleanup goes ahead only while the head's lock
+ still names the run's loop. It removes the review's worktrees before it
+ lets go of that lock, so a review set up on the head right after keeps its
+ own. A lock the agent's `setup` took and left with no state is removed.
++When the agent set no review up, because it could not start or stopped
++before its `setup`, the command takes `reviewing` off itself, unless a live
++start comment, such as another loop's, means a review is in progress. It
++does the same when it is interrupted while the agent runs.
+ The command then posts one comment on the pull request that names the
+ head, the report file's text or why there is none, and the Actions run
+ when there is one, and exits 1.
+diff --git a/docs/projects/review-in-ci/readme.md b/docs/projects/review-in-ci/readme.md
+index 07558cb6..f3b76e7e 100644
+--- a/docs/projects/review-in-ci/readme.md
++++ b/docs/projects/review-in-ci/readme.md
+@@ -1011,6 +1011,17 @@ These tests fail before the change, and each catches the bug it names:
+   writes passes no `config`, so § 10 has a self-hosted runner keep its
+   overrides in that file itself; a per-job configuration file is left for a
+   repository that needs both.
++- **The run adds `reviewing` before the agent starts.** In a measured run,
++  GitHub created the job at 0:00, `project review run` started the agent at
++  0:17, and the agent's `setup` added the label at 1:09, because the agent
++  reads the skill and the repository first. So once its refusal checks pass,
++  the run adds the label itself, through the same `change_labels` that
++  `setup` uses, and `setup` then finds it present and changes nothing. The
++  start comment stays with `setup`. When the agent publishes no verdict and
++  never set a review up, as when it cannot start or times out first, the
++  run takes the label off with `clear_reviewing`, which keeps it while a
++  live start comment, such as another loop's, means a review is in
++  progress.
+ 
+ ## 10. Self-hosted runners
+ 
+diff --git a/docs/review-in-ci.md b/docs/review-in-ci.md
+index e61d8c57..c8bd9fe6 100644
+--- a/docs/review-in-ci.md
++++ b/docs/review-in-ci.md
+@@ -119,10 +119,15 @@ number. Each job:
+    describes. The action runs Projector from the source at the ref the
+    workflow names, not from an installed package, so it sets
+    `PROJECTOR_VERSION` from that source's `.claude-plugin/plugin.json`. The
+-   review names that version in its start comment and its signature.
+-5. **Fails loudly.** When the agent publishes no verdict, the job deletes
+-   the start comment, takes `reviewing` off, posts one comment that says
+-   why, and fails.
++   review names that version in its start comment and its signature. Once
++   its own checks pass, and before the agent starts, the command adds the
++   `reviewing` label. In a measured run, the pull request showed the
++   review 17 seconds after the push, rather than at 70 seconds, when the
++   agent's `setup` posts the start comment.
++5. **Fails loudly.** When the agent publishes no verdict, whether it could
++   not start, ran out of time, or exited, the job deletes the start
++   comment, takes `reviewing` off, posts one comment that says why, and
++   fails.
+ 
+ A second job, `summary`, starts once every review job has ended. It holds
+ the only token that can push `refs/projector/summaries`, and it runs no
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 358e6b58..ad053e44 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -2500,15 +2500,6 @@ def labels_enabled(checkout: Path) -> bool:
+         return True
+ 
+ 
+-def label_lines(labeled: Optional[dict]) -> list[str]:
+-    """What a review command did to the labels, and a warning when GitHub refused the change."""
+-    if not labeled:
+-        return []
+-    lines = [f"added the {name} label" for name in labeled["added"]]
+-    lines += [f"removed the {name} label" for name in labeled["removed"]]
+-    return lines + ([f"warning: {labeled['warning']}"] if labeled["warning"] else [])
+-
+-
+ def review_run(arguments: argparse.Namespace) -> int:
+     """`review run`: one head's review by an agent, in the state the agent's own review commands use."""
+     checkout = review.checkout_root(arguments.checkout or Path.cwd())
+@@ -2630,7 +2621,7 @@ def run_review(arguments: argparse.Namespace) -> int:
+                 print(f"{result['sha'][:7]} is {'signed off' if result['signed_off'] else 'not signed off'}")
+                 if result["status"]:
+                     print(f"posted {review.REVIEW_CONTEXT} {result['status']} on {result['sha'][:7]}")
+-                for line in label_lines(result["labels"]):
++                for line in review.label_lines(result["labels"]):
+                     print(line, file=sys.stderr if line.startswith("warning: ") else sys.stdout)
+                 if result["dismissed"]:
+                     print("dismissed change request " + ", ".join(map(str, result["dismissed"])))
+@@ -2668,7 +2659,7 @@ def run_review(arguments: argparse.Namespace) -> int:
+         print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
+         if command == "setup" and arguments.replace is not None:
+             print(f"deleted start comment {arguments.replace}, which this review replaces")
+-        for line in label_lines(state.get("labels")):
++        for line in review.label_lines(state.get("labels")):
+             print(line, file=sys.stderr if line.startswith("warning: ") else sys.stdout)
+         for path in state["removed"]:
+             print(f"removed the earlier head's worktree {path}")
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 6c6e4d94..2cf8cd42 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -1008,6 +1008,15 @@ def change_labels(repo: str, number: int, present: set[str], add: set[str], remo
+     return {"added": added, "removed": removed, "warning": None}
+ 
+ 
++def label_lines(labeled: Optional[dict]) -> list[str]:
++    """What a review command did to the labels, and a warning when GitHub refused the change."""
++    if not labeled:
++        return []
++    lines = [f"added the {name} label" for name in labeled["added"]]
++    lines += [f"removed the {name} label" for name in labeled["removed"]]
++    return lines + ([f"warning: {labeled['warning']}"] if labeled["warning"] else [])
++
++
+ def reviews_in_progress(repo: str, number: int, reviewer: str, reviews: list[dict],
+                         exclude: Optional[int] = None) -> bool:
+     """Whether a start comment of the reviewer's on the pull request, other than `exclude`, still means a review
+diff --git a/src/projector/run.py b/src/projector/run.py
+index 07e3d2cf..0e25b245 100644
+--- a/src/projector/run.py
++++ b/src/projector/run.py
+@@ -1,9 +1,9 @@
+ """`project review run`: review one pull request's head with an agent and no session, as a CI job does.
+ 
+-The command checks that the head may be reviewed here, starts the agent through a preset or a command the
+-repository names, in a permission mode where nobody is asked, and checks once the agent exits that it
+-published a verdict on the head. When it did not, the command cleans the review up, says why on the pull
+-request, and fails. docs/projects/review-in-ci/readme.md § 2 describes the flow.
++The command checks that the head may be reviewed here, labels the pull request `reviewing`, starts the agent
++through a preset or a command the repository names, in a permission mode where nobody is asked, and checks
++once the agent exits that it published a verdict on the head. When it did not, the command cleans the review
++up, says why on the pull request, and fails. docs/projects/review-in-ci/readme.md § 2 describes the flow.
+ """
+ 
+ from __future__ import annotations
+@@ -194,6 +194,11 @@ def report_text(path: Path) -> str:
+     return text if len(text) <= REPORT_LIMIT else text[:REPORT_LIMIT] + "…"
+ 
+ 
++def print_labels(labeled: Optional[dict]) -> None:
++    for line in review.label_lines(labeled):
++        print(line, file=sys.stderr if line.startswith("warning: ") else sys.stdout)
++
++
+ def start(invocation: Invocation, environ: dict[str, str], cwd: Path, timeout: float) -> tuple[Optional[int], bool]:
+     """Run the agent in its own process group, so a run out of time ends with every process it started, on
+     Windows too. Returns its exit code, or None when it could not start, and whether it ran out of time."""
+@@ -240,6 +245,7 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
+               "pass --rereview to review it again")
+         return 0
+     replace = stale_start(review.start_comments(repo, number, reviewer), reviews, head, model)
++    token = review.reviewer_token(reviewer)
+ 
+     base = dict(os.environ if environ is None else environ)
+     scratch = Path(tempfile.mkdtemp(prefix="projector-review-run-"))
+@@ -265,7 +271,15 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
+     paths = review.Paths(root, repo, number, model)
+     before, held = stored(paths), set(paths.locks())
+     try:
++        if labels:
++            # The agent's `setup` would add it too, but only after the agent has read the skill and the repository.
++            print_labels(review.change_labels(repo, number, review.label_names(pr), {review.REVIEWING_LABEL}, set(),
++                                              token))
+         code, timed_out = start(invocation, environment, checkout, timeout_minutes * 60)
++    except BaseException:
++        if labels:
++            review.clear_reviewing(repo, number, reviewer, token)
++        raise
+     finally:
+         for path in invocation.written:
+             path.unlink(missing_ok=True)
+@@ -299,10 +313,13 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
+             if before is not None:
+                 print(f"project: left the review state of {repo}#{number} by {model} alone, because the agent did "
+                       "not set it up", file=sys.stderr)
++            if labels:
++                # The run added `reviewing` itself, and no `finish` takes it off a review the agent never set up.
++                # A live start comment, such as another loop's, keeps it.
++                print_labels(review.clear_reviewing(repo, number, reviewer, token))
+     except ReviewError as error:
+         print(f"project: could not clean the review up: {error}", file=sys.stderr)
+     review.run_gh(["api", f"repos/{repo}/issues/{number}/comments",
+-                   "-f", f"body={failure_body(head, model, reason, run_link(base))}"],
+-                  review.reviewer_token(reviewer))
++                   "-f", f"body={failure_body(head, model, reason, run_link(base))}"], token)
+     print(f"project: {repo}#{number} at {head[:7]} has no verdict by {model}: {reason}", file=sys.stderr)
+     return 1
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 8daea9ed..2b0f653d 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -412,6 +412,19 @@ def test_takes_off_a_clean_label_no_clean_verdict_on_the_head_supports(self) ->
+         self.assertIn("removed the clean label", out)
+         self.assertEqual([], self.github.created_labels, "a label the repository has is used as it is")
+ 
++    def test_setup_after_review_run_labeled_the_pull_request_changes_no_label(self) -> None:
++        # `project review run` adds `reviewing` before it starts the agent, so the agent's setup finds it on the pull
++        # request; a setup that re-added it, or failed on it, would break every CI review.
++        self.github.repo_labels.add("reviewing")
++        self.github.pr["labels"] = [{"name": "reviewing"}]
++
++        code, out, err = self.setup_review()
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(["reviewing"], self.github.labels())
++        self.assertEqual([], [args for args, _ in self.github.calls if args[:2] == ["pr", "edit"]])
++        self.assertNotIn("added the reviewing label", out)
++
+     def test_a_verdict_read_that_fails_keeps_the_clean_label_and_finishes_the_setup(self) -> None:
+         # The start comment is already posted and the lock held when setup reads the verdicts.
+         self.github.repo_labels.update({"clean", "reviewing"})
+diff --git a/tests/test_run.py b/tests/test_run.py
+index b4c99b2a..2b3ef4dd 100644
+--- a/tests/test_run.py
++++ b/tests/test_run.py
+@@ -63,6 +63,11 @@ def __init__(self, agent_folder: Path) -> None:
+         self.starts: list[dict] = []
+         self.posted: list[str] = []
+         self.deleted: list[str] = []
++        # The labels the repository has, each `gh pr edit` with whether the agent had started by then, and whether
++        # GitHub refuses every edit.
++        self.repo_labels: set[str] = set()
++        self.edits: list[tuple[str, bool]] = []
++        self.refuse_edits = False
+         # Called when the run's cleanup lists start comments, after the agent ran.
+         self.on_cleanup: Optional[Callable[[], None]] = None
+ 
+@@ -94,6 +99,20 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+         if args[:3] == ["api", "-X", "DELETE"]:
+             self.deleted.append(args[3])
+             return ""
++        if args[:2] == ["pr", "edit"]:
++            add = [args[i + 1] for i, arg in enumerate(args) if arg == "--add-label"]
++            remove = {args[i + 1] for i, arg in enumerate(args) if arg == "--remove-label"}
++            if self.refuse_edits:
++                raise ReviewError("HTTP 403: Resource not accessible by integration")
++            if any(name not in self.repo_labels for name in add):
++                raise ReviewError(f"'{add[0]}' not found")
++            self.edits.append((" ".join(args[5:]), (self.agent_folder / "seen.json").exists()))
++            kept = [label for label in self.pr.get("labels") or [] if label["name"] not in remove]
++            self.pr["labels"] = kept + [{"name": name} for name in add]
++            return ""
++        if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/labels"]:
++            self.repo_labels.add(args[5].removeprefix("name="))
++            return "{}"
+         raise AssertionError(f"unexpected gh call: {args}")
+ 
+ 
+@@ -123,7 +142,8 @@ def behave(self, behavior: str) -> None:
+     def review_run(self, **options: object) -> int:
+         settings = dict(model=MODEL, agent="command", configured_runner=self.runner)
+         settings.update(options)
+-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
++        self.out, self.err = io.StringIO(), io.StringIO()
++        with redirect_stdout(self.out), redirect_stderr(self.err):
+             return run.run(self.tmp / "state" / "projector" / "reviews", 1, self.checkout, **settings)
+ 
+     def seen(self) -> dict:
+@@ -325,6 +345,89 @@ def test_a_windows_agent_out_of_time_is_killed_and_reaped(self) -> None:
+                          "the agent's whole process tree ends, not only the agent")
+         process.wait.assert_called_once()
+ 
++    def labels(self) -> list[str]:
++        return [label["name"] for label in self.github.pr.get("labels") or []]
++
++    def test_run_labels_the_pull_request_reviewing_before_the_agent_starts(self) -> None:
++        # Only the agent's `setup` added `reviewing`, about a minute into the job, once the agent had read the skill
++        # and the repository, so the pull request read as idle until then.
++        self.assertEqual(0, self.review_run())
++
++        self.assertEqual([("--add-label reviewing", False)], self.github.edits,
++                         "the label goes on before the agent process starts")
++        self.assertIn("added the reviewing label", self.out.getvalue())
++        self.assertIn("reviewing", self.github.repo_labels, "a repository without the label gets it created")
++
++    def test_a_refused_run_adds_no_label(self) -> None:
++        # A run that labeled before its refusal checks would mark a fork, a draft, a closed pull request, or a head
++        # it already reviewed as in progress, with no review coming to take the label off.
++        refusals = ((lambda: self.github.pr["head"].update(repo={"full_name": "outsider/app"}), "a fork"),
++                    (lambda: self.github.pr.update(draft=True), "a draft"),
++                    (lambda: self.github.pr.update(state="closed"), "a closed pull request"),
++                    (lambda: self.github.reviews.append({"id": 900, "url": "https://example.test/900",
++                                                         "at": "2026-11-18T10:00:00Z", "body": verdict_body(HEAD)}),
++                     "a head already reviewed"))
++        for change, why in refusals:
++            with self.subTest(why=why):
++                self.setUp()
++                change()
++
++                try:
++                    self.assertEqual(0, self.review_run())
++                except ReviewError:
++                    pass
++
++                self.assertEqual([], self.github.edits, why)
++                self.assertFalse(self.started())
++
++    def test_review_labels_false_keeps_the_run_off_the_labels(self) -> None:
++        # The early label ignored `review.labels = false`, which turns every review command's labels off.
++        for behavior in ("publish", "nothing"):
++            with self.subTest(behavior=behavior):
++                self.setUp()
++                self.behave(behavior)
++
++                self.review_run(labels=False)
++
++                self.assertEqual([], self.github.edits)
++                self.assertTrue(self.started())
++
++    def test_a_label_github_refuses_warns_and_the_agent_still_starts(self) -> None:
++        # The labels are a view, so a refusal that failed the run would cost the review itself.
++        self.github.refuse_edits = True
++
++        self.assertEqual(0, self.review_run())
++
++        self.assertIn("warning: left the labels on acme/app#1 as they were", self.err.getvalue())
++        self.assertTrue(self.started())
++
++    def test_every_run_that_publishes_no_verdict_takes_reviewing_off(self) -> None:
++        # Only `finish` of a review the agent set up took `reviewing` off, so once the run added it before the agent's
++        # `setup`, a launch failure, a timeout or an exit before setup, or a crash left the pull request reading as
++        # reviewing with nothing reviewing it.
++        def set_up_and_exit() -> dict:
++            (self.agent / "setup.json").write_text(json.dumps(self.review_files("run", 501)))
++            self.behave("nothing")
++            return {}
++
++        cases = (("the agent could not start", lambda: {"configured_runner": str(self.tmp / "missing-agent")}),
++                 ("the agent exited before its setup", lambda: self.behave("nothing") or {}),
++                 ("the agent set up and exited with no verdict", set_up_and_exit),
++                 ("the agent ran out of time", lambda: self.behave("sleep") or {"timeout_minutes": 0.02}))
++        for why, prepare in cases:
++            with self.subTest(why=why):
++                self.setUp()
++
++                self.assertEqual(1, self.review_run(**prepare()))
++
++                self.assertEqual("--add-label reviewing", self.github.edits[0][0])
++                self.assertEqual([], self.labels(), why)
++
++        self.setUp()
++        with mock.patch.object(run, "start", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
++            self.review_run()
++        self.assertEqual([], self.labels(), "a run interrupted before the agent's setup takes the label off")
++
+     def test_runner_takes_the_agent_then_review_runner_then_claude(self) -> None:
+         self.assertEqual(("claude", None), run.runner(None, None))
+         self.assertEqual(("codex", None), run.runner(None, "codex"))

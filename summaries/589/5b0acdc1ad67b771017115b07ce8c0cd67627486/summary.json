@@ -1,0 +1,129 @@
+{
+ "version": 1,
+ "name": "Early reviewing label in CI",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 589,
+  "title": "Label a pull request reviewing as project review run starts its agent, not a minute later at the agent's setup",
+  "head": "5b0acdc1ad67b771017115b07ce8c0cd67627486",
+  "headRef": "review-run-early-label",
+  "base": "e7a1e2ae5f1e84ec59eb7c5d988a5e0646ff6272",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "When a pull request is reviewed in GitHub Actions, <code>project review run</code> starts an agent that runs the <code>review-pr</code> skill with nobody watching. The <code>reviewing</code> label is how the pull-request list shows that a review is under way. Until now, only the agent's own <code>project review setup</code> added that label, and the agent spends most of its first minute reading the skill and the repository before it gets there. So a pull request looked idle for about 70 seconds after its job started.",
+   "This change makes <code>project review run</code> add the label itself, after its refusal checks pass and just before it starts the agent, which happens at about 17 seconds into the job. Because the label now goes on before any review exists, the run also has to take it off in cases where nothing else would: the agent could not start, it stopped before its <code>setup</code>, or the run was interrupted. The start comment still comes from the agent's <code>setup</code>."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b><code>reviewing</code> label</b>: the label that marks a pull request whose review is in progress.</li><li><b>Start comment</b>: the comment the agent's <code>setup</code> posts when a review begins. While it is live, it means a review is in progress.</li><li><b><code>clear_reviewing</code></b>: removes the label unless a live start comment still means a review is in progress.</li><li><b><code>review.labels = false</code></b>: the setting that turns off every label change a review command makes.</li></ul>"
+   },
+   {
+    "id": "outcomes",
+    "title": "Who takes the label off",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>How the run ends</th><th>Who removes <code>reviewing</code></th></tr></thead><tbody><tr><td>The agent publishes a verdict</td><td class=\"r\">The agent's <code>publish</code></td></tr><tr><td>The agent set a review up but published nothing</td><td class=\"r\"><code>review.finish</code>, as before</td></tr><tr><td>The agent could not start, or stopped before <code>setup</code></td><td class=\"r\">The run, through <code>clear_reviewing</code> (new)</td></tr><tr><td>The run is interrupted while the agent runs</td><td class=\"r\">The run, through <code>clear_reviewing</code>, and then it re-raises (new)</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "run",
+   "title": "Labeling from the run",
+   "kicker": "Where project review run adds the label and takes it off again",
+   "intro": [
+    "<code>run</code> in <code>run.py</code> is the whole CI review. It reads the pull request and refuses forks, drafts, closed pull requests, and heads this model already reviewed. Then it starts the agent and checks afterward that a verdict was published. The new label edit sits between those two steps, inside the same <code>try</code> as the agent's start. That placement means every refusal returns before the label goes on, and an exception after the label goes on can still take it off.",
+    "To make the label edit and the failure comment use one credential, the reviewer's token is now read once, before anything starts, rather than only on the failure path. <code>label_lines</code>, which turns a label change into output lines, moves from <code>cli.py</code> to <code>review.py</code> so that <code>run.py</code> can print the same lines <code>setup</code> prints."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The label edit uses <code>change_labels</code>, the same helper <code>setup</code> uses. That helper creates a missing label, skips a label that is already present, and turns a GitHub refusal into a warning rather than an error, so a refused label never stops the review."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/run.py",
+     "note": "The run adds <code>reviewing</code> before it starts the agent, and removes it when the agent set no review up or the run is interrupted.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 274,
+       "text": "Every early return and refusal in <code>run</code> comes before this line, so a fork, a draft, a closed pull request, or an already-reviewed head never gets the label. I traced each one, and <code>test_a_refused_run_adds_no_label</code> covers the four refusals."
+      },
+      {
+       "kind": "context",
+       "line": 279,
+       "text": "The handler catches <code>BaseException</code> so that an interrupt, such as a cancelled Actions job's SIGINT, takes the label off and then re-raises. If the agent had already posted its start comment, <code>clear_reviewing</code> leaves the label on."
+      },
+      {
+       "kind": "verify",
+       "line": 319,
+       "text": "This branch runs only when the agent set no review up. When it did set one up, <code>review.finish</code> above already removes the label, so neither path removes it twice. I read both branches against <code>set_up_here</code>."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/review.py",
+     "note": "<code>label_lines</code> moves here from <code>cli.py</code> unchanged."
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Both callers now call <code>review.label_lines</code>."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "When the label goes on, what keeps it off, and what takes it off",
+   "intro": [
+    "The fake <code>gh</code> in <code>tests/test_run.py</code> now handles <code>gh pr edit</code> and label creation. For each edit, it records whether the agent process had started yet, so a test can tell that the label went on before the agent ran rather than through the agent's own <code>setup</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_run.py",
+     "note": "Covers labeling before the agent starts, no label on a refused run, <code>review.labels = false</code>, a refused edit, and label removal on every failure path, interrupt included."
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "Checks that <code>setup</code> makes no second label edit when the run already added <code>reviewing</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The command reference, the CI guide, and the plan's record",
+   "intro": [
+    "<code>docs/cli.md</code> and <code>docs/review-in-ci.md</code> describe the new step and the new cleanup, and the review-in-ci plan records the decision in § 9."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The <code>review run</code> section adds the label step, the cleanup, and closed pull requests to the list of refusals."
+    },
+    {
+     "path": "docs/review-in-ci.md",
+     "note": "Steps 4 and 5 of the job describe the early label and when it comes off.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 124,
+       "text": "The 17-second figure is when the agent started in the measured run, not a label anyone has observed yet. The pull request body says the first CI review after the merge will confirm it. The review lists rewording this as a suggestion."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "note": "§ 9 gains a bullet recording why the run labels early and how the label comes off."
+    }
+   ]
+  }
+ ]
+}
