@@ -19,13 +19,13 @@
   "cards": [
    {
     "id": "rollout",
-    "title": "Complete the credential-backed rollout",
-    "html": "<ul class=\"tight\"><li>The local action starts from this pull request’s checkout, so it does not need the action on <code>main</code> first.</li><li>A credential secret is now set: the hosted review job runs the agent and posts its verdict as <code>github-actions[bot]</code>.</li><li>The hosted-runner facts that § 7 of the plan lists still need recording from these first runs.</li></ul>"
+    "title": "Record the hosted rollout evidence",
+    "html": "<ul class=\"tight\"><li>The local action starts from this pull request’s checkout, so it does not need the action on <code>main</code> first.</li><li>The <a href=\"https://github.com/ninjudd/projector/actions/runs/44461168881\">hosted run</a> completed both its Claude review job and summary-publication job successfully on this head.</li><li>The hosted-runner facts listed in section 7 of the plan still need recording from these first runs.</li></ul>"
    },
    {
     "id": "validation",
     "title": "Review evidence",
-    "html": "<ul class=\"tight\"><li>The hosted review of <code>ed4f02c</code> ran the workflow’s gate override on the runner. Both plugin validations passed, <code>claude plugin test .</code> passed all 256 hook tests without the interactive session’s declarations, the whitespace check printed nothing, and the exact-head <code>check</code> workflow passed.</li><li>Both earlier findings are fixed. The override’s gate runs <code>claude plugin test .</code> again, and the § 2.8 paragraph of the plan is rewrapped to the width of the lines around it.</li><li>No finding is open, and the review signed this head off.</li></ul>"
+    "html": "<ul class=\"tight\"><li>Both earlier findings are verified fixed. The current full review has no new findings or suggestions.</li><li>The actual CI override was extracted from the workflow and executed with no interactive declarations. Both validations, all 256 hook tests, and the diff check passed; declarations stayed absent.</li><li>The latest-head configured gate also passed, including 256 hook tests, type-checking and exact-head <code>check</code> CI.</li><li>The revised plan paragraph’s longest line is 74 characters, with no split code spans.</li></ul>"
    }
   ]
  },
@@ -87,7 +87,7 @@
       {
        "kind": "verify",
        "line": 67,
-       "text": "The workflow differs from the generator’s output only by the local checkout and action steps in both jobs and the five-line gate override. On the runner, <code>project review gate</code> ran the override: both validations, 256 passing hook tests, and the whitespace check. <code>review.gate_checks</code> still waits for <code>check</code>, and the edited file keeps <code>init</code> from replacing it."
+       "text": "The CI override retains every normal gate command except the interactive-only type check. Executing the extracted override passed both validations, 256 hook tests and the diff check without interactive declarations. Effective configuration still requires exact-head check, and init preserves the edited workflow."
       },
       {
        "kind": "context",
@@ -126,7 +126,7 @@
       {
        "kind": "verify",
        "line": 368,
-       "text": "The rewrapped paragraph from <code>Secrets reach the action</code> to the YAML block stays within 76 characters and splits no code span across lines."
+       "text": "The rewrapped paragraph now matches the surrounding prose: its longest line is 74 characters and no code span is split across lines."
       }
      ]
     }
