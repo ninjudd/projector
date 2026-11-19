@@ -29,8 +29,8 @@ WHERE = {
     "CODEX_AUTH_JSON": "Projector passes gh the auth.json that `codex login` wrote",
     "OPENAI_API_KEY": "paste an API key from the OpenAI platform",
 }
-# The secret holding a GitHub App's private key, which the action hands only to the step that mints the app's
-# token, never to the agent.
+# The secret holding a GitHub App's private key. The workflow passes it as the action's `app-private-key` input,
+# never as `env`, which would reach every step of the action, so only the step that mints the app's token gets it.
 APP_KEY = "PROJECTOR_APP_PRIVATE_KEY"
 HEADER = "# Written by `project init --ci-review`, which replaces this file while nobody has edited it.\n"
 DIGEST = re.compile(r"\A" + re.escape(HEADER) + r"# projector-workflow sha256=([0-9a-f]{64})\n")
@@ -75,12 +75,11 @@ def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None) 
     template = resources.files("projector").joinpath("templates/review-workflow.yml").read_text(encoding="utf-8")
     matrix = "\n".join(f"          - agent: {name}" + (f"\n            model: {model}" if model else "")
                        for name, model in agents.items())
-    secrets = [name for agent in agents for name in CREDENTIALS[agent].values()]
     app = ""
     if app_id is not None:
-        app = f"          app-id: '{app_id}'\n"
-        secrets.append(APP_KEY)
-    env = "\n".join(f"          {name}: ${{{{ secrets.{name} }}}}" for name in secrets)
+        app = f"          app-id: '{app_id}'\n          app-private-key: ${{{{ secrets.{APP_KEY} }}}}\n"
+    env = "\n".join(f"          {name}: ${{{{ secrets.{name} }}}}"
+                    for agent in agents for name in CREDENTIALS[agent].values())
     return (template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@APP@", app)
             .replace("@ENV@", env))
 

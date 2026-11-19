@@ -945,8 +945,11 @@ These tests fail before the change, and each catches the bug it names:
   `review.ci_app`, and the action's `app-id` input post the reviews as a
   public GitHub App, from its private key in the `PROJECTOR_APP_PRIVATE_KEY`
   secret. `actions/create-github-app-token` mints a token limited to the
-  job's repository and the review's permissions, and the steps that install
-  and run the agent blank the key. An app takes `github-actions[bot]`'s place
+  job's repository and the review's permissions. The workflow passes the key
+  as the `app-private-key` input § 2.4 names, never as `env`: a caller's
+  `env` reaches every step of a composite action, while an input sets no
+  environment variable there, so only the step that mints the token
+  receives the key. An app takes `github-actions[bot]`'s place
   in `review.reviewers`, so a workflow posting with its own token no longer
   counts. Context repositories stay deferred to § 6 step 4.
 - **Projector's own reviews post as Projector Review.** Its workflow passes

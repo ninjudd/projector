@@ -297,19 +297,26 @@ class ActionTests(unittest.TestCase):
     def test_an_app_workflow_gives_the_action_the_app_and_its_key(self) -> None:
         with_app, without = ci.workflow_text("v0", {"claude": ""}, 5827721), ci.workflow_text("v0", {"claude": ""})
 
-        self.assertEqual(["'5827721'"], [job.get("app-id") for job in review_jobs(with_app)],
-                         "the app ID is one of the action's inputs, not an environment variable")
-        self.assertIn(f"          {ci.APP_KEY}: ${{{{ secrets.{ci.APP_KEY} }}}}\n", with_app)
+        self.assertEqual([("'5827721'", f"${{{{ secrets.{ci.APP_KEY} }}}}")],
+                         [(job.get("app-id"), job.get("app-private-key")) for job in review_jobs(with_app)],
+                         "the app and its key are both inputs of the action")
         self.assertTrue(ci.unedited(with_app))
         self.assertEqual(([None], False), ([job.get("app-id") for job in review_jobs(without)], ci.APP_KEY in without))
 
     def test_the_app_key_reaches_only_the_step_that_mints_its_token(self) -> None:
-        # A caller's env reaches every step of a composite action; the agent and npm's install scripts run other code.
+        # A caller's env reaches every step of a composite action, the agent's and npm's install scripts included,
+        # and a composite action's inputs set no environment variable. So the workflow passes the key only as an
+        # input, and only the step that mints the token reads that input.
+        own = Path(__file__).parents[1] / ".github" / "workflows" / "projector-review.yml"
+        for name, workflow in (("generated", ci.workflow_text("v0", {"claude": ""}, 5827721)), ("own", own.read_text())):
+            with self.subTest(workflow=name):
+                self.assertEqual([f"app-private-key: ${{{{ secrets.{ci.APP_KEY} }}}}"],
+                                 [line.strip() for line in workflow.splitlines() if ci.APP_KEY in line],
+                                 "the key is in no job's or step's env")
         steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
-        self.assertIn(f"private-key: ${{{{ env.{ci.APP_KEY} }}}}", steps["Mint the app's token"])
-        for name in ("Install the agent", "Review the pull request"):
-            with self.subTest(step=name):
-                self.assertIn(f"        {ci.APP_KEY}: ''\n", steps[name])
+        self.assertEqual(["Mint the app's token"],
+                         [name for name, step in steps.items() if "app-private-key" in step or ci.APP_KEY in step])
+        self.assertIn("private-key: ${{ inputs.app-private-key }}\n", steps["Mint the app's token"])
 
     def test_the_review_posts_as_the_app_whose_token_it_uses(self) -> None:
         # The token and the login must come from the same step, or the review posts as one account and names another.
