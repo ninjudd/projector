@@ -1,0 +1,94 @@
+{
+ "version": 1,
+ "name": "Stacked merge wording",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 600,
+  "title": "Say a stacked layer merged with its stack into the default branch, not only into the branch below it",
+  "head": "37bf2716a4c6aa1cc5cc79c4f20074b44f2d676e",
+  "headRef": "watch-stack-merged",
+  "base": "89b6e38c28ecabaa2c001dde25b9ca5b37dc868f",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's watch daemon polls the pull requests a session subscribes to and tells the session about each event as one line. When a pull request merges, the line is <code>MERGED owner/repo#N into &lt;base&gt; at …</code>, and the agent that reads it decides what to tell the person.",
+   "A stack is a chain of pull requests, each based on the branch of the one below it. GitHub records each upper layer as merged into the branch below it, even when the whole stack merged into the default branch as a unit. Agents reading <code>into layer-5</code> concluded the change missed <code>main</code> and told the person so.",
+   "This pull request makes the daemon check, for a merged pull request whose base is not the default branch, whether that base reached the default branch, and word the line to match:",
+   "<ul><li><code>MERGED … with its stack into main at …</code> when the layers below merged into the default branch.</li><li><code>MERGED … into layer-5 at …, which is not in main yet</code> when a layer below is open or the stack is based on another branch.</li><li>The old wording, unchanged, for a pull request based on the default branch, or when GitHub cannot say.</li></ul>",
+   "The review found one open problem: the check never compares merge times, so a layer merged into a branch whose own pull request merged earlier is reported as landed in <code>main</code>."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Layer</b>: one pull request of a stack.</li><li><b>GitHub stack</b>: the stack GitHub records through <code>repos/&lt;repo&gt;/stacks?pull_request=N</code>, with its <code>base.ref</code> and each layer's <code>merged_at</code>.</li><li><b>Chain</b>: layers linked only by base branches, where GitHub records no stack.</li><li><b>Pass</b>: one round of the daemon's polling; a per-pass memo answers each question once a round.</li></ul>"
+   },
+   {
+    "id": "cost",
+    "title": "What it costs",
+    "html": "<ul class=\"tight\"><li>The pass query also reads <code>defaultBranchRef</code>, at no extra request.</li><li>A pull request based on the default branch makes no request.</li><li>A merged layer reads GitHub's stack once a pass, shared with the fixer-name lookup and every other layer.</li><li>A chain asks <code>pulls?head=&lt;owner&gt;:&lt;branch&gt;&amp;state=all</code> once per branch, only at a merge.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "Wording MERGED for a layer",
+   "kicker": "How the daemon decides whether a merged layer reached the default branch",
+   "intro": [
+    "<code>closed_detail</code> now builds the <code>MERGED</code> or <code>CLOSED</code> line, and only once a pass for the first session that needs it. When the base is neither unknown nor the default branch, it asks <code>landed</code>, which returns <code>True</code>, <code>False</code>, or <code>None</code> when nothing answers.",
+    "<code>landed</code> tries GitHub's stack first: when the pull request is a layer of it, the answer is whether the stack is based on the default branch and every layer below has a <code>merged_at</code>. Otherwise it walks the chain down by head branch, returning <code>False</code> on an open pull request and following each merged one's base until it reaches the default branch.",
+    "The stack request moved from <code>Daemon.stack</code> into <code>Daemon.read_stack</code>, and the per-pass <code>github_stack</code> memo records the answer for every layer it lists. <code>bottom</code>, which names a stack's fixer subagent, reads through the same memo. The four copies of the <code>gh api</code> JSON parsing became <code>json_of</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The stack API's shape matches what <code>landed</code> reads: a live <code>repos/ninjudd/projector/stacks</code> answer carries <code>base.ref</code> and each layer's <code>merged_at</code>, and records a stack merged as a unit with each layer a second after the one below."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "The new <code>closed_detail</code>, <code>landed</code>, <code>github_stack</code>, and <code>pulls_headed</code> on <code>Pass</code>, and <code>read_stack</code> split out of <code>Daemon.stack</code>.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 1695,
+       "text": "<code>landed</code> counts a layer below as carrying this one whenever it has a <code>merged_at</code>, without comparing it with this pull request's <code>mergedAt</code>. When #5 merged into <code>main</code> and kept its branch, and #6 merged into <code>layer-5</code> later, the daemon says <code>with its stack into main</code> though #6's change is only on the dead branch. The stack path at line 1686 has the same gap. A scratch test reproduced it."
+      },
+      {
+       "kind": "verify",
+       "line": 2013,
+       "text": "<code>bottom</code> keeps its freshness cache in <code>daemon.stacks</code>, and now reads the stack through the per-pass memo, so a merge and its fixer name share one request; the new cost test passed in the gate."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "The fake's stacks and head lookups gain <code>merged_at</code>, <code>base</code>, and <code>state=all</code>, and five <code>StackFixerTests</code> cover each wording and the request counts."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documenting the wording",
+   "kicker": "What docs/cli.md and fix-pr tell a reader and an agent",
+   "intro": [
+    "<code>docs/cli.md</code> shows both new forms with what each means and costs, and the event table says <code>MERGED</code> now reports whether a layer's base reached the default branch. <code>fix-pr</code>, the skill a fixer session follows, says what each form means so its agent does not misreport a merge."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Two example lines and a paragraph on what each form means and what the check asks GitHub."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "The <code>MERGED</code> event's description gains the two stack forms."
+    }
+   ]
+  }
+ ]
+}
