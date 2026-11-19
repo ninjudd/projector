@@ -107,7 +107,13 @@ number. Each job:
 1. **Skips forks and drafts.** The job's condition skips them, and
    `project review run` refuses them too, so a manual run cannot review
    either. A fork's head is code an outsider wrote, and the agent would read
-   it with your credential in its environment.
+   it with your credential in its environment. The command also refuses a
+   closed or merged pull request, and a head this model already reviewed
+   unless the run asks for a rereview. Each refusal means there is nothing
+   to review, so the job passes and shows the reason as a notice. A job
+   that started for the previous head can still find the pull request a
+   draft, because its author held it to push a fix, and that job passes
+   too.
 2. **Cancels a superseded review.** One job runs for each pull request and
    agent. A new push cancels the job for the head it replaces.
 3. **Restores the review state** from the Actions cache, so a small push
@@ -132,7 +138,7 @@ number. Each job:
 5. **Fails loudly.** When the agent publishes no verdict, whether it could
    not start, ran out of time, or exited, the job deletes the start
    comment, takes `reviewing` off, posts one comment that says why, and
-   fails.
+   fails. A refusal in step 1 posts no comment and adds no label.
 
 A second job, `summary`, starts once every review job has ended. It holds
 the only token that can push `refs/projector/summaries`, and it runs no

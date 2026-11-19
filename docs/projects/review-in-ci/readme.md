@@ -90,9 +90,9 @@ author's sessions and the site, count that account's reviews.
    tool.
 6. **The run.** The action runs `project review run <number> --agent <agent>
    --model <model>`. The command first reads the pull request from GitHub.
-   When its head is in another repository, or it is a draft, the command
-   prints why and exits 1 before it reads the diff, posts anything, or
-   starts an agent. This check, not the job's `if`, is the boundary that
+   When its head is in another repository, or it is a draft, closed, or
+   merged, the command prints why and exits 0, as § 11 explains, before it
+   reads the diff, posts anything, or starts an agent. This check, not the job's `if`, is the boundary that
    keeps a fork's diff away from the model credential and the token. Then
    the command does these steps:
    1. **Skip a reviewed head.** When the reviewer already has a verdict by
@@ -645,7 +645,7 @@ file:
 | Push twice within a minute | The first run is cancelled, and the second run gives the only verdict on the newest head, with no start comment left behind |
 | Re-run a finished job | The job prints the existing verdict's URL, exits 0, and posts nothing |
 | Open a pull request from a fork, and push to a draft | No review job runs |
-| Start the workflow by hand with a fork's pull request number, and with a draft's | The review job fails before the agent starts, its log says why, and nothing is posted on the pull request |
+| Start the workflow by hand with a fork's pull request number, and with a draft's | The review job passes before the agent starts, a notice says why, and nothing is posted on the pull request |
 | Make the agent exit without publishing, such as by giving it a model ID the CLI refuses | The job fails, the start comment and `reviewing` label are gone, and one comment names the head and the run |
 | Run `project review status` on the reviewed pull request from a session with `review.reviewers` set, and without it | The bot's verdict signs the head off with the setting, and is ignored without it |
 | List a private repository in `review.context_repos` of a public repository | The run warns and leaves it out, and the agent's working folders do not include it |
@@ -662,7 +662,7 @@ These tests fail before the change, and each catches the bug it names:
 
 - **`test_run_refuses_a_fork_or_a_draft`.** With a fake `gh`, a pull request
   whose head is in another repository, and one that is a draft, each make
-  the command exit 1 without reading the diff, posting a comment, or
+  the command exit 0 without reading the diff, posting a comment, or
   starting the agent. Catches a manual dispatch that sends a fork's diff to
   an agent holding the model credential and the token.
 - **`test_run_skips_a_reviewed_head`.** Catches a re-run that posts a second
@@ -1145,3 +1145,24 @@ expression cannot fall back to the runner's own environment, which only the
 step's shell sees. That keeps the credential out of GitHub entirely, and the
 action's one-credential check covers both places without knowing which one
 the repository chose.
+
+## 11. A refusal passes the job
+
+`project review run` refused a draft, a fork's pull request, and a closed
+one by exiting non-zero, so the job's check turned red, though nothing went
+wrong. A common race caused it: an author holds a pull request as a draft to
+push a fix, and the job that started for the previous head reads the pull
+request after the hold and refuses it.
+
+Every refusal now means there is nothing to review here, so it exits 0 and
+prints its reason, as the skip of a reviewed head already did. Under GitHub
+Actions, where `GITHUB_ACTIONS` is `true`, the command also prints the
+reason as a `::notice::` line, so the job's summary says why it reviewed
+nothing. The refusals are a draft, a fork's head, a closed or merged pull
+request, and a head this model already reviewed without `--rereview`. A
+refusal comes before the `reviewing` label and before anything is posted, so
+it leaves no label and no failure comment behind.
+
+The job still fails when something went wrong: the agent published no
+verdict, ran out of time, or could not start, or an argument is missing or
+invalid.

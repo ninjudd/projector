@@ -2776,12 +2776,22 @@ published https://github.com/owner/example/pull/66#pullrequestreview-2211
 ```
 
 Before it starts anything, the command reads the pull request. It refuses
-a pull request whose head is in a fork, a draft, and a closed pull request,
-however the run was started. When the reviewer already has a verdict by
-this model on the head, it prints that review's address and exits 0, so a
-rerun of a finished job posts nothing. Pass `--rereview` to review the head
-again. A live start comment by this reviewer and model on the head can only
-be a cancelled run's, so the agent's `setup` replaces it.
+a pull request whose head is in a fork, a draft, and a closed or merged pull
+request, however the run was started. It also refuses a head the reviewer
+already has a verdict on by this model, and names that review's address, so
+a rerun of a finished job posts nothing. Pass `--rereview` to review the
+head again. A refusal means there is nothing to review here, so the command
+prints the reason and exits 0, and it posts no comment and adds no label.
+Under GitHub Actions, where `GITHUB_ACTIONS` is `true`, it also prints the
+reason as a `::notice::` line, which the job's summary shows:
+
+```console
+$ project review run 66 --model claude-opus-5-5
+owner/example#66 is not reviewed here: it is a draft, and a draft waits on its author
+```
+
+A live start comment by this reviewer and model on the head can only be a
+cancelled run's, so the agent's `setup` replaces it.
 
 Once those checks pass, the command adds the `reviewing` label to the pull
 request and then starts the agent. The agent takes a minute or so to reach
@@ -2855,6 +2865,17 @@ does the same when it is interrupted while the agent runs.
 The command then posts one comment on the pull request that names the
 head, the report file's text or why there is none, and the Actions run
 when there is one, and exits 1.
+
+The command exits with one of these codes, so a CI job fails only when
+something went wrong:
+
+- `0`: a verdict on the head stands, or the command refused the pull
+  request because there is nothing to review here.
+- `1`: the agent published no verdict, ran out of time, or could not
+  start, or an argument has a value the command refuses, such as an
+  unknown `--agent`, or the pull request cannot be read.
+- `2`: an argument is missing or malformed, such as a pull request number
+  that is not a number or no `--model`.
 
 ## Use the inbox
 
