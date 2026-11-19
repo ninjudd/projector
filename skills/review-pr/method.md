@@ -176,10 +176,13 @@ Read `../guidelines.md` first. It applies in every repository, and its
 sections are the rules this pass enforces on comments, on tests, and on
 whatever it adds later; the repository's own documents outrank it where the
 two disagree. When the change adds or edits a test, read `../testing.md` too,
-which `guidelines.md § 2` makes one of those rules. Then
+which `guidelines.md § 2` makes one of those rules. When it adds or edits a
+comment or docstring, read `../writing.md` § 12 and the sections it names,
+which `guidelines.md § 1` makes one of those rules. Then
 read the parts of the repository's rule documents that bear on the changed
 files, and read the diff against both. A finding here names the document and
-the section it enforces, such as `guidelines.md § 1`, `testing.md § 2`, or
+the section it enforces, such as `guidelines.md § 1`, `testing.md § 2`,
+`writing.md § 12`, or
 the repository document and heading, or it is a preference and does not
 ship. When the rule is one the
 repository's own merged commits keep breaking, report the gap between the

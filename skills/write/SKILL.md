@@ -1,6 +1,6 @@
 ---
 name: write
-description: Write prose for people to read so that it follows Projector's writing guide. That includes documentation, a README section, a pull request body, a commit message, an issue, and a reply. Use when the user asks to write or draft prose, or to check text against the writing guide. To rewrite text that already exists, use rewrite.
+description: Write prose for people to read so that it follows Projector's writing guide. That includes documentation, a README section, a code comment or docstring, a pull request body, a commit message, an issue, and a reply. Use when the user asks to write or draft prose, or to check text against the writing guide. To rewrite text that already exists, use rewrite.
 ---
 
 # Write
@@ -17,7 +17,7 @@ the rules.
    disagree.
 2. Decide who reads the text and what they already know (§ 2). Decide which
    kind of document it is (§ 3). A pull request body or a commit message
-   follows § 10 instead.
+   follows § 10 instead, and a code comment or docstring follows § 12.
 3. For a revision, read the text and the code or facts that it describes.
    Keep every fact that the reader needs. Cut only what the guide tells you
    to cut: history (§ 11) and detail that nobody would act on (§ 2). Add no

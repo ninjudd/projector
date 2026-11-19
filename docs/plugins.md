@@ -47,8 +47,10 @@ reviews and links the summary from its review;
 `implement`, `review-pr`, and `fix-pr` share the code guidelines in
 `skills/guidelines.md`, so the rules one follows are the rules the others
 review and fix against. Every skill that writes prose a person reads, such as
-a plan, a review, a summary, or a pull request body, follows the writing
-guide in `skills/writing.md`. `write` applies the same guide to any other
+a plan, a review, a summary, a pull request body, or a comment or docstring
+in the code it changes, follows the writing guide in `skills/writing.md`.
+The code guidelines make that guide a rule for comments, so a review flags a
+comment that breaks it, such as one that recounts the change's history. `write` applies the same guide to any other
 prose you ask for, such as `/projector:write a README section on the
 site`. `rewrite` revises text that already exists, such as a file, a pull
 request description, a comment, or a Slack message, and writes the result

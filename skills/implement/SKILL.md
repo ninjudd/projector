@@ -87,7 +87,10 @@ A review reads your head against them and `fix-pr` follows them in each
 fix, so a rule skipped here comes back as a finding citing the section you
 skipped. Its first rule is about comments: write code that needs none,
 simplify a stretch before you explain it, and add a comment only to preserve a
-constraint or reason the code cannot carry on its own.
+constraint or reason the code cannot carry on its own. Write each comment and
+docstring you keep by the writing guide in `../writing.md`, § 12 in
+particular: say why, in the present tense, and leave the change's history to
+the commit.
 
 When the work has a plan, update it in the same change whenever
 implementation settles a decision, changes scope, reveals a new constraint,

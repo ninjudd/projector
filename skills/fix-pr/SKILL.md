@@ -307,7 +307,10 @@ same code:
    A finding that cites a section of that file is verified against that
    section, and declined only by showing the rule does not apply to the
    quoted code. Read the lines around an insertion anchor before editing so
-   an attribute, decorator, or comment is not silently detached.
+   an attribute, decorator, or comment is not silently detached. Write a
+   comment the fix adds or changes by `../writing.md` § 12, so it gives the
+   code's reason and never names the finding, the review, or the code it
+   replaced.
 4. Prove a regression test fails without the fix and passes with it. Write
    it, and the failing test from step 2, by the testing guide in
    `../testing.md`: the test catches the defect the finding names, through
