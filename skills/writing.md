@@ -2,8 +2,9 @@
 
 Projector's skills write prose for people to read: plans, reviews, pull
 request summaries, commit messages, and the comments and docstrings in the
-code they change. Each of those skills follows this guide. The `write` skill applies it to any other prose a user asks for,
-and the `rewrite` skill applies it to text that already exists.
+code they change. Each of those skills follows this guide. The `write`
+skill applies it to any other prose a user asks for, and the `rewrite`
+skill applies it to text that already exists.
 
 The guide follows the Google developer documentation style, which
 Projector's own documentation also uses. A skill states any rules its own

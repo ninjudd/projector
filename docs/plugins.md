@@ -50,11 +50,12 @@ review and fix against. Every skill that writes prose a person reads, such as
 a plan, a review, a summary, a pull request body, or a comment or docstring
 in the code it changes, follows the writing guide in `skills/writing.md`.
 The code guidelines make that guide a rule for comments, so a review flags a
-comment that breaks it, such as one that recounts the change's history. `write` applies the same guide to any other
-prose you ask for, such as `/projector:write a README section on the
-site`. `rewrite` revises text that already exists, such as a file, a pull
-request description, a comment, or a Slack message, and writes the result
-back where the text lives when it can, such as
+comment that breaks it, such as one that recounts the change's history.
+`write` applies the same guide to any other prose you ask for, such as
+`/projector:write a README section on the site`. `rewrite` revises text
+that already exists, such as a file, a pull request description, a comment,
+or a Slack message, and writes the result back where the text lives when it
+can, such as
 `/projector:rewrite the install section of the README`. Every skill that
 plans, writes, judges, or accepts a test follows the testing guide in
 `skills/testing.md`, which asks each test to name the bug it catches: `spec`
