@@ -1076,6 +1076,15 @@ These tests fail before the change, and each catches the bug it names:
   run takes the label off with `clear_reviewing`, which keeps it while a
   live start comment, such as another loop's, means a review is in
   progress.
+- **A reviewed head's refusal brings `clean` in line.** A branch
+  force-pushed away from a commit reviewed clean and back to it lost
+  `clean` at the first push, and the job for the second push refused the
+  reviewed head, so nothing put the label back until someone forced a
+  rereview. Only that refusal now sets `clean` by the head's sign-off
+  before it exits 0, through the `head_sign_off` and `label_sign_off` that
+  `publish` uses, counting the logins in `review.reviewers`. It changes
+  neither `reviewing` nor the `projector/review` status, which stays on the
+  commit, and the draft, closed, and fork refusals still change no label.
 
 ## 10. Self-hosted runners
 

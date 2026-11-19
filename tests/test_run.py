@@ -60,6 +60,8 @@ class FakeGitHub:
                    "head": {"sha": HEAD, "ref": "feature", "repo": {"full_name": REPO}},
                    "base": {"ref": "main", "repo": {"full_name": REPO}}}
         self.reviews: list[dict] = []
+        # Review threads as GitHub's GraphQL API gives them.
+        self.threads: list[dict] = []
         self.starts: list[dict] = []
         self.posted: list[str] = []
         self.deleted: list[str] = []
@@ -89,6 +91,9 @@ class FakeGitHub:
             return f"token-{args[3]}\n"
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
             return "".join(json.dumps(r) + "\n" for r in self.listed_reviews())
+        if args[:2] == ["api", "graphql"]:
+            return json.dumps({"data": {"repository": {"pullRequest": {"reviewThreads": {
+                "nodes": self.threads, "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}})
         if args[:3] == ["api", "--paginate", f"repos/{REPO}/issues/1/comments"]:
             if self.on_cleanup is not None and (self.agent_folder / "seen.json").exists():
                 self.on_cleanup()
@@ -405,6 +410,54 @@ class RunTests(unittest.TestCase):
 
                 self.assertEqual([], self.github.edits, why)
                 self.assertFalse(self.started())
+
+    def returned_to_a_clean_head(self) -> None:
+        """The head is a commit this reviewer and model reviewed clean, as a force-push back to it leaves it."""
+        self.github.reviews.append({"id": 900, "url": "https://example.test/900", "at": "2026-11-18T10:00:00Z",
+                                    "login": "operator", "body": verdict_body(HEAD)})
+
+    def test_a_head_a_force_push_returned_to_gets_clean_back_without_an_agent(self) -> None:
+        # The run refused the reviewed head and nothing else adds `clean`, so the label stayed off a head its
+        # newest verdict signs off until someone forced a --rereview.
+        self.returned_to_a_clean_head()
+
+        self.assertEqual(0, self.review_run())
+
+        self.assertFalse(self.started())
+        self.assertEqual(["clean"], self.labels())
+        self.assertEqual([("--add-label clean", False)], self.github.edits, "a refused run never adds reviewing")
+        self.assertIn("added the clean label", self.out.getvalue())
+
+    def test_an_open_finding_keeps_clean_off_a_head_a_force_push_returned_to(self) -> None:
+        # A clean verdict signs a head off only while no finding thread is open, as `publish` decides.
+        self.returned_to_a_clean_head()
+        self.github.threads.append({"id": "T1", "path": "app.py", "line": 3, "isOutdated": False, "isResolved": False,
+                                    "comments": {"nodes": [{"databaseId": 1, "body": "<!-- projector-finding v=1 "
+                                                            f"priority=P1 sha={HEAD} model={MODEL} -->\nA bug."}]}})
+        self.github.pr["labels"] = [{"name": "clean"}]
+
+        self.assertEqual(0, self.review_run())
+
+        self.assertFalse(self.started())
+        self.assertEqual([], self.labels(), "a stale clean comes off")
+        self.assertIn("removed the clean label", self.out.getvalue())
+
+    def test_review_labels_false_keeps_a_refused_run_off_the_labels(self) -> None:
+        self.returned_to_a_clean_head()
+
+        self.assertEqual(0, self.review_run(labels=False))
+
+        self.assertEqual([], self.github.edits)
+
+    def test_a_draft_refusal_changes_no_label_even_on_a_signed_off_head(self) -> None:
+        # Only the refusal of a head already reviewed brings the labels in line; a draft's author is still working.
+        self.returned_to_a_clean_head()
+        self.github.pr["draft"] = True
+
+        self.assertEqual(0, self.review_run())
+
+        self.assertEqual([], self.github.edits)
+        self.assertFalse(self.started())
 
     def test_review_labels_false_keeps_the_run_off_the_labels(self) -> None:
         # The early label ignored `review.labels = false`, which turns every review command's labels off.

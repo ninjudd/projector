@@ -355,11 +355,12 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
         configured_runner: object = None, configured_reviewer: Optional[str] = None, effort: str = DEFAULT_EFFORT,
         mode: str = "auto", timeout_minutes: float = DEFAULT_TIMEOUT_MINUTES, rereview: bool = False,
         loop: str = DEFAULT_LOOP, plugin_dir: Optional[Path] = None, labels: bool = True,
-        context_listed: object = None, environ: Optional[dict[str, str]] = None) -> int:
+        context_listed: object = None, also: tuple[str, ...] = (), environ: Optional[dict[str, str]] = None) -> int:
     """Review the head of pull request `number` in the repository of `checkout` with an agent, as
     docs/projects/review-in-ci/readme.md § 2.1 step 6 describes. Returns the exit code: 0 once a verdict on the
     head stands, the run published one on a head pushed while it ran, or the pull request has nothing to review
-    here, and 1 when the agent published none."""
+    here, and 1 when the agent published none. A head this model already reviewed gets its labels back in line
+    with its sign-off, counting the verdicts of the logins in `also`, which `review.reviewers` names."""
     review.model_key(model)
     review.valid_loop(loop)
     if mode not in MODES:
@@ -376,8 +377,12 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
     reviews = review.reviewer_reviews(repo, number, reviewer)
     earlier = verdicts_on(reviews, head, model)
     if earlier and not rereview:
-        return skip(f"{reviewer} already reviewed {repo}#{number} at {head[:7]} with {model}: "
+        code = skip(f"{reviewer} already reviewed {repo}#{number} at {head[:7]} with {model}: "
                     f"{earlier[0].get('url')}; pass --rereview to review it again", base)
+        if labels:
+            # No `publish` runs, so a head a force-push returned to would keep the labels of the head it left.
+            print_labels(review.relabel_head(repo, number, reviewer, pr, also))
+        return code
     replace = stale_start(review.start_comments(repo, number, reviewer), reviews, head, model)
     token = review.reviewer_token(reviewer)
 
