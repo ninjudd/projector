@@ -139,7 +139,9 @@ project init --ci-review --ci-app projector-review
 for a public app, and refuses an app GitHub does not show. It writes the ID
 into the workflow as the action's `app-id` input, passes the
 `PROJECTOR_APP_PRIVATE_KEY` secret as its `app-private-key` input, records
-`review.ci_app`, and adds `<slug>[bot]` to `review.reviewers`. At a terminal
+`review.ci_app` and `review.ci_app_id`, and adds `<slug>[bot]` to
+`review.reviewers`. A later `init` rebuilds the workflow from the recorded
+ID without asking GitHub, so it works offline. At a terminal
 it asks for the path of the private key file you generated in the app's
 settings, and has `gh` set it as the `PROJECTOR_APP_PRIVATE_KEY` secret from
 that file. Delete the file once the secret holds it.

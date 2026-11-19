@@ -39,10 +39,13 @@ class InitCiReviewTests(RepositoryTestCase):
                                             side_effect=lambda argv, source=None: self.set.append((argv, source)) or 0))
         # The public apps GitHub answers for; a private app reads as missing, as it does to another account.
         self.apps = {"projector-review": 5827721}
+        self.offline = False
         self.enterContext(mock.patch.object(summary, "gh_lookup", side_effect=self.lookup))
 
     def lookup(self, *args: str) -> str | None:
         if args[0] == "api" and args[1].startswith("apps/"):
+            if self.offline:
+                raise summary.SummaryError("the gh CLI is not installed")
             found = self.apps.get(args[1].removeprefix("apps/"))
             return f"{found}\n" if found else None
         raise AssertionError(f"unexpected gh call: {args}")
@@ -144,10 +147,33 @@ class InitCiReviewTests(RepositoryTestCase):
         self.assertEqual(ci.workflow_text("v0", {"claude": ""}, 5827721), self.workflow().read_text())
         self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again,
                       "the recorded app rebuilds the same workflow, so the reviews never fall back to the bot")
-        self.assertEqual(("projector-review", "someone, projector-review[bot]"),
-                         (self.recorded()["ci_app"], self.recorded()["reviewers"]),
+        self.assertEqual(("projector-review", 5827721, "someone, projector-review[bot]"),
+                         (self.recorded()["ci_app"], self.recorded()["ci_app_id"], self.recorded()["reviewers"]),
                          "the app takes github-actions[bot]'s place, and every other reviewer stays")
         self.assertIn(f"gh secret set {ci.APP_KEY} --repo acme/app < <key file>", err)
+
+    def test_a_later_init_refreshes_the_app_workflow_without_github_but_ci_app_still_asks_it(self) -> None:
+        self.assertEqual(0, self.init("--ci-review", "--ci-app", "projector-review")[0])
+        self.offline = True
+
+        code, out, err = self.init()
+        named, _, named_err = self.init("--ci-app", "projector-review")
+
+        self.assertEqual(0, code, err)
+        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out, "the recorded ID rebuilds the workflow with no lookup")
+        self.assertNotEqual(0, named, "--ci-app always asks GitHub, so it can refuse an app GitHub does not show")
+        self.assertIn("could not look up the GitHub App projector-review", named_err)
+
+    def test_an_app_recorded_without_its_id_is_left_as_it_is_when_github_cannot_answer(self) -> None:
+        (self.root / ".projector.toml").write_text('[review]\nci = true\nci_app = "projector-review"\n')
+        self.offline = True
+
+        code, _, err = self.init()
+
+        self.assertEqual(0, code, err)
+        self.assertIn("left the CI review as it is", err)
+        self.assertFalse(self.workflow().exists(), "a workflow without the app would post as github-actions[bot]")
+        self.assertNotIn("ci_app_id", self.recorded())
 
     def test_an_app_github_does_not_show_is_refused_before_anything_is_written(self) -> None:
         code, _, err = self.init("--ci-review", "--ci-app", "private-app")

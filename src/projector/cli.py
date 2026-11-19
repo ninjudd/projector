@@ -2521,8 +2521,7 @@ def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "ci-workflow":
         config = load_config(discover_git_root(Path.cwd()))
         agents = arguments.agents or config.get("review.ci_agents") or "claude"
-        slug = arguments.app or config.get("review.ci_app")
-        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents), app_id(slug) if slug else None),
+        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents), ci_app(config, arguments.app)[1]),
               end="")
         return 0
     if arguments.review_command in ("hold", "ready"):
@@ -3638,11 +3637,16 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
             record_setting(root, "review.ci", False)
             return
     agents = ci.parse_agents(arguments.ci_agents or config.get("review.ci_agents") or "claude")
-    slug = arguments.ci_app or config.get("review.ci_app")
     try:
-        app = app_id(slug) if slug else None
+        slug, app = ci_app(config, arguments.ci_app)
     except UsageError as error:
-        raise InitError(str(error), files) from None
+        if arguments.ci_app:
+            raise InitError(str(error), files) from None
+        # A refresh needs GitHub only for an app recorded without its ID, and like init's other GitHub calls it
+        # warns and goes on rather than failing init.
+        print(f"project: {error}; left the CI review as it is, and `project init --ci-app "
+              f"{config.get('review.ci_app')}` records the app's ID so a refresh needs no lookup", file=sys.stderr)
+        return
     files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents, app)))
     if recorded is not True:
         record_setting(root, "review.ci", True)
@@ -3650,6 +3654,8 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
         record_setting(root, "review.ci_agents", ci.format_agents(agents))
     if slug and config.get("review.ci_app") != slug:
         record_setting(root, "review.ci_app", slug)
+    if app is not None and config.get("review.ci_app_id") != app:
+        record_setting(root, "review.ci_app_id", app)
     # An app replaces github-actions[bot], so a workflow posting with its own token no longer counts as a reviewer.
     reviewer = f"{slug}[bot]" if slug else CI_REVIEWER
     listed = review.extra_reviewers(config.get("review.reviewers"))
@@ -3697,6 +3703,20 @@ def run_interactive(argv: list[str], source: Optional[Path] = None) -> int:
         return subprocess.call(argv)
     with source.open("rb") as handle:
         return subprocess.call(argv, stdin=handle)
+
+
+def ci_app(config: Config, flag: Optional[str]) -> tuple[Optional[str], Optional[int]]:
+    """The slug and ID of the app the CI reviews post as. The app `flag` names is looked up on GitHub, which
+    refuses one it does not show publicly. Otherwise the recorded `review.ci_app` comes with the
+    `review.ci_app_id` init recorded beside it, so a refresh needs no network; only a slug recorded without its
+    ID is looked up."""
+    if flag:
+        return flag, app_id(flag)
+    slug = config.get("review.ci_app")
+    if not slug:
+        return None, None
+    recorded = config.get("review.ci_app_id")
+    return slug, recorded if recorded is not None else app_id(slug)
 
 
 def app_id(slug: str) -> int:

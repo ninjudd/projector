@@ -949,7 +949,12 @@ These tests fail before the change, and each catches the bug it names:
   as the `app-private-key` input § 2.4 names, never as `env`: a caller's
   `env` reaches every step of a composite action, while an input sets no
   environment variable there, so only the step that mints the token
-  receives the key. An app takes `github-actions[bot]`'s place
+  receives the key. `init --ci-app` records the app's ID as
+  `review.ci_app_id` beside the slug, so a later refresh needs no GitHub
+  lookup, while `--ci-app` still looks the app up and refuses one GitHub
+  does not show publicly. The ID in the workflow was rejected as the source,
+  because an edited, kept, or deleted workflow would need the lookup again.
+  An app takes `github-actions[bot]`'s place
   in `review.reviewers`, so a workflow posting with its own token no longer
   counts. Context repositories stay deferred to § 6 step 4.
 - **Projector's own reviews post as Projector Review.** Its workflow passes
