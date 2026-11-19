@@ -1,0 +1,156 @@
+{
+ "version": 1,
+ "name": "CI review in GitHub Actions",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 588,
+  "title": "Give CI reviews other repositories to read, through review.context_repos",
+  "head": "de00aedc520cc2d966e000a0d25d49b73dfe4ea5",
+  "headRef": "review-ci-context",
+  "base": "e2429a5a45c4226eed76f64992f7976f99e14834",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector can review a pull request in a GitHub Actions job, with no agent session running anywhere. Until now that review could read only the repository under review. So it could not check a call against the API in another repository that the call targets.",
+   "This pull request adds a committed setting, <code>review.context_repos</code>, that lists other repositories as <code>owner/name</code>. Before the agent starts, <code>project review run</code> decides which of them the review may read, clones each one it keeps at depth 1, and names their folders in the prompt as context, never as code to review.",
+   "<ol><li><b>The same owner.</b> An app's installation token reaches only one account's repositories, so the review leaves out a repository of another owner.</li><li><b>An app.</b> The workflow's own token, <code>github-actions[bot]</code>, reaches only its own repository, so under it the review keeps no context repository.</li><li><b>Visibility.</b> The review keeps a repository only when it is public, or when it and the reviewed repository are both private or internal, as a visibility check reported. A check that fails keeps nothing private.</li></ol>",
+   "The review's own token still reaches only the reviewed repository. The action mints a second token from the app, with <code>contents: read</code> alone, for the same-owner context repositories it reads from the default branch's setting. Because the list comes from the default branch, a pull request cannot widen what that token reaches. <code>project review run</code> checks and clones the repositories with it, then removes it from the agent's environment.",
+   "GitHub refuses the whole second token when the app cannot reach any one listed repository. So the step that mints it may fail without failing the job. The run then leaves every context repository out with one warning, and the review goes on."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Context repository</b>: a repository the review reads to judge the change, but never reviews.</li><li><b>Installation token</b>: the short-lived token a GitHub App mints for the repositories it is installed on.</li><li><b>Preset</b>: how <code>project review run</code> starts Claude Code or Codex.</li><li><b>Context token</b>: the read-only installation token the action mints for the context repositories, which the run uses and the agent never receives.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, at <code>ec469c1</code>, requested changes with one finding. One listed repository outside the app's installation made the token mint fail, so every review job failed instead of warning and going on.</li><li><code>f6a59f9</code> fixes it. The context repositories now get a token of their own, minted with <code>continue-on-error: true</code>, and a refused mint leaves the context out. The second review found the finding fixed and posted a clean verdict.</li><li><code>de00aed</code> merges <code>main</code>, which brings in the run labeling a pull request <code>reviewing</code> before its agent starts. Git combined that change with this one in <code>run.py</code> without a conflict, and the plan's one conflict keeps both § 9 bullets. An incremental review read the merge and posted a clean verdict.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "selection",
+   "title": "Choosing and cloning context repositories",
+   "kicker": "Which listed repositories a review reads, and how the agent gets them",
+   "intro": [
+    "<code>run.py</code> holds all of the selection logic. <code>parse_context_repos</code> splits the setting, drops entries that are not <code>owner/name</code>, and removes duplicates. <code>context_repos</code> applies the owner, app, and visibility rules, with a warning for each repository it leaves out. When the action reports that GitHub refused the context token, it leaves every repository out. <code>clone_context</code> then clones what remains with the context token.",
+    "Each preset hands the folders to the agent differently. The Claude preset adds each folder with <code>--add-dir</code> and denies <code>Edit</code> and <code>Write</code> in it. The Codex preset adds no folder, because Codex's <code>--add-dir</code> makes a folder writable and its sandbox can already read every folder."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/run.py",
+     "note": "The rules, the clone, the preset arguments, and the prompt text.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 174,
+       "text": "A failed visibility check returns <code>None</code>, which keeps only a public context repository. When the reviewed repository's own check fails, every private or internal one is left out."
+      },
+      {
+       "kind": "context",
+       "line": 187,
+       "text": "<code>PROJECTOR_CONTEXT_MINT</code> is the outcome of the action's <b>Mint the context token</b> step. On <code>failure</code>, the run makes no <code>gh</code> call for the context and reviews without it."
+      },
+      {
+       "kind": "context",
+       "line": 103,
+       "text": "These deny rules join the <code>--disallowedTools</code> list. They use the same <code>//absolute/path/**</code> form as the scratch folder's allow rules."
+      },
+      {
+       "kind": "context",
+       "line": 382,
+       "text": "The agent starts without the context token. The plan's § 9 notes that a process of the same user can still read its parent's environment, so the token's read-only scope is what limits a misled agent."
+      },
+      {
+       "kind": "context",
+       "line": 415,
+       "text": "The run removes the clones only when it made the temporary folder itself. In the action, <code>PROJECTOR_CONTEXT_DIR</code> keeps them under <code>$RUNNER_TEMP</code>."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Passes the setting to <code>run.run</code>, reuses the new workflow-login constant, and gives <code>init</code>'s gate note to a self-hosted runner only when <code>ci.hosted</code> says so."
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers <code>review.context_repos</code> as a string setting."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Tells a headless review to read context folders only as context and to change nothing in them."
+    },
+    {
+     "path": "tests/test_run.py"
+    }
+   ]
+  },
+  {
+   "id": "token",
+   "title": "A token for the context repositories",
+   "kicker": "The action mints a read-only token for the context repositories, apart from the review's own",
+   "intro": [
+    "The review's own token, from <b>Mint the app's token</b>, is unchanged: it reaches only the reviewed repository, with the permissions to post the review. On another repository, its pull-request, issue, and status writes would let a pull request steer the agent to write where it only reads.",
+    "A new step, <b>Read the context repositories</b>, runs after <b>Set up Projector</b>. That setup step points <code>origin/HEAD</code> at the default branch, so <code>project config get</code> reads the committed setting from there rather than from the pull request. The step reuses <code>run.token_repositories</code> to turn the list into repository names.",
+    "<b>Mint the context token</b> runs only when that list is not empty. It asks for <code>contents: read</code> alone and sets no <code>owner</code>, because an owner with no repositories would reach every repository the installation covers. It has <code>continue-on-error: true</code>, and the review step passes its outcome to the run as <code>PROJECTOR_CONTEXT_MINT</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "actions/review/action.yml",
+     "note": "Adds the context step and the context token's mint step, and passes the token, its outcome, and <code>PROJECTOR_CONTEXT_DIR</code> to the review step.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 138,
+       "text": "This read takes the tracked <code>.projector.toml</code> from the default branch, the same source <code>project review run</code> reads, so the token and the run filter the same list."
+      },
+      {
+       "kind": "verify",
+       "line": 151,
+       "text": "Checked against the first review's finding: a 422 from GitHub here no longer fails the job, and <code>context_repos</code> returns no repositories on <code>failure</code> before it calls <code>gh</code>. <code>test_a_refused_context_token_leaves_the_context_out_and_the_review_goes_on</code> covers it, and CI's <code>check</code> job passed on this head."
+      },
+      {
+       "kind": "context",
+       "line": 219,
+       "text": "Only the review step receives the context token. <code>test_only_a_read_only_token_reaches_the_context_repositories_and_the_agent_never_gets_it</code> checks that no other step does."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_ci.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The setting's reference, its guide, and what the plan settled",
+   "intro": [
+    "<code>docs/review-in-ci.md</code> gains a guide section, \"Give a review other repositories to read\". It covers the setting, the app and owner requirements, the visibility rule, the separate read-only token, and what happens when GitHub refuses it. The plan records what implementation settled in § 9 and marks § 6 step 4 done. The project stays <code>in-progress</code>, because live runner checks remain."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/review-in-ci.md"
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/self-hosted-runners.md"
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "note": "§ 9 records the decisions, and § 6 step 4 is marked done."
+    }
+   ]
+  }
+ ]
+}
