@@ -1,0 +1,104 @@
+{
+ "version": 1,
+ "name": "Passing skipped CI reviews",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 596,
+  "title": "Pass a CI review job when project review run refuses a pull request with nothing to review, such as a draft held for a fix",
+  "head": "5cf0c9c71ba12649af60f3fc36cf1030ba0c6eea",
+  "headRef": "review-run-refusal-exit",
+  "base": "fcdf34b18a067319422717ab99e9255bb8902db0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector can review pull requests in GitHub Actions. Each review job runs <code>project review run</code>, which reads the pull request, starts an agent, and checks that the agent published a verdict. Before it starts anything, the command refuses a pull request it must not review: one whose head is in a fork, a draft, or a closed one. It also skips a head this model already reviewed.",
+   "Most of those refusals exited 1, so the job's check turned red even though nothing had gone wrong. The common case was a race. An author marks a pull request as a draft to push a fix, and the job that started for the previous head reads the pull request after that and refuses it.",
+   "This pull request makes every refusal pass the job. A new <code>skip()</code> helper prints the reason and returns 0. Under GitHub Actions it also prints a <code>::notice::</code> workflow command, so the job's summary page says why the job reviewed nothing. A real failure, such as an agent that publishes no verdict, still exits 1 and posts a failure comment."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Refusal</b>: a reason <code>refusal()</code> returns for not reviewing a pull request, such as a draft or a fork's head.</li><li><b>Skip</b>: a run that reviews nothing and passes, which every refusal now is.</li><li><b>Workflow command</b>: a line such as <code>::notice title=…::message</code> that GitHub Actions reads from a step's output and shows as an annotation.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>One Projector review of this head, clean, with no finding threads. It lists one suggestion: rewrap a long line in the plan's § 2.1 step 6.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "run",
+   "title": "Refusals pass the job",
+   "kicker": "How project review run turns a refusal into a passing exit",
+   "intro": [
+    "<code>run()</code> reads the pull request, asks <code>refusal()</code> whether to review it, and then checks for an existing verdict by this model. Before, a refusal raised <code>ReviewError</code>, which the CLI turns into exit 1. A closed pull request never reached <code>refusal()</code>, because <code>review.pull_request</code> raised on it first.",
+    "Now <code>run()</code> reads the pull request with <code>review.read_pull_request</code>, which returns a closed one, and <code>refusal()</code> checks the state first. Each refusal, and the already-reviewed skip, returns through <code>skip()</code>. Every one of them returns before the run adds the <code>reviewing</code> label or reaches the failure-comment path, so a skipped run leaves nothing on the pull request."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/run.py",
+     "note": "The state check in <code>refusal()</code>, the new <code>skip()</code>, and the early returns in <code>run()</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "GitHub's REST API reports a merged pull request as <code>state: closed</code> with <code>merged: true</code>, so this reads <code>merged</code> to name it.",
+       "line": 254
+      },
+      {
+       "kind": "verify",
+       "text": "The message holds only the repository, the number, a SHA prefix, and a review URL, so it needs no <code>%</code> or newline escaping for the workflow command. Checked by reading every message passed to <code>skip()</code>.",
+       "line": 313
+      },
+      {
+       "kind": "verify",
+       "text": "Both returns come before <code>change_labels</code> adds <code>reviewing</code> and before the failure comment. Checked by reading <code>run()</code> to its end, and <code>test_a_refused_run_adds_no_label</code> asserts it.",
+       "line": 373
+      }
+     ]
+    },
+    {
+     "path": "tests/test_run.py",
+     "note": "<code>assert_skipped</code> checks the exit code, exactly one notice, no agent started, and nothing posted or labeled, for each refusal."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and plan",
+   "kicker": "What the docs and the review-in-ci plan now say a refusal does",
+   "intro": [
+    "<code>docs/cli.md</code> and <code>docs/review-in-ci.md</code> describe the new behavior, and <code>docs/cli.md</code> now lists the command's exit codes. The <code>review-in-ci</code> plan, which is in progress, updates its § 2.1 step 6, an acceptance row, and a test description, and adds § 11 to record the decision."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The exit codes <code>docs/cli.md</code> lists match the CLI. In a scratch repository, a non-numeric pull request exited 2, an unknown <code>--agent</code> exited 1, and a missing pull request exited 1."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/review-in-ci.md"
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "This line runs to 105 columns where the lines around it wrap near 76; the review lists rewrapping it as a suggestion.",
+       "line": 95
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
