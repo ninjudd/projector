@@ -1,0 +1,497 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 951222e1..c3f0986b 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3811,6 +3811,40 @@ after the bottom layer merges keeps the name. `MOVED`,
+ and `CLOSED` tell the session to send the subagent no more work for that
+ layer and to finish it once no layer of its stack is open.
+ 
++GitHub records each upper layer of a stack as merged into the branch of the
++layer below it, even when the whole stack merged into the default branch as
++a unit. So when a pull request whose base is not the default branch merges,
++the daemon checks whether that base reached the default branch, and words
++`MERGED` to say so:
++
++```text
++MERGED acme/app#13 with its stack into main at 2026-11-19T18:02:11Z (merge commit 4be1c2d9) — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
++MERGED acme/app#13 into layer-12 at 2026-11-19T18:02:11Z (merge commit 4be1c2d9), which is not in main yet — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
++```
++
++The daemon walks down the chain of base branches. At each step it takes the
++pull request whose head is the base, from the pull request's GitHub stack
++or, where GitHub records none, from the pull requests with that head. That
++pull request carried the change only when it merged no earlier than the one
++above it did, less 10 seconds, because GitHub merges a stack's layers about
++a second apart from the bottom up. The first form means that every step
++carried the change down to a pull request that merged into the default
++branch. The second form means that a pull request below it is still open,
++or that one merged before the change reached it, as when someone merges a
++layer by hand into a layer that already merged.
++
++The check asks GitHub once for the stack, and that answer covers every layer
++that merges in the same pass and each layer's fixer name. The stack does not
++record each layer's base, so the daemon takes it to be the head of the layer
++below. When a step shows that a layer merged well after the layer below it,
++as when the bottom layer merged alone and the next layer was retargeted to
++the default branch, the daemon reads that layer's real base with
++`gh api "repos/<owner>/<repo>/pulls?head=<owner>:<branch>&state=all"`. It
++reads each branch of a chain that GitHub records no stack for the same way,
++once a pass. When GitHub says neither, and for a pull request based on the
++default branch, which costs no request, `MERGED` names the base as GitHub
++records it.
++
+ | Kind | Role | Reports |
+ | --- | --- | --- |
+ | `FINDING` | `fix` | An unresolved review thread |
+@@ -3824,7 +3858,7 @@ layer and to finish it once no layer of its stack is open.
+ | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
+ | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
+ | `MOVED` | any | Another session owns the role now |
+-| `MERGED`, `CLOSED` | any | The pull request merged or closed |
++| `MERGED`, `CLOSED` | any | The pull request merged or closed; `MERGED` says whether a layer's base reached the default branch |
+ | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
+ 
+ A `LABEL` line is not work. The review commands set the `clean` and
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 2733bfc0..c1c1a549 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -603,8 +603,12 @@ role are these:
+ - **`MERGED`** and **`CLOSED`** report that the pull request merged or
+   closed, as
+   `MERGED acme/app#74 into main at 2026-10-23T01:36:44Z (merge commit ea9a364a)`
+-  or `CLOSED acme/app#80 without merging`. The daemon removes the
+-  subscription itself. Act as the next section describes.
++  or `CLOSED acme/app#80 without merging`. For an upper layer of a stack,
++  `MERGED acme/app#75 with its stack into main` means its change reached
++  the default branch with the layers below it, and
++  `MERGED acme/app#75 into layer-74 at 2026-10-23T01:36:44Z, which is not in main yet`
++  means it did not. The daemon removes the subscription itself. Act as the next section
++  describes.
+ - **`MISSING`** reports that the pull request does not exist or that the
+   operator cannot see it, and that the daemon removed the subscription.
+   Tell the user.
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 3edd05fd..3431d54e 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -71,6 +71,9 @@
+ STOP_WAIT = 10.0
+ RENEW_EVERY = 30.0
+ PAGE = 100
++# How many seconds after a layer of a stack merges the layer above it can merge into it and still be carried
++# with it: GitHub merges a stack's layers about a second apart, from the bottom up.
++STACK_MERGE_SPREAD = 10.0
+ SNIPPET = 130
+ DELIVERERS = ("mod", "stream")
+ GONE = "gone"
+@@ -107,7 +110,8 @@
+ 
+ # The query § 2.6 of the watch-daemon plan gives, which Projector's panel reads from the cache too, with
+ # the fields the events name: `mergedAt` and `mergeCommit` for MERGED, each comment's id and times for a
+-# live start comment, and `nameWithOwner` for the review state's path. The panel reads `labels` for the
++# live start comment, `nameWithOwner` for the review state's path, and `defaultBranchRef` for whether a merged
++# layer of a stack reached the default branch. The panel reads `labels` for the
+ # `reviewing` and `clean` labels a review sets, drawing each label in its `color`, and the daemon for their
+ # LABEL events. `rateLimit` reports what it cost. The panel reads the head's `statusCheckRollup` `state`, and
+ # the daemon reads the rollup's contexts for CHECKS. GitHub's counts by state cover every context, so they say
+@@ -118,7 +122,7 @@
+ CONTEXT_NODES = ("nodes{ __typename ... on CheckRun{ name conclusion startedAt completedAt checkSuite{ conclusion"
+                  " workflowRun{ databaseId createdAt workflow{ databaseId } } } } ... on StatusContext{ context state } }")
+ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
+-  repository(owner:$o,name:$r){ visibility nameWithOwner
++  repository(owner:$o,name:$r){ visibility nameWithOwner defaultBranchRef{ name }
+     pullRequest(number:$n){
+       number title url body state isDraft reviewDecision mergeable updatedAt mergedAt mergeCommit { oid }
+       headRefOid headRefName baseRefName isCrossRepository author { login }
+@@ -563,10 +567,7 @@ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tupl
+             continue
+         if key not in held:
+             result = run_gh(["api", f"repos/{repo}/pulls/{number}"])
+-            try:
+-                pull = json.loads(result.stdout) if result.returncode == 0 else None
+-            except ValueError:
+-                pull = None
++            pull = json_of(result)
+             if not isinstance(pull, dict):
+                 problems.append(f"could not look up {repo}#{number}: "
+                                 f"{(result.stderr or result.stdout).strip() or 'gh failed'}")
+@@ -577,10 +578,7 @@ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tupl
+     for repo, branch in unique(branches):
+         owner = repo.split("/")[0]
+         result = run_gh(["api", f"repos/{repo}/pulls?head={quote(f'{owner}:{branch}', safe=':')}&state=open"])
+-        try:
+-            listed = json.loads(result.stdout) if result.returncode == 0 else None
+-        except ValueError:
+-            listed = None
++        listed = json_of(result)
+         if not isinstance(listed, list):
+             problems.append(f"could not look up the pull request for {repo} {branch}: "
+                             f"{(result.stderr or result.stdout).strip() or 'gh failed'}")
+@@ -1250,19 +1248,18 @@ def read_contexts(self, owner: str, name: str, pr: dict, now: float) -> None:
+         contexts["nodes"] = read
+         contexts["pageInfo"] = page
+ 
+-    def stack(self, repo: str, number: int, now: float) -> Optional[int]:
+-        """The bottom layer of the open GitHub stack of two or more that holds the pull request, recorded for each
+-        of the stack's layers, or None when GitHub lists no such stack or cannot answer. A stack lists a merged
+-        layer still, so its bottom stays the bottom."""
++    def read_stack(self, repo: str, number: int) -> Optional[dict]:
++        """The GitHub stack that holds the pull request, or None when GitHub lists none or cannot answer."""
+         result = self.gh(["api", f"repos/{repo}/stacks?pull_request={number}"])
+-        try:
+-            found = json.loads(result.stdout) if result.returncode == 0 else None
+-        except ValueError:
+-            found = None
+-        stack = found[0] if isinstance(found, list) and found and isinstance(found[0], dict) else {}
+-        layers = [layer["number"] for layer in stack.get("pull_requests") or []
+-                  if isinstance(layer, dict) and isinstance(layer.get("number"), int)]
+-        bottom = layers[0] if stack.get("open", True) and len(layers) > 1 and number in layers else None
++        found = json_of(result)
++        return found[0] if isinstance(found, list) and found and isinstance(found[0], dict) else None
++
++    def stack(self, repo: str, number: int, stack: Optional[dict], now: float) -> Optional[int]:
++        """The bottom layer of `stack` when it is an open stack of two or more that holds the pull request,
++        recorded for each of the stack's layers, or else None. A stack lists a merged layer still, so its bottom
++        stays the bottom."""
++        layers = [layer["number"] for layer in stack_layers(stack)]
++        bottom = layers[0] if (stack or {}).get("open", True) and len(layers) > 1 and number in layers else None
+         for layer in layers if bottom is not None else []:
+             self.stacks[repo.lower(), layer] = (now, bottom)
+         return bottom
+@@ -1362,6 +1359,10 @@ def __init__(self, daemon: Daemon, now: float, now_mono: float,
+         # By repository, its open pull requests, and by pull request, the subagent that fixes it.
+         self.listings: dict[str, object] = {}
+         self.fixers: dict[tuple[str, int], str] = {}
++        # By pull request, the GitHub stack that holds it, and by repository and branch, the pull requests whose
++        # head it is, each read at most once a pass.
++        self.github_stacks: dict[tuple[str, int], Optional[dict]] = {}
++        self.headed: dict[tuple[str, str], Optional[dict]] = {}
+         # By repository, lowercased, the logins `review.reviewers` names, and whether its `review.ci` says GitHub
+         # Actions reviews its pull requests, as `settings_of` reads them.
+         self.repo_settings: Optional[dict[str, tuple[tuple[str, ...], bool]]] = None
+@@ -1636,13 +1637,7 @@ def close(self, pull: tuple[str, int], roles: dict, owners: dict[str, str], entr
+         pr = pull_request(entry)
+         number = pull[1]
+         ref = f"{repo}#{number}"
+-        if pr.get("state") == "MERGED":
+-            when = f" at {pr['mergedAt']}" if pr.get("mergedAt") else ""
+-            oid = (pr.get("mergeCommit") or {}).get("oid")
+-            commit = f" (merge commit {oid[:8]})" if oid else ""
+-            detail = f"MERGED {ref} into {pr.get('baseRefName') or '?'}{when}{commit}"
+-        else:
+-            detail = f"CLOSED {ref} without merging"
++        detail = None
+         held: dict[str, list[str]] = {}
+         for (found, name), claims in sorted(roles.items()):
+             owner = owners.get(role_label(found, name))
+@@ -1652,6 +1647,8 @@ def close(self, pull: tuple[str, int], roles: dict, owners: dict[str, str], entr
+             closed = self.states[session].data["closed"]
+             if pull_label(pull) not in closed:
+                 closed[pull_label(pull)] = self.now
++                if detail is None:
++                    detail = self.closed_detail(ref, number, repo, entry)
+                 fixer = self.fixer(pull, repo, pr) if "fix" in names else ""
+                 self.tell(session, f"{detail} — {closing_actions(repo, number, names, fixer)}")
+         for name in session_names(self.root):
+@@ -1664,6 +1661,81 @@ def close(self, pull: tuple[str, int], roles: dict, owners: dict[str, str], entr
+             del owners[label]
+         self.forget_adopted(repo, number, adopted)
+ 
++    def closed_detail(self, ref: str, number: int, repo: str, entry: dict) -> str:
++        pr = pull_request(entry)
++        if pr.get("state") != "MERGED":
++            return f"CLOSED {ref} without merging"
++        when = f" at {pr['mergedAt']}" if pr.get("mergedAt") else ""
++        oid = (pr.get("mergeCommit") or {}).get("oid")
++        commit = f" (merge commit {oid[:8]})" if oid else ""
++        base = pr.get("baseRefName") or "?"
++        default = ((entry.get("repository") or {}).get("defaultBranchRef") or {}).get("name")
++        landed = self.landed(repo, number, pr.get("mergedAt"), base, default) \
++            if default and base not in ("?", default) else None
++        into = f"with its stack into {default}" if landed else f"into {base}"
++        behind = f", which is not in {default} yet" if landed is False else ""
++        return f"MERGED {ref} {into}{when}{commit}{behind}"
++
++    def landed(self, repo: str, number: int, merged_at: object, base: str, default: str) -> Optional[bool]:
++        """Whether the merged pull request's change reached the default branch through its base: True once each
++        step down the chain of base branches reaches the default branch, False when a pull request below is open
++        or merged before the change reached it, None when GitHub does not say. Each step takes the pull request
++        whose head is the base from GitHub's stack, or else from the pull requests with that head, and it
++        carried the change only when it merged no earlier than the one above it, less the seconds GitHub
++        spreads a stack's merge over. A stack layer's base is the head of the layer below it, until a step
++        shows it was retargeted after that layer merged, and then GitHub says where it merged."""
++        stack = self.github_stack(repo, number)
++        layers = {(layer.get("head") or {}).get("ref"): layer for layer in stack_layers(stack)}
++        heads = list(layers)
++        ordered = dict(zip(heads[1:], heads))
++        if heads:
++            ordered[heads[0]] = ((stack or {}).get("base") or {}).get("ref")
++        when, upper, assumed, seen = seconds_of(merged_at), None, False, set()
++        while base != default:
++            if not base or when is None or (base, assumed) in seen:
++                return None
++            seen.add((base, assumed))
++            below = layers.get(base) or self.pull_headed(repo, base)
++            merged = seconds_of((below or {}).get("merged_at"))
++            if below is not None and below.get("state") == "open":
++                return False
++            if merged is None:
++                return None
++            if merged < when - STACK_MERGE_SPREAD:
++                if not assumed:
++                    return False
++                base, assumed = ((self.pull_headed(repo, upper) or {}).get("base") or {}).get("ref"), False
++                continue
++            when, upper = merged, base
++            if base in layers:
++                base, assumed = ordered[base], True
++            else:
++                base, assumed = (below.get("base") or {}).get("ref"), False
++        return True
++
++    def github_stack(self, repo: str, number: int) -> Optional[dict]:
++        """The GitHub stack that holds the pull request, asked at most once a pass for all the stack's layers."""
++        pull = (repo.lower(), number)
++        if pull not in self.github_stacks:
++            stack = self.daemon.read_stack(repo, number)
++            for layer in [number, *(found["number"] for found in stack_layers(stack))]:
++                self.github_stacks[repo.lower(), layer] = stack
++        return self.github_stacks[pull]
++
++    def pull_headed(self, repo: str, branch: str) -> Optional[dict]:
++        """The pull request whose head is `branch`: an open one, or else one that merged, or None when there is
++        neither or GitHub cannot answer. GitHub is asked at most once a pass for each branch."""
++        key = (repo.lower(), branch)
++        if key not in self.headed:
++            owner = repo.split("/")[0]
++            result = self.daemon.gh(["api", f"repos/{repo}/pulls?head={quote(f'{owner}:{branch}', safe=':')}"
++                                            "&state=all"])
++            found = json_of(result)
++            pulls = [pull for pull in found if isinstance(pull, dict)] if isinstance(found, list) else []
++            self.headed[key] = next((pull for pull in pulls if pull.get("state") == "open"),
++                                    next((pull for pull in pulls if pull.get("merged_at")), None))
++        return self.headed[key]
++
+     # Owners
+ 
+     def choose(self, roles: dict, spellings: dict[tuple[str, int], str], results: dict) -> dict[str, str]:
+@@ -1955,7 +2027,7 @@ def bottom(self, pull: tuple[str, int], repo: str, pr: dict) -> Optional[int]:
+         asked = cached[0] if fresh else None
+         if not fresh and (chained or not isinstance(pulls, list) or known is not None):
+             asked = self.now
+-            bottom = self.daemon.stack(repo, number, self.now)
++            bottom = self.daemon.stack(repo, number, self.github_stack(repo, number), self.now)
+             if bottom is not None:
+                 return bottom
+         bottom, seen = (number if chained else None), {number}
+@@ -2178,6 +2250,20 @@ def newest_answer(unresolved: list[dict]) -> Optional[int]:
+     return max(answers) if answers else None
+ 
+ 
++def json_of(result: GhResult) -> object:
++    """What a `gh api` call printed, as JSON, or None when it failed or printed something else."""
++    try:
++        return json.loads(result.stdout) if result.returncode == 0 else None
++    except ValueError:
++        return None
++
++
++def stack_layers(stack: Optional[dict]) -> list[dict]:
++    """The layers of a GitHub stack, from the bottom up, each with its `number`."""
++    return [layer for layer in (stack or {}).get("pull_requests") or []
++            if isinstance(layer, dict) and isinstance(layer.get("number"), int)]
++
++
+ def closing_actions(repo: str, number: int, names: list[str], fixer: str) -> str:
+     """What each role's owner does once the pull request merges or closes. A stack's fixer goes on fixing the
+     layers still open, because the user can merge a stack's lower layers first."""
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index a5a587c7..a90aaa37 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -162,12 +162,16 @@ def committed(self, text, repo="acme/app") -> None:
+     def config_reads(self) -> list[str]:
+         return [call[-1] for call in self.calls if call[:1] == ["api"] and "/contents/" in call[-1]]
+ 
+-    def stack(self, number, *layers, repo="acme/app", open_layers=None, is_open=True) -> None:
+-        """A GitHub stack of the pull requests `layers`, bottom first, of which `open_layers` are open."""
++    def stack(self, number, *layers, repo="acme/app", open_layers=None, merged=None, is_open=True,
++              base="main") -> None:
++        """A GitHub stack of the pull requests `layers`, bottom first, on `base`, each with the head branch
++        `layer-<number>`, of which `open_layers` are open and `merged` maps each merged one to when it merged."""
+         still = set(layers if open_layers is None else open_layers)
+         self.repository(repo).setdefault("stacks", []).append({
+-            "number": number, "open": is_open, "base": {"ref": "main"},
+-            "pull_requests": [{"number": layer, "state": "open" if layer in still else "closed"} for layer in layers]})
++            "number": number, "open": is_open, "base": {"ref": base},
++            "pull_requests": [{"number": layer, "state": "open" if layer in still else "closed",
++                               "merged_at": (merged or {}).get(layer), "head": {"ref": f"layer-{layer}"}}
++                              for layer in layers]})
+ 
+     def stack_lookups(self) -> list[str]:
+         return [call[-1] for call in self.calls if call[:1] == ["api"] and "/stacks?" in call[-1]]
+@@ -244,7 +248,7 @@ def graphql(self, fields: dict) -> watch.GhResult:
+         if pull["contexts"]:
+             found = {**found, "commits": {"nodes": [{"commit": self.rollup(pull["contexts"], fields["query"])}]}}
+         data = {"rateLimit": {"cost": 1}, "repository": {"visibility": repo["visibility"], "nameWithOwner": repo["name"],
+-                                                         "pullRequest": found}}
++                                                         "defaultBranchRef": {"name": "main"}, "pullRequest": found}}
+         return watch.GhResult(0, json.dumps({"data": data}))
+ 
+     @staticmethod
+@@ -294,10 +298,15 @@ def rest(self, path: str, include: bool, etag: Optional[str], paginate: bool) ->
+         tail = parts[3:]
+         open_pulls = [(number, pull) for number, pull in sorted(repo["pulls"].items(), reverse=True)
+                       if pull["node"]["state"] == "OPEN"]
+-        if tail == ["pulls"] and set(query) == {"head", "state"}:
++        if tail == ["pulls"] and set(query) == {"head", "state"} and query["state"] in ("open", "all"):
+             branch = query["head"].split(":", 1)[1]
+-            return self.answer(200, [{"number": number} for number, pull in open_pulls
+-                                     if pull["node"]["headRefName"] == branch], include, etag)
++            listed = open_pulls if query["state"] == "open" else sorted(repo["pulls"].items(), reverse=True)
++            return self.answer(200, [{"number": number, "state": "open" if pull["node"]["state"] == "OPEN" else "closed",
++                                      "merged_at": pull["node"]["mergedAt"] or (LATER if pull["node"]["state"] == "MERGED"
++                                                                                else None),
++                                      "base": {"ref": pull["node"]["baseRefName"]}}
++                                     for number, pull in listed if pull["node"]["headRefName"] == branch],
++                               include, etag)
+         if tail == ["pulls"] and query == {"state": "open", "per_page": "100", "page": query.get("page", "")}:
+             page = int(query["page"])
+             listed = [{"number": number, "user": {"login": pull["node"]["author"]["login"]},
+@@ -2407,6 +2416,135 @@ def test_a_merged_layer_leaves_the_stacks_fixer_to_its_open_layers(self) -> None
+         self.assertEqual(["MERGED acme/app#5 into main — send subagent fix-stack-5 no more work for acme/app#5, and "
+                           "finish it once no layer of its stack is open"], events)
+ 
++    # When the stack merges: GitHub merges its layers one second apart, from the bottom up.
++    MERGED_AT = ("2026-11-16T22:01:00Z", "2026-11-16T22:01:01Z", "2026-11-16T22:01:02Z")
++    ACTION = ("send subagent fix-stack-5 no more work for acme/app#{}, and finish it once no layer of its stack is "
++              "open")
++
++    def merge(self, *numbers: int, base: str = "main", times: tuple[str, ...] = MERGED_AT) -> dict[int, str]:
++        """Merge the chained layers `numbers` at `times`, the first into `base` and each other into the one below
++        it, and answer when each merged."""
++        for number, at in zip(numbers, times):
++            self.github.pull_request(number, ref=f"layer-{number}", base=base, state="MERGED", merged_at=at)
++            base = f"layer-{number}"
++        return dict(zip(numbers, times))
++
++    def merge_stack(self, *numbers: int, **times) -> None:
++        """Merge GitHub's stack of the chained layers `numbers`."""
++        self.github.repository()["stacks"] = []
++        self.github.stack(20, *numbers, open_layers=(), merged=self.merge(*numbers, **times), is_open=False)
++
++    def head_lookups(self) -> list[str]:
++        return [call[-1] for call in self.github.calls if call[:1] == ["api"] and "pulls?head=" in call[-1]]
++
++    def test_an_upper_layer_that_merged_with_its_stack_names_main_not_the_branch_below(self) -> None:
++        self.github.stack(20, 5, 6, 7)
++        self.layers(5, 6, 7)
++        self.live("fixer", "acme/app#5 fix", "acme/app#6 fix", "acme/app#7 fix")
++        self.cycle()
++
++        self.merge_stack(5, 6, 7)
++        events = self.cycle()["fixer"]
++
++        five, six, seven = self.MERGED_AT
++        self.assertEqual([f"MERGED acme/app#5 into main at {five} — {self.ACTION.format(5)}",
++                          f"MERGED acme/app#6 with its stack into main at {six} — {self.ACTION.format(6)}",
++                          f"MERGED acme/app#7 with its stack into main at {seven} — {self.ACTION.format(7)}"],
++                         sorted(events))
++
++    def test_a_merged_stack_costs_one_stack_lookup_for_all_its_layers_events_and_fixers(self) -> None:
++        self.github.stack(20, 5, 6, 7)
++        self.layers(5, 6, 7)
++        self.live("fixer", "acme/app#5 fix", "acme/app#6 fix", "acme/app#7 fix")
++        self.cycle()
++
++        self.merge_stack(5, 6, 7)
++        self.advance(self.settings.renotify)
++        self.github.calls.clear()
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(3, len(events))
++        self.assertEqual(1, len(self.github.stack_lookups()))
++        self.assertEqual([], self.head_lookups())
++
++    def test_a_layer_merged_by_hand_into_an_open_layer_says_its_base_is_not_in_main_yet(self) -> None:
++        self.github.stack(20, 5, 6)
++        self.layers(5, 6)
++        self.live("fixer", "acme/app#6 fix")
++        self.cycle()
++
++        self.github.repository()["stacks"] = []
++        self.github.stack(20, 5, 6, open_layers=(5,), merged={6: LATER})
++        self.github.pull_request(6, ref="layer-6", base="layer-5", state="MERGED", merged_at=LATER)
++        events = self.cycle()["fixer"]
++
++        self.assertEqual([f"MERGED acme/app#6 into layer-5 at {LATER}, which is not in main yet — "
++                          f"{self.ACTION.format(6)}"], events)
++
++    def test_a_layer_merged_into_a_layer_that_had_already_merged_into_main_says_it_is_not_in_main_yet(self) -> None:
++        self.github.stack(20, 5, 6)
++        self.layers(5, 6)
++        self.live("fixer", "acme/app#6 fix")
++        self.cycle()
++
++        self.merge_stack(5, 6, times=("2026-11-16T22:01:00Z", "2026-11-16T23:00:00Z"))
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(["MERGED acme/app#6 into layer-5 at 2026-11-16T23:00:00Z, which is not in main yet — "
++                          f"{self.ACTION.format(6)}"], events)
++
++    def test_a_layer_merged_by_hand_into_a_merged_branch_of_a_chain_says_it_is_not_in_main_yet(self) -> None:
++        self.layers(5, 6)
++        self.live("fixer", "acme/app#6 fix")
++        self.cycle()
++
++        self.merge(5, 6, times=("2026-11-16T22:01:00Z", "2026-11-16T23:00:00Z"))
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(["MERGED acme/app#6 into layer-5 at 2026-11-16T23:00:00Z, which is not in main yet — "
++                          f"{self.ACTION.format(6)}"], events)
++
++    def test_a_layer_merged_with_its_retargeted_parent_after_the_bottom_merged_alone_reached_main(self) -> None:
++        self.github.stack(20, 5, 6, 7)
++        self.layers(5, 6, 7)
++        self.live("fixer", "acme/app#7 fix")
++        self.cycle()
++
++        times = {5: "2026-11-16T22:01:00Z", 6: "2026-11-16T23:00:00Z", 7: "2026-11-16T23:00:01Z"}
++        self.github.repository()["stacks"] = []
++        self.github.stack(20, 5, 6, 7, open_layers=(), merged=times, is_open=False)
++        self.github.pull_request(5, ref="layer-5", state="MERGED", merged_at=times[5])
++        self.github.pull_request(6, ref="layer-6", state="MERGED", merged_at=times[6])
++        self.github.pull_request(7, ref="layer-7", base="layer-6", state="MERGED", merged_at=times[7])
++        events = self.cycle()["fixer"]
++
++        self.assertEqual([f"MERGED acme/app#7 with its stack into main at {times[7]} — {self.ACTION.format(7)}"],
++                         events)
++        self.assertEqual(["repos/acme/app/pulls?head=acme:layer-6&state=all"], self.head_lookups())
++
++    def test_a_chain_that_github_records_no_stack_for_says_its_merged_upper_layer_reached_main(self) -> None:
++        self.layers(5, 6)
++        self.live("fixer", "acme/app#6 fix")
++        self.cycle()
++
++        self.merge(5, 6)
++        events = self.cycle()["fixer"]
++
++        self.assertEqual([f"MERGED acme/app#6 with its stack into main at {self.MERGED_AT[1]} — "
++                          f"{self.ACTION.format(6)}"], events)
++
++    def test_a_pull_request_merged_into_main_reads_no_stack_and_names_main(self) -> None:
++        self.github.pull_request(1)
++        self.live("fixer", "acme/app#1 fix")
++        self.cycle()
++
++        self.github.calls.clear()
++        self.github.pull_request(1, state="MERGED")
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(["MERGED acme/app#1 into main — finish subagent fix-1"], events)
++        self.assertEqual(([], []), (self.github.stack_lookups(), self.head_lookups()))
++
+     def merge_the_bottom_and_refresh(self) -> list[str]:
+         """Merge layer 5, retarget layer 6 to main, and run the pass after the next full pass's lookup."""
+         self.github.pull_request(5, ref="layer-5", state="MERGED")
