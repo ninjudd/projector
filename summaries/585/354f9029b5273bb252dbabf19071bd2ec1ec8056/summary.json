@@ -1,0 +1,66 @@
+{
+ "version": 1,
+ "name": "iPhone push service scope",
+ "project": "console/phone",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 585,
+  "title": "Say which builds of the iPhone app a push service can wake, and that the hosted instance runs the same service",
+  "head": "354f9029b5273bb252dbabf19071bd2ec1ec8056",
+  "headRef": "phone-push-team",
+  "base": "09edb83e92d7fca2f3e823e6c8e718135da0d847",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The <code>console/phone</code> plan describes a Projector iPhone app and a small push service in <code>services/push/</code>. The service wakes the phone when an agent needs you, and it never sees what the notification says. The plan is a draft with priority <code>later</code>, so it makes no claim that it is ready to build.",
+   "The plan already said that you can run the push service yourself. It did not say what a service you run can actually do. Apple delivers a notification only when it is signed with a push key that belongs to the Apple developer team that owns the app's bundle ID, the identifier Apple uses for an app. So a push service can wake only a build of the app signed by the team whose key it holds.",
+   "This change records four consequences:",
+   "<ul class=\"tight\"><li>Only the publisher's instance can wake the App Store app.</li><li>The instance Projector hosts runs this repository's <code>services/push/</code> unchanged, with the publisher's push key in its environment. There is no second, hosted-only service.</li><li>To go without the hosted service, you build the app under your own bundle ID and team, set those in your own instance's environment, and install that build.</li><li>A build installed from Xcode is development-signed, so Apple's production push endpoint rejects its device token. An instance that serves such a build sets its push environment to <code>sandbox</code>. TestFlight and App Store builds use <code>production</code>.</li></ul>",
+   "The design otherwise stays the same: § 2.4 already has the service read the push key, key ID, team ID, and bundle ID from its environment, and the plan's file table now adds Apple's push environment to that list."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Push key</b>: the key Apple issues to a developer team for signing push notifications.</li><li><b>Bundle ID</b>: the identifier that names an app to Apple, owned by one developer team.</li><li><b>Hosted instance</b>: the push service Projector runs, which the app uses by default.</li><li><b>Push environment</b>: which of Apple's two push endpoints an instance sends to, <code>sandbox</code> for development-signed builds or <code>production</code> for TestFlight and App Store builds.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>A full Projector review of <code>dfed393</code> was clean, with no finding threads, and suggested naming Apple's push environment among the service's environment variables. <code>354f902</code> does that, and an incremental review of it was clean.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The phone plan",
+   "kicker": "What a push service you run can wake, and what the hosted one runs",
+   "intro": [
+    "Three edits to <code>docs/projects/console/phone/readme.md</code>. A sentence at the end of the opening of § 2 states the constraint: a push service can wake only builds signed by the team whose push key it holds. The <code>services/push/</code> row of the file table adds Apple's push environment to the settings the service reads from its environment. A new bullet in § 3 explains why there is one push service, run either as the hosted instance or as your own, how to go without the hosted one, and which push environment each kind of build needs.",
+    "No section is renumbered, and the plan's status and priority are unchanged."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/console/phone/readme.md",
+     "note": "The plan for the iPhone app. Adds the push key constraint to § 2, Apple's push environment to the push service's settings in the file table, and the “One push service, hosted or your own” bullet to § 3.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The <code>services/push/</code> row lists Apple's push key, key ID, team ID, the app's bundle ID, and now Apple's push environment among the service's environment variables, so the new bullet needs no other design change. Checked by reading § 2.3, § 2.4, and the file table at the head.",
+       "line": 199
+      },
+      {
+       "kind": "verify",
+       "text": "The bullet's split matches how Apple issues device tokens: a development-signed build from Xcode registers with the sandbox endpoint, which the production endpoint rejects, and TestFlight and App Store builds register with production.",
+       "line": 276
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
