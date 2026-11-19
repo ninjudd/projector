@@ -1,0 +1,7 @@
+# A project with no build serves its other files as static files, so a local
+# .env must never reach a deployment. Its settings belong in the project's
+# environment variables.
+.env
+.env.*
+dist
+test

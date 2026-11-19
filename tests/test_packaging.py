@@ -179,6 +179,28 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual("site/assets", setuptools["package-dir"]["projector.site.assets"])
         self.assertTrue((ROOT / "site" / "assets" / "site.js").is_file())
 
+    def test_neither_the_wheel_nor_a_plugin_ships_ios_or_services(self) -> None:
+        # The app and the push service deploy on their own. The wheel maps
+        # only src/ and site/assets, and each plugin loads only the paths its
+        # manifest and hooks module name, so neither may reach into them.
+        apart = ("ios", "services")
+        setuptools = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["setuptools"]
+        for package, directory in setuptools["package-dir"].items():
+            self.assertNotIn(Path(directory).parts[0], apart, package)
+        loaded = [self.manifest("claude")["skills"], self.manifest("claude")["types"], self.manifest("codex")["skills"]]
+        loaded += [f"hooks/{module}" for module in json.loads((ROOT / "hooks" / "hooks.json").read_text())["modules"]]
+        for path in loaded:
+            self.assertNotIn(Path(path).parts[0], apart, path)
+        for directory in apart:
+            files = [path for path in (ROOT / directory).rglob("*") if "node_modules" not in path.parts]
+            # A plugin root or skill in here would be published with Projector,
+            # and `claude plugin test .` runs every *.test.ts under the root as
+            # a test of the hooks module, so the service names its tests otherwise.
+            for path in files:
+                self.assertNotIn(path.name, {"plugin.json", "SKILL.md", "hooks.json"}, path)
+                self.assertFalse(path.name.endswith((".test.ts", ".test.tsx")), path)
+        self.assertTrue((ROOT / "services" / "push" / "src" / "lib.ts").is_file())
+
     def test_the_installed_command_is_project(self) -> None:
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
 

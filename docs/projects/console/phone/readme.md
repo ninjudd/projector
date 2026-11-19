@@ -161,27 +161,32 @@ the HTTP/2 client that Apple's push service requires and the ES256 signing
 its tokens use, so it has no runtime dependencies at all. It deploys on its
 own, apart from the `projector.bot` site in `web/`, as a Vercel project
 whose root directory is `services/push/`. Its two calls are Vercel
-Functions on the Node runtime. The app uses this hosted instance by
-default.
+Functions on the Node runtime. The App Store build registers through the
+hosted instance's own registration, which authenticates the account, and
+never calls these handlers. A build its operator signs registers with
+`POST /v1/register` on the instance it was built for, which its build
+settings name.
 
 | Call | Sent by | Body | What the service does |
 | --- | --- | --- | --- |
 | `POST /v1/register` | The app | Apple's device token | Encrypts the token with the service's own secret key and returns the result as the push ID |
-| `POST /v1/push` | The daemon | The push ID and the sealed notification, at most 2 KiB | Decrypts the push ID to the device token and forwards the sealed text to it through Apple's push service, and answers `202`. It answers `404` for a push ID it cannot decrypt or that Apple reports as unregistered, and `429` past 60 notifications an hour for one push ID |
+| `POST /v1/push` | The daemon | The push ID and the sealed notification, at most 2 KiB | Decrypts the push ID to the device token and forwards the sealed text to it through Apple's push service, and answers `202`. It answers `404` for a push ID it cannot decrypt or that Apple reports as unregistered, and `429` past 60 notifications an hour for one phone, counted by the device token, so registering again does not reset it |
 
 A push ID is the device token itself, encrypted and authenticated so that
 only the service can read it and no one can forge one. So the service keeps
 no table and needs no database, and losing its host loses nothing but its
 secret key and Apple's push key, both from its environment. It stores no
-notification and logs no body. It counts each push ID's notifications in
-memory for the rate limit. Vercel runs and retires function instances as
-traffic comes and goes, so that count is a best-effort cap for each
-instance, not a shared one. Vercel's Runtime Cache can make it shared
-later, still without a database. A push ID reaches the
-daemon only inside `project agent phone add`, so knowing one is the only
-credential `POST /v1/push` asks for, and the rate limit caps what a leaked
-ID can do. `phone.push_url` in `~/.projector.toml` names the service, so
-anyone can run their own.
+notification and logs no body. It counts each phone's notifications in
+memory for the rate limit, by the device token a push ID opens to, so a
+phone that registers again for a new push ID gets no more. Vercel runs
+and retires function instances as traffic comes and goes, so that count
+is a best-effort cap for each instance, not a shared one. Vercel's
+Runtime Cache can make it shared later, still without a database. A push
+ID reaches the daemon only inside `project agent phone add`, so knowing
+one is the only credential `POST /v1/push` asks for, and the rate limit
+caps what a leaked ID can do. `phone.push_url` in `~/.projector.toml`
+names the service the daemon posts to, so anyone can run their own. It is
+the daemon's setting only: the app takes its instance from its build.
 
 ### 2.4 Changes by repository
 
@@ -267,15 +272,20 @@ anyone can run their own.
 - **One push service, hosted or your own.** Apple accepts a notification
   only when it is signed with a push key of the team that owns the app's
   bundle ID. So no instance but the publisher's can wake the App Store app.
-  The hosted instance runs this repository's `services/push/` unchanged,
-  with the publisher's push key in its environment, rather than a second
-  service of its own. Someone who wants no hosted service builds the app
-  under their own bundle ID and team, sets those in their instance's
-  environment, and installs that build; the README in `services/push/`
-  says how. A build installed from Xcode is development-signed, and Apple's
-  production endpoint rejects its device token, so that instance sets its
-  push environment to `sandbox`. TestFlight and App Store builds use
-  `production`.
+  The hosted instance does not mount `services/push/`'s two handlers,
+  because they ask for no credential beyond a push ID and would let anyone
+  push through the publisher's key. A hosted deployment imports the
+  service's library instead, the push ID's encryption and the forwarder to
+  Apple's push service, and puts its own account check and shared rate
+  limit in front of it, with the publisher's push key in its environment.
+  So the code that holds the key and touches the device token is this
+  repository's, not a second copy. Someone who wants no hosted service
+  builds the app under their own bundle ID and team, sets those in their
+  instance's environment, and installs that build; the README in
+  `services/push/` says how. A build installed from Xcode is
+  development-signed, and Apple's production endpoint rejects its device
+  token, so that instance sets its push environment to `sandbox`.
+  TestFlight and App Store builds use `production`.
 - **One repository.** The daemon, the app, and the service share one
   protocol and one set of test vectors. Separate repositories would make
   each protocol change a pair of pull requests that have to land in step,
@@ -369,3 +379,70 @@ CLI has no runtime dependencies. Apple's CryptoKit provides X25519 and
 ChaCha20-Poly1305, but not the relay's ChaCha20-and-HMAC construction, so
 the app implements that construction itself and checks it against the
 shared fixtures.
+
+## 8. The push service, built ahead of the app
+
+`services/push/` is built before the rest of the project, because it
+depends only on Apple's push service and not on the open questions in § 6.
+The plan stays a draft, because those questions still block the app. The
+build settled these choices:
+
+- **The push ID.** It is AES-256-GCM, from `node:crypto`, under the
+  service's 32-byte secret key in `PUSH_ID_KEY`. The bytes are a version
+  byte, which is also the additional authenticated data, a random 12-byte
+  nonce, the encrypted device token, and the 16-byte tag, in unpadded
+  base64url: 82 characters for a 32-byte token. A random nonce needs no
+  counter, which a service with no storage could not keep, and the service
+  seals once per registration, far inside GCM's bound of 2^32 random
+  nonces under one key. ChaCha20-Poly1305 would serve as well; GCM is
+  hardware-accelerated almost everywhere. An ID that does not re-encode to
+  itself is refused, so no ID has a second spelling. A new key voids every
+  push ID.
+- **The settings.** `APNS_KEY` holds the `.p8` file's contents,
+  `APNS_KEY_ID`, `APNS_TEAM_ID`, and `APNS_BUNDLE_ID` the rest of Apple's
+  identity, and `APNS_ENVIRONMENT` is `production` or `sandbox`, with no
+  default. A missing or malformed setting answers `500` and logs the
+  variable's name, never its value.
+- **The provider token.** It is an ES256 JWT, with `alg` and `kid` in its
+  header, `iss` and `iat` in its claims, and a raw 64-byte signature. Each
+  function instance makes one and reuses it for 50 minutes, inside Apple's
+  rule of no more often than every 20 minutes and no older than an hour,
+  and makes a new one early after Apple answers `ExpiredProviderToken`.
+- **The forwarder.** Each instance keeps one HTTP/2 connection to Apple and
+  opens a new one once Apple closes it. A request that fails on a reused
+  connection before Apple answers gets one retry on a new connection,
+  because a suspended instance can wake to a dead one. Each request times
+  out after 10 seconds. It reports `sent`, `unregistered` for Apple's `410`
+  and `400 BadDeviceToken`, or `failed` with Apple's one-word reason.
+- **The payload.** The service sends an alert with `mutable-content` set,
+  the sealed text unchanged under the payload's `sealed` key, and "An agent
+  needs you." as the text the lock screen shows if the extension cannot
+  open it. The app's notification service extension reads `sealed`.
+- **The calls.** The bodies are JSON: `{"token"}` for `register`, which
+  answers `{"push_id"}`, and `{"push_id", "notification"}` for `push`. The
+  2 KiB limit counts the notification's UTF-8 bytes and answers `413`. A
+  refusal from Apple for any reason but an unregistered device answers
+  `502`.
+- **The rate limit.** It is a sliding hour, counted by the device token
+  rather than the push ID, so registering again does not reset it, and its
+  `429` carries `Retry-After`.
+- **The library.** `services/push/src/lib.ts` exports the push ID's seal
+  and open, the forwarder, and the functions that read the settings. The
+  two handlers and their rate limit sit outside it and import it, and a
+  test walks the library's imports to keep them out. That is what lets a
+  hosted deployment mount neither handler, as § 3 describes.
+- **The tests and the workflow.** The tests run with `node --test` against
+  a local HTTP/2 server that stands in for Apple. Their files do not end in
+  `.test.ts`, because `claude plugin test .` runs every such file under the
+  repository root, and `tests/test_packaging.py` pins that. The
+  `Push service` workflow runs on changes to `services/push/` and to
+  itself. It leaves out `tests/fixtures/`, which § 2.4 names, until the
+  service reads a fixture.
+- **What ships.** The wheel maps nothing from `services/`, and neither
+  plugin's manifest or hooks module names a path in it. Both hosts install
+  the plugin from the repository root, so their plugin caches hold a copy
+  of `services/` as inert files, as they already hold `web/`.
+
+A deploy to Vercel and a notification through Apple's real push service
+wait for an Apple push key and a Vercel project, which come with the
+domain question in § 6.
