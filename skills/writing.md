@@ -290,7 +290,9 @@ at all. This section says how to write the comments that it keeps.
   until `hasNextPage` is false." Describe the code as it stands, not the
   change that made it (§ 11). Leave out "now", "no longer", "instead of",
   the old behavior that the code replaced, and the review or pull request
-  that prompted the change.
+  that prompted the change. Name an old behavior only when a reader still
+  meets it, such as data an older release wrote: then say what they meet
+  and what the code does with it (§ 11).
 - **Write for someone who meets the code cold.** The maintainer reads the
   comment beside the code, without the pull request, the plan, or the
   conversation that produced it. Define each term that the code does not
