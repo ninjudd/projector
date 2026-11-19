@@ -2055,9 +2055,9 @@ reasoning effort from `CLAUDE_EFFORT` in the environment. The version is
 `PROJECTOR_VERSION` when the environment sets it, as the CI review action
 does because it runs Projector from source, and otherwise the version that
 `project version` reports. Claude Code sets `CLAUDE_EFFORT` for the Bash
-tool and keeps it current through a mid-session `/effort` change. When `CLAUDE_EFFORT` is unset or
-empty, as on Codex or on a model without effort support, they leave the
-effort out rather than guess it.
+tool and keeps it current through a mid-session `/effort` change. When
+`CLAUDE_EFFORT` is unset or empty, as on Codex or on a model without effort
+support, they leave the effort out rather than guess it.
 
 `move` follows a head that moved mid-review: it creates a worktree for the new
 head, rechecks trust, edits the start comment in place to name it, re-reads the
