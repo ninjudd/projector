@@ -142,9 +142,10 @@ def body(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] = 
 def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] = None,
                   runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
     """The review workflow for `agents`, calling the action at `action_ref`, posting as the GitHub App `app_id`
-    names when it is given, or as the hosted service's app when it is `HOSTED_APP`, on the runners `runs_on` labels or a GitHub-hosted one, and passing no credential
-    secret when `credential` is `runner`. Its second line records a digest of the rest, so a later `init` can
-    tell a file nobody edited, which it replaces, from one somebody did."""
+    names when it is given, or as the hosted service's app when it is `HOSTED_APP`, on the runners `runs_on`
+    labels or a GitHub-hosted one, and passing no credential secret when `credential` is `runner`. Its second
+    line records a digest of the rest, so a later `init` can tell a file nobody edited, which it replaces, from
+    one somebody did."""
     text = body(action_ref, agents, app_id, runs_on, credential)
     return f"{HEADER}# projector-workflow sha256={hashlib.sha256(text.encode()).hexdigest()}\n{text}"
 
