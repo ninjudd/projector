@@ -36,6 +36,8 @@ Owner and repository names under `cache/` are lowercased, because GitHub ignores
 
 from __future__ import annotations
 
+import base64
+import binascii
 import contextlib
 import json
 import os
@@ -64,6 +66,7 @@ IDLE = 300.0
 SLEPT = 60.0
 SETTLE = 60.0
 SETTLE_EVERY = 5.0
+COMMITTED_EVERY = 600.0
 FORGET = 7 * 24 * 3600.0
 STOP_WAIT = 10.0
 RENEW_EVERY = 30.0
@@ -867,6 +870,11 @@ def fetch_default(top: Path) -> dict:
     return {"state": "ok", "error": ""}
 
 
+def review_settings(found: config.Config) -> tuple[tuple[str, ...], bool]:
+    """The logins `review.reviewers` names, and whether `review.ci` is `true`."""
+    return review.extra_reviewers(found.setting("review.reviewers")), found.setting("review.ci") is True
+
+
 # The daemon
 
 @dataclass
@@ -943,6 +951,9 @@ class Daemon:
         self.last_fetch: Optional[float] = None
         # By pull request, when GitHub's stacks were last asked about it, and the bottom layer of its stack.
         self.stacks: dict[tuple[str, int], tuple[float, Optional[int]]] = {}
+        # By repository, lowercased, when its committed `.projector.toml` was last read from GitHub, and the
+        # review settings read then.
+        self.committed: dict[str, tuple[float, tuple[tuple[str, ...], bool]]] = {}
 
     def log(self, message: str) -> None:
         print(f"{stamp(self.wall())} {message}", flush=True)
@@ -1261,6 +1272,32 @@ class Daemon:
         found = decode_pages(result.stdout) if result.returncode == 0 else None
         return None if found is None else [trim_review(item) for item in found if isinstance(item, dict)]
 
+    def committed_settings(self, repo: str, now: float) -> tuple[tuple[str, ...], bool]:
+        """`repo`'s review settings from the `.projector.toml` its default branch commits on GitHub, never a pull
+        request's head, read at most once every `COMMITTED_EVERY` seconds of the daemon's clock. A repository
+        without the file has none. A read that fails logs and keeps the settings read before, or none."""
+        key = repo.lower()
+        held = self.committed.get(key)
+        if held is not None and now - held[0] < COMMITTED_EVERY:
+            return held[1]
+        settings = held[1] if held is not None else ((), False)
+        response = self.conditional(f"repos/{repo}/contents/{config.CONFIG_NAME}", None)
+        found = response.json() if response.status == 200 else None
+        try:
+            if response.status == 404:
+                settings = review_settings(config.load_committed(None, ""))
+            elif isinstance(found, dict) and found.get("encoding") == "base64" \
+                    and isinstance(found.get("content"), str):
+                data = base64.b64decode(found["content"])
+                settings = review_settings(config.load_committed(data, f"{repo}:{config.CONFIG_NAME}"))
+            else:
+                self.log(f"could not read {repo}'s {config.CONFIG_NAME} from GitHub"
+                         f"{f' (HTTP {response.status})' if response.status else ''}; keeping its last review settings")
+        except (binascii.Error, ConfigError) as error:
+            self.log(f"could not read {repo}'s {config.CONFIG_NAME} from GitHub: {error}")
+        self.committed[key] = (now, settings)
+        return settings
+
     def observe(self, lock: "review.ReviewLock", now: float) -> None:
         seen = self.locks.get(lock.path)
         if seen is None or seen[0] != lock.modified:
@@ -1325,8 +1362,8 @@ class Pass:
         # By repository, its open pull requests, and by pull request, the subagent that fixes it.
         self.listings: dict[str, object] = {}
         self.fixers: dict[tuple[str, int], str] = {}
-        # By repository, lowercased, the logins `review.reviewers` names in a live checkout of it, and whether its
-        # `review.ci` says GitHub Actions reviews its pull requests.
+        # By repository, lowercased, the logins `review.reviewers` names, and whether its `review.ci` says GitHub
+        # Actions reviews its pull requests, as `settings_of` reads them.
         self.repo_settings: Optional[dict[str, tuple[tuple[str, ...], bool]]] = None
 
     def tell(self, session: str, *lines: str) -> None:
@@ -1704,19 +1741,19 @@ class Pass:
             state["review"].pop(role_label(pull, name), None)
 
     def settings_of(self, repo: str) -> tuple[tuple[str, ...], bool]:
-        """`repo`'s `review.reviewers` and `review.ci`, from a checkout of it that a live session works in, read
-        once a pass. A repository no live session works in names no reviewers and no CI review."""
+        """`repo`'s `review.reviewers` and `review.ci`, read once a pass from a checkout of it that a live session
+        works in, or, when no live session works in one, from the `.projector.toml` its default branch commits on
+        GitHub, which the daemon reads again every `COMMITTED_EVERY` seconds."""
         if self.repo_settings is None:
             self.repo_settings = {}
             for top in live_checkouts(self.root, self.daemon.live).values():
                 try:
-                    named = review.origin_repo(top).lower()
-                    found = load_config(top)
-                    self.repo_settings[named] = (review.extra_reviewers(found.setting("review.reviewers")),
-                                                 found.setting("review.ci") is True)
+                    self.repo_settings[review.origin_repo(top).lower()] = review_settings(load_config(top))
                 except (ProjectorError, ConfigError) as error:
                     self.daemon.log(f"could not read the review settings in {top}: {error}")
-        return self.repo_settings.get(repo.lower(), ((), False))
+        if repo.lower() not in self.repo_settings:
+            self.repo_settings[repo.lower()] = self.daemon.committed_settings(repo, self.mono)
+        return self.repo_settings[repo.lower()]
 
     def counted_logins(self, repo: str) -> tuple[str, ...]:
         """The logins whose verdicts count on `repo` beside the operator's, as `project review status` counts
