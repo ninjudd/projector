@@ -2510,7 +2510,7 @@ def review_run(arguments: argparse.Namespace) -> int:
                         configured_reviewer=username if isinstance(username, str) and username else None,
                         effort=arguments.effort, mode=arguments.permission_mode, timeout_minutes=arguments.timeout,
                         rereview=arguments.rereview, loop=arguments.loop, plugin_dir=arguments.plugin_dir,
-                        labels=labels_enabled(checkout))
+                        labels=labels_enabled(checkout), context_listed=config.get("review.context_repos"))
 
 
 def run_review(arguments: argparse.Namespace) -> int:
@@ -3608,7 +3608,7 @@ def record_required_check(root: Path, value: bool) -> None:
 
 
 CI_REVIEW_QUESTION = "Review this repository's pull requests in GitHub Actions? [y/N] "
-CI_REVIEWER = "github-actions[bot]"
+CI_REVIEWER = headless.WORKFLOW_LOGIN
 
 
 def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAction]) -> None:
@@ -3676,7 +3676,7 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
     site, why = summary.push_decision(repo)
     if site is None:
         print(f"project: CI reviews publish no summaries until the site is set up, because {why}", file=sys.stderr)
-    if config.get("review.gate") and runs_on:
+    if config.get("review.gate") and not ci.hosted(runs_on):
         print("project: CI reviews run review.gate on your runner, so install every tool the gate runs there",
               file=sys.stderr)
     elif config.get("review.gate"):

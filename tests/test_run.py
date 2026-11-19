@@ -438,6 +438,137 @@ class RunTests(unittest.TestCase):
                 run.runner(agent, configured)
 
 
+class ContextGitHub:
+    """`gh repo view` and `gh repo clone` for context repositories: each repository's visibility, or a failed
+    check where `visibilities` has none, and a clone that makes the folder it names."""
+
+    def __init__(self, visibilities: dict[str, str]) -> None:
+        self.visibilities = visibilities
+        self.calls: list[list[str]] = []
+        # The tokens each repository's calls used, by repository; None is gh's own.
+        self.tokens: dict[str, set[Optional[str]]] = {}
+
+    def __call__(self, args: list[str], token: str | None = None) -> str:
+        self.calls.append(args)
+        self.tokens.setdefault(args[2], set()).add(token)
+        if args[:2] == ["repo", "view"] and args[3:] == ["--json", "visibility", "--jq", ".visibility"]:
+            if args[2] not in self.visibilities:
+                raise ReviewError(f"gh repo view {args[2]} failed: HTTP 403")
+            return self.visibilities[args[2]] + "\n"
+        if args[:2] == ["repo", "clone"] and args[4:] == ["--", "--depth", "1", "--quiet"]:
+            Path(args[3], "README.md").parent.mkdir(parents=True, exist_ok=True)
+            Path(args[3], "README.md").write_text(f"{args[2]}\n")
+            return ""
+        raise AssertionError(f"unexpected gh call: {args}")
+
+
+class ContextTests(unittest.TestCase):
+    """Which context repositories a review reads, as docs/projects/review-in-ci/readme.md § 2.9 describes."""
+
+    def kept(self, visibilities: dict[str, str], listed: str, **environ: str) -> tuple[list[str], str, ContextGitHub]:
+        github = ContextGitHub(visibilities)
+        with mock.patch.object(review, "run_gh", github), redirect_stderr(io.StringIO()) as err:
+            found = run.context_repos(REPO, listed, environ)
+        return found, err.getvalue(), github
+
+    def test_a_private_repositorys_code_reaches_only_a_review_whose_readers_can_see_it(self) -> None:
+        # A failed check proves nothing, so None, a check that failed, keeps only a public repository.
+        shared = {("PRIVATE", "PRIVATE"), ("PRIVATE", "INTERNAL"), ("INTERNAL", "PRIVATE"), ("INTERNAL", "INTERNAL")}
+        for own in ("PUBLIC", "PRIVATE", "INTERNAL", None):
+            for theirs in ("PUBLIC", "PRIVATE", "INTERNAL", None):
+                with self.subTest(own=own, theirs=theirs):
+                    visibilities = {name: value for name, value in ((REPO, own), ("acme/docs", theirs)) if value}
+                    found, err, _ = self.kept(visibilities, "acme/docs")
+                    expected = theirs == "PUBLIC" or (own, theirs) in shared
+                    self.assertEqual(["acme/docs"] if expected else [], found, err)
+                    self.assertEqual(not expected, "left acme/docs out" in err, "every exclusion is a warning")
+
+    def test_a_repository_of_another_owner_is_left_out_without_a_lookup(self) -> None:
+        # An app's installation token reaches one account, so the clone would fail, or reach the wrong account.
+        found, err, github = self.kept({REPO: "PRIVATE", "acme/docs": "PRIVATE", "other/docs": "PUBLIC"},
+                                       "other/docs, acme/docs, acme/app, not a repository")
+
+        self.assertEqual(["acme/docs"], found)
+        self.assertIn("left other/docs out of the context repositories: an app token reaches one account's", err)
+        self.assertIn("acme/app out of the context repositories: it is the repository under review", err)
+        self.assertIn("'not a repository'", err)
+        self.assertNotIn(["repo", "view", "other/docs", "--json", "visibility", "--jq", ".visibility"], github.calls)
+
+    def test_the_workflows_own_token_reads_no_context_repository(self) -> None:
+        # GITHUB_TOKEN reaches only its own repository, and a public context repository would read without it
+        # only by accident.
+        found, err, github = self.kept({REPO: "PRIVATE", "acme/docs": "PUBLIC"}, "acme/docs",
+                                       **{review.TOKEN_LOGIN: run.WORKFLOW_LOGIN})
+
+        self.assertEqual(([], []), (found, github.calls))
+        self.assertIn("needs a GitHub App whose installation covers them", err)
+
+    def test_the_clone_token_reaches_only_the_owners_context_repositories(self) -> None:
+        # The reviewed repository has the review's token; listing it here would let the clone token read it too.
+        self.assertEqual(["docs", "lib"], run.token_repositories(REPO, "acme/docs, other/x, acme/app, ACME/lib"))
+        for listed in ("", None, "other/docs", "acme/app"):
+            with self.subTest(listed=listed), redirect_stderr(io.StringIO()):
+                self.assertEqual([], run.token_repositories(REPO, listed))
+
+    def review_with_context(self, **given: str) -> tuple[Path, ContextGitHub, str]:
+        """Run a review of public acme/app that lists public acme/docs and private acme/secret as context, with
+        a clone token and the variables `given`, and return the agent's folder, the fake `gh` of the context
+        repositories, and what the run printed to standard error."""
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        checkout = tmp / "checkout"
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+        subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", f"https://github.com/{REPO}.git"],
+                       check=True)
+        agent = tmp / "agent"
+        agent.mkdir()
+        (agent / "agent.py").write_text(AGENT)
+        (agent / "behavior").write_text("publish")
+        pulls = FakeGitHub(agent)
+        context = ContextGitHub({REPO: "PUBLIC", "acme/docs": "PUBLIC", "acme/secret": "PRIVATE"})
+        self.enterContext(mock.patch.object(review, "run_gh", lambda args, token=None: context(args, token)
+                                            if args[0] == "repo" else pulls(args, token)))
+        self.enterContext(mock.patch.dict(os.environ, {"HEAD_SHA": HEAD, "XDG_STATE_HOME": str(tmp / "state")}))
+        folder = tmp / "context"
+
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            code = run.run(tmp / "state" / "projector" / "reviews", 1, checkout, model=MODEL, agent="command",
+                           configured_runner=shlex.join([sys.executable, str(agent / "agent.py"), str(agent)]),
+                           context_listed="acme/docs, acme/secret",
+                           environ={**os.environ, run.CONTEXT_DIR: str(folder), run.CONTEXT_TOKEN: "clone-token",
+                                    **given})
+        self.assertEqual(0, code, err.getvalue())
+        return agent, context, err.getvalue()
+
+    def test_a_refused_context_token_leaves_the_context_out_and_the_review_goes_on(self) -> None:
+        # GitHub refuses the whole token when the app cannot reach one listed repository. Failing the review
+        # then would stop every review in the repository over one stale entry.
+        agent, context, err = self.review_with_context(**{run.CONTEXT_TOKEN: "", run.CONTEXT_MINT: "failure"})
+
+        self.assertTrue((agent / "published.json").exists(), "the review still runs and publishes")
+        self.assertEqual([], context.calls, "nothing is checked or cloned")
+        self.assertNotIn("context", json.loads((agent / "seen.json").read_text())["stdin"])
+        self.assertIn("GitHub refused a token for them, because the app cannot reach one of them", err)
+
+    def test_a_run_clones_each_kept_repository_and_names_only_those_in_the_prompt(self) -> None:
+        agent, _, _ = self.review_with_context()
+        folder = Path(json.loads((agent / "seen.json").read_text())["env"][run.CONTEXT_DIR])
+
+        stdin = json.loads((agent / "seen.json").read_text())["stdin"]
+        self.assertIn(str(folder / "acme" / "docs"), stdin)
+        self.assertNotIn("secret", stdin, "a private repository stays out of a public repository's review")
+        self.assertEqual(["acme/docs"], [path.relative_to(folder).as_posix() for path in folder.glob("*/*")])
+
+    def test_a_run_clones_with_the_context_token_and_keeps_it_from_the_agent(self) -> None:
+        # The agent only reads the clones; a token for their repositories in its environment would let a pull
+        # request steer it to reach them some other way.
+        agent, context, _ = self.review_with_context()
+
+        self.assertNotIn(run.CONTEXT_TOKEN, json.loads((agent / "seen.json").read_text())["env"])
+        self.assertEqual({"acme/docs": {"clone-token"}, "acme/secret": {"clone-token"}, REPO: {None}},
+                         context.tokens, "the context repositories are checked and cloned with the clone token, "
+                         "and the reviewed repository with the review's")
+
+
 def matches(rule: str, command: str) -> bool:
     """Whether a Claude Code `Bash(...)` pattern's command part matches `command`: a trailing ` *` matches the bare
     command and any arguments after it."""
@@ -480,6 +611,21 @@ class PresetTests(unittest.TestCase):
         for refused in ("git push origin HEAD", "gh pr merge 1", "gh repo edit --visibility public"):
             with self.subTest(refused=refused):
                 self.assertTrue(any(matches(rule, refused) for rule in denied))
+
+    def test_the_claude_preset_reads_each_context_folder_and_writes_none(self) -> None:
+        # In auto mode a working folder's edits can pass without a rule, so only a deny rule keeps a clone of
+        # another repository as it was cloned.
+        scratch, context = Path("/tmp/scratch"), (Path("/tmp/context/acme/docs"), Path("/tmp/context/acme/lib"))
+        argv = run.claude_invocation(1, REPO, MODEL, "high", "auto", scratch, None, context).argv
+        added = [argv[i + 1] for i, part in enumerate(argv) if part == "--add-dir"]
+        denied = argv[argv.index("--disallowedTools") + 1:]
+
+        self.assertEqual([str(scratch), *map(str, context)], added)
+        for folder in context:
+            with self.subTest(folder=folder):
+                self.assertIn(str(folder), argv[2], "the prompt names the folder")
+                self.assertTrue({f"Edit(/{folder}/**)", f"Write(/{folder}/**)"} <= set(denied))
+        self.assertNotIn("/tmp/scratch", " ".join(denied), "the scratch folder stays writable")
 
     def test_the_codex_rules_forbid_what_a_reviewer_never_runs(self) -> None:
         rules = run.codex_rules()

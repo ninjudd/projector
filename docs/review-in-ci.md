@@ -197,6 +197,66 @@ the agent and its install scripts included. An input sets no environment
 variable in a composite action, so only the step that mints the token, the
 one step that reads `app-private-key`, receives the key.
 
+## Give a review other repositories to read
+
+A change often makes sense only beside code in another repository, such as
+the service whose API it calls or the library it upgrades. List those
+repositories in the committed `.projector.toml`, and each review clones them
+and reads them as context:
+
+```toml
+[review]
+context_repos = "acme/api, acme/design-system"
+```
+
+The review never reviews them. The prompt names their folders as context
+for the change, and the review judges only the pull request.
+
+A context repository needs three things:
+
+- **An app.** The workflow's own token reaches only the repository it runs
+  in, so a review that posts as `github-actions[bot]` reads no context
+  repository and says so in the job log. Post the reviews as a GitHub App,
+  as [Post as a GitHub App](#post-as-a-github-app) describes, and install the
+  app on every context repository too.
+- **The same owner.** An app's installation token reaches one account's
+  repositories, so the review leaves out a repository of another owner, with
+  a warning that says why.
+- **A visibility that lets the code through.** A review must not carry a
+  private repository's code to readers who cannot see it. Before it clones
+  anything, the review checks each repository's visibility with
+  `gh repo view --json visibility`, and keeps a context repository only when
+  it is public, or when both it and the reviewed repository are private or
+  internal. A check that fails proves nothing: the review leaves out a
+  context repository whose own check fails, and every private or internal
+  one when the reviewed repository's check fails.
+
+Each repository the review leaves out is a warning in the job log, and the
+review goes on without it.
+
+The review's own token still reaches only the reviewed repository. For the
+context repositories, the action mints a second token from the app, with
+`contents: read` and nothing else, for the context repositories of the same
+owner. It reads `review.context_repos` from the default branch, as Projector
+reads every committed setting, so a pull request that edits
+`.projector.toml` cannot add a repository to its own review's token.
+`project review run` receives that token as `PROJECTOR_CONTEXT_TOKEN`,
+checks and clones the context repositories with it, and removes it from the
+agent's environment before the agent starts. The agent reads the clones and
+holds no token for their repositories.
+
+GitHub refuses that token outright when the app cannot reach any one of the
+repositories it lists, such as one that was renamed or that the app is not
+installed on. The review then leaves every context repository out, with one
+warning that says so, and goes on. Install the app on each listed
+repository, or drop the one it cannot reach.
+
+`project review run` clones each repository it keeps at its default branch,
+depth 1, into `$RUNNER_TEMP/context/<owner>/<name>`. The `claude` preset
+adds each folder with `--add-dir` and refuses `Edit` and `Write` there.
+Codex's sandbox reads every folder and writes only its writable roots, which
+leave the folders out.
+
 ## Override a setting for CI
 
 The review job runs `review.gate` on a trusted head, as a session does. When

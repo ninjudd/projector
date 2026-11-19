@@ -193,6 +193,12 @@ the servers up for the agent on the runner:
 Give each tool a token scoped to read only what reviews need, such as a
 Grafana viewer token for one folder of dashboards.
 
+To have the review read code in your other repositories, list them in
+`review.context_repos` rather than cloning them onto the runner, as
+[Give a review other repositories to read](review-in-ci.md#give-a-review-other-repositories-to-read)
+describes. The review then checks each one's visibility before its code
+can reach a review comment.
+
 The review runs `review.gate` on the runner too, so install every tool the
 gate needs there. Put any setting you want only on the runner in the runner
 user's `~/.projector.toml`, rather than in the action's `config` input,

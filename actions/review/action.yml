@@ -127,6 +127,34 @@ runs:
         permission-checks: read
         permission-actions: read
         permission-pages: read
+    # The context repositories a review reads, from the committed .projector.toml as Projector reads it, from the
+    # default branch, so a pull request cannot widen what its own review's clone token reaches. An installation
+    # token reaches one account's repositories, so only those of this repository's owner are listed.
+    - name: Read the context repositories
+      id: context
+      if: inputs.step == 'review' && inputs.app-id != ''
+      shell: bash
+      run: |
+        listed=$(project config get review.context_repos --default '')
+        names=$(PYTHONPATH="$PROJECTOR_ROOT/src" python3 -P -c \
+          'import sys; from projector import run; print(",".join(run.token_repositories(*sys.argv[1:])))' \
+          "$GITHUB_REPOSITORY" "$listed")
+        echo "repositories=$names" >> "$GITHUB_OUTPUT"
+    # A token that only reads the context repositories, for `project review run` to check and clone them with. The
+    # run keeps it out of the agent's environment, so the agent holds no token for them. It sets no `owner`,
+    # which defaults to this repository's: an owner with no repositories would reach the whole installation.
+    # GitHub refuses the whole token when the app cannot reach one listed repository, so a failure here leaves
+    # the context out and the review goes on without it.
+    - name: Mint the context token
+      id: context-token
+      if: steps.context.outputs.repositories != ''
+      continue-on-error: true
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.app-private-key }}
+        repositories: ${{ steps.context.outputs.repositories }}
+        permission-contents: read
     - name: Restore the review state
       if: inputs.step == 'review'
       uses: actions/cache/restore@v4
@@ -191,6 +219,11 @@ runs:
         PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
         # Only the review step hands its summary off; the summary job's publish pushes it.
         PROJECTOR_SUMMARY_HANDOFF: ${{ runner.temp }}/projector-summary
+        # Outside /tmp, which Codex's sandbox lets the agent write.
+        PROJECTOR_CONTEXT_DIR: ${{ runner.temp }}/context
+        # Read only, for the run's clones; the run removes it from the agent's environment.
+        PROJECTOR_CONTEXT_TOKEN: ${{ steps.context-token.outputs.token }}
+        PROJECTOR_CONTEXT_MINT: ${{ steps.context-token.outcome }}
         PR: ${{ inputs.pr }}
         AGENT: ${{ inputs.agent }}
         MODEL: ${{ inputs.model }}

@@ -766,7 +766,8 @@ These tests fail before the change, and each catches the bug it names:
    other repositories.
 4. **Add the app inputs and context repositories** in a later pull request.
    Neither works with the workflow's token, so neither blocks the first
-   three steps.
+   three steps. Done: the app inputs shipped first, and context
+   repositories after them, as § 9 records.
 
 ## 7. Open questions
 
@@ -1011,6 +1012,59 @@ These tests fail before the change, and each catches the bug it names:
   writes passes no `config`, so § 10 has a self-hosted runner keep its
   overrides in that file itself; a per-job configuration file is left for a
   repository that needs both.
+- **Context repositories ship as § 2.9 designs them.** `review.context_repos`
+  is a committed setting. `project review run` reads it through Projector's
+  configuration, which takes a tracked `.projector.toml` from the default
+  branch, and leaves out with a warning an entry that is not `owner/name`,
+  the reviewed repository itself, and a repository of another owner. Under
+  the workflow's own token, which `PROJECTOR_TOKEN_LOGIN` names as
+  `github-actions[bot]`, it leaves every one out with a warning that an app
+  is needed. The same-owner rule holds for a run on a laptop too, so a
+  review reads the same context wherever it runs.
+- **The context repositories get a token of their own.** The review's token
+  stays on the reviewed repository with its permissions, because on a
+  context repository its `pull-requests`, `issues`, and `statuses` writes
+  would let a pull request steer the agent to write in repositories it only
+  reads. The action's **Read the context repositories** step runs after
+  **Set up Projector**, whose `git remote set-head origin --auto` gives
+  Projector the default branch to read, and lists the same-owner context
+  repositories through `run.token_repositories`, so the token and the run
+  filter the list alike. **Mint the context token** runs only when that
+  list is not empty, and mints a token for those repositories with
+  `contents: read` alone. It sets no `owner`: it defaults to the reviewed
+  repository's, and an owner with an empty list would reach every
+  repository the installation covers. Only the review step receives it, as
+  `PROJECTOR_CONTEXT_TOKEN`. `project review run` checks each context
+  repository's visibility and clones it with that token, checks the
+  reviewed repository's own visibility with the review's, and removes the
+  token from the environment it starts the agent with. A process of the
+  same user can still read its parent's environment, so the token's
+  read-only scope, not its absence from the agent's environment, is what
+  bounds a misled agent.
+- **A refused context token leaves the context out.** GitHub refuses a
+  token for a list of repositories with a 422 when the app cannot reach any
+  one of them, and `actions/create-github-app-token` retries only server
+  errors. So the mint step has `continue-on-error: true`, the review step
+  passes its outcome as `PROJECTOR_CONTEXT_MINT`, and on `failure` the run
+  leaves every context repository out with one warning and reviews without
+  them, as § 2.9 promises for each repository left out. Minting a token for
+  each repository was rejected: it would multiply the private-key steps
+  and still give the run no list it could trust before the visibility
+  checks.
+- **The gate note reads the labels too.** `init` tells a repository to
+  install the gate's tools on its runner only when `ci.hosted` says the
+  labels name no GitHub-hosted runner, so `--ci-runs-on ubuntu-latest`
+  gets the hosted runner's advice.
+- **The clones live outside every writable folder.** The action sets
+  `PROJECTOR_CONTEXT_DIR` to `$RUNNER_TEMP/context`, outside `/tmp`, which
+  Codex's `workspace-write` sandbox lets the agent write. Elsewhere the run
+  clones into a temporary folder and removes it once the agent exits.
+  Codex 0.169.0's `--add-dir` makes a folder writable, so the Codex preset
+  passes none for context: its sandbox reads every folder, as
+  `codex sandbox` showed on 2026-11-18, and the prompt names the folders.
+  The Claude preset adds each with `--add-dir` and denies `Edit` and
+  `Write` in it, because auto mode can pass an edit in a working folder that
+  no rule covers.
 - **The run adds `reviewing` before the agent starts.** In a measured run,
   GitHub created the job at 0:00, `project review run` started the agent at
   0:17, and the agent's `setup` added the label at 1:09, because the agent
