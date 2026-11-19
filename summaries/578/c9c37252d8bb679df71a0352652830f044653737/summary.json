@@ -1,0 +1,150 @@
+{
+ "version": 1,
+ "name": "CI review as a GitHub App",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 578,
+  "title": "Post CI reviews as a GitHub App, and post Projector's own as Projector Review",
+  "head": "c9c37252d8bb679df71a0352652830f044653737",
+  "headRef": "review-ci-app",
+  "base": "2e029bf9c0500335170836d89afc785eaf36d99f",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector can review a pull request in a GitHub Actions job with no agent session running. The job runs <code>project review run</code> through the reusable action in <code>actions/review/</code>. Until now, those reviews posted with the workflow's own token, so they appeared as <code>github-actions[bot]</code>. Any workflow in the repository can post as that account, and the name says nothing about Projector.",
+   "This change lets the reviews post as a GitHub App, an account a person registers once and installs on their repositories. The action gains an <code>app-id</code> input. When it is set, a new step uses the app's private key to mint a short-lived installation token, and the review posts as <code>&lt;slug&gt;[bot]</code> with that token. <code>project init --ci-review --ci-app &lt;slug&gt;</code> writes the setup, and Projector's own workflow switches to its <code>projector-review</code> app.",
+   "<ul><li><b>Left for later:</b> context repositories, the other feature an app token enables, stay deferred.</li><li><b>Unchanged:</b> the summary job keeps the workflow's token, because it pushes <code>refs/projector/summaries</code> and the app token is read-only for contents.</li><li><b>The review found one open finding:</b> the private key stays in the environment of the action steps that run after the agent. The flag on <code>actions/review/action.yml</code> explains it.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>App slug</b>: the URL name of a GitHub App, such as <code>projector-review</code>. The app posts as <code>&lt;slug&gt;[bot]</code>.</li><li><b>Installation token</b>: a token GitHub issues to an app for the accounts it is installed on. It lasts an hour.</li><li><b>Composite action</b>: an action made of steps, like <code>actions/review/action.yml</code>. The caller's <code>env</code> reaches every one of its steps.</li><li><b><code>review.reviewers</code></b>: the logins whose Projector verdicts count beside the repository's own accounts.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One review at <code>c9c3725</code>: changes requested, with one P2 finding on the key's exposure and one suggestion.</li><li>CI <code>check</code> and the repository's <code>review.gate</code> steps passed on this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "action",
+   "title": "The action mints the app's token",
+   "kicker": "How a review job gets an app token and posts with it",
+   "intro": [
+    "The reusable action <code>actions/review/action.yml</code> runs every CI review. With an <code>app-id</code> input, a new step, <b>Mint the app's token</b>, calls <code>actions/create-github-app-token</code>. It reads the private key from the <code>PROJECTOR_APP_PRIVATE_KEY</code> environment variable the caller sets. The token it mints reaches only the job's repository, with the same permissions the workflow grants its own token.",
+    "The review step then uses that token as <code>GH_TOKEN</code> and names <code>&lt;slug&gt;[bot]</code> as <code>PROJECTOR_TOKEN_LOGIN</code>. It falls back to <code>github.token</code> and <code>github-actions[bot]</code> when no app is set. The steps that install and run the agent set the key variable to an empty string, so those processes do not get it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "actions/review/action.yml",
+     "note": "Adds the <code>app-id</code> input and the mint step, and switches the review step's token and login to the app's.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 100,
+       "text": "Only the install and review steps blank <code>PROJECTOR_APP_PRIVATE_KEY</code>. <b>Save the review state</b> and <b>Hand the summary to the summary job</b> run after them and still get the key in their environment. So code that the agent or an install script leaves behind, such as a loader variable written to <code>$GITHUB_ENV</code>, can read it there. The review asks for an <code>app-private-key</code> input instead, because a composite action's inputs reach no step's environment."
+      },
+      {
+       "kind": "context",
+       "line": 149,
+       "text": "The token and the login both come from the <code>app</code> step's outputs, so the review never posts as one account while naming another."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_ci.py",
+     "collapsed": true,
+     "note": "Tests the app workflow text, the key blanking in the install and review steps, the token and login wiring, and how <code>init</code> handles an app."
+    }
+   ]
+  },
+  {
+   "id": "init",
+   "title": "init and ci-workflow write the app into the workflow",
+   "kicker": "The CLI flags, the workflow template, and the setting",
+   "intro": [
+    "<code>project init --ci-review --ci-app &lt;slug&gt;</code> looks the app's numeric ID up with <code>gh api apps/&lt;slug&gt;</code>. It refuses an app GitHub does not show before it writes anything. It writes the ID into the workflow as <code>app-id</code>, adds <code>PROJECTOR_APP_PRIVATE_KEY</code> to the step's secrets, and records <code>review.ci_app</code>, so a later <code>init</code> rebuilds the same workflow. <code>project review ci-workflow --app &lt;slug&gt;</code> prints that same file.",
+    "<code>init</code> also puts <code>&lt;slug&gt;[bot]</code> in <code>review.reviewers</code> in place of <code>github-actions[bot]</code>, so a workflow posting with its own token no longer counts as a reviewer. At a terminal, it asks for the path of the key file and has <code>gh secret set</code> read it as standard input, so the key never appears on a command line."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds <code>--ci-app</code> and <code>--app</code>, <code>app_id</code> for the lookup, the reviewers rewrite, and <code>set_app_key</code> for the secret.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 3656,
+       "text": "This line drops only <code>github-actions[bot]</code>. A switch from one app to another leaves the old <code>&lt;slug&gt;[bot]</code> counted, which the review lists as a suggestion."
+      },
+      {
+       "kind": "verify",
+       "line": 3702,
+       "text": "<code>app_id</code> raises on a 404 or a non-numeric answer, and <code>init</code> turns that into an error before it writes the workflow or records any setting. <code>test_an_app_github_does_not_show_is_refused_before_anything_is_written</code> covers it, and it passed on this head."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/ci.py",
+     "note": "<code>workflow_text</code> takes an optional app ID and fills the template's <code>@APP@</code> slot and the extra secret."
+    },
+    {
+     "path": "src/projector/templates/review-workflow.yml",
+     "note": "Adds the <code>@APP@</code> slot before the review step's <code>env:</code>. With no app, it expands to nothing."
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers <code>review.ci_app</code> as a string setting."
+    }
+   ]
+  },
+  {
+   "id": "own",
+   "title": "Projector's own reviews post as Projector Review",
+   "kicker": "This repository's workflow and configuration",
+   "intro": [
+    "Projector's workflow passes <code>app-id: '5827721'</code> for the <code>projector-review</code> app and the key secret. <code>.projector.toml</code> records the app and counts only <code>projector-review[bot]</code> as an extra reviewer. Because a writer's pull request runs the action from its own checkout, any writer of this repository could reach the key, so the app stays installed only on the owner's repositories."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".github/workflows/projector-review.yml",
+     "note": "Passes the app ID and the key secret to the action."
+    },
+    {
+     "path": ".projector.toml",
+     "note": "Records <code>ci_app</code>, and replaces <code>github-actions[bot]</code> with <code>projector-review[bot]</code> in <code>reviewers</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "How to set an app up, and what the plan records",
+   "intro": [
+    "<code>docs/review-in-ci.md</code> gains a <b>Post as a GitHub App</b> section and a row for the <code>app-id</code> input. <code>docs/cli.md</code> describes the new flags and the <code>review.ci_app</code> setting. The plan's § 9 records that the app input shipped before context repositories, and how Projector's own reviews post."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/review-in-ci.md",
+     "note": "Says how to register the app, run <code>init</code>, and where the key goes."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Describes <code>--ci-app</code>, <code>--app</code>, and <code>review.ci_app</code>."
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "note": "§ 9 records what shipped. § 2.4 and § 7 still name an <code>app-private-key</code> input, which the change replaced with an environment variable."
+    }
+   ]
+  }
+ ]
+}

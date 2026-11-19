@@ -1,0 +1,12 @@
+[review]
+require_check = true
+# The Check workflow's `check` job runs the test suite, `npm run check`, and `project check` on every push.
+gate_checks = "check"
+# The steps of the gate in AGENTS.md that CI cannot run, run on the review's worktree against the merge base.
+gate = 'claude plugin validate . && claude plugin validate skills && claude plugin test . && hooks/typecheck.sh && git diff --check "$2" HEAD'
+# Each pull request whose head is in this repository is reviewed in GitHub Actions by
+# .github/workflows/projector-review.yml, which posts as the Projector Review app.
+ci = true
+ci_agents = "claude"
+ci_app = "projector-review"
+reviewers = "projector-review[bot]"
