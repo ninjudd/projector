@@ -74,3 +74,4 @@ jobs:
         with:
           step: summary
           pr: ${{ github.event.pull_request.number || inputs.pr }}
+@APP@

@@ -97,7 +97,7 @@ runs:
     # only this step, which reads the input, receives the key.
     - name: Mint the app's token
       id: app
-      if: inputs.step == 'review' && inputs.app-id != ''
+      if: inputs.app-id != ''
       uses: actions/create-github-app-token@v2
       with:
         app-id: ${{ inputs.app-id }}
@@ -199,9 +199,12 @@ runs:
     - name: Publish the summaries
       if: inputs.step == 'summary'
       shell: bash
+      # The links post as the app when there is one. Its token cannot push, so the summaries ref goes up with the
+      # checkout's own credentials and the site's rebuild event with the workflow's token.
       env:
-        GH_TOKEN: ${{ github.token }}
-        PROJECTOR_TOKEN_LOGIN: github-actions[bot]
+        GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
+        PROJECTOR_DISPATCH_TOKEN: ${{ github.token }}
         PR: ${{ inputs.pr }}
       run: |
         for folder in "$RUNNER_TEMP"/projector-summaries/*/; do

@@ -964,3 +964,11 @@ These tests fail before the change, and each catches the bug it names:
 - **A runner fact checked on 2026-11-19:** `actions/download-artifact`
   succeeds when no artifact matches its pattern. The summary job of Projector's
   own review passed with nothing to publish.
+- **A summary posts as the app too.** The summary job mints the app's token
+  as the review job does, which is safe because it runs no agent, so the
+  summary's comment and the link in the description post as `<slug>[bot]`.
+  The app keeps no `contents: write`, because its key could then push code
+  to every repository it is installed on. So the job's own token does the
+  two things that need it: the checkout's credentials push
+  `refs/projector/summaries`, and `project summary publish` sends the
+  site's rebuild event with the token in `PROJECTOR_DISPATCH_TOKEN`.

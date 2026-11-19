@@ -146,13 +146,20 @@ it asks for the path of the private key file you generated in the app's
 settings, and has `gh` set it as the `PROJECTOR_APP_PRIVATE_KEY` secret from
 that file. Delete the file once the secret holds it.
 
-In each review job, the action's **Mint the app's token** step creates an
-installation token with `actions/create-github-app-token`. The token reaches
-only the repository the job runs in, with the review's permissions in the
-table above, and the review posts as `<slug>[bot]` with it. The app needs
-those same permissions, and it must be installed on the repository. The
-summary job keeps the workflow's own token, because it pushes
-`refs/projector/summaries`.
+In each review job and in the summary job, the action's **Mint the app's
+token** step creates an installation token with
+`actions/create-github-app-token`. The token reaches only the repository the
+job runs in, with the review's permissions in the table above, and the
+review, the summary's comment, and the link in the description post as
+`<slug>[bot]` with it. The app needs those same permissions, and it must be
+installed on the repository.
+
+The app has no `contents: write`, so it cannot push code. The summary job
+still needs that permission for two things, and it uses the workflow's own
+token for both: the push of `refs/projector/summaries`, which goes up with
+the checkout's credentials, and the site's rebuild event, which
+`project summary publish` sends with the token in
+`PROJECTOR_DISPATCH_TOKEN`.
 
 The private key carries the app's full authority over every repository it is
 installed on, so the workflow passes it as an input and never as `env`. A
