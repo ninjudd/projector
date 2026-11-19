@@ -1,0 +1,119 @@
+{
+ "version": 1,
+ "name": "CI review version",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 582,
+  "title": "Name the Projector version in CI reviews, which run Projector from a source tree no package installs",
+  "head": "359be7d2ad1a4a845cde5c015b3545a724906858",
+  "headRef": "review-ci-version",
+  "base": "ac4496d83830163aeec8415da9c5111ddcf2187a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Every Projector review names the Projector version that produced it, in its start comment, in its signature line, and in the hidden marker that later commands read. A reader uses it to tell which release of the review method wrote a verdict, and an incremental review compares it to decide whether it may build on an earlier full review.",
+   "Reviews that Projector's GitHub Action posts all named that version <code>unknown</code>. The version came from <code>distribution_version()</code>, which reads installed package metadata, and the action never installs Projector: it runs it straight from a source tree through a small shim that sets <code>PYTHONPATH</code>.",
+   "This pull request gives reviews a second source for the version. The action's <b>Set up Projector</b> step reads <code>version</code> from the source tree's <code>.claude-plugin/plugin.json</code> and exports it as <code>PROJECTOR_VERSION</code> to every later step. <code>project review</code> names that variable when it is set and the installed version otherwise. <code>distribution_version()</code> itself is unchanged, because <code>project upgrade</code> and the watch daemon rely on it answering <code>unknown</code> for a source tree."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Start comment</b>: the comment a review posts when it begins, naming the head, version, model, and effort.</li><li><b>Signature line</b>: the first line of a published review, with the same segments plus the verdict.</li><li><b>Marker</b>: the HTML comment under the signature, such as <code>projector=0.10.0</code>, that commands parse.</li><li><b>Incremental review</b>: a short verdict that builds on an earlier full review, allowed only when the version, model, and effort match.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Open review findings",
+    "html": "<ul class=\"tight\"><li>The action's <code>python3 -c</code> now runs with <code>-I</code>, so a repository's top-level <code>json.py</code> can no longer shadow the standard library. This settles the first round's finding.</li><li>Still open: <code>docs/cli.md</code> now says where the version comes from, but <code>skills/review-pr/SKILL.md</code> still says a review names the version <code>project version</code> reports. The reviewing agent follows that file.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Where a review gets its version",
+   "kicker": "A new helper that prefers the CI action's stated version",
+   "intro": [
+    "<code>producer_version()</code> returns <code>PROJECTOR_VERSION</code> when it is set and not blank, and falls back to <code>distribution_version()</code>. The three places that name a review's version now call it: the start comment, the signature and marker that <code>heading</code> writes, and the version that <code>incremental_rules</code> compares against an earlier full review's marker."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>producer_version()</code> and switches the three version readers to it.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Every other caller of <code>distribution_version()</code>, such as <code>project version</code>, <code>project upgrade</code>, and the daemon handshake in <code>cli.py</code>, still reads the installed distribution. Checked by searching <code>src/</code> for every caller."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Says the start comment and signature name <code>PROJECTOR_VERSION</code> when it is set, and the version <code>project version</code> reports otherwise.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 2055,
+       "text": "This paragraph is right now, but <code>skills/review-pr/SKILL.md:701-705</code>, which this pull request leaves alone, still says the version comes from <code>project version</code> and that an uninstalled checkout reports <code>unknown</code>. The reviewing agent follows that file, so it should say the same thing as this paragraph."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "action",
+   "title": "The action states its version",
+   "kicker": "The setup step exports the source tree's release version",
+   "intro": [
+    "The <b>Set up Projector</b> step already writes the <code>project</code> shim and exports <code>PROJECTOR_ROOT</code>. It now also reads the version from <code>.claude-plugin/plugin.json</code>, which every release keeps equal to <code>pyproject.toml</code>, and exports <code>PROJECTOR_VERSION</code> through <code>$GITHUB_ENV</code>, so the agent's <code>project</code> commands see it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "actions/review/action.yml",
+     "note": "Reads the manifest's version and exports it as <code>PROJECTOR_VERSION</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The version is read with <code>python3 -I</code>, which keeps the caller's checkout off <code>sys.path</code>, as <code>-P</code> does for the shim. <code>test_the_action_names_its_reviews_by_its_source_trees_version</code> runs the command beside a planted <code>json.py</code>, and it passed in the <code>check</code> job at this head."
+      }
+     ]
+    },
+    {
+     "path": "docs/review-in-ci.md",
+     "note": "Says the action sets <code>PROJECTOR_VERSION</code> and the review names it."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "One test per side of the change, and a cleared variable",
+   "intro": [
+    "The test package now clears <code>PROJECTOR_VERSION</code> at import, as it already clears <code>CLAUDE_EFFORT</code>. A CI review's gate can run this suite on a runner where the action set the variable, and every review test expects the version the mocked metadata gives."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The <code>check</code> job and the repository's <code>review.gate</code> both passed at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/__init__.py"
+    },
+    {
+     "path": "tests/test_ci.py",
+     "note": "Extracts the action's version-reading command and runs it beside a planted <code>json.py</code>, expecting this checkout's manifest version."
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "With no installed package and <code>PROJECTOR_VERSION=0.10.0</code>, the start comment, signature, and marker name <code>0.10.0</code>."
+    }
+   ]
+  }
+ ]
+}
