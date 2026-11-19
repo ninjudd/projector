@@ -2325,9 +2325,9 @@ people's approval. A label stays on the pull
 request through a push, so `setup` removes a stale `clean` when the next
 review starts. `publish` reads the head again after it adds `clean`, and
 takes the label back off when a push moved the head during the edit. Set
-`review.labels` to `false` to keep `setup`, `publish`, and `finish` from
-adding or removing either label, as in a repository whose own `clean` or
-`reviewing` label means something else.
+`review.labels` to `false` to keep `setup`, `publish`, `finish`, and `run`
+from adding or removing either label, as in a repository whose own `clean`
+or `reviewing` label means something else.
 
 `publish` prints what it did:
 
@@ -2781,7 +2781,8 @@ request, however the run was started. It also refuses a head the reviewer
 already has a verdict on by this model, and names that review's address, so
 a rerun of a finished job posts nothing. Pass `--rereview` to review the
 head again. A refusal means there is nothing to review here, so the command
-prints the reason and exits 0, and it posts no comment and adds no label.
+prints the reason and exits 0, and it posts no comment and never adds the
+`reviewing` label.
 Under GitHub Actions, where `GITHUB_ACTIONS` is `true`, it also prints the
 reason as a `::notice::` line, which the job's summary shows:
 
@@ -2789,6 +2790,25 @@ reason as a `::notice::` line, which the job's summary shows:
 $ project review run 66 --model claude-opus-5-5
 owner/example#66 is not reviewed here: it is a draft, and a draft waits on its author
 ```
+
+When the command refuses a head it already reviewed, it brings the `clean`
+label in line with that head's sign-off before it exits, as `publish` would
+after a review. A branch force-pushed back to a commit reviewed clean loses
+`clean` at the push that left the commit, and no `publish` runs to add it
+back. So the command adds `clean` when the newest Projector verdict on the
+head is clean and no finding thread is open, and removes it otherwise,
+counting the verdicts of every login `review.reviewers` names. It prints
+each label it changed:
+
+```console
+$ project review run 66 --model claude-opus-5-5
+github-actions[bot] already reviewed owner/example#66 at 3f2a91c with claude-opus-5-5: https://github.com/owner/example/pull/66#pullrequestreview-2211; pass --rereview to review it again
+added the clean label
+```
+
+It leaves the `reviewing` label and the `projector/review` status alone,
+because the status belongs to the commit and is still on it. The other
+refusals change no label, and `review.labels = false` turns this off too.
 
 A live start comment by this reviewer and model on the head can only be a
 cancelled run's, so the agent's `setup` replaces it.

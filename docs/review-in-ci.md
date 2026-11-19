@@ -113,7 +113,10 @@ number. Each job:
    to review, so the job passes and shows the reason as a notice. A job
    that started for the previous head can still find the pull request a
    draft, because its author held it to push a fix, and that job passes
-   too.
+   too. When the job refuses a head this model already reviewed, such as a
+   commit a force-push returned the branch to, it also puts `clean` back on
+   or takes it off by that head's sign-off, as a review's `publish` does,
+   because the push that left the commit took the label off.
 2. **Cancels a superseded review.** One job runs for each pull request and
    agent. A new push cancels the job for the head it replaces.
 3. **Restores the review state** from the Actions cache, so a small push

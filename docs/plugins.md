@@ -321,7 +321,9 @@ review wants something:
 - **`reviewing`**, in orange, while the pull request carries the
   `reviewing` label, which `project review setup` adds when a review starts.
 - **`clean`**, in green, while it carries the `clean` label, which
-  `project review publish` adds once a review signs off the current head.
+  `project review publish` adds once a review signs off the current head,
+  and `project review run` puts back on a signed-off head it refuses to
+  review again.
 - **`draft`**, in the default text color, while it is a draft.
 - **`ready`**, in light blue, while it is ready for review and carries
   neither label. That covers a pull request no review has read yet, and also

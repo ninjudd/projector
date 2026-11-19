@@ -2510,7 +2510,8 @@ def review_run(arguments: argparse.Namespace) -> int:
                         configured_reviewer=username if isinstance(username, str) and username else None,
                         effort=arguments.effort, mode=arguments.permission_mode, timeout_minutes=arguments.timeout,
                         rereview=arguments.rereview, loop=arguments.loop, plugin_dir=arguments.plugin_dir,
-                        labels=labels_enabled(checkout), context_listed=config.get("review.context_repos"))
+                        labels=labels_enabled(checkout), context_listed=config.get("review.context_repos"),
+                        also=review.extra_reviewers(config.get("review.reviewers")))
 
 
 def run_review(arguments: argparse.Namespace) -> int:

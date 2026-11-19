@@ -951,6 +951,18 @@ def sign_off(head: str, reviews: list[dict], open_threads: int) -> dict:
             "signed_off": newest is not None and newest["verdict"] == "clean" and not open_threads}
 
 
+def head_sign_off(repo: str, number: int, reviewer: str, sha: str, pr: dict, also: tuple[str, ...] = (),
+                  posted: Optional[dict] = None) -> tuple[dict, list[dict]]:
+    """Whether `sha` is signed off, as `sign_off` decides from every counted verdict on the pull request `pr`
+    and its finding threads open now, with the verdicts it counted. A review `posted` counts as given, whether
+    or not the listing shows it yet."""
+    counted = [r for r in verdicts(repo, number, reviewer, repo_visibility(pr), also)
+               if posted is None or r.get("id") != posted["id"]]
+    if posted is not None:
+        counted.append(posted)
+    return sign_off(sha, counted, census(repo, number)["open"]), counted
+
+
 def label_names(pr: dict) -> set[str]:
     """The labels on `pr`, a pull request as GitHub's REST API gives it, lowercased, as GitHub matches them."""
     return {(label.get("name") or "").lower() for label in pr.get("labels") or []}
@@ -1015,6 +1027,42 @@ def label_lines(labeled: Optional[dict]) -> list[str]:
     lines = [f"added the {name} label" for name in labeled["added"]]
     lines += [f"removed the {name} label" for name in labeled["removed"]]
     return lines + ([f"warning: {labeled['warning']}"] if labeled["warning"] else [])
+
+
+def label_sign_off(repo: str, number: int, sha: str, current: dict, signed_off: bool, remove: set[str],
+                   token: Optional[str]) -> dict:
+    """Set `clean` when `sha` is signed off and is still the head of `current`, the pull request as just read,
+    and take it off otherwise, removing `remove` in the same edit, as `change_labels` does."""
+    # The labels describe the pull request's current head, so a push since the verdict takes `clean` off.
+    clean = signed_off and (current.get("head") or {}).get("sha") == sha
+    labeled = change_labels(repo, number, label_names(current), {CLEAN_LABEL} if clean else set(),
+                            (set() if clean else {CLEAN_LABEL}) | remove, token)
+    if CLEAN_LABEL in labeled["added"]:
+        # A push between the read above and the edit queued its label workflow with an event that lists no
+        # `clean`, so that job skips and leaves the label on a head no review has read. The head as it is
+        # now decides; a push after this read lists `clean`, and its workflow takes the label off. The labels
+        # never fail the command, so a read that fails leaves them as the edit made them.
+        moved = {"head": {"sha": sha}}
+        with suppress(ReviewError):
+            moved = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or moved
+        if (moved.get("head") or {}).get("sha") != sha:
+            taken = change_labels(repo, number, label_names(moved), set(), {CLEAN_LABEL}, token)
+            labeled = {"added": [name for name in labeled["added"] if name not in taken["removed"]],
+                       "removed": labeled["removed"], "warning": labeled["warning"] or taken["warning"]}
+    return labeled
+
+
+def relabel_head(repo: str, number: int, reviewer: str, pr: dict, also: tuple[str, ...] = ()) -> dict:
+    """Bring `clean` in line with whether the head of `pr` is signed off, as `publish` does, for a head
+    reviewed before, such as one a force-push returned to. It leaves `reviewing` and the commit status alone,
+    and gives a `warning` rather than raising when the verdicts cannot be read."""
+    sha = pr["head"]["sha"]
+    try:
+        verdict, _ = head_sign_off(repo, number, reviewer, sha, pr, also)
+        token = reviewer_token(reviewer)
+    except ReviewError as exc:
+        return {"added": [], "removed": [], "warning": f"left the labels on {repo}#{number} as they were: {exc}"}
+    return label_sign_off(repo, number, sha, pr, verdict["signed_off"], set(), token)
 
 
 def reviews_in_progress(repo: str, number: int, reviewer: str, reviews: list[dict],
@@ -2923,10 +2971,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
               "login": reviewer, "body": read["body"]}
     current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
-    counted = [r for r in verdicts(repo, number, reviewer, repo_visibility(current), also)
-               if r.get("id") != review_id]
-    counted.append(posted)
-    verdict_now = sign_off(sha, counted, census(repo, number)["open"])
+    verdict_now, counted = head_sign_off(repo, number, reviewer, sha, current, also, posted)
     newest, signed_off = verdict_now["newest"], verdict_now["signed_off"]
     standing = [] if published.get("self") else standing_change_requests(repo, number, reviewer)
     dismissed = []
@@ -2938,24 +2983,9 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     status = post_status(repo, sha, verdict_now, token) if requires_check(repo, branch) else None
     labeled = None
     if labels:
-        # The labels describe the pull request's current head, so a push since the submit takes `clean` off.
-        clean = signed_off and (current.get("head") or {}).get("sha") == sha
         others = reviews_in_progress(repo, number, reviewer, counted, (state.get("start_comment") or {}).get("id"))
-        labeled = change_labels(repo, number, label_names(current), {CLEAN_LABEL} if clean else set(),
-                                (set() if clean else {CLEAN_LABEL}) | (set() if others else {REVIEWING_LABEL}),
-                                token)
-        if CLEAN_LABEL in labeled["added"]:
-            # A push between the read above and the edit queued its label workflow with an event that lists no
-            # `clean`, so that job skips and leaves the label on a head no review has read. The head as it is
-            # now decides; a push after this read lists `clean`, and its workflow takes the label off. The labels
-            # never fail the publish, so a read that fails leaves them as the edit made them.
-            moved = {"head": {"sha": sha}}
-            with suppress(ReviewError):
-                moved = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or moved
-            if (moved.get("head") or {}).get("sha") != sha:
-                taken = change_labels(repo, number, label_names(moved), set(), {CLEAN_LABEL}, token)
-                labeled = {"added": [name for name in labeled["added"] if name not in taken["removed"]],
-                           "removed": labeled["removed"], "warning": labeled["warning"] or taken["warning"]}
+        labeled = label_sign_off(repo, number, sha, current, signed_off, set() if others else {REVIEWING_LABEL},
+                                 token)
     if loop is not None:
         with locked(loop_record(root, loop).parent):
             record = read_record(root, loop)
