@@ -1,0 +1,23 @@
+name: Push service
+on:
+  pull_request:
+    paths: ['services/push/**', .github/workflows/push-service.yml]
+  push:
+    branches: [main]
+    paths: ['services/push/**', .github/workflows/push-service.yml]
+permissions:
+  contents: read
+jobs:
+  push-service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/push
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run check
+      - run: npm test

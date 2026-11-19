@@ -1,0 +1,19 @@
+{
+  "name": "projector-push",
+  "private": true,
+  "type": "module",
+  "description": "Projector's push service: wakes the iPhone app through Apple's push service without seeing what a notification says.",
+  "license": "MIT",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "pretest": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "test": "tsc && node --test --test-timeout=10000 --test-force-exit \"dist/test/*.js\""
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3"
+  }
+}
