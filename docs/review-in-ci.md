@@ -103,7 +103,11 @@ number. Each job:
    describes. The action runs Projector from the source at the ref the
    workflow names, not from an installed package, so it sets
    `PROJECTOR_VERSION` from that source's `.claude-plugin/plugin.json`. The
-   review names that version in its start comment and its signature.
+   review names that version in its start comment and its signature. For
+   Claude, it also adds that source as a plugin marketplace and installs the
+   plugins Projector's plugin depends on, at the versions the marketplace
+   pins. Claude Code loads no plugin whose dependency is missing, so without
+   them the agent would have no `review-pr` skill.
 5. **Fails loudly.** When the agent publishes no verdict, the job deletes
    the start comment, takes `reviewing` off, posts one comment that says
    why, and fails.

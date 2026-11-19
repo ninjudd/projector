@@ -276,6 +276,34 @@ def review_jobs(workflow: str) -> list[dict[str, str]]:
 
 @unittest.skipIf(shutil.which("bash") is None, "the action's steps run in bash")
 class ActionTests(unittest.TestCase):
+    def test_the_claude_agent_gets_every_plugin_projector_depends_on(self) -> None:
+        # Claude Code loads no plugin whose dependency is missing, so without them every CI review ran with no
+        # review-pr skill, and an agent that did not find the skill's files by hand published no verdict.
+        root = Path(__file__).parents[1]
+        manifest = json.loads((root / ".claude-plugin" / "plugin.json").read_text())
+        marketplace = json.loads((root / ".claude-plugin" / "marketplace.json").read_text())
+        self.assertTrue(manifest.get("dependencies"), "the test needs a dependency to check")
+        with tempfile.TemporaryDirectory() as scratch:
+            bin_dir, log = Path(scratch, "bin"), Path(scratch, "calls")
+            bin_dir.mkdir()
+            for name in ("npm", "claude"):
+                fake = bin_dir / name
+                fake.write_text(f'#!/bin/sh\necho "{name} $*" >> "{log}"\n')
+                fake.chmod(0o755)
+            environment = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "AGENT": "claude", "CLAUDE_VERSION": "9.9.9",
+                           "PROJECTOR_ROOT": str(root)}
+            subprocess.run(["bash", "-e", "-c", step_script("Install the agent")], env=environment, check=True,
+                           capture_output=True, text=True)
+            calls = log.read_text().splitlines()
+        self.assertIn(f"claude plugin marketplace add {root}", calls)
+        listed = {plugin["name"] for plugin in marketplace["plugins"]}
+        for dependency in manifest["dependencies"]:
+            with self.subTest(dependency=dependency):
+                self.assertIn(dependency, listed, "the marketplace the action adds must carry the dependency")
+                self.assertIn(f"claude plugin install {dependency}@{marketplace['name']}", calls)
+        self.assertLess(calls.index(f"claude plugin marketplace add {root}"),
+                        calls.index(f"claude plugin install {manifest['dependencies'][0]}@{marketplace['name']}"))
+
     def test_the_action_names_its_reviews_by_its_source_trees_version(self) -> None:
         # The runner installs no distribution, so a review names the version only through this variable.
         script = step_script("Set up Projector")

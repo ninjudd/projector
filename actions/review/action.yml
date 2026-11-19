@@ -135,6 +135,11 @@ runs:
         case "$AGENT" in
           claude)
             npm install --global "@anthropic-ai/claude-code@$CLAUDE_VERSION"
+            # Claude Code loads no plugin whose dependency is missing, and without Projector the agent has no
+            # review-pr skill. This tree's marketplace pins each dependency, and both commands are no-ops on a
+            # runner that already has them.
+            claude plugin marketplace add "$PROJECTOR_ROOT"
+            claude plugin install gh-stack@projector
             ;;
           codex)
             npm install --global "@openai/codex@$CODEX_VERSION"
