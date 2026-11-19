@@ -83,7 +83,8 @@ runs:
         chmod +x "$bin/project"
         echo "$bin" >> "$GITHUB_PATH"
         # Reviews name the Projector version that made them, and this source tree is installed as no distribution.
-        version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' \
+        # -I keeps the caller's checkout, the working directory, off sys.path, as -P does for the shim.
+        version=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' \
           "$root/.claude-plugin/plugin.json")
         {
           echo "PROJECTOR_ROOT=$root"

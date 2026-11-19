@@ -282,8 +282,12 @@ class ActionTests(unittest.TestCase):
         read = re.search(r"^version=\$\(.*?plugin\.json\"\)$", script, re.M | re.S).group(0)
         self.assertIn(f'echo "{review.PRODUCER_VERSION}=$version"', script)
         root = Path(__file__).parents[1]
-        found = subprocess.run(["bash", "-c", f'{read}\nprintf %s "$version"'], env={**os.environ, "root": str(root)},
-                               capture_output=True, text=True, check=True).stdout
+        # The step runs in the caller's checkout, whose own top-level json.py must not replace the standard one.
+        with tempfile.TemporaryDirectory() as caller:
+            Path(caller, "json.py").write_text("def load(file):\n    return {'version': 'hijacked'}\n")
+            found = subprocess.run(["bash", "-c", f'{read}\nprintf %s "$version"'], cwd=caller,
+                                   env={**os.environ, "root": str(root)}, capture_output=True, text=True,
+                                   check=True).stdout
         self.assertEqual(json.loads((root / ".claude-plugin" / "plugin.json").read_text())["version"], found)
 
     def check(self, agent: str, **secrets: str) -> subprocess.CompletedProcess:
