@@ -3822,18 +3822,28 @@ MERGED acme/app#13 with its stack into main at 2026-11-19T18:02:11Z (merge commi
 MERGED acme/app#13 into layer-12 at 2026-11-19T18:02:11Z (merge commit 4be1c2d9), which is not in main yet — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
 ```
 
-The first form means that every layer below it in its GitHub stack merged
-and the stack is based on the default branch, or, where GitHub records no
-stack, that each pull request down the chain of base branches merged until
-one merged into the default branch. The second form means that a layer
-below it is still open, or that its stack is based on another branch, as
-when someone merges one layer into another by hand. The check asks GitHub
-once for the stack, and that answer covers every layer that merges in the
-same pass and each layer's fixer name. Where GitHub records no stack, it
-asks once for each branch down the chain, with
-`gh api "repos/<owner>/<repo>/pulls?head=<owner>:<branch>&state=all"`.
-When neither says, and for a pull request based on the default branch,
-which costs no request, `MERGED` names the base as GitHub records it.
+The daemon walks down the chain of base branches. At each step it takes the
+pull request whose head is the base, from the pull request's GitHub stack
+or, where GitHub records none, from the pull requests with that head. That
+pull request carried the change only when it merged no earlier than the one
+above it did, less 10 seconds, because GitHub merges a stack's layers about
+a second apart from the bottom up. The first form means that every step
+carried the change down to a pull request that merged into the default
+branch. The second form means that a pull request below it is still open,
+or that one merged before the change reached it, as when someone merges a
+layer by hand into a layer that already merged.
+
+The check asks GitHub once for the stack, and that answer covers every layer
+that merges in the same pass and each layer's fixer name. The stack does not
+record each layer's base, so the daemon takes it to be the head of the layer
+below. When a step shows that a layer merged well after the layer below it,
+as when the bottom layer merged alone and the next layer was retargeted to
+the default branch, the daemon reads that layer's real base with
+`gh api "repos/<owner>/<repo>/pulls?head=<owner>:<branch>&state=all"`. It
+reads each branch of a chain that GitHub records no stack for the same way,
+once a pass. When GitHub says neither, and for a pull request based on the
+default branch, which costs no request, `MERGED` names the base as GitHub
+records it.
 
 | Kind | Role | Reports |
 | --- | --- | --- |

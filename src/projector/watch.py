@@ -71,6 +71,9 @@ FORGET = 7 * 24 * 3600.0
 STOP_WAIT = 10.0
 RENEW_EVERY = 30.0
 PAGE = 100
+# How many seconds after a layer of a stack merges the layer above it can merge into it and still be carried
+# with it: GitHub merges a stack's layers about a second apart, from the bottom up.
+STACK_MERGE_SPREAD = 10.0
 SNIPPET = 130
 DELIVERERS = ("mod", "stream")
 GONE = "gone"
@@ -1359,7 +1362,7 @@ class Pass:
         # By pull request, the GitHub stack that holds it, and by repository and branch, the pull requests whose
         # head it is, each read at most once a pass.
         self.github_stacks: dict[tuple[str, int], Optional[dict]] = {}
-        self.headed: dict[tuple[str, str], Optional[list]] = {}
+        self.headed: dict[tuple[str, str], Optional[dict]] = {}
         # By repository, lowercased, the logins `review.reviewers` names, and whether its `review.ci` says GitHub
         # Actions reviews its pull requests, as `settings_of` reads them.
         self.repo_settings: Optional[dict[str, tuple[tuple[str, ...], bool]]] = None
@@ -1667,35 +1670,47 @@ class Pass:
         commit = f" (merge commit {oid[:8]})" if oid else ""
         base = pr.get("baseRefName") or "?"
         default = ((entry.get("repository") or {}).get("defaultBranchRef") or {}).get("name")
-        landed = self.landed(repo, number, base, default) if default and base not in ("?", default) else None
+        landed = self.landed(repo, number, pr.get("mergedAt"), base, default) \
+            if default and base not in ("?", default) else None
         into = f"with its stack into {default}" if landed else f"into {base}"
         behind = f", which is not in {default} yet" if landed is False else ""
         return f"MERGED {ref} {into}{when}{commit}{behind}"
 
-    def landed(self, repo: str, number: int, base: str, default: str) -> Optional[bool]:
-        """Whether the merged pull request's base reached the default branch: True when every layer below it in
-        its GitHub stack, which is based on the default branch, merged, or else when each pull request down the
-        chain of base branches merged until one merged into the default branch; False when a layer below it is
-        open or its stack is based on another branch; None when neither GitHub's stack nor the chain says."""
+    def landed(self, repo: str, number: int, merged_at: object, base: str, default: str) -> Optional[bool]:
+        """Whether the merged pull request's change reached the default branch through its base: True once each
+        step down the chain of base branches reaches the default branch, False when a pull request below is open
+        or merged before the change reached it, None when GitHub does not say. Each step takes the pull request
+        whose head is the base from GitHub's stack, or else from the pull requests with that head, and it
+        carried the change only when it merged no earlier than the one above it, less the seconds GitHub
+        spreads a stack's merge over. A stack layer's base is the head of the layer below it, until a step
+        shows it was retargeted after that layer merged, and then GitHub says where it merged."""
         stack = self.github_stack(repo, number)
-        layers = stack_layers(stack)
-        numbers = [layer["number"] for layer in layers]
-        if number in numbers:
-            below = layers[:numbers.index(number)]
-            return ((stack or {}).get("base") or {}).get("ref") == default and \
-                all(layer.get("merged_at") for layer in below)
-        seen = set()
+        layers = {(layer.get("head") or {}).get("ref"): layer for layer in stack_layers(stack)}
+        heads = list(layers)
+        ordered = dict(zip(heads[1:], heads))
+        if heads:
+            ordered[heads[0]] = ((stack or {}).get("base") or {}).get("ref")
+        when, upper, assumed, seen = seconds_of(merged_at), None, False, set()
         while base != default:
-            if not base or base in seen:
+            if not base or when is None or (base, assumed) in seen:
                 return None
-            seen.add(base)
-            heading = [found for found in self.pulls_headed(repo, base) or [] if isinstance(found, dict)]
-            if any(found.get("state") == "open" for found in heading):
+            seen.add((base, assumed))
+            below = layers.get(base) or self.pull_headed(repo, base)
+            merged = seconds_of((below or {}).get("merged_at"))
+            if below is not None and below.get("state") == "open":
                 return False
-            merged = next((found for found in heading if found.get("merged_at")), None)
             if merged is None:
                 return None
-            base = (merged.get("base") or {}).get("ref")
+            if merged < when - STACK_MERGE_SPREAD:
+                if not assumed:
+                    return False
+                base, assumed = ((self.pull_headed(repo, upper) or {}).get("base") or {}).get("ref"), False
+                continue
+            when, upper = merged, base
+            if base in layers:
+                base, assumed = ordered[base], True
+            else:
+                base, assumed = (below.get("base") or {}).get("ref"), False
         return True
 
     def github_stack(self, repo: str, number: int) -> Optional[dict]:
@@ -1707,16 +1722,18 @@ class Pass:
                 self.github_stacks[repo.lower(), layer] = stack
         return self.github_stacks[pull]
 
-    def pulls_headed(self, repo: str, branch: str) -> Optional[list]:
-        """The repository's pull requests, open or closed, whose head is `branch`, or None when GitHub cannot
-        answer, read at most once a pass."""
+    def pull_headed(self, repo: str, branch: str) -> Optional[dict]:
+        """The pull request whose head is `branch`: an open one, or else one that merged, or None when there is
+        neither or GitHub cannot answer. GitHub is asked at most once a pass for each branch."""
         key = (repo.lower(), branch)
         if key not in self.headed:
             owner = repo.split("/")[0]
             result = self.daemon.gh(["api", f"repos/{repo}/pulls?head={quote(f'{owner}:{branch}', safe=':')}"
                                             "&state=all"])
             found = json_of(result)
-            self.headed[key] = found if isinstance(found, list) else None
+            pulls = [pull for pull in found if isinstance(pull, dict)] if isinstance(found, list) else []
+            self.headed[key] = next((pull for pull in pulls if pull.get("state") == "open"),
+                                    next((pull for pull in pulls if pull.get("merged_at")), None))
         return self.headed[key]
 
     # Owners
