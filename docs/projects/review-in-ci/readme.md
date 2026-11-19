@@ -972,6 +972,45 @@ These tests fail before the change, and each catches the bug it names:
   two things that need it: the checkout's credentials push
   `refs/projector/summaries`, and `project summary publish` sends the
   site's rebuild event with the token in `PROJECTOR_DISPATCH_TOKEN`.
+- **A self-hosted runner's labels are a setting.** `review.ci_runs_on`
+  records them, so a refresh keeps the workflow on the repository's own
+  runner, as § 10 describes. A single label is written as a plain scalar,
+  so `--ci-runs-on ubuntu-latest` writes the same workflow as no labels.
+  A label is letters, digits, `.`, `_`, and `-`, because the workflow writes
+  it unquoted in a flow sequence.
+- **`review.ci_credential` records every kind.** `init` records the kind
+  `--ci-credential` names, not only `runner`, because a later
+  `--ci-credential api-key` must be able to replace a recorded `runner`, and
+  a recorded `subscription` or `api-key` is then the secret a later `init`
+  asks for. One kind covers every agent; a list of kinds by agent waits for
+  a repository that needs one.
+- **The runner's Codex login is a credential of its own.** The action's
+  check counts an `auth.json` in `${CODEX_HOME:-$HOME/.codex}` only when no
+  `CODEX_AUTH_JSON` is set, so a secret still wins on a runner that also has
+  a login, and refuses the login beside `OPENAI_API_KEY`, as it refuses a
+  secret beside a key, so a review never draws on API credits meant to stay
+  unused.
+- **Projector's skills go beside the runner's own.** Codex 0.169.0 keeps its
+  built-in skills in a real `skills/.system` directory of its home, so the
+  action links Projector's skills as `skills/projector` rather than replacing
+  `skills`, which would put a link inside that directory on the second job.
+  Codex discovers skills one directory deeper and through the link, which
+  `codex debug prompt-input` showed on 2026-11-18.
+- **The guard reads the labels for a hosted runner.** `init` refuses the
+  `runner` credential when the labels are none, or are only labels of
+  GitHub's images, `ubuntu-*`, `macos-*`, and `windows-*`, without
+  `self-hosted`. Requiring `self-hosted` was rejected: GitHub adds it by
+  default, but a runner registered with `--no-default-labels` lacks it, and
+  a runner scale set of the Actions Runner Controller does not support it
+  and carries only its own name. A hosted larger runner, named as its owner
+  chooses, still gets through, and its review stops at the credential
+  check.
+- **The `config` input still appends.** On a persistent runner the action
+  adds the input to the runner user's `~/.projector.toml` on every job, and
+  a second job's copy of the same table would not parse. The workflow `init`
+  writes passes no `config`, so § 10 has a self-hosted runner keep its
+  overrides in that file itself; a per-job configuration file is left for a
+  repository that needs both.
 - **The run adds `reviewing` before the agent starts.** In a measured run,
   GitHub created the job at 0:00, `project review run` started the agent at
   0:17, and the agent's `setup` added the label at 1:09, because the agent
@@ -983,3 +1022,72 @@ These tests fail before the change, and each catches the bug it names:
   run takes the label off with `clear_reviewing`, which keeps it while a
   live start comment, such as another loop's, means a review is in
   progress.
+
+## 10. Self-hosted runners
+
+A repository can run its CI reviews on runners it controls, to reach
+internal tools such as a self-hosted Grafana, to keep the agent's
+credential on its own machines, or to keep a Codex ChatGPT login that a
+hosted runner would let go stale. Three things blocked that:
+
+1. The workflow hard-coded `runs-on: ubuntu-latest`, and editing it made the
+   workflow one that `init` keeps rather than maintains.
+2. The workflow passed each credential as `NAME: ${{ secrets.NAME }}`. An
+   unset secret is an empty string, which hides a credential the runner's
+   own environment holds, and the action's check then finds none.
+3. The action gave Codex a fresh home in `$RUNNER_TEMP` on every job and
+   wrote `auth.json` there from `CODEX_AUTH_JSON`. OpenAI's guidance for a
+   persistent runner is the opposite: keep one Codex home, sign in once,
+   let Codex refresh the login in place, keep one `auth.json` per runner or
+   serialized stream, never share it across concurrent jobs or machines,
+   and never use it for a public repository.
+
+The design:
+
+- **Runner labels.** `project init --ci-review --ci-runs-on <labels>`
+  records a comma-separated list as `review.ci_runs_on`, which later plain
+  `init` runs and `project review ci-workflow --runs-on` read, as
+  `review.ci_agents` and `review.ci_app` are read. Both jobs run on them:
+  `runs-on: [self-hosted, linux, projector]` for a list, and
+  `runs-on: ubuntu-latest` while the setting is unset. The labels are part
+  of the generated text, so the digest line still marks the workflow as
+  one nobody edited.
+- **A runner-held credential.** `--ci-credential runner` says the runner
+  provides the agent's credential. `init` sets no secret and says what each
+  agent needs on the runner, and the workflow passes no `secrets.*`
+  variable, so the review step sees the runner's environment. `init`
+  refuses `runner` while the labels name a GitHub-hosted runner, because a
+  hosted runner holds no credential of the repository's.
+- **The action's check reads the runner.** For `claude` it accepts
+  `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` from the runner's
+  environment and still refuses both. For `codex` it accepts
+  `OPENAI_API_KEY` from the environment or an `auth.json` in the runner's
+  Codex home. With nothing, it names what to set up on the runner.
+- **A persistent Codex login is used in place.** With no `CODEX_AUTH_JSON`
+  and no `OPENAI_API_KEY`, the install step exports the runner's Codex home
+  to `GITHUB_ENV` instead of a temporary one, links Projector's skills into
+  it with `ln -sfn`, and never writes `auth.json`. Every other case keeps the
+  hosted runner's temporary home exactly as before. One login per runner
+  fits, because a runner runs one job at a time.
+- **A preinstalled CLI is used.** The install step skips
+  `npm install --global` when the agent's CLI on `PATH` prints exactly the
+  pinned version as a word of its `--version` output, as `2.1.327 (Claude
+  Code)` and `codex-cli 0.169.0` do, so a runner whose user cannot write
+  where `npm` installs can carry the CLI itself.
+- **Private repositories only.** The job already skips forks, but GitHub
+  advises against self-hosted runners for public repositories, and OpenAI's
+  rule forbids a persistent ChatGPT login there.
+  `docs/self-hosted-runners.md` says so, recommends ephemeral or
+  just-in-time runners, a runner group limited to the repositories that need
+  it, and read-only tokens for internal tools, and names the risk that sets
+  those limits: the agent reads the pull request's code in auto mode, so a
+  pull request can steer it to quote anything it can reach into a review
+  comment.
+
+Why this shape: a setting rather than a hand edit keeps the workflow one
+that `init` maintains, so a release that changes the template reaches a
+self-hosted repository too. The workflow leaves the secrets out because an
+expression cannot fall back to the runner's own environment, which only the
+step's shell sees. That keeps the credential out of GitHub entirely, and the
+action's one-credential check covers both places without knowing which one
+the repository chose.
