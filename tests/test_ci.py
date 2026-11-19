@@ -311,15 +311,6 @@ class ActionTests(unittest.TestCase):
             ran[inputs["agent"]] = args[args.index("--model") + 1]
         self.assertEqual({"claude": "claude-opus-5-5", "codex": "gpt-5.5"}, ran)
 
-    def test_every_step_that_runs_project_with_the_workflow_token_names_the_login_it_posts_as(self) -> None:
-        # GitHub refuses `gh api user` to that token, so without the name a step fails after it pushes or posts.
-        steps = ACTION.read_text().split("\n    - ")[1:]
-        with_token = [step for step in steps if "GH_TOKEN: ${{ github.token }}" in step]
-        self.assertIn("name: Publish the summaries", [step.splitlines()[0] for step in with_token])
-        for step in with_token:
-            with self.subTest(step=step.splitlines()[0]):
-                self.assertIn(f"        {review.TOKEN_LOGIN}: {cli.CI_REVIEWER}\n", step)
-
     def test_an_app_workflow_gives_the_action_the_app_and_its_key(self) -> None:
         with_app, without = ci.workflow_text("v0", {"claude": ""}, 5827721), ci.workflow_text("v0", {"claude": ""})
 
@@ -336,21 +327,29 @@ class ActionTests(unittest.TestCase):
         own = Path(__file__).parents[1] / ".github" / "workflows" / "projector-review.yml"
         for name, workflow in (("generated", ci.workflow_text("v0", {"claude": ""}, 5827721)), ("own", own.read_text())):
             with self.subTest(workflow=name):
-                self.assertEqual([f"app-private-key: ${{{{ secrets.{ci.APP_KEY} }}}}"],
-                                 [line.strip() for line in workflow.splitlines() if ci.APP_KEY in line],
-                                 "the key is in no job's or step's env")
+                self.assertEqual({f"app-private-key: ${{{{ secrets.{ci.APP_KEY} }}}}"},
+                                 {line.strip() for line in workflow.splitlines() if ci.APP_KEY in line},
+                                 "the key is in no job's or step's env, only each job's input")
         steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
         self.assertEqual(["Mint the app's token"],
                          [name for name, step in steps.items() if "app-private-key" in step or ci.APP_KEY in step])
         self.assertIn("private-key: ${{ inputs.app-private-key }}\n", steps["Mint the app's token"])
 
-    def test_the_review_posts_as_the_app_whose_token_it_uses(self) -> None:
-        # The token and the login must come from the same step, or the review posts as one account and names another.
+    def test_the_review_and_its_summary_post_as_the_app_whose_token_they_use(self) -> None:
+        # The token and the login must come from the same step, or a step posts as one account and names another;
+        # GitHub refuses `gh api user` to a token of no user, so a step without the login fails once it posts.
         steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
         minted = re.search(r"\n      id: (\S+)\n", steps["Mint the app's token"]).group(1)
-        review_step = steps["Review the pull request"]
-        self.assertIn(f"GH_TOKEN: ${{{{ steps.{minted}.outputs.token || github.token }}}}", review_step)
-        self.assertIn(f"format('{{0}}[bot]', steps.{minted}.outputs.app-slug)", review_step)
+        self.assertNotIn("inputs.step", steps["Mint the app's token"].split("uses:")[0],
+                         "the summary job mints the app's token too")
+        for name in ("Review the pull request", "Publish the summaries"):
+            with self.subTest(step=name):
+                self.assertIn(f"GH_TOKEN: ${{{{ steps.{minted}.outputs.token || github.token }}}}", steps[name])
+                self.assertIn(f"{review.TOKEN_LOGIN}: ${{{{ steps.{minted}.outputs.app-slug && "
+                              f"format('{{0}}[bot]', steps.{minted}.outputs.app-slug) || '{cli.CI_REVIEWER}' }}}}",
+                              steps[name])
+        self.assertIn(f"{summary.DISPATCH_TOKEN}: ${{{{ github.token }}}}", steps["Publish the summaries"],
+                      "the rebuild event goes out on the workflow's token, which can send it")
 
     def test_only_the_review_step_hands_its_summary_off(self) -> None:
         # The summary job's publish must push; a handoff there would publish nothing.

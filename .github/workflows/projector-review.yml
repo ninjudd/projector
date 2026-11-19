@@ -89,3 +89,5 @@ jobs:
         with:
           step: summary
           pr: ${{ github.event.pull_request.number || inputs.pr }}
+          app-id: '5827721'
+          app-private-key: ${{ secrets.PROJECTOR_APP_PRIVATE_KEY }}

@@ -499,10 +499,12 @@ def stored_attributes(path: Path) -> dict[str, bool]:
 
 # GitHub
 
-def gh(*args: str, input: str | None = None) -> str:
-    """Run gh with `input` on standard input. A failure names the arguments, never the input."""
+def gh(*args: str, input: str | None = None, token: str | None = None) -> str:
+    """Run gh with `input` on standard input, as `token` when it is given. A failure names the arguments, never
+    the input."""
+    env = dict(os.environ, GH_TOKEN=token) if token else None
     try:
-        return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, input=input).stdout
+        return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, input=input, env=env).stdout
     except FileNotFoundError as exc:
         raise SummaryError("the gh CLI is not installed") from exc
     except subprocess.CalledProcessError as exc:
@@ -1146,13 +1148,19 @@ def seed_from_legacy(remote: str) -> str:
     return head
 
 
+# The token that sends the site's rebuild event when the one `gh` posts with cannot: a GitHub App with no
+# `contents: write` posts a summary's links, and a CI job's own token starts the build.
+DISPATCH_TOKEN = "PROJECTOR_DISPATCH_TOKEN"
+
+
 def dispatch(repo: str) -> None:
-    gh("api", f"repos/{repo}/dispatches", "-f", f"event_type={DISPATCH_EVENT}")
+    token = os.environ.get(DISPATCH_TOKEN) or None
+    gh("api", f"repos/{repo}/dispatches", "-f", f"event_type={DISPATCH_EVENT}", token=token)
     # A site workflow generated before the rename listens only for the old
     # event, so send it too; a workflow generated since listens only for the
     # new one, so an updated repository still builds once. A later release
     # stops sending the old event.
-    gh("api", f"repos/{repo}/dispatches", "-f", f"event_type={LEGACY_DISPATCH_EVENT}")
+    gh("api", f"repos/{repo}/dispatches", "-f", f"event_type={LEGACY_DISPATCH_EVENT}", token=token)
 
 
 def ref_exists(ref: str) -> bool:

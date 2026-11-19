@@ -1175,12 +1175,24 @@ def embedded(page: Path) -> dict:
 
 
 class DispatchTests(unittest.TestCase):
-    def test_dispatch_sends_the_old_event_too_for_workflows_generated_before_the_rename(self) -> None:
-        calls: list[tuple[str, ...]] = []
-        with mock.patch.object(summary, "gh", side_effect=lambda *args: calls.append(args) or ""):
+    def dispatched(self, environ: dict[str, str]) -> list[tuple[tuple[str, ...], str | None]]:
+        calls: list[tuple[tuple[str, ...], str | None]] = []
+        inherited = {name: value for name, value in os.environ.items() if name != summary.DISPATCH_TOKEN}
+        with mock.patch.dict(os.environ, {**inherited, **environ}, clear=True), \
+                mock.patch.object(summary, "gh", side_effect=lambda *args, token=None: calls.append((args, token)) or ""):
             summary.dispatch("owner/repo")
+        return calls
+
+    def test_dispatch_sends_the_old_event_too_for_workflows_generated_before_the_rename(self) -> None:
         self.assertEqual([("api", "repos/owner/repo/dispatches", "-f", "event_type=projector-summaries"),
-                          ("api", "repos/owner/repo/dispatches", "-f", "event_type=projector-walkthroughs")], calls)
+                          ("api", "repos/owner/repo/dispatches", "-f", "event_type=projector-walkthroughs")],
+                         [args for args, _ in self.dispatched({})])
+
+    def test_dispatch_sends_both_events_with_the_dispatch_token_when_one_is_set(self) -> None:
+        # A GitHub App that posts the links has no `contents: write`, so GitHub refuses it the rebuild event.
+        self.assertEqual([None, None], [token for _, token in self.dispatched({})])
+        self.assertEqual(["workflow-token", "workflow-token"],
+                         [token for _, token in self.dispatched({summary.DISPATCH_TOKEN: "workflow-token"})])
 
 
 class KindTests(unittest.TestCase):
