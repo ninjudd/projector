@@ -18,6 +18,7 @@ for.
 from __future__ import annotations
 
 import ctypes
+import re
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,8 @@ SECRET_TOOL = "secret-tool"
 TIMEOUT = 5.0
 SYSTEM = sys.platform
 NOT_ANSWERING = "keychain locked or not answering"
+# What `security -i` reads as more than a word of its script.
+UNSCRIPTABLE = re.compile(r"[\s\"'`\\\x00-\x1f\x7f]")
 
 
 class KeychainError(ProjectorError):
@@ -67,6 +70,13 @@ class MacOS:
         return "" if Path(SECURITY).is_file() else "security: not installed"
 
     def store(self, key_id: str, secret: str, timeout: float, service: str = SERVICE) -> None:
+        # The secret goes in the script `security -i` reads on standard input, never on its command line, where
+        # the process list would show it. That script splits on whitespace and reads quotes and backslashes, so a
+        # value holding one could end the command and start another; the relay key's base64 holds none.
+        for name, value in (("service name", service), ("account", key_id), ("secret", secret)):
+            if not value or UNSCRIPTABLE.search(value):
+                raise KeychainError(f"security: the {name} holds whitespace, a quote, a backslash, or a control "
+                                    "character, which the keychain's script cannot carry, so nothing was stored")
         command = f"add-generic-password -U -s {service} -a {key_id} -w {secret}\n"
         run("security", [SECURITY, "-i"], timeout, input=command.encode(), secret=secret)
 

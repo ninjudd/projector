@@ -24,7 +24,8 @@ from tests.test_projector import RepositoryTestCase
 from tests.test_relay import FakeAdvapi32
 
 ROOT = Path(__file__).parents[1]
-TOKEN = "pjh_account"
+# An account token as the service issues one: pjh_ and the unpadded base64url of 32 bytes.
+TOKEN = "pjh_" + base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode()
 CHECKOUT = "https://billing.example/checkout/1"
 SUBSCRIBE = "https://billing.example/subscribe"
 
@@ -37,6 +38,7 @@ class FakeService:
         self.seen: list[dict[str, Any]] = []
         self.pending = 1
         self.tokens = {TOKEN}
+        self.issued = TOKEN
         self.challenges: dict[str, tuple[str, bytes]] = {}
         self.registered: list[str] = []
         # What the service seals in place of a key challenge, and from which key, as one replaying a record
@@ -101,7 +103,7 @@ class FakeService:
             if self.pending:
                 self.pending -= 1
                 return 202, {"status": "pending", "interval": 0}
-            return 200, {"token": TOKEN, "login": "octocat", "expires_at": "2027-02-17T00:00:00Z"}
+            return 200, {"token": self.issued, "login": "octocat", "expires_at": "2027-02-17T00:00:00Z"}
         if path == "/v1/review-token":
             if bearer != f"oidc-for-{self.url}":
                 return 401, {"error": "the Actions token is refused"}
@@ -219,6 +221,21 @@ class HostedCommandTests(RepositoryTestCase):
         # Past the label, the service could fit a record's own bytes in any length it chose.
         self.refused_challenge(hosted.CHALLENGE_PREFIX + b"relay-plaintext", b"relay-plaintext")
 
+    def test_login_refuses_a_token_outside_the_services_format_before_the_keychain_sees_it(self) -> None:
+        # macOS stores through a script `security -i` reads, where a newline or quote in a token the service chose
+        # would run a command of its own, such as deleting the relay's key.
+        for issued in (f"{TOKEN}\ndelete-generic-password -s projector-agent", f'{TOKEN[:-1]}"', TOKEN[:-1]):
+            with self.subTest(issued=issued):
+                self.service.issued = issued
+
+                with mock.patch.object(relay, "command_key", return_value=(None, relay.NO_KEY)):
+                    code, out, err = self.invoke("hosted", "login")
+
+                self.assertNotEqual(0, code)
+                self.assertIn("is not an account token", err)
+                self.assertNotIn(issued, out + err)
+                self.assertEqual({}, self.items, "nothing reaches the keychain")
+
     def test_login_without_agent_key_keeps_the_token_and_says_why_no_key_is_registered(self) -> None:
         with mock.patch.object(relay, "command_key", return_value=(None, relay.NO_KEY)):
             code, out, err = self.invoke("hosted", "login")
@@ -320,6 +337,28 @@ class HostedCommandTests(RepositoryTestCase):
 
 
 class KeychainServiceTests(unittest.TestCase):
+    def test_the_macos_script_refuses_a_secret_that_could_run_a_command_and_still_stores_the_relay_key(self) -> None:
+        # `security -i` splits its script on whitespace and reads quotes and backslashes, so such a secret could
+        # end the store command and start another.
+        ran: list[bytes] = []
+
+        def run(tool: str, args: list[str], timeout: float, *, input: Optional[bytes] = None,
+                secret: str = "") -> bytes:
+            ran.append(input or b"")
+            return b""
+
+        relay_key = base64.b64encode(crypto.new_private_key()).decode()
+        with mock.patch.object(keychain, "run", run):
+            for secret in ('tok"en', "tok\ndelete-keychain", "tok en", "tok\\en", "tok'en", "tok\x00en"):
+                with self.subTest(secret=secret), self.assertRaises(keychain.KeychainError) as refused:
+                    keychain.MacOS().store("0123456789abcdef", secret, 1.0)
+                self.assertNotIn(secret, str(refused.exception))
+            self.assertEqual([], ran, "no refused secret reaches security")
+            keychain.MacOS().store("0123456789abcdef", relay_key, 1.0)
+            keychain.MacOS().store("https://hosted.example", TOKEN, 1.0, hosted.SERVICE)
+        self.assertEqual(2, len(ran))
+        self.assertIn(f"-w {relay_key}\n".encode(), ran[0])
+
     def test_every_backend_keeps_the_account_token_apart_from_the_relay_key(self) -> None:
         # A backend that ignored the service name would keep the token among the relay's keys, where removing
         # one removes the other.

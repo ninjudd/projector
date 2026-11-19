@@ -42,6 +42,9 @@ TEAM = "team"
 # What a key challenge's plaintext is: this label, then this many random bytes, which alone go back.
 CHALLENGE_PREFIX = b"projector hosted key challenge v1\x00"
 CHALLENGE_BYTES = 32
+# An account token as the service issues one: `pjh_` and the unpadded base64url of 32 random bytes. The token
+# comes from a server and goes into the keychain, so nothing else is kept.
+ACCOUNT_TOKEN = re.compile(r"pjh_[A-Za-z0-9_-]{43}")
 # The step's input that has the review post as the hosted service's app.
 APP = "projector"
 
@@ -133,8 +136,9 @@ def sign_in(url: str, say: Callable[[str], None], sleep: Callable[[float], None]
         sleep(interval)
         status, answer = call(url, "POST", "/v1/login/poll", {"device_code": device}, ok=(200, 202))
         if status == 200:
-            if not isinstance(answer.get("token"), str) or not answer["token"]:
-                raise HostedError(f"{url} signed you in but gave no account token")
+            if not isinstance(answer.get("token"), str) or not ACCOUNT_TOKEN.fullmatch(answer["token"]):
+                raise HostedError(f"{url} signed you in, but what it answered is not an account token, so nothing "
+                                  "was kept")
             return answer
         interval = seconds(answer.get("interval"), interval)
     raise HostedError(f"the code expired before it was approved; {LOGIN} again")
