@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import re
 from importlib import resources
+from typing import Optional
 
 from .core import UsageError
 
@@ -28,6 +29,9 @@ WHERE = {
     "CODEX_AUTH_JSON": "Projector passes gh the auth.json that `codex login` wrote",
     "OPENAI_API_KEY": "paste an API key from the OpenAI platform",
 }
+# The secret holding a GitHub App's private key, which the action hands only to the step that mints the app's
+# token, never to the agent.
+APP_KEY = "PROJECTOR_APP_PRIVATE_KEY"
 HEADER = "# Written by `project init --ci-review`, which replaces this file while nobody has edited it.\n"
 DIGEST = re.compile(r"\A" + re.escape(HEADER) + r"# projector-workflow sha256=([0-9a-f]{64})\n")
 
@@ -67,19 +71,25 @@ def format_agents(agents: dict[str, str]) -> str:
     return ", ".join(f"{name}={model}" if model else name for name, model in agents.items())
 
 
-def body(action_ref: str, agents: dict[str, str]) -> str:
+def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None) -> str:
     template = resources.files("projector").joinpath("templates/review-workflow.yml").read_text(encoding="utf-8")
     matrix = "\n".join(f"          - agent: {name}" + (f"\n            model: {model}" if model else "")
                        for name, model in agents.items())
-    env = "\n".join(f"          {name}: ${{{{ secrets.{name} }}}}"
-                    for agent in agents for name in CREDENTIALS[agent].values())
-    return template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@ENV@", env)
+    secrets = [name for agent in agents for name in CREDENTIALS[agent].values()]
+    app = ""
+    if app_id is not None:
+        app = f"          app-id: '{app_id}'\n"
+        secrets.append(APP_KEY)
+    env = "\n".join(f"          {name}: ${{{{ secrets.{name} }}}}" for name in secrets)
+    return (template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@APP@", app)
+            .replace("@ENV@", env))
 
 
-def workflow_text(action_ref: str, agents: dict[str, str]) -> str:
-    """The review workflow for `agents`, calling the action at `action_ref`. Its second line records a digest of
-    the rest, so a later `init` can tell a file nobody edited, which it replaces, from one somebody did."""
-    text = body(action_ref, agents)
+def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None) -> str:
+    """The review workflow for `agents`, calling the action at `action_ref`, and posting as the GitHub App
+    `app_id` names when it is given. Its second line records a digest of the rest, so a later `init` can tell a
+    file nobody edited, which it replaces, from one somebody did."""
+    text = body(action_ref, agents, app_id)
     return f"{HEADER}# projector-workflow sha256={hashlib.sha256(text.encode()).hexdigest()}\n{text}"
 
 

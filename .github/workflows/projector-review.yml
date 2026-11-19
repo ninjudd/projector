@@ -60,6 +60,7 @@ jobs:
           model: ${{ matrix.model }}
           pr: ${{ github.event.pull_request.number || inputs.pr }}
           rereview: ${{ inputs.rereview || false }}
+          app-id: '5827721'
           # The gate's hooks/typecheck.sh compiles against declarations only an interactive Claude Code session
           # writes, so a review on a runner runs the rest of the gate without it.
           config: |
@@ -68,6 +69,7 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PROJECTOR_APP_PRIVATE_KEY: ${{ secrets.PROJECTOR_APP_PRIVATE_KEY }}
 
   summary:
     needs: review

@@ -102,6 +102,7 @@ SETTINGS: dict[str, type] = {
     "review.runner": str,
     "review.ci": bool,
     "review.ci_agents": str,
+    "review.ci_app": str,
     "fix.resolve_human_threads": bool,
     "watch.auto_start": bool,
     "watch.interval": int,

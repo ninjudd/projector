@@ -941,3 +941,18 @@ These tests fail before the change, and each catches the bug it names:
   of `@main`, so each pull request is reviewed by the action it carries and
   CI review works on the pull requests that build the action. A repository
   that `init` sets up calls the action at a release ref, as § 2.8 says.
+- **The app input ships before context repositories.** `--ci-app <slug>`,
+  `review.ci_app`, and the action's `app-id` input post the reviews as a
+  public GitHub App, from its private key in the `PROJECTOR_APP_PRIVATE_KEY`
+  secret. `actions/create-github-app-token` mints a token limited to the
+  job's repository and the review's permissions, and the steps that install
+  and run the agent blank the key. An app takes `github-actions[bot]`'s place
+  in `review.reviewers`, so a workflow posting with its own token no longer
+  counts. Context repositories stay deferred to § 6 step 4.
+- **Projector's own reviews post as Projector Review.** Its workflow passes
+  `app-id: '5827721'` for `projector-review`, and the app's key is a secret
+  of this repository until a hosted token service replaces it. Until then the app stays installed on the owner's repositories
+  only, because the key carries the app's authority over every installation.
+- **A runner fact checked on 2026-11-19:** `actions/download-artifact`
+  succeeds when no artifact matches its pattern. The summary job of Projector's
+  own review passed with nothing to publish.

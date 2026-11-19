@@ -37,6 +37,15 @@ class InitCiReviewTests(RepositoryTestCase):
         self.set: list[tuple[list[str], Path | None]] = []
         self.enterContext(mock.patch.object(cli, "run_interactive",
                                             side_effect=lambda argv, source=None: self.set.append((argv, source)) or 0))
+        # The public apps GitHub answers for; a private app reads as missing, as it does to another account.
+        self.apps = {"projector-review": 5827721}
+        self.enterContext(mock.patch.object(summary, "gh_lookup", side_effect=self.lookup))
+
+    def lookup(self, *args: str) -> str | None:
+        if args[0] == "api" and args[1].startswith("apps/"):
+            found = self.apps.get(args[1].removeprefix("apps/"))
+            return f"{found}\n" if found else None
+        raise AssertionError(f"unexpected gh call: {args}")
 
     def gh(self, *args: str) -> str:
         self.gh_calls.append(args)
@@ -124,6 +133,43 @@ class InitCiReviewTests(RepositoryTestCase):
         self.assertFalse(self.workflow().exists())
         self.assertEqual(([], None, None), (self.set, self.recorded().get("ci"), self.recorded().get("ci_agents")),
                          "no secret is set and nothing is recorded")
+
+    def test_an_app_posts_the_reviews_and_a_later_init_keeps_it(self) -> None:
+        (self.root / ".projector.toml").write_text('[review]\nreviewers = "someone, github-actions[bot]"\n')
+
+        code, _, err = self.init("--ci-review", "--ci-app", "projector-review")
+        again, out_again, _ = self.init()
+
+        self.assertEqual((0, 0), (code, again), err)
+        self.assertEqual(ci.workflow_text("v0", {"claude": ""}, 5827721), self.workflow().read_text())
+        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again,
+                      "the recorded app rebuilds the same workflow, so the reviews never fall back to the bot")
+        self.assertEqual(("projector-review", "someone, projector-review[bot]"),
+                         (self.recorded()["ci_app"], self.recorded()["reviewers"]),
+                         "the app takes github-actions[bot]'s place, and every other reviewer stays")
+        self.assertIn(f"gh secret set {ci.APP_KEY} --repo acme/app < <key file>", err)
+
+    def test_an_app_github_does_not_show_is_refused_before_anything_is_written(self) -> None:
+        code, _, err = self.init("--ci-review", "--ci-app", "private-app")
+
+        self.assertNotEqual(0, code)
+        self.assertIn("make the app public", err)
+        self.assertFalse(self.workflow().exists())
+        self.assertNotIn("ci", self.recorded())
+
+    def test_init_sets_the_app_key_from_the_file_you_name_without_reading_it(self) -> None:
+        self.at_a_terminal()
+        self.secrets = ["CLAUDE_CODE_OAUTH_TOKEN"]
+        key = self.root.parent / "projector-review.pem"
+        key.write_text("not a real key\n")
+
+        with mock.patch("sys.stdin.readline", return_value=f"{key}\n"):
+            code, _, err = self.init("--ci-review", "--ci-app", "projector-review")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([(["gh", "secret", "set", ci.APP_KEY, "--repo", "acme/app"], key)], self.set,
+                         "gh reads the key from the file, so it is on no command line")
+        self.assertIn(f"delete {key}", err)
 
     def test_without_a_terminal_or_a_flag_init_adds_no_ci_review(self) -> None:
         code, _, err = self.init()
@@ -247,6 +293,31 @@ class ActionTests(unittest.TestCase):
         for step in with_token:
             with self.subTest(step=step.splitlines()[0]):
                 self.assertIn(f"        {review.TOKEN_LOGIN}: {cli.CI_REVIEWER}\n", step)
+
+    def test_an_app_workflow_gives_the_action_the_app_and_its_key(self) -> None:
+        with_app, without = ci.workflow_text("v0", {"claude": ""}, 5827721), ci.workflow_text("v0", {"claude": ""})
+
+        self.assertEqual(["'5827721'"], [job.get("app-id") for job in review_jobs(with_app)],
+                         "the app ID is one of the action's inputs, not an environment variable")
+        self.assertIn(f"          {ci.APP_KEY}: ${{{{ secrets.{ci.APP_KEY} }}}}\n", with_app)
+        self.assertTrue(ci.unedited(with_app))
+        self.assertEqual(([None], False), ([job.get("app-id") for job in review_jobs(without)], ci.APP_KEY in without))
+
+    def test_the_app_key_reaches_only_the_step_that_mints_its_token(self) -> None:
+        # A caller's env reaches every step of a composite action; the agent and npm's install scripts run other code.
+        steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
+        self.assertIn(f"private-key: ${{{{ env.{ci.APP_KEY} }}}}", steps["Mint the app's token"])
+        for name in ("Install the agent", "Review the pull request"):
+            with self.subTest(step=name):
+                self.assertIn(f"        {ci.APP_KEY}: ''\n", steps[name])
+
+    def test_the_review_posts_as_the_app_whose_token_it_uses(self) -> None:
+        # The token and the login must come from the same step, or the review posts as one account and names another.
+        steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
+        minted = re.search(r"\n      id: (\S+)\n", steps["Mint the app's token"]).group(1)
+        review_step = steps["Review the pull request"]
+        self.assertIn(f"GH_TOKEN: ${{{{ steps.{minted}.outputs.token || github.token }}}}", review_step)
+        self.assertIn(f"format('{{0}}[bot]', steps.{minted}.outputs.app-slug)", review_step)
 
     def test_only_the_review_step_hands_its_summary_off(self) -> None:
         # The summary job's publish must push; a handoff there would publish nothing.
