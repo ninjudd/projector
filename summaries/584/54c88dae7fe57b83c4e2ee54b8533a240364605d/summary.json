@@ -1,0 +1,152 @@
+{
+ "version": 1,
+ "name": "Self-hosted CI review runners",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 584,
+  "title": "Run CI reviews on your own runners, with the credential the runner holds",
+  "head": "54c88dae7fe57b83c4e2ee54b8533a240364605d",
+  "headRef": "review-ci-self-hosted",
+  "base": "636f84d0aa307a69e5fb20ddc090185f73a4a949",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector can review each pull request in a GitHub Actions job. <code>project init --ci-review</code> writes the workflow, <code>.github/workflows/projector-review.yml</code>, and the composite action in <code>actions/review/</code> runs an agent (Claude Code or Codex) that publishes the review. Until now that job always ran on a GitHub-hosted <code>ubuntu-latest</code> machine, with the agent's credential passed in from a repository secret.",
+   "This pull request lets the jobs run on <b>self-hosted runners</b>, machines the repository's owner controls. Such a runner can reach internal tools, such as a self-hosted Grafana, and can hold the agent's credential itself. Three things stood in the way, and the change removes each one:",
+   "<ol><li><b>The runner was hard-coded.</b> A new setting, <code>review.ci_runs_on</code>, records runner labels, and <code>init</code> writes them into both jobs.</li><li><b>Unset secrets hid the runner's own credential.</b> A secret that is not set reads as an empty string, so <code>CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}</code> blanked out a value the runner held. A new credential kind, <code>runner</code>, makes the workflow pass no secrets at all.</li><li><b>Codex got a throwaway home on every job.</b> A Codex ChatGPT login refreshes itself in <code>auth.json</code>, so a copy goes stale. The action now uses the runner's own Codex home in place when that is the credential.</li></ol>",
+   "A new page, <code>docs/self-hosted-runners.md</code>, explains setup and safety limits, and the <code>review-in-ci</code> plan records the decisions in a new § 10. The action's <code>config</code> input still appends to <code>~/.projector.toml</code> on every job, which a persistent runner cannot tolerate; the docs work around it and the plan leaves a fix for later."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Hosted runner</b>: a fresh GitHub machine per job, here <code>ubuntu-latest</code>.</li><li><b>Self-hosted runner</b>: your own machine registered with GitHub; a job picks it by its labels.</li><li><b>Credential kind</b>: <code>subscription</code>, <code>api-key</code>, or the new <code>runner</code>, recorded as <code>review.ci_credential</code>.</li><li><b>Codex home</b>: <code>$CODEX_HOME</code>, or <code>~/.codex</code>, where Codex keeps <code>auth.json</code>, <code>config.toml</code>, and skills.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first Projector review, at <code>066bf19</code>, requested changes with one finding: naming <code>ubuntu-latest</code> explicitly bypassed the guard that refuses a runner credential on a hosted runner. <code>54c88da</code> fixed it with <code>ci.hosted</code>, and the review of that head is clean, with one suggestion: the init note about running <code>review.gate</code> on your runner should also check <code>ci.hosted</code>. The CI <code>check</code> job and <code>review.gate</code> passed on both heads.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "generator",
+   "title": "Generating the workflow",
+   "kicker": "Runner labels and the runner credential kind, from flags and settings into the workflow text",
+   "intro": [
+    "<code>ci.workflow_text</code> renders the workflow from a template. It now takes two more inputs: the runner labels, which fill <code>runs-on</code> in both jobs, and the credential kind. When the kind is <code>runner</code>, the review step gets no <code>env:</code> block, so the agent sees the runner's own environment.",
+    "<code>init</code> and <code>project review ci-workflow</code> read the labels from <code>--ci-runs-on</code>/<code>--runs-on</code>, then <code>review.ci_runs_on</code>, and the kind from <code>--ci-credential</code>/<code>--credential</code>, then <code>review.ci_credential</code>. <code>init</code> records both, so a later plain <code>init</code> keeps the workflow the same."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The workflow's second line is a digest of its text. <code>init</code> replaces a workflow whose digest still matches and keeps one somebody edited. Labels being part of the generated text is what lets a self-hosted workflow stay maintained by <code>init</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/ci.py",
+     "note": "Adds <code>parse_runs_on</code>/<code>format_runs_on</code>, the <code>runner</code> kind, <code>hosted</code>, which tells a GitHub-hosted runner's labels apart, and the guard in <code>body</code> that refuses <code>runner</code> on a hosted runner.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 47,
+       "text": "<code>hosted</code> counts as hosted no labels at all, or only labels of GitHub's images (<code>ubuntu-*</code>, <code>macos-*</code>, <code>windows-*</code>) without <code>self-hosted</code>. It does not require <code>self-hosted</code>, because a runner registered with <code>--no-default-labels</code> and an Actions Runner Controller scale set do not carry it."
+      },
+      {
+       "kind": "verify",
+       "line": 114,
+       "text": "The guard now uses <code>hosted(runs_on)</code>, so <code>--ci-runs-on ubuntu-latest</code> with a recorded <code>runner</code> credential is refused rather than writing a hosted workflow with no secrets. The review at <code>54c88da</code> traced it, and the new subtests cover it."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "New flags on <code>init</code> and <code>review ci-workflow</code>, the <code>ci_runs_on</code> and <code>ci_credential</code> resolvers, recording both settings, and <code>set_ci_secrets</code> setting no credential secret for <code>runner</code> while still handling an app's private key."
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers <code>review.ci_runs_on</code> and <code>review.ci_credential</code> as string settings."
+    },
+    {
+     "path": "src/projector/templates/review-workflow.yml",
+     "note": "Both <code>runs-on</code> lines become <code>@RUNS_ON@</code>, and the <code>env:</code> header moves into <code>@ENV@</code> so it can be left out.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "With no labels and no <code>runner</code> kind, the rendered workflow is the same as before apart from the header comment: the old template joined env lines and added a blank line, and the new one ends each env line with a newline, giving the same bytes. Checked by comparing the two templates' substitution."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "action",
+   "title": "The review action on a runner",
+   "kicker": "The credential check and install step learn about a runner's own login and CLI",
+   "intro": [
+    "The action's first step checks that the agent has exactly one credential. For Codex it now also counts an <code>auth.json</code> in the runner's Codex home, when no <code>CODEX_AUTH_JSON</code> secret is set, and refuses that login beside <code>OPENAI_API_KEY</code>. With no credential, the error names what to set up on a self-hosted runner.",
+    "The install step skips <code>npm install --global</code> when the CLI on <code>PATH</code> already prints the pinned version as a whole word. When the runner's Codex login is the credential, the step exports that home as <code>CODEX_HOME</code>, links Projector's skills in as <code>skills/projector</code>, and never writes <code>auth.json</code>. Every hosted path is unchanged."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "actions/review/action.yml",
+     "note": "Credential check and install step changes for a runner-held Codex login and a preinstalled CLI.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 168,
+       "text": "This branch runs only when neither Codex secret is set, which the credential check above allows only when <code>auth.json</code> exists in the same home. Linking into <code>skills/projector</code> rather than replacing <code>skills</code> keeps Codex's own <code>skills/.system</code> in place."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "A new guide for self-hosted runners, the reference updates, and plan § 10",
+   "intro": [
+    "<code>docs/self-hosted-runners.md</code> walks through deciding whether you need a runner, preparing it, pointing the workflow at it, giving it each agent's credential, preinstalling the CLI, reaching internal tools, and safety limits: private repositories only, ephemeral runners where possible, a restricted runner group, and read-only tokens. It names the prompt-injection risk that sets those limits.",
+    "<code>docs/cli.md</code> and <code>docs/review-in-ci.md</code> document the new flags and settings and link to the guide. The <code>review-in-ci</code> plan, still <code>in-progress</code>, gains § 9 bullets and a new § 10 without renumbering earlier sections."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/self-hosted-runners.md",
+     "note": "New guide to running reviews on self-hosted runners."
+    },
+    {
+     "path": "docs/review-in-ci.md",
+     "note": "Adds the <code>runner</code> credential kind and a short section that links to the guide."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents <code>--ci-runs-on</code>, <code>--ci-credential runner</code>, <code>--runs-on</code>, <code>--credential</code>, and the two settings."
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "note": "Plan § 9 bullets for what implementation settled, and new § 10 on self-hosted runners."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Init, workflow, and action-step tests for the new paths",
+   "intro": [
+    "The new tests drive <code>init</code> in temporary repositories and run the action's bash steps with fake <code>claude</code>, <code>codex</code>, and <code>npm</code> binaries on <code>PATH</code>. They cover labels surviving a refresh, a runner credential passing no secret, the refusal on a hosted runner (no labels, or only GitHub image labels such as <code>ubuntu-latest</code>), moving a runner credential back to a hosted runner, runners GitHub does not host (a scale set name, custom labels, and <code>Self-Hosted</code>), the Codex login counting as a credential, the exact-version install skip, and the runner's Codex home being reused across two jobs."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_ci.py"
+    }
+   ]
+  }
+ ]
+}

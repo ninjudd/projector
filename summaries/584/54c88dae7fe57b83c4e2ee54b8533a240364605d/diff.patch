@@ -1,0 +1,1015 @@
+diff --git a/actions/review/action.yml b/actions/review/action.yml
+index 905f217b..34386916 100644
+--- a/actions/review/action.yml
++++ b/actions/review/action.yml
+@@ -61,8 +61,21 @@ runs:
+           echo "::error::both $subscription and $key are set for $AGENT; delete the secret you do not mean to use"
+           exit 1
+         fi
++        # A self-hosted runner can keep a Codex login of its own, which Codex refreshes in place.
++        login="${CODEX_HOME:-$HOME/.codex}/auth.json"
++        if [ "$AGENT" = codex ] && [ -z "${!subscription:-}" ] && [ -f "$login" ]; then
++          if [ -n "${!key:-}" ]; then
++            echo "::error::both $key and the Codex login in $login are on the runner; remove the one you do not mean to use"
++            exit 1
++          fi
++          exit 0
++        fi
+         if [ -z "${!subscription:-}${!key:-}" ]; then
+-          echo "::error::neither $subscription nor $key is set for $AGENT; run \`project init --ci-review\` to set one"
++          case "$AGENT" in
++            claude) runner="set $subscription or $key in the runner's environment" ;;
++            codex) runner="run \`codex login\` as the runner's user, or set $key in its environment" ;;
++          esac
++          echo "::error::neither $subscription nor $key is set for $AGENT; run \`project init --ci-review\` to set one as a secret, or on a self-hosted runner, $runner"
+           exit 1
+         fi
+     - uses: actions/checkout@v4
+@@ -132,20 +145,35 @@ runs:
+         CLAUDE_VERSION: ${{ inputs.claude-code-version }}
+         CODEX_VERSION: ${{ inputs.codex-version }}
+       run: |
++        # A self-hosted runner can have the CLI installed already, where npm may not write.
++        installed() {
++          local found
++          found=$("$1" --version 2>/dev/null | tr -s '[:space:]' ' ') || return 1
++          [[ " $found " == *" $2 "* ]]
++        }
+         case "$AGENT" in
+           claude)
+-            npm install --global "@anthropic-ai/claude-code@$CLAUDE_VERSION"
++            installed claude "$CLAUDE_VERSION" || npm install --global "@anthropic-ai/claude-code@$CLAUDE_VERSION"
+             ;;
+           codex)
+-            npm install --global "@openai/codex@$CODEX_VERSION"
+-            home="$RUNNER_TEMP/codex-home"
+-            mkdir -p "$home"
+-            ln -s "$PROJECTOR_ROOT/skills" "$home/skills"
+-            echo "CODEX_HOME=$home" >> "$GITHUB_ENV"
+-            if [ -n "${CODEX_AUTH_JSON:-}" ]; then
+-              (umask 077 && printf '%s' "$CODEX_AUTH_JSON" > "$home/auth.json")
++            installed codex "$CODEX_VERSION" || npm install --global "@openai/codex@$CODEX_VERSION"
++            if [ -z "${CODEX_AUTH_JSON:-}${OPENAI_API_KEY:-}" ]; then
++              # The runner's own login, which the credential check found. Codex refreshes it in place, so the
++              # job uses that home rather than a copy, and adds Projector's skills beside the runner's own.
++              home="${CODEX_HOME:-$HOME/.codex}"
++              mkdir -p "$home/skills"
++              ln -sfn "$PROJECTOR_ROOT/skills" "$home/skills/projector"
++              echo "CODEX_HOME=$home" >> "$GITHUB_ENV"
+             else
+-              printf '%s' "$OPENAI_API_KEY" | CODEX_HOME="$home" codex login --with-api-key
++              home="$RUNNER_TEMP/codex-home"
++              mkdir -p "$home"
++              ln -s "$PROJECTOR_ROOT/skills" "$home/skills"
++              echo "CODEX_HOME=$home" >> "$GITHUB_ENV"
++              if [ -n "${CODEX_AUTH_JSON:-}" ]; then
++                (umask 077 && printf '%s' "$CODEX_AUTH_JSON" > "$home/auth.json")
++              else
++                printf '%s' "$OPENAI_API_KEY" | CODEX_HOME="$home" codex login --with-api-key
++              fi
+             fi
+             ;;
+         esac
+diff --git a/docs/cli.md b/docs/cli.md
+index 8f5622ba..c7725bb6 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -611,7 +611,17 @@ a recorded answer, `init` asks nothing and changes nothing. A yes writes
+ the agents, `claude` by default, each as `agent=<model>` to name the model it
+ runs, such as `claude,codex=<model>`. `codex` needs a model, so `init`
+ refuses it without one. `--ci-credential` picks the kind of secret `init`
+-asks for. `--ci-app <slug>` posts the reviews as that public GitHub App:
++asks for, and `init` records it as `review.ci_credential`. Its `runner` kind
++says that your own runner holds the credential, so `init` sets no secret
++and the workflow passes none. `--ci-runs-on <labels>` runs both jobs on your
++own runners, those with every label in the comma-separated list, such as
++`self-hosted,linux,projector`, and `init` records the labels as
++`review.ci_runs_on`; without it the jobs run on `ubuntu-latest`. `init`
++refuses `runner` while the labels name a GitHub-hosted runner, either no
++labels or only labels of GitHub's images such as `ubuntu-latest` without
++`self-hosted`, because a hosted runner holds no credential of yours, as
++[Run reviews on your own runners](self-hosted-runners.md) describes.
++`--ci-app <slug>` posts the reviews as that public GitHub App:
+ `init` looks the app's ID up on GitHub, records the slug as `review.ci_app`
+ and the ID as `review.ci_app_id`, adds `<slug>[bot]` to `review.reviewers`
+ in place of `github-actions[bot]`, and asks for the app's private key file,
+@@ -619,8 +629,10 @@ as
+ [Post as a GitHub App](review-in-ci.md#post-as-a-github-app) describes.
+ Once `review.ci` is `true`, every later `init`
+ refreshes the workflow, replacing one nobody edited and keeping an edited
+-one. A refresh takes the app's ID from `review.ci_app_id`, so it needs no
+-network; only `--ci-app` looks an app up. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
++one. A refresh takes the app's ID from `review.ci_app_id`, the runner
++labels from `review.ci_runs_on`, and the credential kind from
++`review.ci_credential`, so it needs no network; only `--ci-app` looks an
++app up. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
+ setup, the credentials, and what each job does.
+ 
+ ## Browse projects
+@@ -1074,6 +1086,8 @@ reads, which are these:
+ | `review.ci_agents` | string | `claude` | `init` and `project review ci-workflow`, as the agents the CI review workflow runs, separated by commas, from `claude` and `codex`, each as `agent=<model>` to name the model its job runs, which `codex` needs, such as `claude, codex=<model>` |
+ | `review.ci_app` | string | none | `init` and `project review ci-workflow`, as the public GitHub App the CI reviews post as, by its slug; none posts as `github-actions[bot]` |
+ | `review.ci_app_id` | whole number | none | `init` and `project review ci-workflow`, as the ID of the app `review.ci_app` names, which `init --ci-app` looks up and records so a later refresh needs no lookup; set both with `init --ci-app` |
++| `review.ci_runs_on` | string | none | `init` and `project review ci-workflow`, as the labels of your own runners the CI review jobs run on, separated by commas, such as `self-hosted, linux, projector`; none runs them on `ubuntu-latest`; set it with `init --ci-runs-on` |
++| `review.ci_credential` | string | none | `init` and `project review ci-workflow`, as the kind of credential the CI reviews read: `subscription` or `api-key` picks the secret `init` asks for, and `runner` sets no secret and has the workflow pass none, for a runner that holds the credential itself; none asks for a subscription for `claude` and an API key for `codex`; set it with `init --ci-credential` |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
+ | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
+@@ -2619,8 +2633,10 @@ describes. It writes nothing, takes no pull request, and runs from any
+ directory. `ci-workflow` prints the `.github/workflows/projector-review.yml`
+ that `init --ci-review` writes, for `--agents`, then `review.ci_agents`, then
+ `claude`, at `--action-ref`, `v0` by default, and posting as the app
+-`--app`, then `review.ci_app`, names, so you can compare it with a copy you
+-edited.
++`--app`, then `review.ci_app`, names, on the runners `--runs-on`, then
++`review.ci_runs_on`, labels, and passing no credential secret when
++`--credential`, then `review.ci_credential`, is `runner`, so you can compare
++it with a copy you edited.
+ 
+ No command takes a SHA: each comes from GitHub or the state file. `setup` works
+ from the checkout containing the working directory, or `--checkout`, and
+diff --git a/docs/projects/review-in-ci/readme.md b/docs/projects/review-in-ci/readme.md
+index 08116962..07558cb6 100644
+--- a/docs/projects/review-in-ci/readme.md
++++ b/docs/projects/review-in-ci/readme.md
+@@ -972,3 +972,111 @@ These tests fail before the change, and each catches the bug it names:
+   two things that need it: the checkout's credentials push
+   `refs/projector/summaries`, and `project summary publish` sends the
+   site's rebuild event with the token in `PROJECTOR_DISPATCH_TOKEN`.
++- **A self-hosted runner's labels are a setting.** `review.ci_runs_on`
++  records them, so a refresh keeps the workflow on the repository's own
++  runner, as § 10 describes. A single label is written as a plain scalar,
++  so `--ci-runs-on ubuntu-latest` writes the same workflow as no labels.
++  A label is letters, digits, `.`, `_`, and `-`, because the workflow writes
++  it unquoted in a flow sequence.
++- **`review.ci_credential` records every kind.** `init` records the kind
++  `--ci-credential` names, not only `runner`, because a later
++  `--ci-credential api-key` must be able to replace a recorded `runner`, and
++  a recorded `subscription` or `api-key` is then the secret a later `init`
++  asks for. One kind covers every agent; a list of kinds by agent waits for
++  a repository that needs one.
++- **The runner's Codex login is a credential of its own.** The action's
++  check counts an `auth.json` in `${CODEX_HOME:-$HOME/.codex}` only when no
++  `CODEX_AUTH_JSON` is set, so a secret still wins on a runner that also has
++  a login, and refuses the login beside `OPENAI_API_KEY`, as it refuses a
++  secret beside a key, so a review never draws on API credits meant to stay
++  unused.
++- **Projector's skills go beside the runner's own.** Codex 0.169.0 keeps its
++  built-in skills in a real `skills/.system` directory of its home, so the
++  action links Projector's skills as `skills/projector` rather than replacing
++  `skills`, which would put a link inside that directory on the second job.
++  Codex discovers skills one directory deeper and through the link, which
++  `codex debug prompt-input` showed on 2026-11-18.
++- **The guard reads the labels for a hosted runner.** `init` refuses the
++  `runner` credential when the labels are none, or are only labels of
++  GitHub's images, `ubuntu-*`, `macos-*`, and `windows-*`, without
++  `self-hosted`. Requiring `self-hosted` was rejected: GitHub adds it by
++  default, but a runner registered with `--no-default-labels` lacks it, and
++  a runner scale set of the Actions Runner Controller does not support it
++  and carries only its own name. A hosted larger runner, named as its owner
++  chooses, still gets through, and its review stops at the credential
++  check.
++- **The `config` input still appends.** On a persistent runner the action
++  adds the input to the runner user's `~/.projector.toml` on every job, and
++  a second job's copy of the same table would not parse. The workflow `init`
++  writes passes no `config`, so § 10 has a self-hosted runner keep its
++  overrides in that file itself; a per-job configuration file is left for a
++  repository that needs both.
++
++## 10. Self-hosted runners
++
++A repository can run its CI reviews on runners it controls, to reach
++internal tools such as a self-hosted Grafana, to keep the agent's
++credential on its own machines, or to keep a Codex ChatGPT login that a
++hosted runner would let go stale. Three things blocked that:
++
++1. The workflow hard-coded `runs-on: ubuntu-latest`, and editing it made the
++   workflow one that `init` keeps rather than maintains.
++2. The workflow passed each credential as `NAME: ${{ secrets.NAME }}`. An
++   unset secret is an empty string, which hides a credential the runner's
++   own environment holds, and the action's check then finds none.
++3. The action gave Codex a fresh home in `$RUNNER_TEMP` on every job and
++   wrote `auth.json` there from `CODEX_AUTH_JSON`. OpenAI's guidance for a
++   persistent runner is the opposite: keep one Codex home, sign in once,
++   let Codex refresh the login in place, keep one `auth.json` per runner or
++   serialized stream, never share it across concurrent jobs or machines,
++   and never use it for a public repository.
++
++The design:
++
++- **Runner labels.** `project init --ci-review --ci-runs-on <labels>`
++  records a comma-separated list as `review.ci_runs_on`, which later plain
++  `init` runs and `project review ci-workflow --runs-on` read, as
++  `review.ci_agents` and `review.ci_app` are read. Both jobs run on them:
++  `runs-on: [self-hosted, linux, projector]` for a list, and
++  `runs-on: ubuntu-latest` while the setting is unset. The labels are part
++  of the generated text, so the digest line still marks the workflow as
++  one nobody edited.
++- **A runner-held credential.** `--ci-credential runner` says the runner
++  provides the agent's credential. `init` sets no secret and says what each
++  agent needs on the runner, and the workflow passes no `secrets.*`
++  variable, so the review step sees the runner's environment. `init`
++  refuses `runner` while the labels name a GitHub-hosted runner, because a
++  hosted runner holds no credential of the repository's.
++- **The action's check reads the runner.** For `claude` it accepts
++  `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` from the runner's
++  environment and still refuses both. For `codex` it accepts
++  `OPENAI_API_KEY` from the environment or an `auth.json` in the runner's
++  Codex home. With nothing, it names what to set up on the runner.
++- **A persistent Codex login is used in place.** With no `CODEX_AUTH_JSON`
++  and no `OPENAI_API_KEY`, the install step exports the runner's Codex home
++  to `GITHUB_ENV` instead of a temporary one, links Projector's skills into
++  it with `ln -sfn`, and never writes `auth.json`. Every other case keeps the
++  hosted runner's temporary home exactly as before. One login per runner
++  fits, because a runner runs one job at a time.
++- **A preinstalled CLI is used.** The install step skips
++  `npm install --global` when the agent's CLI on `PATH` prints exactly the
++  pinned version as a word of its `--version` output, as `2.1.327 (Claude
++  Code)` and `codex-cli 0.169.0` do, so a runner whose user cannot write
++  where `npm` installs can carry the CLI itself.
++- **Private repositories only.** The job already skips forks, but GitHub
++  advises against self-hosted runners for public repositories, and OpenAI's
++  rule forbids a persistent ChatGPT login there.
++  `docs/self-hosted-runners.md` says so, recommends ephemeral or
++  just-in-time runners, a runner group limited to the repositories that need
++  it, and read-only tokens for internal tools, and names the risk that sets
++  those limits: the agent reads the pull request's code in auto mode, so a
++  pull request can steer it to quote anything it can reach into a review
++  comment.
++
++Why this shape: a setting rather than a hand edit keeps the workflow one
++that `init` maintains, so a release that changes the template reaches a
++self-hosted repository too. The workflow leaves the secrets out because an
++expression cannot fall back to the runner's own environment, which only the
++step's shell sees. That keeps the credential out of GitHub entirely, and the
++action's one-credential check covers both places without knowing which one
++the repository chose.
+diff --git a/docs/review-in-ci.md b/docs/review-in-ci.md
+index 763ba425..e61d8c57 100644
+--- a/docs/review-in-ci.md
++++ b/docs/review-in-ci.md
+@@ -80,7 +80,23 @@ Keep these limits in mind:
+ - **A Codex ChatGPT login goes stale on a hosted runner.** Codex refreshes
+   its tokens and writes them back to `auth.json`, and a hosted runner
+   throws that file away, so the secret gets older with every run. Use an
+-  API key for `codex` on hosted runners.
++  API key for `codex` on hosted runners, or keep the login on a runner of
++  your own, as
++  [Run reviews on your own runners](self-hosted-runners.md#codex) describes.
++
++`--ci-credential runner` is a third kind, for a self-hosted runner that
++holds the agent's credential itself: `init` sets no secret, and the workflow
++passes none, so the job reads the runner's own environment and, for
++`codex`, the runner's own Codex login.
++
++## Run on your own runners
++
++The jobs run on `ubuntu-latest` unless you name your own runners' labels
++with `--ci-runs-on`, such as `--ci-runs-on self-hosted,linux,projector`.
++`init` records them as `review.ci_runs_on`, and both jobs run there.
++[Run reviews on your own runners](self-hosted-runners.md) describes what the
++runner needs, how it holds the agent's credential, how a review reaches your
++internal tools from it, and how to keep it safe.
+ 
+ ## What a review job does
+ 
+@@ -205,6 +221,6 @@ replaces.
+ | `rereview` | `false` | Review a head this model already reviewed |
+ | `config` | Empty | TOML for the runner's `~/.projector.toml` |
+ | `timeout-minutes` | `45` | The agent's time limit. The job's own limit is 15 minutes longer. |
+-| `claude-code-version`, `codex-version` | The versions Projector tests | The CLI version the agent runs |
++| `claude-code-version`, `codex-version` | The versions Projector tests | The CLI version the agent runs. The action installs it with `npm` unless the CLI on `PATH` already reports it. |
+ | `app-id` | Empty | Post as this GitHub App. Empty posts as `github-actions[bot]`. |
+ | `app-private-key` | Empty | The private key of the app `app-id` names, from the `PROJECTOR_APP_PRIVATE_KEY` secret. Pass it here, never as `env`, so that only the step that mints the token receives it. |
+diff --git a/docs/self-hosted-runners.md b/docs/self-hosted-runners.md
+new file mode 100644
+index 00000000..c3ee9548
+--- /dev/null
++++ b/docs/self-hosted-runners.md
+@@ -0,0 +1,247 @@
++# Run reviews on your own runners
++
++The CI review workflow that `project init --ci-review` writes runs on a
++GitHub-hosted runner by default. You can run it on self-hosted runners
++instead: machines you control, with your network, your tools, and your
++credentials. This page shows how to set one up, give it the agent's
++credential, and keep it safe. It assumes you have read
++[Review pull requests in GitHub Actions](review-in-ci.md).
++
++## Decide whether you need one
++
++A hosted runner is simpler, so use your own runner only when it gives you
++something a hosted one cannot:
++
++- **Internal tools.** The review can read a service on your network, such
++  as a self-hosted Grafana, an internal API, or an MCP server that only your
++  network reaches.
++- **Your own credentials.** The agent's credential stays on a machine you
++  control, in place of a repository or organization secret.
++- **A ChatGPT login for Codex.** Codex refreshes its login and writes it
++  back to `auth.json`. A hosted runner throws that file away after every
++  job, so the login goes stale there. A persistent runner keeps it.
++- **Cost and control.** You choose the hardware, the operating system, the
++  installed tools, and what the machine can reach.
++
++Use a self-hosted runner only for a private repository. GitHub advises
++against self-hosted runners for public repositories, and OpenAI's rule is
++that a persistent ChatGPT login never serves a public repository. The review
++workflow already skips pull requests from forks, but a public repository's
++collaborators and its history are still more than you can vouch for.
++
++## Prepare the runner
++
++The review action runs bash steps on the runner, so the machine needs:
++
++- Linux or macOS, with `bash`, `git`, and `tar`.
++- Python 3.11 or newer, as `python3`. The action runs Projector from its own
++  source with it.
++- The GitHub CLI, `gh`, which the review uses for every call to GitHub.
++- Node.js and `npm`, unless you install the agent's CLI yourself, as
++  [Install the agent's CLI ahead of time](#install-the-agents-cli-ahead-of-time)
++  describes.
++- Outbound HTTPS to GitHub, including the Actions cache and artifact
++  services, to your model provider's API, and to the npm registry when the
++  action installs the CLI.
++
++The runner application brings its own Node.js for the JavaScript actions the
++review uses, such as `actions/checkout` and `actions/cache`.
++
++Register the runner on the repository or the organization, as
++[GitHub's self-hosted runner documentation](https://docs.github.com/en/actions/hosting-your-own-runners)
++describes. Give it a label that names its purpose, so that only the review
++jobs land on it:
++
++```sh
++./config.sh --url https://github.com/<owner>/<repo> --token <token> --labels projector
++```
++
++## Point the workflow at the runner
++
++Pass the runner's labels to `init`, separated by commas. A job runs on a
++runner that has every label you name:
++
++```sh
++project init --ci-review --ci-runs-on self-hosted,linux,projector --ci-credential runner
++```
++
++`init` writes both jobs of the workflow with those labels and records them
++as `review.ci_runs_on`, so every later `init` keeps the workflow on your
++runner:
++
++```yaml
++    runs-on: [self-hosted, linux, projector]
++```
++
++`--ci-credential runner` says that the runner holds the agent's credential,
++which the next section sets up. `init` records it as `review.ci_credential`,
++sets no credential secret, and writes no `secrets.*` variable into the
++workflow. Pass it whenever the runner holds the credential: a secret that is
++not set reads as an empty string, and an empty variable in the review step's
++environment would hide the runner's own value. `init` refuses
++`--ci-credential runner` when the labels name a GitHub-hosted runner,
++because a hosted runner holds no credential of yours: no labels at all, or
++only labels of GitHub's own images, such as `ubuntu-latest` and
++`macos-latest`, without `self-hosted`. Any other label names a runner of
++yours, including a runner scale set of the Actions Runner Controller, which
++carries only its own name, and a runner registered with
++`--no-default-labels`.
++
++To compare the workflow with one you edited, or to see it before you run
++`init`, print it:
++
++```sh
++project review ci-workflow --runs-on self-hosted,linux,projector --credential runner
++```
++
++To move the reviews back to a hosted runner, name it and the kind of secret
++you want, `subscription` or `api-key`, and set the secret `init` asks for:
++
++```sh
++project init --ci-runs-on ubuntu-latest --ci-credential api-key
++```
++
++## Give the runner the agent's credential
++
++The review job checks for exactly one credential for its agent before it
++starts, and refuses a job with none or with two.
++
++### Claude
++
++Put a token from `claude setup-token`, or an API key, in the runner's
++environment. The runner application reads a `.env` file in its own
++directory when it starts, and every job it runs gets those variables:
++
++```sh
++# .env in the runner's directory
++CLAUDE_CODE_OAUTH_TOKEN=<the token claude setup-token prints>
++```
++
++Restart the runner service after you change the file. Set
++`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, never both.
++
++### Codex
++
++To review with a ChatGPT plan, sign Codex in once, as the user the runner
++runs as. First have Codex keep its login in a file, by adding this line to
++`config.toml` in the Codex home, `~/.codex` unless `CODEX_HOME` names
++another:
++
++```toml
++cli_auth_credentials_store = "file"
++```
++
++Then sign in. On a machine without a browser, `--device-auth` gives you a
++code to enter on another device:
++
++```sh
++codex login --device-auth
++```
++
++When the job finds `auth.json` in the runner's Codex home and no Codex
++secret, it uses that home in place: Codex refreshes the login there, and
++the next job reads the refreshed tokens. The action links Projector's skills
++into the home as `skills/projector`, and never writes `auth.json`.
++
++Follow OpenAI's rules for a login that a runner uses:
++
++- **One login for each runner.** A runner runs one job at a time, so one
++  login per runner keeps its refreshes in order. Never share an `auth.json`
++  between machines, or between runners that run jobs at the same time.
++- **One Codex home for each runner.** When several runners share a machine,
++  give each one its own home, with `CODEX_HOME` in its `.env` file, and sign
++  each one in.
++- **Sign in again when the refresh fails.** When a review fails with `401`,
++  run `codex login` on the runner again.
++
++A login needs a runner that keeps its files between jobs. On an ephemeral
++runner, put `OPENAI_API_KEY` in the runner's environment instead, and give
++the job no login.
++
++## Install the agent's CLI ahead of time
++
++The action installs the agent's CLI with `npm install --global` at the
++version it pins, in its `claude-code-version` and `codex-version` inputs.
++It skips the install when the CLI on `PATH` reports exactly that version,
++so you can install the CLI yourself on a runner whose user cannot write
++where `npm` installs:
++
++```sh
++npm install --global @anthropic-ai/claude-code@<claude-code-version>
++npm install --global @openai/codex@<codex-version>
++```
++
++Read the pinned versions from `actions/review/action.yml` at the ref your
++workflow uses. A new Projector release can pin a newer version, and then the
++action installs it with `npm` until you update the runner.
++
++## Reach internal tools from the review
++
++The agent runs as the runner's user, so it reaches what that user reaches:
++the network, the files, and the MCP servers configured for that user. Set
++the servers up for the agent on the runner:
++
++- **Claude.** Add a server for the runner's user with
++  `claude mcp add --scope user`, and deny the tools a review does not need
++  with `permissions.deny` in `~/.claude/settings.json`.
++- **Codex.** Add a server with `codex mcp add`, which writes it to
++  `config.toml` in the Codex home, and list the tools the review needs in
++  the server's `enabled_tools`. The job reads that `config.toml` only when
++  it uses the runner's own Codex login. With an API key, it gives Codex a
++  home of its own for the job.
++
++Give each tool a token scoped to read only what reviews need, such as a
++Grafana viewer token for one folder of dashboards.
++
++The review runs `review.gate` on the runner too, so install every tool the
++gate needs there. Put any setting you want only on the runner in the runner
++user's `~/.projector.toml`, rather than in the action's `config` input,
++which adds to that file on every job.
++
++## Keep the runner safe
++
++The agent reads the pull request's code in a permission mode that never
++waits for a prompt. A pull request can carry text written to steer it, so
++anything the agent can reach, it could be led to quote into a review
++comment. Plan the runner around that:
++
++- **Use a private repository.** Never attach the runner to a public one.
++- **Prefer ephemeral or just-in-time runners.** A runner that takes one job
++  and is then removed keeps nothing that one job could leave for the next.
++  A persistent runner is the price of a Codex ChatGPT login.
++- **Restrict the runner to the repositories that need it.** Put it in a
++  dedicated runner group that only those repositories can use.
++- **Run it as a dedicated user** that owns nothing beyond the runner, the
++  agent's credential, and the tools reviews need.
++- **Give it read-only tokens.** Scope each internal tool's token to what a
++  review reads, and give the runner no credential that can change anything.
++
++## Troubleshoot a review job
++
++These messages come from the action's **Check the agent's credentials**
++step, and from what GitHub shows for the job:
++
++- **`neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set for claude`.**
++  The runner's environment lacks the credential. Check the `.env` file and
++  restart the runner. When the workflow still passes `secrets.*` variables,
++  run `project init --ci-credential runner`, because an empty secret hides
++  the runner's value.
++- **`neither CODEX_AUTH_JSON nor OPENAI_API_KEY is set for codex`.** The
++  runner has no API key in its environment and no `auth.json` in its Codex
++  home. Run `codex login` as the runner's user, with
++  `cli_auth_credentials_store = "file"` set.
++- **`both CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY are set for claude`.**
++  The runner's environment, the repository's secrets, or the two together
++  hold both. Remove the one you do not mean to use.
++- **`both OPENAI_API_KEY and the Codex login in <path> are on the runner`.**
++  Remove the key from the runner's environment to use the login, or sign
++  Codex out with `codex logout` to use the key.
++- **The job waits with "Waiting for a runner to pick up this job".** No
++  online runner has every label in `runs-on`. Compare the labels in
++  `review.ci_runs_on` with the runner's labels in the repository's
++  **Settings**, under **Actions** and **Runners**.
++- **`npm` fails with `EACCES` while it installs the agent.** The runner's user
++  cannot write where `npm` installs. Install the CLI at the pinned version
++  yourself, as
++  [Install the agent's CLI ahead of time](#install-the-agents-cli-ahead-of-time)
++  describes.
+diff --git a/src/projector/ci.py b/src/projector/ci.py
+index 5b88e3b9..dce21b7b 100644
+--- a/src/projector/ci.py
++++ b/src/projector/ci.py
+@@ -12,7 +12,9 @@
+ 
+ WORKFLOW_PATH = ".github/workflows/projector-review.yml"
+ AGENTS = ("claude", "codex")
+-KINDS = ("subscription", "api-key")
++# `runner` means a self-hosted runner holds the agent's credential, so the workflow passes no secret for it.
++RUNNER = "runner"
++KINDS = ("subscription", "api-key", RUNNER)
+ # Each agent's credential secrets, by kind. The workflow passes both, and the action refuses a job that has
+ # both or neither.
+ CREDENTIALS = {
+@@ -29,6 +31,23 @@
+     "CODEX_AUTH_JSON": "Projector passes gh the auth.json that `codex login` wrote",
+     "OPENAI_API_KEY": "paste an API key from the OpenAI platform",
+ }
++ON_RUNNER = {
++    "claude": "set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the runner's environment, such as its .env file",
++    "codex": "run `codex login` as the runner's user, or set OPENAI_API_KEY in the runner's environment",
++}
++HOSTED = "ubuntu-latest"
++# A runner label as a plain YAML scalar in a flow sequence can carry it.
++LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
++# The labels of GitHub's own runner images, such as ubuntu-latest, macos-15, and windows-2025. A self-hosted
++# runner carries `self-hosted` unless it was registered with --no-default-labels, and a runner scale set of the
++# Actions Runner Controller carries its own name, so only a list of these labels alone names a hosted runner.
++HOSTED_IMAGE = re.compile(r"(ubuntu|macos|windows)-[a-z0-9._-]+\Z", re.I)
++
++
++def hosted(labels: Optional[list[str]]) -> bool:
++    """Whether a job with these `runs-on` labels runs on a runner GitHub hosts."""
++    return not labels or ("self-hosted" not in (label.lower() for label in labels)
++                          and all(HOSTED_IMAGE.match(label) for label in labels))
+ # The secret holding a GitHub App's private key. The workflow passes it as the action's `app-private-key` input,
+ # never as `env`, which would reach every step of the action, so only the step that mints the app's token gets it.
+ APP_KEY = "PROJECTOR_APP_PRIVATE_KEY"
+@@ -71,24 +90,55 @@ def format_agents(agents: dict[str, str]) -> str:
+     return ", ".join(f"{name}={model}" if model else name for name, model in agents.items())
+ 
+ 
+-def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None) -> str:
++def parse_runs_on(text: str) -> list[str]:
++    """The runner labels a comma-separated list names, in order and once each. Refuses a list with none, and a
++    label the workflow could not write unquoted."""
++    labels: list[str] = []
++    for label in (part.strip() for part in text.split(",")):
++        if label and not LABEL.match(label):
++            raise UsageError(f"{label!r} in {text!r} is not a runner label")
++        if label and label not in labels:
++            labels.append(label)
++    if not labels:
++        raise UsageError(f"the CI review runner needs at least one label, separated by commas; got {text!r}")
++    return labels
++
++
++def format_runs_on(labels: list[str]) -> str:
++    """`labels` as `review.ci_runs_on` records them, which `parse_runs_on` reads back."""
++    return ", ".join(labels)
++
++
++def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
++         runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
++    if credential == RUNNER and hosted(runs_on):
++        raise UsageError("a GitHub-hosted runner holds no credential of yours, so the runner credential needs "
++                         "your own runner's labels, such as self-hosted, from --ci-runs-on or review.ci_runs_on; "
++                         "to run on a hosted runner, pass --ci-credential subscription or api-key")
+     template = resources.files("projector").joinpath("templates/review-workflow.yml").read_text(encoding="utf-8")
+     matrix = "\n".join(f"          - agent: {name}" + (f"\n            model: {model}" if model else "")
+                        for name, model in agents.items())
+     app = ""
+     if app_id is not None:
+         app = f"          app-id: '{app_id}'\n          app-private-key: ${{{{ secrets.{APP_KEY} }}}}\n"
+-    env = "\n".join(f"          {name}: ${{{{ secrets.{name} }}}}"
+-                    for agent in agents for name in CREDENTIALS[agent].values())
++    # A secret that is not set reads as empty, which would hide the credential a runner's environment holds.
++    env = ""
++    if credential != RUNNER:
++        env = "        env:\n" + "".join(f"          {name}: ${{{{ secrets.{name} }}}}\n"
++                                         for agent in agents for name in CREDENTIALS[agent].values())
++    labels = runs_on or [HOSTED]
++    runner = labels[0] if len(labels) == 1 else f"[{', '.join(labels)}]"
+     return (template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@APP@", app)
+-            .replace("@ENV@", env))
++            .replace("@ENV@", env).replace("@RUNS_ON@", runner))
+ 
+ 
+-def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None) -> str:
+-    """The review workflow for `agents`, calling the action at `action_ref`, and posting as the GitHub App
+-    `app_id` names when it is given. Its second line records a digest of the rest, so a later `init` can tell a
+-    file nobody edited, which it replaces, from one somebody did."""
+-    text = body(action_ref, agents, app_id)
++def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
++                  runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
++    """The review workflow for `agents`, calling the action at `action_ref`, posting as the GitHub App `app_id`
++    names when it is given, on the runners `runs_on` labels or a GitHub-hosted one, and passing no credential
++    secret when `credential` is `runner`. Its second line records a digest of the rest, so a later `init` can
++    tell a file nobody edited, which it replaces, from one somebody did."""
++    text = body(action_ref, agents, app_id, runs_on, credential)
+     return f"{HEADER}# projector-workflow sha256={hashlib.sha256(text.encode()).hexdigest()}\n{text}"
+ 
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index dc3bfc0f..358e6b58 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -624,8 +624,12 @@ def parser() -> argparse.ArgumentParser:
+                       help="post CI reviews as this public GitHub App, whose private key init asks for as the "
+                            f"{ci.APP_KEY} secret (default: review.ci_app, then github-actions[bot])")
+     init.add_argument("--ci-credential", choices=ci.KINDS,
+-                      help="the credential secret init asks for when an agent has none (default: subscription for "
+-                           "claude, api-key for codex)")
++                      help="the credential secret init asks for when an agent has none, or runner, for a "
++                           "credential your own runner holds, which the workflow passes no secret for (default: "
++                           "review.ci_credential, then subscription for claude and api-key for codex)")
++    init.add_argument("--ci-runs-on", metavar="LABELS",
++                      help="run the CI reviews on your own runners with these labels, separated by commas, such as "
++                           f"self-hosted,linux (default: review.ci_runs_on, then {ci.HOSTED})")
+     rule_choice = init.add_mutually_exclusive_group()
+     rule_choice.add_argument(
+         "--publish-rule",
+@@ -851,6 +855,12 @@ def parser() -> argparse.ArgumentParser:
+                                                                        "runs (default: v0)")
+     review_ci_workflow.add_argument("--app", metavar="SLUG", help="the public GitHub App the reviews post as "
+                                                                   "(default: review.ci_app, then github-actions[bot])")
++    review_ci_workflow.add_argument("--runs-on", metavar="LABELS",
++                                    help="the labels of the runners the reviews run on, separated by commas "
++                                         f"(default: review.ci_runs_on, then {ci.HOSTED})")
++    review_ci_workflow.add_argument("--credential", choices=ci.KINDS,
++                                    help="runner passes no credential secret, for a runner that holds its own "
++                                         "(default: review.ci_credential)")
+     review_status = review_commands.add_parser(
+         "status", help="report the newest Projector verdict on a pull request's current head"
+     )
+@@ -2521,7 +2531,8 @@ def run_review(arguments: argparse.Namespace) -> int:
+     if arguments.review_command == "ci-workflow":
+         config = load_config(discover_git_root(Path.cwd()))
+         agents = arguments.agents or config.get("review.ci_agents") or "claude"
+-        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents), ci_app(config, arguments.app)[1]),
++        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents), ci_app(config, arguments.app)[1],
++                               ci_runs_on(config, arguments.runs_on), ci_credential(config, arguments.credential)),
+               end="")
+         return 0
+     if arguments.review_command in ("hold", "ready"):
+@@ -3637,6 +3648,8 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
+             record_setting(root, "review.ci", False)
+             return
+     agents = ci.parse_agents(arguments.ci_agents or config.get("review.ci_agents") or "claude")
++    runs_on = ci_runs_on(config, arguments.ci_runs_on)
++    credential = ci_credential(config, arguments.ci_credential)
+     try:
+         slug, app = ci_app(config, arguments.ci_app)
+     except UsageError as error:
+@@ -3647,11 +3660,15 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
+         print(f"project: {error}; left the CI review as it is, and `project init --ci-app "
+               f"{config.get('review.ci_app')}` records the app's ID so a refresh needs no lookup", file=sys.stderr)
+         return
+-    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents, app)))
++    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents, app, runs_on, credential)))
+     if recorded is not True:
+         record_setting(root, "review.ci", True)
+     if config.get("review.ci_agents") != ci.format_agents(agents):
+         record_setting(root, "review.ci_agents", ci.format_agents(agents))
++    if runs_on and config.get("review.ci_runs_on") != ci.format_runs_on(runs_on):
++        record_setting(root, "review.ci_runs_on", ci.format_runs_on(runs_on))
++    if credential and config.get("review.ci_credential") != credential:
++        record_setting(root, "review.ci_credential", credential)
+     if slug and config.get("review.ci_app") != slug:
+         record_setting(root, "review.ci_app", slug)
+     if app is not None and config.get("review.ci_app_id") != app:
+@@ -3664,11 +3681,14 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
+         kept.append(reviewer)
+     if kept != list(listed):
+         record_setting(root, "review.reviewers", ", ".join(kept))
+-    set_ci_secrets(repo, agents, arguments.ci_credential, slug)
++    set_ci_secrets(repo, agents, credential, slug)
+     site, why = summary.push_decision(repo)
+     if site is None:
+         print(f"project: CI reviews publish no summaries until the site is set up, because {why}", file=sys.stderr)
+-    if config.get("review.gate"):
++    if config.get("review.gate") and runs_on:
++        print("project: CI reviews run review.gate on your runner, so install every tool the gate runs there",
++              file=sys.stderr)
++    elif config.get("review.gate"):
+         print("project: CI reviews run review.gate on a hosted runner; for a step the runner cannot run, give the "
+               "workflow's review step a config input with an `[override.50.review]` table that sets a gate it can "
+               "run", file=sys.stderr)
+@@ -3719,6 +3739,22 @@ def ci_app(config: Config, flag: Optional[str]) -> tuple[Optional[str], Optional
+     return slug, recorded if recorded is not None else app_id(slug)
+ 
+ 
++def ci_runs_on(config: Config, flag: Optional[str]) -> Optional[list[str]]:
++    """The labels of the runners the CI reviews run on, from `flag`, then `review.ci_runs_on`, or None for a
++    GitHub-hosted runner."""
++    text = flag if flag is not None else config.get("review.ci_runs_on")
++    return None if text is None else ci.parse_runs_on(text)
++
++
++def ci_credential(config: Config, flag: Optional[str]) -> Optional[str]:
++    """The kind of credential the CI reviews read, from `flag`, then `review.ci_credential`, or None for each
++    agent's default kind."""
++    kind = flag or config.get("review.ci_credential")
++    if kind is not None and kind not in ci.KINDS:
++        raise UsageError(f"review.ci_credential must be {', '.join(ci.KINDS)}; got {kind!r}")
++    return kind
++
++
+ def app_id(slug: str) -> int:
+     """The ID of the public GitHub App `slug` names. GitHub answers this only for a public app, and only a public
+     app installs on an account other than its owner's."""
+@@ -3757,7 +3793,15 @@ def set_app_key(repo: str, slug: str, listed: set[str]) -> None:
+ 
+ def set_ci_secrets(repo: str, agents: dict[str, str], kind: Optional[str], app: Optional[str] = None) -> None:
+     """Report each agent's credential secret, and the app's private key when `app` names one, and at a terminal
+-    have `gh` set a missing one, so the workflow can start the agent and post as the app."""
++    have `gh` set a missing one, so the workflow can start the agent and post as the app. A `runner` kind sets
++    no credential secret, and says what each agent needs on the runner instead."""
++    if kind == ci.RUNNER:
++        for agent in agents:
++            print(f"project: the {agent} review reads its credential from your runner: {ci.ON_RUNNER[agent]}",
++                  file=sys.stderr)
++        if not app:
++            return
++        agents = {}
+     wanted = {agent: ci.CREDENTIALS[agent][kind or ci.DEFAULT_KIND[agent]] for agent in agents}
+     commands = [f"gh secret set {name} --repo {repo}" for name in wanted.values()]
+     if app:
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 285a2d9d..b6a1539c 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -104,6 +104,8 @@
+     "review.ci_agents": str,
+     "review.ci_app": str,
+     "review.ci_app_id": int,
++    "review.ci_runs_on": str,
++    "review.ci_credential": str,
+     "fix.resolve_human_threads": bool,
+     "watch.auto_start": bool,
+     "watch.interval": int,
+diff --git a/src/projector/templates/review-workflow.yml b/src/projector/templates/review-workflow.yml
+index cf035984..f47b8ee1 100644
+--- a/src/projector/templates/review-workflow.yml
++++ b/src/projector/templates/review-workflow.yml
+@@ -4,9 +4,10 @@ name: Projector review
+ # `project review run`, one job for each agent, and publishes each review's
+ # summary from a second job that runs no agent. `project review run` refuses a
+ # fork's pull request and a draft however the workflow starts, so a manual run
+-# cannot review either. Each agent's job reads the one credential secret that
+-# is set for it: a subscription's or an API key. Secrets that are not set read
+-# as empty.
++# cannot review either. Each agent's job reads the one credential that is set
++# for it, a subscription's or an API key, from the secrets its review step
++# passes, or from the runner when the step passes none. Secrets that are not
++# set read as empty.
+ on:
+   pull_request:
+     types: [opened, reopened, synchronize, ready_for_review]
+@@ -45,7 +46,7 @@ jobs:
+     concurrency:
+       group: projector-review-${{ github.event.pull_request.number || inputs.pr }}-${{ matrix.agent }}
+       cancel-in-progress: true
+-    runs-on: ubuntu-latest
++    runs-on: @RUNS_ON@
+     timeout-minutes: 60
+     steps:
+       - uses: ninjudd/projector/actions/review@@REF@
+@@ -54,9 +55,7 @@ jobs:
+           model: ${{ matrix.model }}
+           pr: ${{ github.event.pull_request.number || inputs.pr }}
+           rereview: ${{ inputs.rereview || false }}
+-@APP@        env:
+-@ENV@
+-
++@APP@@ENV@
+   summary:
+     needs: review
+     if: ${{ !cancelled() && needs.review.result != 'skipped' }}
+@@ -67,7 +66,7 @@ jobs:
+       pages: read
+     concurrency:
+       group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
+-    runs-on: ubuntu-latest
++    runs-on: @RUNS_ON@
+     timeout-minutes: 10
+     steps:
+       - uses: ninjudd/projector/actions/review@@REF@
+diff --git a/tests/test_ci.py b/tests/test_ci.py
+index 2456bcd6..cd4feb6f 100644
+--- a/tests/test_ci.py
++++ b/tests/test_ci.py
+@@ -216,6 +216,68 @@ def test_a_no_at_the_terminal_is_recorded_and_asked_no_more(self) -> None:
+         self.assertIs(False, self.recorded()["ci"])
+         self.assertFalse(self.workflow().exists())
+ 
++    def test_both_jobs_run_on_the_labels_you_name_and_a_later_init_keeps_them(self) -> None:
++        # A refresh that forgot the labels would move the reviews back to a hosted runner, away from the
++        # credential and network the repository's own runner holds.
++        code, _, err = self.init("--ci-review", "--ci-runs-on", "self-hosted, linux,projector")
++        again, out_again, _ = self.init()
++
++        self.assertEqual((0, 0), (code, again), err)
++        self.assertEqual(["[self-hosted, linux, projector]"] * 2, runs_on(self.workflow().read_text()))
++        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again)
++        self.assertEqual("self-hosted, linux, projector", self.recorded()["ci_runs_on"])
++
++        named, _, named_err = self.init("--ci-runs-on", "ubuntu-latest")
++        self.assertEqual(0, named, named_err)
++        self.assertEqual(["ubuntu-latest"] * 2, runs_on(self.workflow().read_text()),
++                         "naming the hosted runner moves the reviews back to it")
++
++    def test_a_runner_credential_passes_no_secret_and_sets_none(self) -> None:
++        # An unset secret reads as empty, and an empty variable in the step's env hides the runner's own.
++        self.at_a_terminal()
++
++        code, _, err = self.init("--ci-review", "--ci-agents", "claude,codex=gpt-5.5", "--ci-runs-on", "self-hosted",
++                                 "--ci-credential", "runner")
++        again, out_again, _ = self.init()
++
++        self.assertEqual((0, 0), (code, again), err)
++        self.assertNotIn("secrets.", self.workflow().read_text())
++        self.assertEqual(([], []), (self.set, self.gh_calls), "no secret is listed or set")
++        self.assertIn("the codex review reads its credential from your runner: run `codex login`", err)
++        self.assertEqual("runner", self.recorded()["ci_credential"])
++        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again, "a refresh keeps passing no secret")
++
++    def test_a_runner_credential_on_a_hosted_runner_is_refused_before_anything_is_written(self) -> None:
++        # A hosted runner holds no credential of yours, so every review would stop at the credential check.
++        for labels in ((), ("--ci-runs-on", "ubuntu-latest"), ("--ci-runs-on", "macos-latest"),
++                       ("--ci-runs-on", "ubuntu-24.04,windows-2025")):
++            with self.subTest(labels=labels):
++                code, _, err = self.init("--ci-review", "--ci-credential", "runner", *labels)
++
++                self.assertNotEqual(0, code)
++                self.assertIn("--ci-runs-on", err)
++                self.assertFalse(self.workflow().exists())
++                self.assertEqual((None, None), (self.recorded().get("ci"), self.recorded().get("ci_credential")))
++
++    def test_moving_a_runner_credential_back_to_a_hosted_runner_asks_for_a_secret_kind(self) -> None:
++        # Naming the hosted runner alone would keep the recorded `runner` and write a workflow with no secret.
++        self.assertEqual(0, self.init("--ci-review", "--ci-runs-on", "self-hosted", "--ci-credential", "runner")[0])
++        written = self.workflow().read_text()
++
++        code, _, err = self.init("--ci-runs-on", "ubuntu-latest")
++        moved, _, moved_err = self.init("--ci-runs-on", "ubuntu-latest", "--ci-credential", "api-key")
++
++        self.assertNotEqual(0, code)
++        self.assertIn("--ci-credential", err)
++        self.assertEqual(0, moved, moved_err)
++        self.assertNotEqual(written, self.workflow().read_text())
++        self.assertIn("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}", self.workflow().read_text())
++
++
++def runs_on(workflow: str) -> list[str]:
++    """The `runs-on` value of each job in `workflow`, in order."""
++    return re.findall(r"^    runs-on: (.*)$", workflow, re.M)
++
+ 
+ class WorkflowTests(unittest.TestCase):
+     def test_a_workflow_init_wrote_reads_as_unedited_with_any_agents_and_ref(self) -> None:
+@@ -235,6 +297,23 @@ def test_the_workflow_passes_both_credentials_of_each_agent(self) -> None:
+                 with self.subTest(agent=agent, name=name):
+                     self.assertIn(f"          {name}: ${{{{ secrets.{name} }}}}\n", text)
+         self.assertIn("uses: ninjudd/projector/actions/review@v0\n", text)
++        self.assertEqual([ci.HOSTED] * 2, runs_on(text), "with no labels, both jobs run on a hosted runner")
++
++    def test_a_runner_credential_runs_on_any_runner_github_does_not_host(self) -> None:
++        # An Actions Runner Controller scale set carries only its own name, and a runner registered with
++        # --no-default-labels has no `self-hosted`, so a guard that wants that label would refuse both.
++        for labels in (["arc-runner-set"], ["projector", "linux"], ["self-hosted", "ubuntu-24.04"], ["Self-Hosted"]):
++            with self.subTest(labels=labels):
++                self.assertNotIn("secrets.CLAUDE", ci.workflow_text("v0", {"claude": ""}, None, labels, ci.RUNNER))
++
++    def test_parse_runs_on_reads_what_format_runs_on_records_and_refuses_the_rest(self) -> None:
++        labels = ci.parse_runs_on(" self-hosted,linux , self-hosted,gpu.large_1")
++        self.assertEqual(["self-hosted", "linux", "gpu.large_1"], labels)
++        self.assertEqual(labels, ci.parse_runs_on(ci.format_runs_on(labels)))
++        # Each of these would break the workflow's YAML or name no runner at all.
++        for text in ("", " , ", "self-hosted, [linux]", "a: b", "my runner", "-x"):
++            with self.subTest(text=text), self.assertRaises(UsageError):
++                ci.parse_runs_on(text)
+ 
+     def test_parse_agents_reads_what_format_agents_records_and_refuses_the_rest(self) -> None:
+         agents = ci.parse_agents("codex = gpt-5.5, claude, codex=other")
+@@ -268,7 +347,8 @@ def review_jobs(workflow: str) -> list[dict[str, str]]:
+         key, _, value = line.strip().removeprefix("- ").partition(": ")
+         entries[-1][key] = value
+     start = lines.index("        with:") + 1
+-    given = dict(line.strip().partition(": ")[::2] for line in lines[start:lines.index("        env:", start)])
++    end = next(i for i in range(start, len(lines)) if not lines[i].startswith("          "))
++    given = dict(line.strip().partition(": ")[::2] for line in lines[start:end])
+     expression = re.compile(r"\$\{\{ matrix\.(\w+) \}\}")
+     return [{name: expression.sub(lambda found: entry.get(found.group(1), ""), value)
+              for name, value in given.items()} for entry in entries]
+@@ -307,6 +387,82 @@ def test_an_agent_runs_with_exactly_one_credential(self) -> None:
+                                                       ANTHROPIC_API_KEY="k").stdout)
+         self.assertEqual(0, self.check("command").returncode, "a command the repository names brings its own")
+ 
++    def test_a_codex_login_on_the_runner_counts_as_its_one_credential(self) -> None:
++        home = Path(self.enterContext(tempfile.TemporaryDirectory()))
++        (home / ".codex").mkdir()
++        (home / ".codex" / "auth.json").write_text("{}")
++        elsewhere = home / "runner-2"
++        elsewhere.mkdir()
++        (elsewhere / "auth.json").write_text("{}")
++        for given, passes in (({"HOME": str(home)}, True),
++                              ({"HOME": str(elsewhere.parent / "nobody"), "CODEX_HOME": str(elsewhere)}, True),
++                              ({"HOME": str(home), "OPENAI_API_KEY": "k"}, False),
++                              ({"HOME": str(home), "CODEX_AUTH_JSON": "{}"}, True),
++                              ({"HOME": str(elsewhere)}, False)):
++            with self.subTest(given=sorted(given)):
++                result = self.check("codex", **given)
++                self.assertEqual(passes, result.returncode == 0, result.stdout)
++        self.assertIn("run `codex login` as the runner's user", self.check("codex", HOME=str(elsewhere)).stdout,
++                      "a runner with nothing says what to set up on it")
++        self.assertIn("the Codex login in", self.check("codex", HOME=str(home), OPENAI_API_KEY="k").stdout)
++
++    def install(self, agent: str, prints: str | None, home: Path, **given: str) -> tuple[list[str], dict[str, str]]:
++        """Run the action's install step for `agent` with a fake CLI on PATH that prints `prints` for `--version`,
++        or none when it is None, and a fake npm. Returns the commands the fakes ran and what the step put in
++        GITHUB_ENV."""
++        stub = home / "bin"
++        stub.mkdir(exist_ok=True)
++        ran = home / "ran"
++        ran.write_text("")
++        (stub / "npm").write_text(f'#!/bin/sh\necho "npm $*" >> "{ran}"\n')
++        (stub / "npm").chmod(0o755)
++        (stub / agent).unlink(missing_ok=True)
++        if prints is not None:
++            (stub / agent).write_text(f'#!/bin/sh\n[ "$1" = --version ] && {{ echo "{prints}"; exit 0; }}\n'
++                                      f'cat > /dev/null\necho "{agent} $*" >> "{ran}"\n')
++            (stub / agent).chmod(0o755)
++        environment = {"PATH": f"{stub}{os.pathsep}/usr/bin{os.pathsep}/bin", "HOME": str(home), "AGENT": agent,
++                       "CLAUDE_VERSION": "2.1.327", "CODEX_VERSION": "0.169.0", "RUNNER_TEMP": str(home / "temp"),
++                       "GITHUB_ENV": str(home / "github-env"), "PROJECTOR_ROOT": str(home / "projector"), **given}
++        (home / "temp").mkdir(exist_ok=True)
++        (home / "github-env").write_text("")
++        result = subprocess.run(["bash", "-eo", "pipefail", "-c", step_script("Install the agent")], env=environment,
++                                capture_output=True, text=True)
++        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
++        exported = dict(line.partition("=")[::2] for line in (home / "github-env").read_text().splitlines())
++        return ran.read_text().splitlines(), exported
++
++    def test_a_cli_already_at_the_pinned_version_is_not_installed_again(self) -> None:
++        # A self-hosted runner's user may have no write access where npm installs globally.
++        for agent, prints, installs in (("claude", "2.1.327 (Claude Code)", False), ("codex", "codex-cli 0.169.0", False),
++                                        ("claude", "2.1.3270 (Claude Code)", True), ("claude", "2.1.32 (Claude Code)", True),
++                                        ("codex", "codex-cli 0.169.0-alpha.1", True), ("claude", None, True)):
++            with self.subTest(agent=agent, prints=prints), tempfile.TemporaryDirectory() as home:
++                ran, _ = self.install(agent, prints, Path(home), OPENAI_API_KEY="k")
++                self.assertEqual(installs, any(line.startswith("npm install --global") for line in ran), ran)
++
++    def test_a_codex_login_on_the_runner_is_used_in_place_and_never_replaced(self) -> None:
++        # Codex refreshes the login in place, so a copy, or a home the job throws away, makes it go stale.
++        home = Path(self.enterContext(tempfile.TemporaryDirectory()))
++        (home / "projector" / "skills").mkdir(parents=True)
++        codex = home / ".codex"
++        (codex / "skills" / ".system").mkdir(parents=True)
++        (codex / "auth.json").write_text('{"tokens": "refreshed"}')
++
++        for run in (1, 2):
++            with self.subTest(run=run):
++                ran, exported = self.install("codex", "codex-cli 0.169.0", home)
++                self.assertEqual(str(codex), exported["CODEX_HOME"])
++                self.assertEqual('{"tokens": "refreshed"}', (codex / "auth.json").read_text())
++                self.assertEqual([], ran, "nothing logs in over the runner's login")
++                self.assertEqual(home / "projector" / "skills", (codex / "skills" / "projector").readlink())
++                self.assertEqual([".system", "projector"], sorted(path.name for path in (codex / "skills").iterdir()),
++                                 "the runner's own skills stay, and a second job links nothing inside the link")
++
++        ran, exported = self.install("codex", "codex-cli 0.169.0", home, OPENAI_API_KEY="k")
++        self.assertEqual(str(home / "temp" / "codex-home"), exported["CODEX_HOME"], "a key still gets a home of its own")
++        self.assertEqual(["codex login --with-api-key"], ran)
++
+     def test_every_job_the_generated_workflow_runs_reaches_the_review_with_a_model(self) -> None:
+         # The workflow's matrix and `with:` are one side of the seam, and the action's review step the other.
+         jobs = review_jobs(ci.workflow_text("v0", ci.parse_agents("claude, codex=gpt-5.5")))
