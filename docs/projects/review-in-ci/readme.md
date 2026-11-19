@@ -365,10 +365,10 @@ runs the CLI from its own checkout with `PYTHONPATH` set to the action's
 
 Secrets reach the action as `env`. `project init --ci-review` (§ 2.10)
 writes `.github/workflows/projector-review.yml`, which calls the action at
-`@v0`, and Projector's own copy calls it at `@main`, as the site workflow
-does. `project review ci-workflow` prints the workflow `init` would write,
-so you can compare it with yours, as `project review workflow` does for the
-`clean` label workflow:
+`@v0`. Projector's own copy runs it from the pull request's checkout
+instead, as § 9 records. `project review ci-workflow` prints the workflow
+`init` would write, so you can compare it with yours, as
+`project review workflow` does for the `clean` label workflow:
 
 ```yaml
 name: Projector review
@@ -553,7 +553,7 @@ file:
 | `src/projector/config.py` | `review.reviewers`, `review.runner`, `review.ci_agents`, and `review.context_repos`, all strings, and `review.ci`, a boolean |
 | `src/projector/templates/review-workflow.yml` | New. The workflow `init --ci-review` writes and `review ci-workflow` prints |
 | `actions/review/action.yml` | New. The composite action (§ 2.8) |
-| `.github/workflows/projector-review.yml` | New. Projector's own review workflow, at `@main` |
+| `.github/workflows/projector-review.yml` | New. Projector's own review workflow, running the action from the pull request's checkout, as § 9 records |
 | `.projector.toml` | `reviewers = "github-actions[bot]"`, and an override for the gate in the workflow's `config` input, since `hooks/typecheck.sh` cannot run in CI |
 | `skills/review-pr/SKILL.md` | "Review without a session" (§ 2.2) |
 | `docs/review-in-ci.md` | New. How to set a repository up with `project init --ci-review`, the inputs, the secrets, and what the review can and cannot do |
@@ -755,8 +755,9 @@ These tests fail before the change, and each catches the bug it names:
 ## 6. Rollout
 
 1. **Land the command, the action, the setting, the `init` step, and the
-   workflow** in one stack, with Projector's own workflow at `@main` in the
-   last layer, written by `project init --ci-review --action-ref main`.
+   workflow** in one stack, with Projector's own workflow in the last layer,
+   written by `project init --ci-review --action-ref main` and then edited
+   to run the action from the pull request's checkout, as § 9 records.
 2. **Check the runner facts** in § 7 on Projector's own pull requests, and
    record what they show in this plan. If auto mode is unavailable for the
    credentials Projector's repository uses, set the workflow's
@@ -935,3 +936,8 @@ These tests fail before the change, and each catches the bug it names:
   lives in `src/projector/summary.py`, which `review.py` already imports,
   and both commands use it. The action sets the variable on every step that
   runs `project` with the workflow's token.
+- **Projector runs the action from the pull request's checkout.** Its own
+  workflow checks the repository out and uses `./actions/review` in place
+  of `@main`, so each pull request is reviewed by the action it carries and
+  CI review works on the pull requests that build the action. A repository
+  that `init` sets up calls the action at a release ref, as § 2.8 says.
