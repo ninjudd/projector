@@ -1,0 +1,129 @@
+{
+ "version": 1,
+ "name": "Code comments by the writing guide",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 603,
+  "title": "Write code comments and docstrings by the writing guide",
+  "head": "99fd4b947b2bdbd992370cfd9b2bb11783fa11e3",
+  "headRef": "write-code-comments-by-the-writing-guide",
+  "base": "8a05582753af6babc2f56f212eb362e23333cd43",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's skills share two rule documents. The code guidelines, <code>skills/guidelines.md</code>, say what code any skill writes must follow, and the review flags a break of them as a finding. The writing guide, <code>skills/writing.md</code>, says how every skill writes prose for people, such as plans, reviews, and commit messages.",
+   "Until this change, the code guidelines said only <em>when</em> code needs a comment, and the writing guide did not cover comments at all. So an agent that wrote a comment had no rule for how to word it, and comments came out recounting the change that made them, such as \"changed to use a timer as the review suggested\".",
+   "This pull request adds § 12 to the writing guide, on code comments and docstrings, and makes <code>guidelines.md</code> § 1 require it. Each skill that writes or judges code then points at § 12: <code>implement</code> and <code>fix-pr</code> write comments by it, the review reads comments against it and cites it in a finding, and <code>write</code> routes a comment request to it. The change is instruction text only; no Python or TypeScript changes."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Written-rules pass</b>: the part of the review method that reads a change against the rules written down in <code>guidelines.md</code> and the repository's own documents.</li><li><b>P2 finding</b>: a review thread that blocks the pull request, used for a bounded defect or a break of a written rule.</li><li><b>§ 11</b>: the writing guide's section that keeps a change's history in the commit log rather than in the text, with an exception for history the reader still meets.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "What the review found",
+    "html": "<ul class=\"tight\"><li>One P2: § 12's first bullet bans \"the old behavior that the code replaced\" with no exception, which conflicts with § 11's exception for history a reader still meets. Compatibility comments in <code>src/projector/review.py</code> depend on that exception.</li><li>Two suggestions to rewrap paragraphs left with one long line.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "rules",
+   "title": "The new rule and where it lives",
+   "kicker": "Writing guide § 12, and the code guidelines that make it binding",
+   "intro": [
+    "The writing guide gains § 12. It says the rest of the guide applies to comments, except § 3 on document kinds and § 10 on pull requests, and it adds four rules: give the reason in the present tense, write for a maintainer who meets the code cold, open a docstring with what the caller gets, and keep the comment short and true. A before-and-after example closes the section.",
+    "<code>guidelines.md</code> § 1 then makes § 12 a written rule, the same way § 2 makes the testing guide one. A comment that breaks the writing guide becomes a P2 finding that cites the section it breaks."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Because <code>guidelines.md</code> § 1 makes every break of § 12 a blocking finding, the wording of § 12 decides what reviews flag and what <code>fix-pr</code> deletes."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/writing.md",
+     "note": "Adds § 12 on code comments and docstrings, and widens the intro's scope to name them.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 292,
+       "text": "§ 12 tells a comment to leave out \"the old behavior that the code replaced\" with no exception, while § 11 keeps history that changes what the reader does, such as data an older version wrote. Comments like <code>FORMER_LABEL_COLORS</code> in <code>src/projector/review.py</code> depend on that exception, and a review that reads this bullet literally would flag them as P2."
+      },
+      {
+       "kind": "verify",
+       "text": "The citations § 2, § 3, § 8, § 10, and § 11 name the sections they describe at this head: § 8 lists \"This function\"-style filler, and § 11 covers history."
+      }
+     ]
+    },
+    {
+     "path": "skills/guidelines.md",
+     "note": "§ 1 requires comments and docstrings to follow the writing guide, and says a break of it is a finding that cites its section."
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Skills that write or judge code",
+   "kicker": "Each skill points at § 12 in the step where it writes or reads a comment",
+   "intro": [
+    "Each skill that writes or reviews code now names § 12 where it handles comments. <code>implement</code> writes each comment it keeps by § 12. <code>fix-pr</code> writes the comment a fix adds by § 12, never naming the finding. In <code>review-pr</code>, the written-rules pass reads changed comments against § 12, and the incremental review's prose check does too. <code>write</code> lists code comments in its description and routes them to § 12."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every skill that references <code>writing.md</code> was read at this head; <code>rewrite</code>, <code>spec</code>, <code>summarize-pr</code>, and <code>cleanup</code> need no change for the wider scope."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "Tells the implementer to write each comment and docstring it keeps by § 12."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Tells a fix to write its comments by § 12, without naming the finding, the review, or the replaced code."
+    },
+    {
+     "path": "skills/review-pr/method.md",
+     "note": "The written-rules pass reads § 12 when a change adds or edits a comment, and gives <code>writing.md § 12</code> as a citation."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "The incremental review's prose check reads comments against § 12 and treats a comment that tells history as a finding."
+    },
+    {
+     "path": "skills/write/SKILL.md",
+     "note": "Names code comments and docstrings in the description, and sends them to § 12."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Plugin documentation",
+   "kicker": "The user-facing description of the shared guides",
+   "intro": [
+    "<code>docs/plugins.md</code> says that the writing guide covers comments in the code a skill changes, and that a review flags a comment that breaks it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Adds comments and docstrings to the writing guide's scope.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 53,
+       "text": "This line runs to 115 characters where the paragraph wraps near 78; the review lists rewrapping it as a suggestion."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
