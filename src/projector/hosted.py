@@ -309,4 +309,3 @@ def actions_token(request_url: str, request_token: str, audience: str) -> str:
 def failed(message: str) -> int:
     print(f"::error::{message}", flush=True)
     return 1
-
