@@ -1,0 +1,741 @@
+diff --git a/actions/review/action.yml b/actions/review/action.yml
+index 34386916..dd76b999 100644
+--- a/actions/review/action.yml
++++ b/actions/review/action.yml
+@@ -110,9 +110,24 @@ runs:
+         if [ -n "$CONFIG" ]; then
+           printf '%s\n' "$CONFIG" >> "$HOME/.projector.toml"
+         fi
+-    # The app's token reaches only this repository, with the review's permissions. The key is an input, not a
+-    # caller's env, which would reach every step: a composite action's inputs set no environment variable, so
+-    # only this step, which reads the input, receives the key.
++    # A review that reads context repositories needs the app's token to reach them too, and an installation token
++    # reaches one account's repositories. The list comes from the committed .projector.toml as Projector reads
++    # it, from the default branch, so a pull request cannot widen its own review's token.
++    - name: Read the context repositories
++      id: context
++      if: inputs.step == 'review' && inputs.app-id != ''
++      shell: bash
++      run: |
++        listed=$(project config get review.context_repos --default '')
++        names=$(PYTHONPATH="$PROJECTOR_ROOT/src" python3 -P -c \
++          'import sys; from projector import run; print(",".join(run.token_repositories(*sys.argv[1:])))' \
++          "$GITHUB_REPOSITORY" "$listed")
++        echo "repositories=$names" >> "$GITHUB_OUTPUT"
++    # The app's token reaches only this repository, and the context repositories when there are any, with the
++    # review's permissions. It sets no `owner`, which defaults to this repository's: an owner with no
++    # repositories would reach every repository the installation covers. The key is an input, not a caller's
++    # env, which would reach every step: a composite action's inputs set no environment variable, so only this
++    # step, which reads the input, receives the key.
+     - name: Mint the app's token
+       id: app
+       if: inputs.app-id != ''
+@@ -120,6 +135,7 @@ runs:
+       with:
+         app-id: ${{ inputs.app-id }}
+         private-key: ${{ inputs.app-private-key }}
++        repositories: ${{ steps.context.outputs.repositories }}
+         permission-contents: read
+         permission-pull-requests: write
+         permission-issues: write
+@@ -185,6 +201,8 @@ runs:
+         PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
+         # Only the review step hands its summary off; the summary job's publish pushes it.
+         PROJECTOR_SUMMARY_HANDOFF: ${{ runner.temp }}/projector-summary
++        # Outside /tmp, which Codex's sandbox lets the agent write.
++        PROJECTOR_CONTEXT_DIR: ${{ runner.temp }}/context
+         PR: ${{ inputs.pr }}
+         AGENT: ${{ inputs.agent }}
+         MODEL: ${{ inputs.model }}
+diff --git a/docs/cli.md b/docs/cli.md
+index c7725bb6..f732ee9b 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1088,6 +1088,7 @@ reads, which are these:
+ | `review.ci_app_id` | whole number | none | `init` and `project review ci-workflow`, as the ID of the app `review.ci_app` names, which `init --ci-app` looks up and records so a later refresh needs no lookup; set both with `init --ci-app` |
+ | `review.ci_runs_on` | string | none | `init` and `project review ci-workflow`, as the labels of your own runners the CI review jobs run on, separated by commas, such as `self-hosted, linux, projector`; none runs them on `ubuntu-latest`; set it with `init --ci-runs-on` |
+ | `review.ci_credential` | string | none | `init` and `project review ci-workflow`, as the kind of credential the CI reviews read: `subscription` or `api-key` picks the secret `init` asks for, and `runner` sets no secret and has the workflow pass none, for a runner that holds the credential itself; none asks for a subscription for `claude` and an API key for `codex`; set it with `init --ci-credential` |
++| `review.context_repos` | string | none | `project review run` and the review action, as the repositories, each `owner/name` and separated by commas, that a review reads as context; the action reads it from the default branch, and a review keeps only those of the reviewed repository's owner whose visibility allows it, as [Give a review other repositories to read](review-in-ci.md#give-a-review-other-repositories-to-read) describes |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
+ | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
+@@ -2806,6 +2807,22 @@ cancelled run's start comment, `PROJECTOR_REREVIEW`, `PROJECTOR_SCRATCH`, a
+ folder for the files it writes, and `PROJECTOR_RUN_REPORT`, a file for the
+ question it would have asked.
+ 
++Before the agent starts, the command clones the repositories
++`review.context_repos` lists that the review may read, and the prompt names
++their folders as context to read, never as code under review. It keeps a
++repository only when it shares the reviewed repository's owner and, by a
++visibility check that succeeded, is public, or is private or internal beside
++a private or internal reviewed repository. Under the workflow's own token,
++`PROJECTOR_TOKEN_LOGIN` set to `github-actions[bot]`, it keeps none. Each
++repository it leaves out is a warning, not a failure. It clones each one at
++its default branch, depth 1, into `PROJECTOR_CONTEXT_DIR/<owner>/<name>`,
++or into a temporary folder it removes once the agent exits. The `claude`
++preset adds each folder with `--add-dir` and denies `Edit` and `Write` in
++it. Codex's sandbox reads every folder, and the action puts the clones
++outside every folder it writes, as
++[Give a review other repositories to read](review-in-ci.md#give-a-review-other-repositories-to-read)
++describes.
++
+ A verdict counts when the agent published it during the run, on the head
+ or on a newer one: when a push lands while the agent reviews, the skill
+ moves the review to the new head and publishes there. When the agent exits
+diff --git a/docs/projects/review-in-ci/readme.md b/docs/projects/review-in-ci/readme.md
+index 07558cb6..567f79d5 100644
+--- a/docs/projects/review-in-ci/readme.md
++++ b/docs/projects/review-in-ci/readme.md
+@@ -766,7 +766,8 @@ These tests fail before the change, and each catches the bug it names:
+    other repositories.
+ 4. **Add the app inputs and context repositories** in a later pull request.
+    Neither works with the workflow's token, so neither blocks the first
+-   three steps.
++   three steps. Done: the app inputs shipped first, and context
++   repositories after them, as § 9 records.
+ 
+ ## 7. Open questions
+ 
+@@ -1011,6 +1012,37 @@ These tests fail before the change, and each catches the bug it names:
+   writes passes no `config`, so § 10 has a self-hosted runner keep its
+   overrides in that file itself; a per-job configuration file is left for a
+   repository that needs both.
++- **Context repositories ship as § 2.9 designs them.** `review.context_repos`
++  is a committed setting. `project review run` reads it through Projector's
++  configuration, which takes a tracked `.projector.toml` from the default
++  branch, and leaves out with a warning an entry that is not `owner/name`,
++  the reviewed repository itself, and a repository of another owner. Under
++  the workflow's own token, which `PROJECTOR_TOKEN_LOGIN` names as
++  `github-actions[bot]`, it leaves every one out with a warning that an app
++  is needed. The same-owner rule holds for a run on a laptop too, so a
++  review reads the same context wherever it runs.
++- **The token's reach comes from the default branch.** The action's
++  **Read the context repositories** step runs after **Set up Projector**,
++  whose `git remote set-head origin --auto` gives Projector the default
++  branch to read, and hands the **Mint the app's token** step the reviewed
++  repository and the same-owner context repositories as `repositories`. It
++  reuses `run.token_repositories`, so the token and the run filter the list
++  alike. The mint step sets no `owner`: it defaults to the reviewed
++  repository's, and an owner with an empty list would reach every
++  repository the installation covers. With no context repositories, the
++  list is empty and the token reaches the reviewed repository alone, as
++  before. The permissions stay as they were, and they reach the context
++  repositories too, which `docs/review-in-ci.md` says.
++- **The clones live outside every writable folder.** The action sets
++  `PROJECTOR_CONTEXT_DIR` to `$RUNNER_TEMP/context`, outside `/tmp`, which
++  Codex's `workspace-write` sandbox lets the agent write. Elsewhere the run
++  clones into a temporary folder and removes it once the agent exits.
++  Codex 0.169.0's `--add-dir` makes a folder writable, so the Codex preset
++  passes none for context: its sandbox reads every folder, as
++  `codex sandbox` showed on 2026-11-18, and the prompt names the folders.
++  The Claude preset adds each with `--add-dir` and denies `Edit` and
++  `Write` in it, because auto mode can pass an edit in a working folder that
++  no rule covers.
+ 
+ ## 10. Self-hosted runners
+ 
+diff --git a/docs/review-in-ci.md b/docs/review-in-ci.md
+index e61d8c57..ccbcb9fe 100644
+--- a/docs/review-in-ci.md
++++ b/docs/review-in-ci.md
+@@ -168,7 +168,9 @@ that file. Delete the file once the secret holds it.
+ In each review job and in the summary job, the action's **Mint the app's
+ token** step creates an installation token with
+ `actions/create-github-app-token`. The token reaches only the repository the
+-job runs in, with the review's permissions in the table above, and the
++job runs in, and in a review job the context repositories
++[Give a review other repositories to read](#give-a-review-other-repositories-to-read)
++describes, with the review's permissions in the table above, and the
+ review, the summary's comment, and the link in the description post as
+ `<slug>[bot]` with it. The app needs those same permissions, and it must be
+ installed on the repository.
+@@ -187,6 +189,58 @@ the agent and its install scripts included. An input sets no environment
+ variable in a composite action, so only the step that mints the token, the
+ one step that reads `app-private-key`, receives the key.
+ 
++## Give a review other repositories to read
++
++A change often makes sense only beside code in another repository, such as
++the service whose API it calls or the library it upgrades. List those
++repositories in the committed `.projector.toml`, and each review clones them
++and reads them as context:
++
++```toml
++[review]
++context_repos = "acme/api, acme/design-system"
++```
++
++The review never reviews them. The prompt names their folders as context
++for the change, and the review judges only the pull request.
++
++A context repository needs three things:
++
++- **An app.** The workflow's own token reaches only the repository it runs
++  in, so a review that posts as `github-actions[bot]` reads no context
++  repository and says so in the job log. Post the reviews as a GitHub App,
++  as [Post as a GitHub App](#post-as-a-github-app) describes, and install the
++  app on every context repository too.
++- **The same owner.** An app's installation token reaches one account's
++  repositories, so the review leaves out a repository of another owner, with
++  a warning that says why.
++- **A visibility that lets the code through.** A review must not carry a
++  private repository's code to readers who cannot see it. Before it clones
++  anything, the review checks each repository's visibility with
++  `gh repo view --json visibility`, and keeps a context repository only when
++  it is public, or when both it and the reviewed repository are private or
++  internal. A check that fails proves nothing: the review leaves out a
++  context repository whose own check fails, and every private or internal
++  one when the reviewed repository's check fails.
++
++Each repository the review leaves out is a warning in the job log, and the
++review goes on without it.
++
++The action reads `review.context_repos` from the default branch, as
++Projector reads every committed setting, before it mints the app's token.
++It mints the token for the reviewed repository and the context repositories
++of the same owner, with the review's permissions in [Tokens](#tokens), so a
++pull request that edits `.projector.toml` cannot widen its own review's
++token. Those permissions reach the context repositories too, so the agent
++could comment on their pull requests and issues, though not push to them.
++List only repositories whose reviewers would accept that.
++
++`project review run` clones each repository it keeps at its default branch,
++depth 1, into `$RUNNER_TEMP/context/<owner>/<name>`. The `claude` preset
++adds each folder with `--add-dir` and refuses `Edit` and `Write` there.
++Codex's sandbox reads every folder and writes only its writable roots, which
++leave the folders out.
++
+ ## Override a setting for CI
+ 
+ The review job runs `review.gate` on a trusted head, as a session does. When
+diff --git a/docs/self-hosted-runners.md b/docs/self-hosted-runners.md
+index c3ee9548..c6fbbc90 100644
+--- a/docs/self-hosted-runners.md
++++ b/docs/self-hosted-runners.md
+@@ -193,6 +193,12 @@ the servers up for the agent on the runner:
+ Give each tool a token scoped to read only what reviews need, such as a
+ Grafana viewer token for one folder of dashboards.
+ 
++To have the review read code in your other repositories, list them in
++`review.context_repos` rather than cloning them onto the runner, as
++[Give a review other repositories to read](review-in-ci.md#give-a-review-other-repositories-to-read)
++describes. The review then checks each one's visibility before its code
++can reach a review comment.
++
+ The review runs `review.gate` on the runner too, so install every tool the
+ gate needs there. Put any setting you want only on the runner in the runner
+ user's `~/.projector.toml`, rather than in the action's `config` input,
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index bf3eec06..3a402f77 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -44,6 +44,9 @@ differences:
+   `PROJECTOR_TOKEN_LOGIN` where the token belongs to no user.
+ - **Do not subscribe.** Skip the subscription step. The workflow runs again
+   on the next head.
++- **Read context folders only as context.** When the prompt names folders
++  of other repositories, read them to judge the change, such as an API it
++  calls, but review only the pull request, and change nothing in them.
+ - **Ask nobody.** Wherever this skill says to ask the user, write the
+   question and what you found to the file `$PROJECTOR_RUN_REPORT`, and stop
+   without publishing. `project review run` posts that text on the pull
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 358e6b58..96117448 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -2519,7 +2519,7 @@ def review_run(arguments: argparse.Namespace) -> int:
+                         configured_reviewer=username if isinstance(username, str) and username else None,
+                         effort=arguments.effort, mode=arguments.permission_mode, timeout_minutes=arguments.timeout,
+                         rereview=arguments.rereview, loop=arguments.loop, plugin_dir=arguments.plugin_dir,
+-                        labels=labels_enabled(checkout))
++                        labels=labels_enabled(checkout), context_listed=config.get("review.context_repos"))
+ 
+ 
+ def run_review(arguments: argparse.Namespace) -> int:
+@@ -3617,7 +3617,7 @@ def record_required_check(root: Path, value: bool) -> None:
+ 
+ 
+ CI_REVIEW_QUESTION = "Review this repository's pull requests in GitHub Actions? [y/N] "
+-CI_REVIEWER = "github-actions[bot]"
++CI_REVIEWER = headless.WORKFLOW_LOGIN
+ 
+ 
+ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAction]) -> None:
+diff --git a/src/projector/config.py b/src/projector/config.py
+index b6a1539c..2b04a32b 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -106,6 +106,7 @@
+     "review.ci_app_id": int,
+     "review.ci_runs_on": str,
+     "review.ci_credential": str,
++    "review.context_repos": str,
+     "fix.resolve_human_threads": bool,
+     "watch.auto_start": bool,
+     "watch.interval": int,
+diff --git a/src/projector/run.py b/src/projector/run.py
+index 07e3d2cf..73264c32 100644
+--- a/src/projector/run.py
++++ b/src/projector/run.py
+@@ -10,7 +10,9 @@
+ 
+ import json
+ import os
++import re
+ import shlex
++import shutil
+ import subprocess
+ import sys
+ import tempfile
+@@ -19,7 +21,7 @@
+ from typing import Optional
+ 
+ from . import core, review
+-from .review import ReviewError
++from .review import TOKEN_LOGIN, ReviewError
+ 
+ PRESETS = ("claude", "codex")
+ MODES = ("auto", "allowlist")
+@@ -49,6 +51,15 @@
+ CODEX_RULES_NAME = "projector-review-run.rules"
+ # Claude Code's modes: `auto` has a classifier decide what no rule covers, and `dontAsk` refuses it.
+ CLAUDE_MODES = {"auto": "auto", "allowlist": "dontAsk"}
++# The login of the workflow's own token, which reaches only the repository the workflow runs in.
++WORKFLOW_LOGIN = "github-actions[bot]"
++REPOSITORY = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+\Z")
++VISIBILITIES = ("PUBLIC", "PRIVATE", "INTERNAL")
++# Visibilities whose readers the owner chose, so one such repository's code may reach another's review.
++SHARED = ("PRIVATE", "INTERNAL")
++# Where the action has the run clone the context repositories. Elsewhere the run clones them into a temporary
++# folder it removes once the agent exits.
++CONTEXT_DIR = "PROJECTOR_CONTEXT_DIR"
+ 
+ 
+ @dataclass
+@@ -61,23 +72,29 @@ class Invocation:
+     written: list[Path] = field(default_factory=list)
+ 
+ 
+-def prompt(number: int, repo: str) -> str:
+-    return (f"Use the review-pr skill to review pull request {number} in {repo}. No session runs this review, "
++def prompt(number: int, repo: str, context: tuple[Path, ...] = ()) -> str:
++    text = (f"Use the review-pr skill to review pull request {number} in {repo}. No session runs this review, "
+             "and nobody can answer a question, so follow the skill's \"Review without a session\" section.")
++    if context:
++        text += (" These folders hold other repositories at their default branches, to read as context for the "
++                 "change and never to review: " + ", ".join(str(folder) for folder in context) + ".")
++    return text
+ 
+ 
+ def claude_invocation(number: int, repo: str, model: str, effort: str, mode: str, scratch: Path,
+-                      plugin_dir: Optional[Path]) -> Invocation:
+-    """`claude -p` with Projector's plugin, in a mode that never waits for a prompt."""
++                      plugin_dir: Optional[Path], context: tuple[Path, ...] = ()) -> Invocation:
++    """`claude -p` with Projector's plugin, in a mode that never waits for a prompt, reading each `context`
++    folder and writing none."""
+     writable = f"/{scratch}/**"
+     allowed = [*READ_TOOLS, f"Edit({writable})", f"Write({writable})",
+                *(f"Bash({command})" for command in ALLOWED_COMMANDS)]
+-    argv = ["claude", "-p", f"/projector:review-pr {number}\n\n{prompt(number, repo)}",
++    argv = ["claude", "-p", f"/projector:review-pr {number}\n\n{prompt(number, repo, context)}",
+             "--model", model, "--effort", effort, "--output-format", "stream-json", "--verbose",
+             "--permission-mode", CLAUDE_MODES[mode], "--permission-prompts", "none",
+-            "--add-dir", str(scratch),
++            "--add-dir", str(scratch), *(part for folder in context for part in ("--add-dir", str(folder))),
+             "--allowedTools", *allowed,
+-            "--disallowedTools", *(f"Bash({command})" for command in DENIED_COMMANDS)]
++            "--disallowedTools", *(f"Bash({command})" for command in DENIED_COMMANDS),
++            *(f"{tool}(/{folder}/**)" for folder in context for tool in ("Edit", "Write"))]
+     if plugin_dir is not None:
+         argv[2:2] = ["--plugin-dir", str(plugin_dir)]
+     return Invocation(argv)
+@@ -94,24 +111,117 @@ def codex_rules() -> str:
+ 
+ 
+ def codex_invocation(number: int, repo: str, model: str, effort: str, mode: str, scratch: Path,
+-                     state: Path, checkout: Path, environ: dict[str, str]) -> Invocation:
++                     state: Path, checkout: Path, environ: dict[str, str],
++                     context: tuple[Path, ...] = ()) -> Invocation:
+     """`codex exec` in its workspace-write sandbox, with network on so `gh` reaches GitHub, and the review
+-    state and the scratch folder writable beside the checkout."""
++    state and the scratch folder writable beside the checkout. The sandbox reads every folder, so each
++    `context` folder needs only the prompt's mention, and stays unwritable because it is no writable root."""
+     home = Path(environ.get("CODEX_HOME") or Path(environ.get("HOME") or Path.home()) / ".codex")
+     rules = home / "rules" / CODEX_RULES_NAME
+     approval = ["--approve-for-me"] if mode == "auto" else ["-c", 'approval_policy="never"']
+     argv = ["codex", "exec", "--model", model, "-c", f'model_reasoning_effort="{effort}"', "--json",
+             "--sandbox", "workspace-write", *approval, "-c", "sandbox_workspace_write.network_access=true",
+-            "--cd", str(checkout), "--add-dir", str(state), "--add-dir", str(scratch), prompt(number, repo)]
++            "--cd", str(checkout), "--add-dir", str(state), "--add-dir", str(scratch),
++            prompt(number, repo, context)]
+     return Invocation(argv, written=[rules])
+ 
+ 
+-def command_invocation(command: str, number: int, repo: str) -> Invocation:
++def command_invocation(command: str, number: int, repo: str, context: tuple[Path, ...] = ()) -> Invocation:
+     """A command `review.runner` names, which reads the prompt on standard input."""
+     argv = shlex.split(command)
+     if not argv:
+         raise ReviewError("review.runner names an empty command")
+-    return Invocation(argv, stdin=prompt(number, repo))
++    return Invocation(argv, stdin=prompt(number, repo, context))
++
++
++def parse_context_repos(listed: object) -> list[str]:
++    """The `owner/name` repositories `review.context_repos` lists, in order and once each, warning about an
++    entry that names none."""
++    names: list[str] = []
++    for entry in (part.strip() for part in (listed if isinstance(listed, str) else "").split(",")):
++        if not entry:
++            continue
++        if not REPOSITORY.match(entry):
++            print(f"project: left {entry!r} out of the context repositories: it is not owner/name", file=sys.stderr)
++        elif entry.lower() not in {name.lower() for name in names}:
++            names.append(entry)
++    return names
++
++
++def token_repositories(repo: str, listed: object) -> list[str]:
++    """The names, without the owner, of the repositories an app token for reviewing `repo` must reach: `repo`
++    itself, then each context repository of the same owner, or none when there are no such repositories, so
++    the token keeps reaching `repo` alone."""
++    owner, _, name = repo.partition("/")
++    same = [entry.partition("/")[2] for entry in parse_context_repos(listed)
++            if entry.partition("/")[0].lower() == owner.lower() and entry.lower() != repo.lower()]
++    return [name, *same] if same else []
++
++
++def visibility(repo: str) -> Optional[str]:
++    """`repo`'s visibility as GitHub reports it, `PUBLIC`, `PRIVATE`, or `INTERNAL`, or None when the check
++    fails, which proves nothing."""
++    try:
++        found = review.run_gh(["repo", "view", repo, "--json", "visibility", "--jq", ".visibility"]).strip()
++    except ReviewError:
++        return None
++    return found if found in VISIBILITIES else None
++
++
++def context_repos(repo: str, listed: object, environ: dict[str, str]) -> list[str]:
++    """The context repositories a review of `repo` may read, as docs/projects/review-in-ci/readme.md § 2.9
++    describes, warning about each one it leaves out. A repository must share `repo`'s owner, because an app
++    token reaches one account, and be public, or private or internal beside a private or internal `repo`, by a
++    check that succeeded."""
++    names = parse_context_repos(listed)
++    if names and environ.get(TOKEN_LOGIN) == WORKFLOW_LOGIN:
++        print(f"project: left out the context repositories {', '.join(names)}: the workflow's own token reaches "
++              f"only {repo}, so the review needs a GitHub App whose installation covers them", file=sys.stderr)
++        return []
++    owner = repo.partition("/")[0].lower()
++    candidates = []
++    for name in names:
++        if name.lower() == repo.lower():
++            print(f"project: left {name} out of the context repositories: it is the repository under review",
++                  file=sys.stderr)
++        elif name.partition("/")[0].lower() != owner:
++            print(f"project: left {name} out of the context repositories: an app token reaches one account's "
++                  f"repositories, and {name} is not {repo}'s owner's", file=sys.stderr)
++        else:
++            candidates.append(name)
++    own = visibility(repo) if candidates else None
++    kept = []
++    for name in candidates:
++        theirs = visibility(name)
++        if theirs == "PUBLIC" or (theirs in SHARED and own in SHARED):
++            kept.append(name)
++        elif theirs is None:
++            print(f"project: left {name} out of the context repositories: its visibility check failed",
++                  file=sys.stderr)
++        elif own is None:
++            print(f"project: left {name} out of the context repositories: it is {theirs.lower()}, and {repo}'s own "
++                  "visibility check failed", file=sys.stderr)
++        else:
++            print(f"project: left {name} out of the context repositories: it is {theirs.lower()}, and {repo} is "
++                  f"{own.lower()}, so its code would reach readers who cannot see it", file=sys.stderr)
++    return kept
++
++
++def clone_context(names: list[str], folder: Path) -> tuple[Path, ...]:
++    """Clone each repository in `names` at its default branch, depth 1, into `folder`/<owner>/<name>, with
++    `gh`'s token, and return the folders that cloned, warning about each that did not."""
++    cloned = []
++    for name in names:
++        target = folder / name
++        shutil.rmtree(target, ignore_errors=True)
++        target.parent.mkdir(parents=True, exist_ok=True)
++        try:
++            review.run_gh(["repo", "clone", name, str(target), "--", "--depth", "1", "--quiet"])
++        except ReviewError as error:
++            print(f"project: left {name} out of the context repositories: {error}", file=sys.stderr)
++            continue
++        cloned.append(target)
++    return tuple(cloned)
+ 
+ 
+ def runner(agent: Optional[str], configured: object) -> tuple[str, Optional[str]]:
+@@ -216,7 +326,7 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
+         configured_runner: object = None, configured_reviewer: Optional[str] = None, effort: str = DEFAULT_EFFORT,
+         mode: str = "auto", timeout_minutes: float = DEFAULT_TIMEOUT_MINUTES, rereview: bool = False,
+         loop: str = DEFAULT_LOOP, plugin_dir: Optional[Path] = None, labels: bool = True,
+-        environ: Optional[dict[str, str]] = None) -> int:
++        context_listed: object = None, environ: Optional[dict[str, str]] = None) -> int:
+     """Review the head of pull request `number` in the repository of `checkout` with an agent, as
+     docs/projects/review-in-ci/readme.md § 2.1 step 6 describes. Returns the exit code: 0 once a verdict on the
+     head stands, or the run published one on a head pushed while it ran, and 1 when the agent published none."""
+@@ -242,6 +352,9 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
+     replace = stale_start(review.start_comments(repo, number, reviewer), reviews, head, model)
+ 
+     base = dict(os.environ if environ is None else environ)
++    names = context_repos(repo, context_listed, base)
++    folder = Path(base.get(CONTEXT_DIR) or tempfile.mkdtemp(prefix="projector-review-context-")) if names else None
++    context = clone_context(names, folder) if folder is not None else ()
+     scratch = Path(tempfile.mkdtemp(prefix="projector-review-run-"))
+     report = scratch / "report.md"
+     environment = dict(base, PROJECTOR_HEADLESS="1", PROJECTOR_LOOP=loop, PROJECTOR_MODEL=model,
+@@ -251,17 +364,20 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
+     if replace is not None:
+         environment["PROJECTOR_REPLACE"] = str(replace)
+     if chosen == "claude":
+-        invocation = claude_invocation(number, repo, model, effort, mode, scratch, plugin_dir)
++        invocation = claude_invocation(number, repo, model, effort, mode, scratch, plugin_dir, context)
+     elif chosen == "codex":
+-        invocation = codex_invocation(number, repo, model, effort, mode, scratch, root, checkout, environment)
++        invocation = codex_invocation(number, repo, model, effort, mode, scratch, root, checkout, environment,
++                                      context)
+     else:
+-        invocation = command_invocation(command or "", number, repo)
++        invocation = command_invocation(command or "", number, repo, context)
+     for path in invocation.written:
+         path.parent.mkdir(parents=True, exist_ok=True)
+         path.write_text(codex_rules(), encoding="utf-8")
+ 
+     print(f"reviewing {repo}#{number} at {head[:7]} as {reviewer} with {model} through {chosen}"
+-          + (f", in place of the cancelled run's start comment {replace}" if replace is not None else ""))
++          + (f", in place of the cancelled run's start comment {replace}" if replace is not None else "")
++          + (f", with {', '.join(str(path.relative_to(folder)) for path in context)} to read as context"
++             if folder is not None and context else ""))
+     paths = review.Paths(root, repo, number, model)
+     before, held = stored(paths), set(paths.locks())
+     try:
+@@ -269,6 +385,8 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
+     finally:
+         for path in invocation.written:
+             path.unlink(missing_ok=True)
++        if folder is not None and not base.get(CONTEXT_DIR):
++            shutil.rmtree(folder, ignore_errors=True)
+ 
+     # A verdict counts only when the run posted it, which no clock can tell as surely as a review id can. It
+     # may name a newer head than `head`, because the agent moves its review to a head pushed while it runs.
+diff --git a/tests/test_ci.py b/tests/test_ci.py
+index cd4feb6f..3520a145 100644
+--- a/tests/test_ci.py
++++ b/tests/test_ci.py
+@@ -8,6 +8,7 @@
+ import re
+ import shutil
+ import subprocess
++import sys
+ import tempfile
+ import tomllib
+ import unittest
+@@ -528,6 +529,69 @@ def test_only_the_review_step_hands_its_summary_off(self) -> None:
+         self.assertEqual(1, text.count("PROJECTOR_SUMMARY_HANDOFF"))
+         self.assertIn("PROJECTOR_SUMMARY_HANDOFF", review_step)
+ 
++    def context_token(self, listed: str) -> str:
++        """The `repositories` the action's context step hands the step that mints the app's token, when the
++        repository's setting lists `listed`."""
++        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
++        (tmp / "project").write_text(f"#!/bin/sh\nprintf '%s\\n' '{listed}'\n")
++        (tmp / "project").chmod(0o755)
++        output = tmp / "output"
++        output.write_text("")
++        environment = {"PATH": f"{tmp}{os.pathsep}{os.environ['PATH']}", "GITHUB_REPOSITORY": "acme/app",
++                       "GITHUB_OUTPUT": str(output), "PROJECTOR_ROOT": str(Path(__file__).parents[1])}
++        result = subprocess.run(["bash", "-eo", "pipefail", "-c", step_script("Read the context repositories")],
++                                cwd=tmp, env=environment, capture_output=True, text=True)
++        self.assertEqual(0, result.returncode, result.stderr)
++        return dict(line.partition("=")[::2] for line in output.read_text().splitlines())["repositories"]
++
++    def test_the_apps_token_reaches_the_reviewed_repository_and_its_owners_context_repositories(self) -> None:
++        # A token without the context repositories cannot clone them, and one without the reviewed repository
++        # cannot post the review.
++        self.assertEqual("app,docs,lib", self.context_token("acme/docs, other/x, acme/app, acme/lib"))
++        self.assertEqual("", self.context_token(""), "no context keeps the token on the reviewed repository")
++        self.assertEqual("", self.context_token("other/docs"))
++
++        steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
++        context = re.search(r"\n      id: (\S+)\n", steps["Read the context repositories"]).group(1)
++        mint = steps["Mint the app's token"]
++        self.assertIn(f"repositories: ${{{{ steps.{context}.outputs.repositories }}}}\n", mint)
++        # With an owner and no repositories, the token would reach every repository the installation covers.
++        self.assertNotIn("owner:", mint)
++        self.assertIn("permission-contents: read\n", mint)
++
++    def test_a_pull_request_cannot_add_a_context_repository_to_its_own_review(self) -> None:
++        # The step that sets the token's reach reads the setting with `project config get`, which must take a
++        # tracked .projector.toml from the default branch, not from the pull request's head. It finds the default
++        # branch through origin/HEAD, which only the action's setup sets in a fresh checkout.
++        steps = [step.splitlines()[0] for step in ACTION.read_text().split("\n    - ")[1:]]
++        self.assertIn("git remote set-head origin --auto\n", step_script("Set up Projector"))
++        self.assertLess(steps.index("name: Set up Projector"), steps.index("name: Read the context repositories"))
++        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
++        environment = {**os.environ, "HOME": str(tmp / "home"), "XDG_STATE_HOME": str(tmp / "state"),
++                       "PYTHONPATH": str(Path(__file__).parents[1] / "src"), "GIT_CONFIG_GLOBAL": os.devnull}
++        (tmp / "home").mkdir()
++
++        def git(*args: str, cwd: Path = tmp / "checkout") -> None:
++            subprocess.run(["git", *args], cwd=cwd, env=environment, check=True, capture_output=True)
++
++        git("init", "-q", "--bare", "-b", "main", str(tmp / "origin.git"), cwd=tmp)
++        git("clone", "-q", str(tmp / "origin.git"), str(tmp / "checkout"), cwd=tmp)
++        git("config", "user.name", "Test")
++        git("config", "user.email", "test@example.com")
++        (tmp / "checkout" / ".projector.toml").write_text('[review]\ncontext_repos = "acme/docs"\n')
++        git("add", ".projector.toml")
++        git("commit", "-qm", "Read the docs")
++        git("push", "-q", "origin", "HEAD:main")
++        git("remote", "set-head", "origin", "--auto")
++        git("checkout", "-qb", "widen")
++        (tmp / "checkout" / ".projector.toml").write_text('[review]\ncontext_repos = "acme/docs, acme/secrets"\n')
++        git("commit", "-qam", "Read the secrets too")
++
++        found = subprocess.run([sys.executable, "-m", "projector", "config", "get", "review.context_repos",
++                                "--default", ""], cwd=tmp / "checkout", env=environment, capture_output=True,
++                               text=True, check=True).stdout
++        self.assertEqual("acme/docs", found.strip())
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_run.py b/tests/test_run.py
+index b4c99b2a..29f9e3bb 100644
+--- a/tests/test_run.py
++++ b/tests/test_run.py
+@@ -335,6 +335,105 @@ def test_runner_takes_the_agent_then_review_runner_then_claude(self) -> None:
+                 run.runner(agent, configured)
+ 
+ 
++class ContextGitHub:
++    """`gh repo view` and `gh repo clone` for context repositories: each repository's visibility, or a failed
++    check where `visibilities` has none, and a clone that makes the folder it names."""
++
++    def __init__(self, visibilities: dict[str, str]) -> None:
++        self.visibilities = visibilities
++        self.calls: list[list[str]] = []
++
++    def __call__(self, args: list[str], token: str | None = None) -> str:
++        self.calls.append(args)
++        if args[:2] == ["repo", "view"] and args[3:] == ["--json", "visibility", "--jq", ".visibility"]:
++            if args[2] not in self.visibilities:
++                raise ReviewError(f"gh repo view {args[2]} failed: HTTP 403")
++            return self.visibilities[args[2]] + "\n"
++        if args[:2] == ["repo", "clone"] and args[4:] == ["--", "--depth", "1", "--quiet"]:
++            Path(args[3], "README.md").parent.mkdir(parents=True, exist_ok=True)
++            Path(args[3], "README.md").write_text(f"{args[2]}\n")
++            return ""
++        raise AssertionError(f"unexpected gh call: {args}")
++
++
++class ContextTests(unittest.TestCase):
++    """Which context repositories a review reads, as docs/projects/review-in-ci/readme.md § 2.9 describes."""
++
++    def kept(self, visibilities: dict[str, str], listed: str, **environ: str) -> tuple[list[str], str, ContextGitHub]:
++        github = ContextGitHub(visibilities)
++        with mock.patch.object(review, "run_gh", github), redirect_stderr(io.StringIO()) as err:
++            found = run.context_repos(REPO, listed, environ)
++        return found, err.getvalue(), github
++
++    def test_a_private_repositorys_code_reaches_only_a_review_whose_readers_can_see_it(self) -> None:
++        # A failed check proves nothing, so None, a check that failed, keeps only a public repository.
++        shared = {("PRIVATE", "PRIVATE"), ("PRIVATE", "INTERNAL"), ("INTERNAL", "PRIVATE"), ("INTERNAL", "INTERNAL")}
++        for own in ("PUBLIC", "PRIVATE", "INTERNAL", None):
++            for theirs in ("PUBLIC", "PRIVATE", "INTERNAL", None):
++                with self.subTest(own=own, theirs=theirs):
++                    visibilities = {name: value for name, value in ((REPO, own), ("acme/docs", theirs)) if value}
++                    found, err, _ = self.kept(visibilities, "acme/docs")
++                    expected = theirs == "PUBLIC" or (own, theirs) in shared
++                    self.assertEqual(["acme/docs"] if expected else [], found, err)
++                    self.assertEqual(not expected, "left acme/docs out" in err, "every exclusion is a warning")
++
++    def test_a_repository_of_another_owner_is_left_out_without_a_lookup(self) -> None:
++        # An app's installation token reaches one account, so the clone would fail, or reach the wrong account.
++        found, err, github = self.kept({REPO: "PRIVATE", "acme/docs": "PRIVATE", "other/docs": "PUBLIC"},
++                                       "other/docs, acme/docs, acme/app, not a repository")
++
++        self.assertEqual(["acme/docs"], found)
++        self.assertIn("left other/docs out of the context repositories: an app token reaches one account's", err)
++        self.assertIn("acme/app out of the context repositories: it is the repository under review", err)
++        self.assertIn("'not a repository'", err)
++        self.assertNotIn(["repo", "view", "other/docs", "--json", "visibility", "--jq", ".visibility"], github.calls)
++
++    def test_the_workflows_own_token_reads_no_context_repository(self) -> None:
++        # GITHUB_TOKEN reaches only its own repository, and a public context repository would read without it
++        # only by accident.
++        found, err, github = self.kept({REPO: "PRIVATE", "acme/docs": "PUBLIC"}, "acme/docs",
++                                       **{review.TOKEN_LOGIN: run.WORKFLOW_LOGIN})
++
++        self.assertEqual(([], []), (found, github.calls))
++        self.assertIn("needs a GitHub App whose installation covers them", err)
++
++    def test_the_token_reaches_the_reviewed_repository_and_its_owners_context_repositories(self) -> None:
++        # An empty list keeps the token on the reviewed repository alone; a list without it would lose it.
++        self.assertEqual(["app", "docs", "lib"], run.token_repositories(REPO, "acme/docs, other/x, acme/app, ACME/lib"))
++        for listed in ("", None, "other/docs", "acme/app"):
++            with self.subTest(listed=listed), redirect_stderr(io.StringIO()):
++                self.assertEqual([], run.token_repositories(REPO, listed))
++
++    def test_a_run_clones_each_kept_repository_and_names_only_those_in_the_prompt(self) -> None:
++        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
++        checkout = tmp / "checkout"
++        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
++        subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", f"https://github.com/{REPO}.git"],
++                       check=True)
++        agent = tmp / "agent"
++        agent.mkdir()
++        (agent / "agent.py").write_text(AGENT)
++        (agent / "behavior").write_text("publish")
++        pulls = FakeGitHub(agent)
++        context = ContextGitHub({REPO: "PUBLIC", "acme/docs": "PUBLIC", "acme/secret": "PRIVATE"})
++        self.enterContext(mock.patch.object(review, "run_gh", lambda args, token=None: context(args, token)
++                                            if args[0] == "repo" else pulls(args, token)))
++        self.enterContext(mock.patch.dict(os.environ, {"HEAD_SHA": HEAD, "XDG_STATE_HOME": str(tmp / "state")}))
++        folder = tmp / "context"
++
++        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
++            code = run.run(tmp / "state" / "projector" / "reviews", 1, checkout, model=MODEL, agent="command",
++                           configured_runner=shlex.join([sys.executable, str(agent / "agent.py"), str(agent)]),
++                           context_listed="acme/docs, acme/secret",
++                           environ={**os.environ, run.CONTEXT_DIR: str(folder)})
++
++        self.assertEqual(0, code)
++        stdin = json.loads((agent / "seen.json").read_text())["stdin"]
++        self.assertIn(str(folder / "acme" / "docs"), stdin)
++        self.assertNotIn("secret", stdin, "a private repository stays out of a public repository's review")
++        self.assertEqual(["acme/docs"], [path.relative_to(folder).as_posix() for path in folder.glob("*/*")])
++
++
+ def matches(rule: str, command: str) -> bool:
+     """Whether a Claude Code `Bash(...)` pattern's command part matches `command`: a trailing ` *` matches the bare
+     command and any arguments after it."""
+@@ -378,6 +477,21 @@ def test_claude_preset_allows_every_command_the_review_skill_runs(self) -> None:
+             with self.subTest(refused=refused):
+                 self.assertTrue(any(matches(rule, refused) for rule in denied))
+ 
++    def test_the_claude_preset_reads_each_context_folder_and_writes_none(self) -> None:
++        # In auto mode a working folder's edits can pass without a rule, so only a deny rule keeps a clone of
++        # another repository as it was cloned.
++        scratch, context = Path("/tmp/scratch"), (Path("/tmp/context/acme/docs"), Path("/tmp/context/acme/lib"))
++        argv = run.claude_invocation(1, REPO, MODEL, "high", "auto", scratch, None, context).argv
++        added = [argv[i + 1] for i, part in enumerate(argv) if part == "--add-dir"]
++        denied = argv[argv.index("--disallowedTools") + 1:]
++
++        self.assertEqual([str(scratch), *map(str, context)], added)
++        for folder in context:
++            with self.subTest(folder=folder):
++                self.assertIn(str(folder), argv[2], "the prompt names the folder")
++                self.assertTrue({f"Edit(/{folder}/**)", f"Write(/{folder}/**)"} <= set(denied))
++        self.assertNotIn("/tmp/scratch", " ".join(denied), "the scratch folder stays writable")
++
+     def test_the_codex_rules_forbid_what_a_reviewer_never_runs(self) -> None:
+         rules = run.codex_rules()
+         for command in run.DENIED_COMMANDS:

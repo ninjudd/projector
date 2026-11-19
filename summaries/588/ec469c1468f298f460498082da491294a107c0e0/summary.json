@@ -1,0 +1,134 @@
+{
+ "version": 1,
+ "name": "CI review in GitHub Actions",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 588,
+  "title": "Give CI reviews other repositories to read, through review.context_repos",
+  "head": "ec469c1468f298f460498082da491294a107c0e0",
+  "headRef": "review-ci-context",
+  "base": "e7a1e2ae5f1e84ec59eb7c5d988a5e0646ff6272",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector can review a pull request in a GitHub Actions job, with no agent session running anywhere. Until now that review could read only the repository under review. So it could not check a call against the API in another repository that the call targets.",
+   "This pull request adds a committed setting, <code>review.context_repos</code>, that lists other repositories as <code>owner/name</code>. Before the agent starts, <code>project review run</code> decides which of them the review may read, clones each one it keeps at depth 1, and names their folders in the prompt as context, never as code to review.",
+   "<ol><li><b>The same owner.</b> An app's installation token reaches only one account's repositories, so the review leaves out a repository of another owner.</li><li><b>An app.</b> The workflow's own token, <code>github-actions[bot]</code>, reaches only its own repository, so under it the review keeps no context repository.</li><li><b>Visibility.</b> The review keeps a repository only when it is public, or when it and the reviewed repository are both private or internal, as a visibility check reported. A check that fails keeps nothing private.</li></ol>",
+   "The action reads the setting from the default branch and mints the app's token for the reviewed repository and its same-owner context repositories. Because the list comes from the default branch, a pull request cannot widen its own review's token."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Context repository</b>: a repository the review reads to judge the change, but never reviews.</li><li><b>Installation token</b>: the short-lived token a GitHub App mints for the repositories it is installed on.</li><li><b>Preset</b>: how <code>project review run</code> starts Claude Code or Codex.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review requested changes with one finding. When any listed repository is outside the app's installation, the mint step fails, so the review job fails rather than warning and going on.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "selection",
+   "title": "Choosing and cloning context repositories",
+   "kicker": "Which listed repositories a review reads, and how the agent gets them",
+   "intro": [
+    "<code>run.py</code> holds all of the selection logic. <code>parse_context_repos</code> splits the setting, drops entries that are not <code>owner/name</code>, and removes duplicates. <code>context_repos</code> applies the owner, app, and visibility rules, with a warning for each repository it leaves out. <code>clone_context</code> then clones what remains.",
+    "Each preset hands the folders to the agent differently. The Claude preset adds each folder with <code>--add-dir</code> and denies <code>Edit</code> and <code>Write</code> in it. The Codex preset adds no folder, because Codex's <code>--add-dir</code> makes a folder writable and its sandbox can already read every folder."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/run.py",
+     "note": "The rules, the clone, the preset arguments, and the prompt text.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 171,
+       "text": "A failed visibility check returns <code>None</code>, which keeps only a public context repository. When the reviewed repository's own check fails, every private or internal one is left out."
+      },
+      {
+       "kind": "context",
+       "line": 97,
+       "text": "These deny rules join the <code>--disallowedTools</code> list. They use the same <code>//absolute/path/**</code> form as the scratch folder's allow rules."
+      },
+      {
+       "kind": "context",
+       "line": 389,
+       "text": "The run removes the clones only when it made the temporary folder itself. In the action, <code>PROJECTOR_CONTEXT_DIR</code> keeps them under <code>$RUNNER_TEMP</code>."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Passes the setting to <code>run.run</code>, and reuses the new workflow-login constant."
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers <code>review.context_repos</code> as a string setting."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Tells a headless review to read context folders only as context and to change nothing in them."
+    },
+    {
+     "path": "tests/test_run.py"
+    }
+   ]
+  },
+  {
+   "id": "token",
+   "title": "The app token's reach",
+   "kicker": "The action mints a token that reaches the context repositories",
+   "intro": [
+    "A new step, <b>Read the context repositories</b>, runs after <b>Set up Projector</b>. That setup step points <code>origin/HEAD</code> at the default branch, so <code>project config get</code> reads the committed setting from there rather than from the pull request. The step reuses <code>run.token_repositories</code> to turn the list into repository names, and hands them to <b>Mint the app's token</b> as <code>repositories</code>.",
+    "The mint step sets no <code>owner</code>. With an owner and no repositories, the token would reach every repository the installation covers."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "actions/review/action.yml",
+     "note": "Adds the context step, passes its list to the mint step, and sets <code>PROJECTOR_CONTEXT_DIR</code>.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 138,
+       "text": "<code>actions/create-github-app-token</code> asks for a token covering exactly these names. GitHub refuses the whole request with a 422 when any one of them is outside the installation, and the action retries only 5xx errors. So one missing, renamed, or uninstalled context repository fails every review job, instead of becoming a warning as the docs promise."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_ci.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The setting's reference, its guide, and what the plan settled",
+   "intro": [
+    "<code>docs/review-in-ci.md</code> gains a guide section, \"Give a review other repositories to read\". It covers the setting, the app and owner requirements, the visibility rule, and the permissions the token carries into the context repositories. The plan records what implementation settled in § 9 and marks § 6 step 4 done. The project stays <code>in-progress</code>, because live runner checks remain."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/review-in-ci.md"
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/self-hosted-runners.md"
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "note": "§ 9 records the decisions, and § 6 step 4 is marked done."
+    }
+   ]
+  }
+ ]
+}
