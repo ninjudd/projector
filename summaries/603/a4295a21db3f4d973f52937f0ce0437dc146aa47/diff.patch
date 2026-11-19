@@ -1,0 +1,210 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index e9076d7a..cb5d8022 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -46,13 +46,16 @@ reviews and links the summary from its review;
+ `project config set review.summarize false` turns that off. All three of
+ `implement`, `review-pr`, and `fix-pr` share the code guidelines in
+ `skills/guidelines.md`, so the rules one follows are the rules the others
+-review and fix against. Every skill that writes prose a person reads, such as
+-a plan, a review, a summary, or a pull request body, follows the writing
+-guide in `skills/writing.md`. `write` applies the same guide to any other
+-prose you ask for, such as `/projector:write a README section on the
+-site`. `rewrite` revises text that already exists, such as a file, a pull
+-request description, a comment, or a Slack message, and writes the result
+-back where the text lives when it can, such as
++review and fix against. Every skill that writes prose a person reads, such
++as a plan, a review, a summary, a pull request body, or a comment or
++docstring in the code it changes, follows the writing guide in
++`skills/writing.md`. The code guidelines make that guide a rule for
++comments, so a review flags a comment that breaks it, such as one that
++recounts the change's history. `write` applies the same guide to any other
++prose you ask for, such as `/projector:write a README section on the site`.
++`rewrite` revises text that already exists, such as a file, a pull request
++description, a comment, or a Slack message, and writes the result back where
++the text lives when it can, such as
+ `/projector:rewrite the install section of the README`. Every skill that
+ plans, writes, judges, or accepts a test follows the testing guide in
+ `skills/testing.md`, which asks each test to name the bug it catches: `spec`
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index c1c1a549..b16ff689 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -307,7 +307,10 @@ same code:
+    A finding that cites a section of that file is verified against that
+    section, and declined only by showing the rule does not apply to the
+    quoted code. Read the lines around an insertion anchor before editing so
+-   an attribute, decorator, or comment is not silently detached.
++   an attribute, decorator, or comment is not silently detached. Write a
++   comment the fix adds or changes by `../writing.md` § 12, so it gives the
++   code's reason and never names the finding, the review, or the code it
++   replaced.
+ 4. Prove a regression test fails without the fix and passes with it. Write
+    it, and the failing test from step 2, by the testing guide in
+    `../testing.md`: the test catches the defect the finding names, through
+diff --git a/skills/guidelines.md b/skills/guidelines.md
+index 46fb2506..29b3dc99 100644
+--- a/skills/guidelines.md
++++ b/skills/guidelines.md
+@@ -23,15 +23,19 @@ usually a sign the block should be two.
+ Add a comment only to preserve a constraint, requirement, or reason a future
+ maintainer could not recover from the code and its history: a limit an
+ external system imposes, an order two operations must keep, a case that looks
+-redundant and is not. Keep it short and in plain language, and put it beside
+-the code it protects.
++redundant and is not. Put it beside the code it protects, and write it, and
++every docstring, by the writing guide in `writing.md`, § 12 in particular:
++say why, in the present tense, for a maintainer who never saw the change.
+ 
+ Never use a comment to narrate what the code beneath it plainly does, to
+ excuse complexity the change could have removed, or to assert that a decision
+ is correct rather than say why it was made. A review flags each of those as a
+ violation of a written rule, a P2 thread under the written-rules pass citing
+ this section; the fix is to delete the comment, or to simplify the code until
+-nothing is left to explain. A comment that misstates what the code does is a
++nothing is left to explain. A comment or docstring that breaks the writing
++guide is the same kind of finding and cites the section it breaks, such as
++`writing.md § 12` for a comment that tells the change's history rather than
++the code's reason. A comment that misstates what the code does is a
+ correctness finding, because a maintainer who trusts it changes the wrong
+ thing.
+ 
+diff --git a/skills/implement/SKILL.md b/skills/implement/SKILL.md
+index 6fbe7954..c613d664 100644
+--- a/skills/implement/SKILL.md
++++ b/skills/implement/SKILL.md
+@@ -87,7 +87,10 @@ A review reads your head against them and `fix-pr` follows them in each
+ fix, so a rule skipped here comes back as a finding citing the section you
+ skipped. Its first rule is about comments: write code that needs none,
+ simplify a stretch before you explain it, and add a comment only to preserve a
+-constraint or reason the code cannot carry on its own.
++constraint or reason the code cannot carry on its own. Write each comment and
++docstring you keep by the writing guide in `../writing.md`, § 12 in
++particular: say why, in the present tense, and leave the change's history to
++the commit.
+ 
+ When the work has a plan, update it in the same change whenever
+ implementation settles a decision, changes scope, reveals a new constraint,
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 3a402f77..06211a26 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -609,9 +609,10 @@ Prose qualifies only when a full review would pass it, so read it the two ways
+ a full review does. Read it as `method.md` § 2 reads documentation: against
+ the code it describes at the head, for accuracy, broken references, and
+ contradictions. Read each added or changed comment and docstring against
+-`../guidelines.md` § 1 as well. A comment that misstates the code is a
+-correctness finding there, and one that narrates the code beneath it, excuses
+-complexity, or asserts that a decision is correct is a written-rules finding.
++`../guidelines.md` § 1 and `../writing.md` § 12 as well. A comment that
++misstates the code is a correctness finding there, and one that narrates the
++code beneath it, excuses complexity, asserts that a decision is correct, or
++tells the change's history is a written-rules finding.
+ 
+ How the head moved, the `kind` that `interdiff` prints, also guides the
+ decision:
+diff --git a/skills/review-pr/method.md b/skills/review-pr/method.md
+index 57adcea3..8fd76d98 100644
+--- a/skills/review-pr/method.md
++++ b/skills/review-pr/method.md
+@@ -176,10 +176,13 @@ Read `../guidelines.md` first. It applies in every repository, and its
+ sections are the rules this pass enforces on comments, on tests, and on
+ whatever it adds later; the repository's own documents outrank it where the
+ two disagree. When the change adds or edits a test, read `../testing.md` too,
+-which `guidelines.md § 2` makes one of those rules. Then
++which `guidelines.md § 2` makes one of those rules. When it adds or edits a
++comment or docstring, read `../writing.md` § 12 and the sections it names,
++which `guidelines.md § 1` makes one of those rules. Then
+ read the parts of the repository's rule documents that bear on the changed
+ files, and read the diff against both. A finding here names the document and
+-the section it enforces, such as `guidelines.md § 1`, `testing.md § 2`, or
++the section it enforces, such as `guidelines.md § 1`, `testing.md § 2`,
++`writing.md § 12`, or
+ the repository document and heading, or it is a preference and does not
+ ship. When the rule is one the
+ repository's own merged commits keep breaking, report the gap between the
+diff --git a/skills/write/SKILL.md b/skills/write/SKILL.md
+index ce3edb0e..790d1a7a 100644
+--- a/skills/write/SKILL.md
++++ b/skills/write/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: write
+-description: Write prose for people to read so that it follows Projector's writing guide. That includes documentation, a README section, a pull request body, a commit message, an issue, and a reply. Use when the user asks to write or draft prose, or to check text against the writing guide. To rewrite text that already exists, use rewrite.
++description: Write prose for people to read so that it follows Projector's writing guide. That includes documentation, a README section, a code comment or docstring, a pull request body, a commit message, an issue, and a reply. Use when the user asks to write or draft prose, or to check text against the writing guide. To rewrite text that already exists, use rewrite.
+ ---
+ 
+ # Write
+@@ -17,7 +17,7 @@ the rules.
+    disagree.
+ 2. Decide who reads the text and what they already know (§ 2). Decide which
+    kind of document it is (§ 3). A pull request body or a commit message
+-   follows § 10 instead.
++   follows § 10 instead, and a code comment or docstring follows § 12.
+ 3. For a revision, read the text and the code or facts that it describes.
+    Keep every fact that the reader needs. Cut only what the guide tells you
+    to cut: history (§ 11) and detail that nobody would act on (§ 2). Add no
+diff --git a/skills/writing.md b/skills/writing.md
+index 8db047d4..dc7ebf29 100644
+--- a/skills/writing.md
++++ b/skills/writing.md
+@@ -1,9 +1,10 @@
+ # Writing guide
+ 
+ Projector's skills write prose for people to read: plans, reviews, pull
+-request summaries, and commit messages. Each of those skills follows this
+-guide. The `write` skill applies it to any other prose a user asks for,
+-and the `rewrite` skill applies it to text that already exists.
++request summaries, commit messages, and the comments and docstrings in the
++code they change. Each of those skills follows this guide. The `write`
++skill applies it to any other prose a user asks for, and the `rewrite`
++skill applies it to text that already exists.
+ 
+ The guide follows the Google developer documentation style, which
+ Projector's own documentation also uses. A skill states any rules its own
+@@ -278,3 +279,45 @@ There, `git log` and `git blame` keep it next to the change that made it.
+   summary or a review explains what a change does, so the old behavior is
+   part of its content. A plan's rejected alternatives are not history
+   either. They explain its decisions.
++
++## 12. Write code comments for the next maintainer
++
++A code comment or a docstring is prose too, and the sections above apply to
++it, except § 3 and § 10. `guidelines.md § 1` says when code needs a comment
++at all. This section says how to write the comments that it keeps.
++
++- **Say why, in the present tense.** Give the constraint or the reason that
++  the code cannot carry: "GitHub returns at most 100 threads, so this pages
++  until `hasNextPage` is false." Describe the code as it stands, not the
++  change that made it (§ 11). Leave out "now", "no longer", "instead of",
++  the old behavior that the code replaced, and the review or pull request
++  that prompted the change. Name an old behavior only when a reader still
++  meets it, such as data an older release wrote: then say what they meet
++  and what the code does with it (§ 11).
++- **Write for someone who meets the code cold.** The maintainer reads the
++  comment beside the code, without the pull request, the plan, or the
++  conversation that produced it. Define each term that the code does not
++  (§ 2), and name the external system or rule behind a constraint.
++- **Open a docstring with what the caller gets.** Say what the function
++  returns or does, then what a caller must know: what an argument means, an
++  error it raises, or a side effect. Do not restate the name or open with
++  "This function" (§ 8).
++- **Keep it short and keep it true.** One or two sentences carry most
++  reasons. A comment that needs a paragraph often marks code to simplify.
++  When you change code, update or delete each comment that describes it.
++
++For example, do not write this:
++
++```ts
++// Changed to use a timer instead of awaiting the refresh directly, as the
++// review suggested, so that the hook no longer blocks.
++setTimeout(refresh, 0)
++```
++
++Write this:
++
++```ts
++// The engine waits for each hook to return, so the refresh runs from a
++// timer and the hook returns at once.
++setTimeout(refresh, 0)
++```
