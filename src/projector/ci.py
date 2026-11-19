@@ -38,6 +38,16 @@ ON_RUNNER = {
 HOSTED = "ubuntu-latest"
 # A runner label as a plain YAML scalar in a flow sequence can carry it.
 LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+# The labels of GitHub's own runner images, such as ubuntu-latest, macos-15, and windows-2025. A self-hosted
+# runner carries `self-hosted` unless it was registered with --no-default-labels, and a runner scale set of the
+# Actions Runner Controller carries its own name, so only a list of these labels alone names a hosted runner.
+HOSTED_IMAGE = re.compile(r"(ubuntu|macos|windows)-[a-z0-9._-]+\Z", re.I)
+
+
+def hosted(labels: Optional[list[str]]) -> bool:
+    """Whether a job with these `runs-on` labels runs on a runner GitHub hosts."""
+    return not labels or ("self-hosted" not in (label.lower() for label in labels)
+                          and all(HOSTED_IMAGE.match(label) for label in labels))
 # The secret holding a GitHub App's private key. The workflow passes it as the action's `app-private-key` input,
 # never as `env`, which would reach every step of the action, so only the step that mints the app's token gets it.
 APP_KEY = "PROJECTOR_APP_PRIVATE_KEY"
@@ -101,9 +111,10 @@ def format_runs_on(labels: list[str]) -> str:
 
 def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
          runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
-    if credential == RUNNER and not runs_on:
+    if credential == RUNNER and hosted(runs_on):
         raise UsageError("a GitHub-hosted runner holds no credential of yours, so the runner credential needs "
-                         "your own runner's labels, from --ci-runs-on or review.ci_runs_on")
+                         "your own runner's labels, such as self-hosted, from --ci-runs-on or review.ci_runs_on; "
+                         "to run on a hosted runner, pass --ci-credential subscription or api-key")
     template = resources.files("projector").joinpath("templates/review-workflow.yml").read_text(encoding="utf-8")
     matrix = "\n".join(f"          - agent: {name}" + (f"\n            model: {model}" if model else "")
                        for name, model in agents.items())

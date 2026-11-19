@@ -617,8 +617,9 @@ and the workflow passes none. `--ci-runs-on <labels>` runs both jobs on your
 own runners, those with every label in the comma-separated list, such as
 `self-hosted,linux,projector`, and `init` records the labels as
 `review.ci_runs_on`; without it the jobs run on `ubuntu-latest`. `init`
-refuses `runner` without labels, because a hosted runner holds no
-credential of yours, as
+refuses `runner` while the labels name a GitHub-hosted runner, either no
+labels or only labels of GitHub's images such as `ubuntu-latest` without
+`self-hosted`, because a hosted runner holds no credential of yours, as
 [Run reviews on your own runners](self-hosted-runners.md) describes.
 `--ci-app <slug>` posts the reviews as that public GitHub App:
 `init` looks the app's ID up on GitHub, records the slug as `review.ci_app`

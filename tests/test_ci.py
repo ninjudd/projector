@@ -249,12 +249,29 @@ class InitCiReviewTests(RepositoryTestCase):
 
     def test_a_runner_credential_on_a_hosted_runner_is_refused_before_anything_is_written(self) -> None:
         # A hosted runner holds no credential of yours, so every review would stop at the credential check.
-        code, _, err = self.init("--ci-review", "--ci-credential", "runner")
+        for labels in ((), ("--ci-runs-on", "ubuntu-latest"), ("--ci-runs-on", "macos-latest"),
+                       ("--ci-runs-on", "ubuntu-24.04,windows-2025")):
+            with self.subTest(labels=labels):
+                code, _, err = self.init("--ci-review", "--ci-credential", "runner", *labels)
+
+                self.assertNotEqual(0, code)
+                self.assertIn("--ci-runs-on", err)
+                self.assertFalse(self.workflow().exists())
+                self.assertEqual((None, None), (self.recorded().get("ci"), self.recorded().get("ci_credential")))
+
+    def test_moving_a_runner_credential_back_to_a_hosted_runner_asks_for_a_secret_kind(self) -> None:
+        # Naming the hosted runner alone would keep the recorded `runner` and write a workflow with no secret.
+        self.assertEqual(0, self.init("--ci-review", "--ci-runs-on", "self-hosted", "--ci-credential", "runner")[0])
+        written = self.workflow().read_text()
+
+        code, _, err = self.init("--ci-runs-on", "ubuntu-latest")
+        moved, _, moved_err = self.init("--ci-runs-on", "ubuntu-latest", "--ci-credential", "api-key")
 
         self.assertNotEqual(0, code)
-        self.assertIn("--ci-runs-on", err)
-        self.assertFalse(self.workflow().exists())
-        self.assertEqual((None, None), (self.recorded().get("ci"), self.recorded().get("ci_credential")))
+        self.assertIn("--ci-credential", err)
+        self.assertEqual(0, moved, moved_err)
+        self.assertNotEqual(written, self.workflow().read_text())
+        self.assertIn("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}", self.workflow().read_text())
 
 
 def runs_on(workflow: str) -> list[str]:
@@ -281,6 +298,13 @@ class WorkflowTests(unittest.TestCase):
                     self.assertIn(f"          {name}: ${{{{ secrets.{name} }}}}\n", text)
         self.assertIn("uses: ninjudd/projector/actions/review@v0\n", text)
         self.assertEqual([ci.HOSTED] * 2, runs_on(text), "with no labels, both jobs run on a hosted runner")
+
+    def test_a_runner_credential_runs_on_any_runner_github_does_not_host(self) -> None:
+        # An Actions Runner Controller scale set carries only its own name, and a runner registered with
+        # --no-default-labels has no `self-hosted`, so a guard that wants that label would refuse both.
+        for labels in (["arc-runner-set"], ["projector", "linux"], ["self-hosted", "ubuntu-24.04"], ["Self-Hosted"]):
+            with self.subTest(labels=labels):
+                self.assertNotIn("secrets.CLAUDE", ci.workflow_text("v0", {"claude": ""}, None, labels, ci.RUNNER))
 
     def test_parse_runs_on_reads_what_format_runs_on_records_and_refuses_the_rest(self) -> None:
         labels = ci.parse_runs_on(" self-hosted,linux , self-hosted,gpu.large_1")

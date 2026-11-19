@@ -996,6 +996,15 @@ These tests fail before the change, and each catches the bug it names:
   `skills`, which would put a link inside that directory on the second job.
   Codex discovers skills one directory deeper and through the link, which
   `codex debug prompt-input` showed on 2026-11-18.
+- **The guard reads the labels for a hosted runner.** `init` refuses the
+  `runner` credential when the labels are none, or are only labels of
+  GitHub's images, `ubuntu-*`, `macos-*`, and `windows-*`, without
+  `self-hosted`. Requiring `self-hosted` was rejected: GitHub adds it by
+  default, but a runner registered with `--no-default-labels` lacks it, and
+  a runner scale set of the Actions Runner Controller does not support it
+  and carries only its own name. A hosted larger runner, named as its owner
+  chooses, still gets through, and its review stops at the credential
+  check.
 - **The `config` input still appends.** On a persistent runner the action
   adds the input to the runner user's `~/.projector.toml` on every job, and
   a second job's copy of the same table would not parse. The workflow `init`
@@ -1036,8 +1045,8 @@ The design:
   provides the agent's credential. `init` sets no secret and says what each
   agent needs on the runner, and the workflow passes no `secrets.*`
   variable, so the review step sees the runner's environment. `init`
-  refuses `runner` without runner labels, because a hosted runner holds no
-  credential of the repository's.
+  refuses `runner` while the labels name a GitHub-hosted runner, because a
+  hosted runner holds no credential of the repository's.
 - **The action's check reads the runner.** For `claude` it accepts
   `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` from the runner's
   environment and still refuses both. For `codex` it accepts

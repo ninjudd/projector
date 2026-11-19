@@ -79,8 +79,13 @@ sets no credential secret, and writes no `secrets.*` variable into the
 workflow. Pass it whenever the runner holds the credential: a secret that is
 not set reads as an empty string, and an empty variable in the review step's
 environment would hide the runner's own value. `init` refuses
-`--ci-credential runner` without runner labels, because a hosted runner
-holds no credential of yours.
+`--ci-credential runner` when the labels name a GitHub-hosted runner,
+because a hosted runner holds no credential of yours: no labels at all, or
+only labels of GitHub's own images, such as `ubuntu-latest` and
+`macos-latest`, without `self-hosted`. Any other label names a runner of
+yours, including a runner scale set of the Actions Runner Controller, which
+carries only its own name, and a runner registered with
+`--no-default-labels`.
 
 To compare the workflow with one you edited, or to see it before you run
 `init`, print it:
