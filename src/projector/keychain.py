@@ -6,6 +6,9 @@
   `ctypes`, with a generic credential.
 - **Linux** runs `secret-tool`, which reads the secret to store from standard input.
 
+Each item is stored under a service name and an account, its key ID: `projector-agent` for the relay's key, and
+another service name for another secret, such as a hosted service's account token.
+
 No backend passes the key as an argument, where the process list would show it. Every call is bounded by a
 timeout, because a locked keychain may not answer: `security` shows an unlock dialog and waits for a person, so a
 process that runs past the timeout is killed, and a Windows call runs on a worker thread that is no longer waited
@@ -63,16 +66,16 @@ class MacOS:
     def usable(self) -> str:
         return "" if Path(SECURITY).is_file() else "security: not installed"
 
-    def store(self, key_id: str, secret: str, timeout: float) -> None:
-        command = f"add-generic-password -U -s {SERVICE} -a {key_id} -w {secret}\n"
+    def store(self, key_id: str, secret: str, timeout: float, service: str = SERVICE) -> None:
+        command = f"add-generic-password -U -s {service} -a {key_id} -w {secret}\n"
         run("security", [SECURITY, "-i"], timeout, input=command.encode(), secret=secret)
 
-    def read(self, key_id: str, timeout: float) -> str:
-        found = run("security", [SECURITY, "find-generic-password", "-s", SERVICE, "-a", key_id, "-w"], timeout)
+    def read(self, key_id: str, timeout: float, service: str = SERVICE) -> str:
+        found = run("security", [SECURITY, "find-generic-password", "-s", service, "-a", key_id, "-w"], timeout)
         return found.decode("utf-8", "replace").strip()
 
-    def delete(self, key_id: str, timeout: float) -> None:
-        run("security", [SECURITY, "delete-generic-password", "-s", SERVICE, "-a", key_id], timeout)
+    def delete(self, key_id: str, timeout: float, service: str = SERVICE) -> None:
+        run("security", [SECURITY, "delete-generic-password", "-s", service, "-a", key_id], timeout)
 
 
 class Linux:
@@ -81,16 +84,17 @@ class Linux:
     def usable(self) -> str:
         return "" if shutil.which(SECRET_TOOL) else "secret-tool: not installed"
 
-    def store(self, key_id: str, secret: str, timeout: float) -> None:
-        run("secret-tool", [SECRET_TOOL, "store", f"--label=Projector agent key {key_id}", "service", SERVICE,
-                            "key", key_id], timeout, input=secret.encode(), secret=secret)
+    def store(self, key_id: str, secret: str, timeout: float, service: str = SERVICE) -> None:
+        label = f"Projector agent key {key_id}" if service == SERVICE else f"{service} {key_id}"
+        run("secret-tool", [SECRET_TOOL, "store", f"--label={label}", "service", service, "key", key_id], timeout,
+            input=secret.encode(), secret=secret)
 
-    def read(self, key_id: str, timeout: float) -> str:
-        found = run("secret-tool", [SECRET_TOOL, "lookup", "service", SERVICE, "key", key_id], timeout)
+    def read(self, key_id: str, timeout: float, service: str = SERVICE) -> str:
+        found = run("secret-tool", [SECRET_TOOL, "lookup", "service", service, "key", key_id], timeout)
         return found.decode("utf-8", "replace").strip()
 
-    def delete(self, key_id: str, timeout: float) -> None:
-        run("secret-tool", [SECRET_TOOL, "clear", "service", SERVICE, "key", key_id], timeout)
+    def delete(self, key_id: str, timeout: float, service: str = SERVICE) -> None:
+        run("secret-tool", [SECRET_TOOL, "clear", "service", service, "key", key_id], timeout)
 
 
 class FILETIME(ctypes.Structure):
@@ -156,14 +160,14 @@ class Windows:
         return ""
 
     @staticmethod
-    def target(key_id: str) -> str:
-        return f"{SERVICE}:{key_id}"
+    def target(key_id: str, service: str = SERVICE) -> str:
+        return f"{service}:{key_id}"
 
-    def store(self, key_id: str, secret: str, timeout: float) -> None:
+    def store(self, key_id: str, secret: str, timeout: float, service: str = SERVICE) -> None:
         def write() -> None:
             data = secret.encode("utf-8")
             blob = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
-            credential = CREDENTIAL(Type=CRED_TYPE_GENERIC, TargetName=self.target(key_id),
+            credential = CREDENTIAL(Type=CRED_TYPE_GENERIC, TargetName=self.target(key_id, service),
                                     CredentialBlobSize=len(data),
                                     CredentialBlob=ctypes.cast(blob, ctypes.POINTER(ctypes.c_ubyte)),
                                     Persist=CRED_PERSIST_LOCAL_MACHINE, UserName=key_id)
@@ -171,11 +175,11 @@ class Windows:
                 raise KeychainError(f"Credential Manager: CredWriteW failed with error {last_error()}")
         bounded(write, timeout)
 
-    def read(self, key_id: str, timeout: float) -> str:
+    def read(self, key_id: str, timeout: float, service: str = SERVICE) -> str:
         def lookup() -> str:
             found = ctypes.POINTER(CREDENTIAL)()
             api = self.library()
-            if not api.CredReadW(self.target(key_id), CRED_TYPE_GENERIC, 0, ctypes.pointer(found)):
+            if not api.CredReadW(self.target(key_id, service), CRED_TYPE_GENERIC, 0, ctypes.pointer(found)):
                 raise KeychainError(f"Credential Manager: CredReadW failed with error {last_error()}")
             try:
                 credential = found.contents
@@ -184,9 +188,9 @@ class Windows:
                 api.CredFree(found)
         return str(bounded(lookup, timeout))
 
-    def delete(self, key_id: str, timeout: float) -> None:
+    def delete(self, key_id: str, timeout: float, service: str = SERVICE) -> None:
         def remove() -> None:
-            if not self.library().CredDeleteW(self.target(key_id), CRED_TYPE_GENERIC, 0):
+            if not self.library().CredDeleteW(self.target(key_id, service), CRED_TYPE_GENERIC, 0):
                 raise KeychainError(f"Credential Manager: CredDeleteW failed with error {last_error()}")
         bounded(remove, timeout)
 
@@ -200,16 +204,16 @@ def backend():
     return Linux()
 
 
-def store(key_id: str, secret: str, timeout: Optional[float] = None) -> str:
-    """Store `secret` under `key_id` and read it back, and answer the keychain's name. A backend counts as usable
-    only when both succeed in time."""
+def store(key_id: str, secret: str, timeout: Optional[float] = None, *, service: str = SERVICE) -> str:
+    """Store `secret` under `key_id` in `service` and read it back, and answer the keychain's name. A backend
+    counts as usable only when both succeed in time."""
     chosen = backend()
     missing = chosen.usable()
     if missing:
         raise KeychainError(missing)
     timeout = TIMEOUT if timeout is None else timeout
-    chosen.store(key_id, secret, timeout)
-    if chosen.read(key_id, timeout) != secret:
+    chosen.store(key_id, secret, timeout, service)
+    if chosen.read(key_id, timeout, service) != secret:
         raise KeychainError(f"{chosen.name}: the stored key did not read back")
     return chosen.name
 
@@ -219,16 +223,16 @@ def usable() -> str:
     return backend().usable()
 
 
-def read(key_id: str, timeout: Optional[float] = None) -> str:
+def read(key_id: str, timeout: Optional[float] = None, *, service: str = SERVICE) -> str:
     chosen = backend()
     missing = chosen.usable()
     if missing:
         raise KeychainError(missing)
-    found = chosen.read(key_id, TIMEOUT if timeout is None else timeout)
+    found = chosen.read(key_id, TIMEOUT if timeout is None else timeout, service)
     if not found:
         raise KeychainError(f"{chosen.name}: holds no key {key_id}")
     return found
 
 
-def delete(key_id: str, timeout: Optional[float] = None) -> None:
-    backend().delete(key_id, TIMEOUT if timeout is None else timeout)
+def delete(key_id: str, timeout: Optional[float] = None, *, service: str = SERVICE) -> None:
+    backend().delete(key_id, TIMEOUT if timeout is None else timeout, service)

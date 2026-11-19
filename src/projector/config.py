@@ -128,6 +128,7 @@ SETTINGS: dict[str, type] = {
     "ios.app": str,
     "ios.project": str,
     "ios.output": str,
+    "hosted.url": str,
 }
 
 # The least value `project config set` accepts for each whole-number key. The
@@ -157,7 +158,7 @@ PRIORITY = re.compile(r"[1-9][0-9]?")
 # The settings that say where your data goes. The owner of a repository's
 # default branch may not be you, so a value read from it applies only once you
 # allow it with `project config allow`.
-DESTINATIONS: frozenset[str] = frozenset({"agent.relay", "agent.s3_endpoint", "agent.s3_profile"})
+DESTINATIONS: frozenset[str] = frozenset({"agent.relay", "agent.s3_endpoint", "agent.s3_profile", "hosted.url"})
 
 # The forms `agent.relay` takes: `origin`, the checkout's own repository, a
 # GitHub repository the relay carries records through, or an S3 bucket and
@@ -245,6 +246,32 @@ def s3_endpoint(value: str) -> str:
     host = parts.hostname.lower()
     host = f"[{host}]" if ":" in host else host
     return f"https://{host}" + (f":{port}" if port not in (None, 443) else "")
+
+
+# The hosted Projector service `hosted.url` names when no file sets it.
+HOSTED_URL = "https://api.projector.bot"
+LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def hosted_url(value: str) -> str:
+    """A `hosted.url` value as requests and the review's OIDC audience use it: the scheme, the host in lowercase,
+    and its port unless it is the scheme's own. It takes `https://`, or `http://` for a service on this machine,
+    and refuses a path, query, fragment, or user info."""
+
+    try:
+        parts: Optional[urllib.parse.SplitResult] = urllib.parse.urlsplit(value)
+        port = parts.port if parts else None
+    except ValueError:
+        parts, port = None, None
+    scheme = parts.scheme.lower() if parts else ""
+    host = (parts.hostname or "").lower() if parts else ""
+    if (parts is None or not host or parts.path not in ("", "/") or parts.query or parts.fragment
+            or "@" in parts.netloc or value.endswith(("?", "#"))
+            or not (scheme == "https" or scheme == "http" and host in LOOPBACK)):
+        raise ConfigError(f"hosted.url is {value!r}, and it takes an https:// URL with no path, query, or user info, "
+                          f"such as {HOSTED_URL}, or http:// for a service on this machine")
+    host = f"[{host}]" if ":" in host else host
+    return f"{scheme}://{host}" + (f":{port}" if port not in (None, 443 if scheme == "https" else 80) else "")
 
 
 def s3_identity(endpoint: Optional[str], bucket: str, prefix: str) -> str:
@@ -460,6 +487,8 @@ def parse_value(key: str, text: str) -> Any:
             relay_location(text)
         elif key == "agent.s3_endpoint":
             s3_endpoint(text)
+        elif key == "hosted.url":
+            hosted_url(text)
     except ConfigError as error:
         raise UsageError(str(error)) from None
     return text

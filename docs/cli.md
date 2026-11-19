@@ -116,7 +116,8 @@ what it did to each:
     "Bash(project console)",
     "Bash(project console *)",
     "Bash(project ios *allow-untrusted*)",
-    "Bash(project review run *)"
+    "Bash(project review run *)",
+    "Bash(project hosted *)"
   ]
   ```
 
@@ -137,7 +138,9 @@ what it did to each:
   `project ios` command refuses an abbreviated option.
   `project review run` starts another agent with its own credentials, or the
   command `review.runner` names, so `Bash(project review run *)` asks before
-  it.
+  it. `project hosted` signs in to a hosted service, holds its account token,
+  and subscribes the account, so `Bash(project hosted *)` asks before each of
+  its commands.
   `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`,
   `start`, and `unclear` record your answer to an item an agent posted, your
   outcome for a request, your consent to a request's start action, your word
@@ -627,6 +630,12 @@ and the ID as `review.ci_app_id`, adds `<slug>[bot]` to `review.reviewers`
 in place of `github-actions[bot]`, and asks for the app's private key file,
 as
 [Post as a GitHub App](review-in-ci.md#post-as-a-github-app) describes.
+`--ci-app projector` posts them as the hosted service's app instead: the
+workflow passes `app: projector` and gives both jobs `id-token: write`,
+`init` adds `projector-review[bot]` to `review.reviewers` and sets no key
+secret, as
+[Post as Projector Review through a hosted service](review-in-ci.md#post-as-projector-review-through-a-hosted-service)
+describes.
 Once `review.ci` is `true`, every later `init`
 refreshes the workflow, replacing one nobody edited and keeping an edited
 one. A refresh takes the app's ID from `review.ci_app_id`, the runner
@@ -978,8 +987,10 @@ project config allow --remove agent.relay github:acme/agents
 `--list --json` prints the approvals as `allowed`. `--remove` exits 1 when
 there was no such approval. The destinations are `agent.relay`, as
 [Relay through a repository you choose](#relay-through-a-repository-you-choose)
-describes, and `agent.s3_endpoint` and `agent.s3_profile`, as
-[Relay through an S3 bucket](#relay-through-an-s3-bucket) describes.
+describes, `agent.s3_endpoint` and `agent.s3_profile`, as
+[Relay through an S3 bucket](#relay-through-an-s3-bucket) describes, and
+`hosted.url`, as [Use a hosted Projector service](#use-a-hosted-projector-service)
+describes.
 `allow` refuses a key that is not one with exit code 2.
 
 ### Keep paths inside the repository
@@ -1084,7 +1095,7 @@ reads, which are these:
 | `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
 | `review.ci` | boolean | none | the watch daemon, from the configuration of a checkout a live session works in, or, for a repository no live session has a checkout of, from the `.projector.toml` its default branch commits on GitHub, which announces no `UNREVIEWED` for a head from the repository's own branches while it is `true`, and `init`, as your answer to whether the repository's pull requests get a review in GitHub Actions: none asks at a terminal, `true` refreshes the workflow, and `false` asks no more; `init` writes it when you answer, as [Review pull requests in GitHub Actions](#review-pull-requests-in-github-actions) describes |
 | `review.ci_agents` | string | `claude` | `init` and `project review ci-workflow`, as the agents the CI review workflow runs, separated by commas, from `claude` and `codex`, each as `agent=<model>` to name the model its job runs, which `codex` needs, such as `claude, codex=<model>` |
-| `review.ci_app` | string | none | `init` and `project review ci-workflow`, as the public GitHub App the CI reviews post as, by its slug; none posts as `github-actions[bot]` |
+| `review.ci_app` | string | none | `init` and `project review ci-workflow`, as the public GitHub App the CI reviews post as, by its slug, or `projector` for the hosted service's app; none posts as `github-actions[bot]` |
 | `review.ci_app_id` | whole number | none | `init` and `project review ci-workflow`, as the ID of the app `review.ci_app` names, which `init --ci-app` looks up and records so a later refresh needs no lookup; set both with `init --ci-app` |
 | `review.ci_runs_on` | string | none | `init` and `project review ci-workflow`, as the labels of your own runners the CI review jobs run on, separated by commas, such as `self-hosted, linux, projector`; none runs them on `ubuntu-latest`; set it with `init --ci-runs-on` |
 | `review.ci_credential` | string | none | `init` and `project review ci-workflow`, as the kind of credential the CI reviews read: `subscription` or `api-key` picks the secret `init` asks for, and `runner` sets no secret and has the workflow pass none, for a runner that holds the credential itself; none asks for a subscription for `claude` and an API key for `codex`; set it with `init --ci-credential` |
@@ -1109,6 +1120,7 @@ reads, which are these:
 | `agent.s3_poll` | whole number | `10` | the watch daemon, from each registration's checkout, as the seconds between polls of its S3 location; at least `2` |
 | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
 | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
+| `hosted.url` | string | `https://api.projector.bot` | `project hosted` and the review action's `app: projector` input, as the address of the hosted Projector service: an `https://` URL with no path, query, or user info, or `http://` for a service on this machine. A destination, so a committed file's value applies only once you allow it; see [Use a hosted Projector service](#use-a-hosted-projector-service) |
 | `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, relative to the checkout's root, inside the checkout or the state directory unless `~/.projector.toml` sets it |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
@@ -4993,6 +5005,113 @@ the watch state root's `peers.json`.
 A rejection of a record that another key sealed, `other-key`, records that
 key's ID, and `project watch status` names the keys that are no peer of
 yours as unknown senders, beside the number of peers.
+
+## Use a hosted Projector service
+
+A hosted Projector service runs the parts of Projector that need a server,
+such as posting CI reviews as its own app, for an account you sign in to with
+GitHub. `project hosted` signs you in, shows the account, subscribes it,
+claims an installation of the service's app for it, and signs you out. Every command talks to the service `hosted.url` names, which
+defaults to `https://api.projector.bot`. Set it to use another instance:
+
+```sh
+project config set hosted.url https://projector.example.com
+```
+
+`hosted.url` is a destination, because the account token goes there. A value
+that a file the repository commits sets applies only once you allow it, as
+[Allow a destination a repository chooses](#allow-a-destination-a-repository-chooses)
+describes, and until you do, `project hosted` stops and names the command to
+run.
+
+### Sign in
+
+`project hosted login` signs in through GitHub's device flow. It prints a
+code and the page to enter it on, and waits while you approve it there:
+
+```console
+$ project hosted login
+Open https://github.com/login/device and enter the code ABCD-1234
+signed in to https://api.projector.bot as octocat, the macOS Keychain holds the account token, and key 3f9c0d2a6b1e8f47 is registered to the account
+```
+
+The service answers an account token, which the command keeps in the OS
+keychain under the service name `projector-hosted` and the service's address,
+so a token only ever goes back to the service that issued it. The command
+refuses to start when the keychain cannot be used, as `project agent key init`
+describes for the relay's key.
+
+It then registers `agent.key`'s public key to the account. The service seals
+a random challenge to the key, and the command opens it with the private key
+and sends it back, which proves the machine holds the key without sending it.
+A key belongs to one account, and the service refuses one that another
+account registered. Without `agent.key`, the command keeps the token and
+registers no key, and says why; run `project agent key init`, then
+`project hosted login` again.
+
+### Show the account
+
+`project hosted status` prints the account's login, plan, subscription
+status, paid seats, and registered keys:
+
+```console
+$ project hosted status
+service: https://api.projector.bot
+login: octocat
+plan: none
+subscription: none
+paid seats: 0
+keys: 3f9c0d2a6b1e8f47 (registered 2026-11-19T00:00:00Z)
+```
+
+`--json` prints the service's answer, with `url` beside it.
+
+### Subscribe
+
+`project hosted subscribe <plan>` opens the page that subscribes the account
+to the plan, in your browser. `--no-browser` prints its address instead. A
+plan sold by the seat, `team`, needs `--seats` with how many, and the command
+refuses it without them before it calls the service:
+
+```sh
+project hosted subscribe team --seats 4 --no-browser
+```
+
+The service names its plans: a plan it does not sell is refused with the
+list of those it does.
+
+### Claim an installation
+
+An organization's installation of the service's app can have no payer, such
+as one made before the service recorded installations, and the service
+refuses its reviews with `402` until someone pays for it. An admin of the
+organization, or the user an account installation belongs to, claims it:
+
+```sh
+project hosted claim acme
+```
+
+On success the command says that you now pay for the installation on `acme`,
+so its reviews count against your plan. Claiming needs a paid plan first, so
+an account without one is told to run `project hosted subscribe`. An
+installation that already has a payer cannot be claimed, and the command
+says so. Anyone but an admin is refused with the service's words, which can
+also say that an owner of the organization must first accept the app's
+organization members permission in the organization's installation settings
+on GitHub, because the service reads the caller's role through that
+permission.
+
+### Sign out
+
+`project hosted logout` revokes the account token on the service and removes
+it from the keychain. A token the service no longer knows is removed too.
+
+### When the service refuses
+
+Each command prints the service's own words and exits non-zero. A `401`,
+for a token that is missing, expired, or revoked, adds that you run
+`project hosted login`. A `402`, for an account with no paid subscription,
+adds the address the service gives to subscribe at.
 
 ## Put an iOS app on a device
 

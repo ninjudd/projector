@@ -51,6 +51,11 @@ def hosted(labels: Optional[list[str]]) -> bool:
 # The secret holding a GitHub App's private key. The workflow passes it as the action's `app-private-key` input,
 # never as `env`, which would reach every step of the action, so only the step that mints the app's token gets it.
 APP_KEY = "PROJECTOR_APP_PRIVATE_KEY"
+# The app slug `--ci-app` takes for the hosted service's app. The action's `app: projector` input trades the job's
+# OIDC token for the service's installation token, so the workflow passes no key, and the reviews post as the
+# service's app.
+HOSTED_APP = "projector"
+HOSTED_LOGIN = "projector-review[bot]"
 HEADER = "# Written by `project init --ci-review`, which replaces this file while nobody has edited it.\n"
 DIGEST = re.compile(r"\A" + re.escape(HEADER) + r"# projector-workflow sha256=([0-9a-f]{64})\n")
 
@@ -109,7 +114,7 @@ def format_runs_on(labels: list[str]) -> str:
     return ", ".join(labels)
 
 
-def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
+def body(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] = None,
          runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
     if credential == RUNNER and hosted(runs_on):
         raise UsageError("a GitHub-hosted runner holds no credential of yours, so the runner credential needs "
@@ -118,8 +123,10 @@ def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
     template = resources.files("projector").joinpath("templates/review-workflow.yml").read_text(encoding="utf-8")
     matrix = "\n".join(f"          - agent: {name}" + (f"\n            model: {model}" if model else "")
                        for name, model in agents.items())
-    app = ""
-    if app_id is not None:
+    app = id_token = ""
+    if app_id == HOSTED_APP:
+        app, id_token = f"          app: {HOSTED_APP}\n", "      id-token: write\n"
+    elif app_id is not None:
         app = f"          app-id: '{app_id}'\n          app-private-key: ${{{{ secrets.{APP_KEY} }}}}\n"
     # A secret that is not set reads as empty, which would hide the credential a runner's environment holds.
     env = ""
@@ -129,13 +136,13 @@ def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
     labels = runs_on or [HOSTED]
     runner = labels[0] if len(labels) == 1 else f"[{', '.join(labels)}]"
     return (template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@APP@", app)
-            .replace("@ENV@", env).replace("@RUNS_ON@", runner))
+            .replace("@ENV@", env).replace("@RUNS_ON@", runner).replace("@ID_TOKEN@", id_token))
 
 
-def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
+def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] = None,
                   runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
     """The review workflow for `agents`, calling the action at `action_ref`, posting as the GitHub App `app_id`
-    names when it is given, on the runners `runs_on` labels or a GitHub-hosted one, and passing no credential
+    names when it is given, or as the hosted service's app when it is `HOSTED_APP`, on the runners `runs_on` labels or a GitHub-hosted one, and passing no credential
     secret when `credential` is `runner`. Its second line records a digest of the rest, so a later `init` can
     tell a file nobody edited, which it replaces, from one somebody did."""
     text = body(action_ref, agents, app_id, runs_on, credential)
