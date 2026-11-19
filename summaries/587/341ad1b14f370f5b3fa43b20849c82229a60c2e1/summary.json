@@ -1,0 +1,80 @@
+{
+ "version": 1,
+ "name": "CI review plugin dependencies",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 587,
+  "title": "Install the plugins Projector depends on before a Claude CI review, so the review-pr skill loads",
+  "head": "341ad1b14f370f5b3fa43b20849c82229a60c2e1",
+  "headRef": "review-ci-plugin-deps",
+  "base": "e2429a5a45c4226eed76f64992f7976f99e14834",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector can review pull requests in GitHub Actions: its <code>actions/review</code> action installs an agent's CLI on the runner and has it run Projector's <code>review-pr</code> skill. For Claude, the action gives Claude Code Projector's source as a plugin with <code>--plugin-dir</code>, and the plugin supplies the skill.",
+   "Projector's plugin manifest, <code>.claude-plugin/plugin.json</code>, lists <code>gh-stack</code> as a dependency, and Claude Code loads no plugin whose dependency is missing. The runner had no <code>gh-stack</code>, so the plugin never loaded and the agent never had the skill. Most agents found the skill's files and followed them anyway. One didn't, published no verdict, and failed its job.",
+   "This change adds two commands to the action's install step. They register Projector's own source tree as a plugin marketplace, a catalogue of plugins that <code>.claude-plugin/marketplace.json</code> describes, and install <code>gh-stack</code> from it at the commit the catalogue pins. A test runs the install step against fake <code>npm</code> and <code>claude</code> commands, and the CI review documentation describes the step."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Marketplace</b>: a catalogue of Claude Code plugins. Projector's lists Projector itself and <code>gh-stack</code>, pinned to a tag and commit.</li><li><b>Dependency</b>: a plugin another plugin's manifest names. Claude Code refuses to load the dependent plugin until the dependency is installed.</li><li><b>Persistent runner</b>: a self-hosted runner that keeps its files, <code>~/.claude</code> included, from one job to the next.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The review of <code>98f788d</code> requested changes with one finding: on a persistent runner, <code>claude plugin install</code> leaves an older <code>gh-stack</code> in place after a Projector upgrade changes the pin. The author declined it, because no self-hosted runner reviews a repository yet.</p><p>The review of <code>341ad1b</code> keeps the finding open. <code>docs/self-hosted-runners.md</code> documents self-hosted Claude runners that keep <code>~/.claude</code> between jobs, so the step's comment and the CI review guide are already wrong for those runners. Since <code>98f788d</code>, the only change is a merge of <code>main</code>, which resolved a conflict in <code>docs/review-in-ci.md</code> by keeping both sides' text.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "action",
+   "title": "Install the dependencies before the review",
+   "kicker": "The action's install step adds the marketplace and installs gh-stack",
+   "intro": [
+    "Right after the Claude Code CLI is installed, the action registers <code>$PROJECTOR_ROOT</code>, the Projector source tree the action runs from, as a marketplace. It then installs <code>gh-stack@projector</code>, meaning the <code>gh-stack</code> plugin from the marketplace named <code>projector</code>. With the dependency installed, the plugin that <code>--plugin-dir</code> passes loads, and with it the <code>review-pr</code> skill.",
+    "The Codex path needs nothing like this: the action links Projector's skills straight into the Codex home, and Codex checks no dependencies."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "actions/review/action.yml",
+     "note": "Two new commands in the <code>claude</code> branch of the <b>Install the agent</b> step.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "In a throwaway Claude Code 2.1.327 config, both commands exit 0 when run a second time, and adding the marketplace again from another path repoints it and also exits 0. This review itself ran with the plugin loaded."
+      },
+      {
+       "kind": "flag",
+       "line": 161,
+       "text": "Open finding: once <code>gh-stack</code> is installed, <code>install</code> keeps it at the old version even after a Projector upgrade changes the pin, so a persistent runner keeps the old <code>gh-stack</code>. Running <code>claude plugin update gh-stack@projector</code> after the install brings it to the pin."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Test and documentation",
+   "kicker": "A test of the install step's commands, and a sentence in the CI review guide",
+   "intro": [
+    "The new test runs the action's install step with fake <code>npm</code> and <code>claude</code> commands that log how they're called. It checks that the step adds the marketplace before installing, and that it installs each dependency the manifest names from a marketplace that carries that dependency. The existing helper's fake <code>npm</code> now leaves a fake agent CLI behind, so the new <code>claude plugin</code> calls in later steps have something to run."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_ci.py"
+    },
+    {
+     "path": "docs/review-in-ci.md",
+     "note": "Describes the new step under what each review job does."
+    }
+   ]
+  }
+ ]
+}
