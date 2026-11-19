@@ -1,0 +1,133 @@
+{
+ "version": 1,
+ "name": "Review in CI",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 580,
+  "title": "Post CI summaries as the review app, and keep the workflow's token for the push and the rebuild event",
+  "head": "5b653ad8277a5d4604c46fb03f52b89b143805cb",
+  "headRef": "review-ci-summary-app",
+  "base": "1b28906f7b3fc3b2630a0b0fa27e755a36c5ea15",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector can review pull requests in a GitHub Actions workflow. That workflow has two jobs. The <b>review</b> job runs an agent that reviews the pull request. The <b>summary</b> job then publishes the summary page the review wrote, posts a comment linking to it, and adds the link to the bottom of the pull request's description.",
+   "A repository can have the reviews post under a GitHub App's name, such as <code>projector-review[bot]</code>, rather than as <code>github-actions[bot]</code>. Before this change only the review job used the app, so each summary comment still came from <code>github-actions[bot]</code>. This change has the summary job mint the app's token too, so the comment and the description link post as the app.",
+   "The app deliberately has no <code>contents: write</code> permission. Its private key can mint tokens for every repository the app is installed on, and with that permission a leaked key could push code to all of them. So the two things in the summary job that need that permission keep using the workflow's own token:",
+   "<ol><li><b>Pushing the summaries ref.</b> <code>git push</code> of <code>refs/projector/summaries</code> uses the credentials <code>actions/checkout</code> left in the checkout, which belong to the workflow's token. Changing <code>GH_TOKEN</code> does not affect git.</li><li><b>Starting the site rebuild.</b> <code>project summary publish</code> sends a <code>repository_dispatch</code> event, and GitHub requires <code>contents: write</code> for that. A new variable, <code>PROJECTOR_DISPATCH_TOKEN</code>, gives the dispatch its own token. The action sets it to <code>github.token</code>.</li></ol>",
+   "Without an app, both jobs behave as before. In a session, outside CI, the variable is unset and the dispatch uses <code>GH_TOKEN</code> as it always has."
+  ],
+  "cards": [
+   {
+    "id": "tokens",
+    "title": "Which token does what in the summary job",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Action</th><th>Token</th></tr></thead><tbody><tr><td>Post the summary comment</td><td class=\"r\">App, when set</td></tr><tr><td>Edit the description's link</td><td class=\"r\">App, when set</td></tr><tr><td>Push <code>refs/projector/summaries</code></td><td class=\"r\">Workflow</td></tr><tr><td>Send the rebuild event</td><td class=\"r\">Workflow</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>App token:</b> a short-lived installation token that <code>actions/create-github-app-token</code> mints from the app's private key.</li><li><b>Workflow token:</b> <code>github.token</code>, which GitHub gives each job with the permissions the workflow grants it.</li><li><b>Rebuild event:</b> the <code>repository_dispatch</code> event that starts the repository's Projector site build.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "action",
+   "title": "The action and its workflows",
+   "kicker": "The summary job mints the app's token and posts with it",
+   "intro": [
+    "The shared action at <code>actions/review/action.yml</code> runs both jobs, chosen by its <code>step</code> input. Its <b>Mint the app's token</b> step used to run only for <code>step: review</code>. Now it runs whenever the caller passes an <code>app-id</code>, so the summary job gets the token too.",
+    "The workflows then have to pass <code>app-id</code> and <code>app-private-key</code> to the summary job as well. The template that <code>project init --ci-review</code> generates and Projector's own workflow both do so, and both still pass the key only as an input, never as <code>env</code>, so only the mint step sees it."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The summary job's <code>actions/checkout@v4</code>, inside the action, runs before the mint step with the default <code>github.token</code>. Its persisted credentials are what <code>git push</code> uses, so the push does not use the app's token."
+    }
+   ],
+   "files": [
+    {
+     "path": "actions/review/action.yml",
+     "note": "The mint step now runs in both jobs. The summary step takes its token and login from it, and sets <code>PROJECTOR_DISPATCH_TOKEN</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>PROJECTOR_TOKEN_LOGIN</code> must name the same account as <code>GH_TOKEN</code>. The summary comment code keeps one comment per account and finds the account's old comments by this login.",
+       "line": 206
+      },
+      {
+       "kind": "context",
+       "text": "The minted token carries the review's permission set, which includes <code>contents: read</code> but never <code>contents: write</code>.",
+       "line": 100
+      }
+     ]
+    },
+    {
+     "path": "src/projector/templates/review-workflow.yml",
+     "note": "A second <code>@APP@</code> slot gives the summary job the app's inputs. <code>ci.body</code> fills both slots with <code>str.replace</code>, and leaves both empty without an app."
+    },
+    {
+     "path": ".github/workflows/projector-review.yml",
+     "note": "Projector's own workflow passes its app to the summary job too."
+    }
+   ]
+  },
+  {
+   "id": "dispatch",
+   "title": "The rebuild event's own token",
+   "kicker": "How summary publish sends the dispatch with a different token",
+   "intro": [
+    "<code>project summary publish</code> runs every <code>gh</code> call with <code>GH_TOKEN</code>. In the summary job that is now the app's token, which GitHub refuses for <code>repository_dispatch</code>. So <code>gh</code> takes an optional <code>token</code> that replaces <code>GH_TOKEN</code> for one call, and <code>dispatch</code> passes it the value of <code>PROJECTOR_DISPATCH_TOKEN</code>.",
+    "An unset or empty variable leaves <code>token</code> as <code>None</code>, so the call inherits the environment as before."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "<code>gh</code> gains a <code>token</code> argument. <code>dispatch</code>, whose only caller is <code>publish</code>, uses it for both of its events.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Only the two dispatch calls pass <code>token</code>. Every other call a CI publish makes, reading Pages, the diff, and the timeline, posting the comment, and editing the description, fits the app token's permissions. Checked by reading every <code>gh</code> call on the publish path.",
+       "line": 1157
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and tests",
+   "kicker": "The CI guide, the plan, and the tests that pin the token split",
+   "intro": [
+    "The CI guide now says the summary job posts as the app and names the two steps that keep the workflow's token. The <code>review-in-ci</code> plan records the decision. The tests check that both jobs' posting steps take the token and login from the mint step, that the key appears only as an input, and that <code>dispatch</code> uses the variable when it is set."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "<code>docs/cli.md</code>, where it describes the two dispatch events of <code>summary publish</code>, does not mention <code>PROJECTOR_DISPATCH_TOKEN</code> yet. The review lists that as a suggestion."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/review-in-ci.md",
+     "note": "The app section now covers the summary job and the two steps that keep the workflow's token."
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "note": "A new decision bullet records why the summary posts as the app."
+    },
+    {
+     "path": "tests/test_ci.py",
+     "note": "One test now covers the review step and the summary step together. The test it replaces looked for a step using only the workflow token, and no such step remains."
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "A helper runs <code>dispatch</code> with a controlled environment and records each call's token."
+    }
+   ]
+  }
+ ]
+}
