@@ -123,10 +123,15 @@ number. Each job:
    Claude, it also adds that source as a plugin marketplace and installs the
    plugins Projector's plugin depends on, at the versions the marketplace
    pins. Claude Code loads no plugin whose dependency is missing, so without
-   them the agent would have no `review-pr` skill.
-5. **Fails loudly.** When the agent publishes no verdict, the job deletes
-   the start comment, takes `reviewing` off, posts one comment that says
-   why, and fails.
+   them the agent would have no `review-pr` skill. Once its own checks pass,
+   and before the agent starts, the command adds the `reviewing` label. In a
+   measured run, the pull request showed the review 17 seconds after the
+   push, rather than at 70 seconds, when the agent's `setup` posts the start
+   comment.
+5. **Fails loudly.** When the agent publishes no verdict, whether it could
+   not start, ran out of time, or exited, the job deletes the start
+   comment, takes `reviewing` off, posts one comment that says why, and
+   fails.
 
 A second job, `summary`, starts once every review job has ended. It holds
 the only token that can push `refs/projector/summaries`, and it runs no
