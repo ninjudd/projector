@@ -250,6 +250,9 @@ def runner(agent: Optional[str], configured: object) -> tuple[str, Optional[str]
 def refusal(pr: dict, repo: str) -> Optional[str]:
     """Why a run must not review the pull request, whatever started it, or None. A fork's head is code an
     outsider wrote, and a draft waits on its author."""
+    if pr.get("state") != "open":
+        state = "merged" if pr.get("merged") else pr.get("state") or "not open"
+        return f"it is {state}, and only an open pull request is reviewed"
     head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name")
     if (head_repo or "").lower() != repo.lower():
         return f"its head is in {head_repo or 'a deleted fork'}, not {repo}, and a run reviews no fork's head"
@@ -301,6 +304,16 @@ def run_link(environ: dict[str, str]) -> Optional[str]:
     return f"{server}/{repository}/actions/runs/{run_id}" if server and repository and run_id else None
 
 
+def skip(message: str, environ: dict[str, str]) -> int:
+    """Say why the run reviews nothing, as a notice on the job too under GitHub Actions, and pass: a pull request
+    with nothing to review here is no failure, such as a draft its author held while a job for the head before
+    it started."""
+    print(message)
+    if environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::notice title=Review skipped::{message}")
+    return 0
+
+
 def failure_body(head: str, model: str, reason: str, link: Optional[str]) -> str:
     where = f"\n\nThe run: {link}" if link else ""
     return (f"<!-- projector-run v=1 sha={head} model={model} result=failed -->\n"
@@ -345,7 +358,8 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
         context_listed: object = None, environ: Optional[dict[str, str]] = None) -> int:
     """Review the head of pull request `number` in the repository of `checkout` with an agent, as
     docs/projects/review-in-ci/readme.md § 2.1 step 6 describes. Returns the exit code: 0 once a verdict on the
-    head stands, or the run published one on a head pushed while it ran, and 1 when the agent published none."""
+    head stands, the run published one on a head pushed while it ran, or the pull request has nothing to review
+    here, and 1 when the agent published none."""
     review.model_key(model)
     review.valid_loop(loop)
     if mode not in MODES:
@@ -353,22 +367,20 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
     chosen, command = runner(agent, configured_runner)
     checkout = review.checkout_root(checkout)
     repo = review.origin_repo(checkout)
-    pr = review.pull_request(repo, number)
-    why = refusal(pr, repo)
-    if why:
-        raise ReviewError(f"{repo}#{number} is not reviewed here: {why}")
+    base = dict(os.environ if environ is None else environ)
+    pr = review.read_pull_request(repo, number)
+    if why := refusal(pr, repo):
+        return skip(f"{repo}#{number} is not reviewed here: {why}", base)
     head = pr["head"]["sha"]
     reviewer = review.reviewer_login(None, configured_reviewer, review.authenticated_login())
     reviews = review.reviewer_reviews(repo, number, reviewer)
     earlier = verdicts_on(reviews, head, model)
     if earlier and not rereview:
-        print(f"{reviewer} already reviewed {repo}#{number} at {head[:7]} with {model}: {earlier[0].get('url')}; "
-              "pass --rereview to review it again")
-        return 0
+        return skip(f"{reviewer} already reviewed {repo}#{number} at {head[:7]} with {model}: "
+                    f"{earlier[0].get('url')}; pass --rereview to review it again", base)
     replace = stale_start(review.start_comments(repo, number, reviewer), reviews, head, model)
     token = review.reviewer_token(reviewer)
 
-    base = dict(os.environ if environ is None else environ)
     names = context_repos(repo, context_listed, base)
     folder = Path(base.get(CONTEXT_DIR) or tempfile.mkdtemp(prefix="projector-review-context-")) if names else None
     context = clone_context(names, folder, base.get(CONTEXT_TOKEN) or None) if folder is not None else ()

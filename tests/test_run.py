@@ -161,27 +161,55 @@ class RunTests(unittest.TestCase):
                                                environment["PROJECTOR_MODEL"]))
         self.assertIn("review-pr skill to review pull request 1 in acme/app", self.seen()["stdin"])
 
-    def test_run_refuses_a_fork_or_a_draft_before_it_starts_anything(self) -> None:
-        # A manual dispatch can name any pull request, so the command, not the workflow's `if`, is the boundary.
+    def assert_skipped(self, why: str) -> None:
+        """A run under GitHub Actions passes, says `why` in one notice, and starts, labels, and posts nothing."""
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+            self.assertEqual(0, self.review_run(), "a pull request with nothing to review here fails no job")
+
+        notices = [line for line in self.out.getvalue().splitlines() if line.startswith("::notice")]
+        self.assertEqual(1, len(notices), self.out.getvalue())
+        self.assertIn(why, notices[0])
+        self.assertFalse(self.started())
+        self.assertEqual(([], []), (self.github.posted, self.github.edits),
+                         "a skipped run leaves no failure comment and no reviewing label")
+
+    def test_a_draft_held_while_its_job_started_passes_the_job_with_a_notice(self) -> None:
+        # An author who holds a pull request as a draft to push a fix turned the job for the head before it red,
+        # when that job read the pull request after the hold.
+        self.github.pr["draft"] = True
+
+        self.assert_skipped("it is a draft")
+
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": ""}):
+            self.assertEqual(0, self.review_run())
+        self.assertIn("it is a draft", self.out.getvalue())
+        self.assertNotIn("::notice", self.out.getvalue(), "a notice outside GitHub Actions is noise")
+
+    def test_a_closed_or_merged_pull_request_passes_the_job(self) -> None:
+        # A job queued behind a merge read the pull request as closed and failed.
+        for change, why in ((dict(state="closed"), "it is closed"), (dict(state="closed", merged=True), "it is merged")):
+            with self.subTest(why=why):
+                self.setUp()
+                self.github.pr.update(change)
+
+                self.assert_skipped(why)
+
+    def test_a_forks_pull_request_passes_the_job_without_starting_its_agent(self) -> None:
+        # A manual dispatch can name any pull request, so the command, not the workflow's `if`, is the boundary,
+        # and a dispatch that names a fork's has nothing to review here rather than a failure.
         for change, why in ((lambda pr: pr["head"].update(repo={"full_name": "outsider/app"}), "outsider/app"),
-                            (lambda pr: pr["head"].update(repo=None), "a deleted fork"),
-                            (lambda pr: pr.update(draft=True), "it is a draft")):
+                            (lambda pr: pr["head"].update(repo=None), "a deleted fork")):
             with self.subTest(why=why):
                 self.setUp()
                 change(self.github.pr)
 
-                with self.assertRaisesRegex(ReviewError, why):
-                    self.review_run()
-
-                self.assertFalse(self.started(), "no agent reads an outsider's diff or a draft")
-                self.assertEqual([], self.github.posted)
+                self.assert_skipped(why)
 
     def test_run_skips_a_head_the_reviewer_and_model_already_reviewed(self) -> None:
         self.github.reviews.append({"id": 900, "url": "https://example.test/900", "at": "2026-11-18T10:00:00Z",
                                     "body": verdict_body(HEAD)})
 
-        self.assertEqual(0, self.review_run())
-        self.assertFalse(self.started(), "a re-run of a finished job posts nothing")
+        self.assert_skipped("pass --rereview to review it again")
 
         self.github.reviews[0]["body"] = verdict_body(HEAD, model="gpt-5.5")
         self.assertEqual(0, self.review_run())
@@ -228,11 +256,12 @@ class RunTests(unittest.TestCase):
             with self.subTest(behavior=behavior):
                 self.setUp()
                 self.behave(behavior)
-                with mock.patch.dict(os.environ, {"GITHUB_SERVER_URL": "https://github.com",
+                with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "GITHUB_SERVER_URL": "https://github.com",
                                                   "GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "77"}):
                     code = self.review_run()
 
-                self.assertEqual(1, code)
+                self.assertEqual(1, code, "an agent that publishes nothing fails the job, unlike a skipped run")
+                self.assertNotIn("::notice", self.out.getvalue())
                 self.assertEqual(1, len(self.github.posted))
                 self.assertIn(reason, self.github.posted[0])
                 self.assertIn(f"https://github.com/{REPO}/actions/runs/77", self.github.posted[0])
@@ -372,10 +401,7 @@ class RunTests(unittest.TestCase):
                 self.setUp()
                 change()
 
-                try:
-                    self.assertEqual(0, self.review_run())
-                except ReviewError:
-                    pass
+                self.assertEqual(0, self.review_run())
 
                 self.assertEqual([], self.github.edits, why)
                 self.assertFalse(self.started())
