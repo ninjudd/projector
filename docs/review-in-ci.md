@@ -103,10 +103,15 @@ number. Each job:
    describes. The action runs Projector from the source at the ref the
    workflow names, not from an installed package, so it sets
    `PROJECTOR_VERSION` from that source's `.claude-plugin/plugin.json`. The
-   review names that version in its start comment and its signature.
-5. **Fails loudly.** When the agent publishes no verdict, the job deletes
-   the start comment, takes `reviewing` off, posts one comment that says
-   why, and fails.
+   review names that version in its start comment and its signature. Once
+   its own checks pass, and before the agent starts, the command adds the
+   `reviewing` label. In a measured run, the pull request showed the
+   review 17 seconds after the push, rather than at 70 seconds, when the
+   agent's `setup` posts the start comment.
+5. **Fails loudly.** When the agent publishes no verdict, whether it could
+   not start, ran out of time, or exited, the job deletes the start
+   comment, takes `reviewing` off, posts one comment that says why, and
+   fails.
 
 A second job, `summary`, starts once every review job has ended. It holds
 the only token that can push `refs/projector/summaries`, and it runs no

@@ -412,6 +412,19 @@ class SetupTests(ReviewCase):
         self.assertIn("removed the clean label", out)
         self.assertEqual([], self.github.created_labels, "a label the repository has is used as it is")
 
+    def test_setup_after_review_run_labeled_the_pull_request_changes_no_label(self) -> None:
+        # `project review run` adds `reviewing` before it starts the agent, so the agent's setup finds it on the pull
+        # request; a setup that re-added it, or failed on it, would break every CI review.
+        self.github.repo_labels.add("reviewing")
+        self.github.pr["labels"] = [{"name": "reviewing"}]
+
+        code, out, err = self.setup_review()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(["reviewing"], self.github.labels())
+        self.assertEqual([], [args for args, _ in self.github.calls if args[:2] == ["pr", "edit"]])
+        self.assertNotIn("added the reviewing label", out)
+
     def test_a_verdict_read_that_fails_keeps_the_clean_label_and_finishes_the_setup(self) -> None:
         # The start comment is already posted and the lock held when setup reads the verdicts.
         self.github.repo_labels.update({"clean", "reviewing"})
