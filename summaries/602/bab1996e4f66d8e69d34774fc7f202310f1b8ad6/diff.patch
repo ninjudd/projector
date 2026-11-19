@@ -1,0 +1,1614 @@
+diff --git a/actions/review/action.yml b/actions/review/action.yml
+index 9528ef5f..62d0fb75 100644
+--- a/actions/review/action.yml
++++ b/actions/review/action.yml
+@@ -40,6 +40,9 @@ inputs:
+   app-private-key:
+     description: The private key of the app app-id names, from the PROJECTOR_APP_PRIVATE_KEY secret. Only the step that mints the app's token reads it.
+     default: ''
++  app:
++    description: "`projector` posts the review as the hosted Projector service's app, with a token the service at hosted.url mints for the job's OIDC token, so no private key is involved. The job needs `id-token: write`. Leave app-id empty."
++    default: ''
+ runs:
+   using: composite
+   steps:
+@@ -127,6 +130,18 @@ runs:
+         permission-checks: read
+         permission-actions: read
+         permission-pages: read
++    # The hosted service mints the app's token for the repository the job's OIDC token names, so this step holds
++    # no key. A 402 or 403 fails the job with the service's words, such as where to subscribe.
++    - name: Request the hosted service's token
++      id: hosted
++      if: inputs.app != ''
++      shell: bash
++      env:
++        APP: ${{ inputs.app }}
++        APP_ID: ${{ inputs.app-id }}
++      run: |
++        PYTHONPATH="$PROJECTOR_ROOT/src" python3 -P -c \
++          'import sys; from projector import hosted; sys.exit(hosted.review_token_step())'
+     # The context repositories a review reads, from the committed .projector.toml as Projector reads it, from the
+     # default branch, so a pull request cannot widen what its own review's clone token reaches. An installation
+     # token reaches one account's repositories, so only those of this repository's owner are listed.
+@@ -215,8 +230,8 @@ runs:
+       if: inputs.step == 'review'
+       shell: bash
+       env:
+-        GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+-        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
++        GH_TOKEN: ${{ steps.app.outputs.token || steps.hosted.outputs.token || github.token }}
++        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || steps.hosted.outputs.login || 'github-actions[bot]' }}
+         # Only the review step hands its summary off; the summary job's publish pushes it.
+         PROJECTOR_SUMMARY_HANDOFF: ${{ runner.temp }}/projector-summary
+         # Outside /tmp, which Codex's sandbox lets the agent write.
+@@ -274,8 +289,8 @@ runs:
+       # The links post as the app when there is one. Its token cannot push, so the summaries ref goes up with the
+       # checkout's own credentials and the site's rebuild event with the workflow's token.
+       env:
+-        GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+-        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
++        GH_TOKEN: ${{ steps.app.outputs.token || steps.hosted.outputs.token || github.token }}
++        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || steps.hosted.outputs.login || 'github-actions[bot]' }}
+         PROJECTOR_DISPATCH_TOKEN: ${{ github.token }}
+         PR: ${{ inputs.pr }}
+       run: |
+diff --git a/docs/cli.md b/docs/cli.md
+index b46fd77d..a4c0d456 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -116,7 +116,8 @@ what it did to each:
+     "Bash(project console)",
+     "Bash(project console *)",
+     "Bash(project ios *allow-untrusted*)",
+-    "Bash(project review run *)"
++    "Bash(project review run *)",
++    "Bash(project hosted *)"
+   ]
+   ```
+ 
+@@ -137,7 +138,9 @@ what it did to each:
+   `project ios` command refuses an abbreviated option.
+   `project review run` starts another agent with its own credentials, or the
+   command `review.runner` names, so `Bash(project review run *)` asks before
+-  it.
++  it. `project hosted` signs in to a hosted service, holds its account token,
++  and subscribes the account, so `Bash(project hosted *)` asks before each of
++  its commands.
+   `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`,
+   `start`, and `unclear` record your answer to an item an agent posted, your
+   outcome for a request, your consent to a request's start action, your word
+@@ -627,6 +630,12 @@ and the ID as `review.ci_app_id`, adds `<slug>[bot]` to `review.reviewers`
+ in place of `github-actions[bot]`, and asks for the app's private key file,
+ as
+ [Post as a GitHub App](review-in-ci.md#post-as-a-github-app) describes.
++`--ci-app projector` posts them as the hosted service's app instead: the
++workflow passes `app: projector` and gives both jobs `id-token: write`,
++`init` adds `projector-review[bot]` to `review.reviewers` and sets no key
++secret, as
++[Post as Projector Review through a hosted service](review-in-ci.md#post-as-projector-review-through-a-hosted-service)
++describes.
+ Once `review.ci` is `true`, every later `init`
+ refreshes the workflow, replacing one nobody edited and keeping an edited
+ one. A refresh takes the app's ID from `review.ci_app_id`, the runner
+@@ -978,8 +987,10 @@ project config allow --remove agent.relay github:acme/agents
+ `--list --json` prints the approvals as `allowed`. `--remove` exits 1 when
+ there was no such approval. The destinations are `agent.relay`, as
+ [Relay through a repository you choose](#relay-through-a-repository-you-choose)
+-describes, and `agent.s3_endpoint` and `agent.s3_profile`, as
+-[Relay through an S3 bucket](#relay-through-an-s3-bucket) describes.
++describes, `agent.s3_endpoint` and `agent.s3_profile`, as
++[Relay through an S3 bucket](#relay-through-an-s3-bucket) describes, and
++`hosted.url`, as [Use a hosted Projector service](#use-a-hosted-projector-service)
++describes.
+ `allow` refuses a key that is not one with exit code 2.
+ 
+ ### Keep paths inside the repository
+@@ -1084,7 +1095,7 @@ reads, which are these:
+ | `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
+ | `review.ci` | boolean | none | the watch daemon, from the configuration of a checkout a live session works in, or, for a repository no live session has a checkout of, from the `.projector.toml` its default branch commits on GitHub, which announces no `UNREVIEWED` for a head from the repository's own branches while it is `true`, and `init`, as your answer to whether the repository's pull requests get a review in GitHub Actions: none asks at a terminal, `true` refreshes the workflow, and `false` asks no more; `init` writes it when you answer, as [Review pull requests in GitHub Actions](#review-pull-requests-in-github-actions) describes |
+ | `review.ci_agents` | string | `claude` | `init` and `project review ci-workflow`, as the agents the CI review workflow runs, separated by commas, from `claude` and `codex`, each as `agent=<model>` to name the model its job runs, which `codex` needs, such as `claude, codex=<model>` |
+-| `review.ci_app` | string | none | `init` and `project review ci-workflow`, as the public GitHub App the CI reviews post as, by its slug; none posts as `github-actions[bot]` |
++| `review.ci_app` | string | none | `init` and `project review ci-workflow`, as the public GitHub App the CI reviews post as, by its slug, or `projector` for the hosted service's app; none posts as `github-actions[bot]` |
+ | `review.ci_app_id` | whole number | none | `init` and `project review ci-workflow`, as the ID of the app `review.ci_app` names, which `init --ci-app` looks up and records so a later refresh needs no lookup; set both with `init --ci-app` |
+ | `review.ci_runs_on` | string | none | `init` and `project review ci-workflow`, as the labels of your own runners the CI review jobs run on, separated by commas, such as `self-hosted, linux, projector`; none runs them on `ubuntu-latest`; set it with `init --ci-runs-on` |
+ | `review.ci_credential` | string | none | `init` and `project review ci-workflow`, as the kind of credential the CI reviews read: `subscription` or `api-key` picks the secret `init` asks for, and `runner` sets no secret and has the workflow pass none, for a runner that holds the credential itself; none asks for a subscription for `claude` and an API key for `codex`; set it with `init --ci-credential` |
+@@ -1109,6 +1120,7 @@ reads, which are these:
+ | `agent.s3_poll` | whole number | `10` | the watch daemon, from each registration's checkout, as the seconds between polls of its S3 location; at least `2` |
+ | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
+ | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
++| `hosted.url` | string | `https://api.projector.bot` | `project hosted` and the review action's `app: projector` input, as the address of the hosted Projector service: an `https://` URL with no path, query, or user info, or `http://` for a service on this machine. A destination, so a committed file's value applies only once you allow it; see [Use a hosted Projector service](#use-a-hosted-projector-service) |
+ | `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, relative to the checkout's root, inside the checkout or the state directory unless `~/.projector.toml` sets it |
+ 
+ `review.allow_approve` is off unless it is exactly `true`; an unset key means
+@@ -4994,6 +5006,117 @@ A rejection of a record that another key sealed, `other-key`, records that
+ key's ID, and `project watch status` names the keys that are no peer of
+ yours as unknown senders, beside the number of peers.
+ 
++## Use a hosted Projector service
++
++A hosted Projector service runs the parts of Projector that need a server,
++such as posting CI reviews as its own app, for an account you sign in to with
++GitHub. `project hosted` signs you in, shows the account, subscribes it,
++claims an installation of the service's app for it, and signs you out. Every command talks to the service `hosted.url` names, which
++defaults to `https://api.projector.bot`. Set it to use another instance:
++
++```sh
++project config set hosted.url https://projector.example.com
++```
++
++`hosted.url` is a destination, because the account token goes there. A value
++that a file the repository commits sets applies only once you allow it, as
++[Allow a destination a repository chooses](#allow-a-destination-a-repository-chooses)
++describes, and until you do, `project hosted` stops and names the command to
++run.
++
++### Sign in
++
++`project hosted login` signs in through GitHub's device flow. It prints a
++code and the page to enter it on, and waits while you approve it there:
++
++```console
++$ project hosted login
++Open https://github.com/login/device and enter the code ABCD-1234
++signed in to https://api.projector.bot as octocat, the macOS Keychain holds the account token, and key 3f9c0d2a6b1e8f47 is registered to the account
++```
++
++The service answers an account token, which the command keeps in the OS
++keychain under the service name `projector-hosted` and the service's address,
++so a token only ever goes back to the service that issued it. The command
++refuses to start when the keychain cannot be used, as `project agent key init`
++describes for the relay's key.
++
++It then registers `agent.key`'s public key to the account. The service seals
++a challenge to the key: the label `projector hosted key challenge v1` and a
++NUL byte, then 32 random bytes. The command opens it with the private key and
++sends back only the 32 random bytes, which proves the machine holds the key
++without sending it. The same key opens your relay records, so the command
++refuses anything else the service seals to it, sends nothing back, and shows
++none of it: a service that passed off a relay record as a challenge learns
++nothing from the answer. A key belongs to one account, and the service refuses one that another
++account registered. Without `agent.key`, the command keeps the token and
++registers no key, and says why; run `project agent key init`, then
++`project hosted login` again.
++
++### Show the account
++
++`project hosted status` prints the account's login, plan, subscription
++status, paid seats, and registered keys:
++
++```console
++$ project hosted status
++service: https://api.projector.bot
++login: octocat
++plan: none
++subscription: none
++paid seats: 0
++keys: 3f9c0d2a6b1e8f47 (registered 2026-11-19T00:00:00Z)
++```
++
++`--json` prints the service's answer, with `url` beside it.
++
++### Subscribe
++
++`project hosted subscribe <plan>` opens the page that subscribes the account
++to the plan, in your browser. `--no-browser` prints its address instead. A
++plan sold by the seat, `team`, needs `--seats` with how many, and the command
++refuses it without them before it calls the service:
++
++```sh
++project hosted subscribe team --seats 4 --no-browser
++```
++
++The service names its plans: a plan it does not sell is refused with the
++list of those it does.
++
++### Claim an installation
++
++An organization's installation of the service's app can have no payer, such
++as one made before the service recorded installations, and the service
++refuses its reviews with `402` until someone pays for it. An admin of the
++organization, or the user an account installation belongs to, claims it:
++
++```sh
++project hosted claim acme
++```
++
++On success the command says that you now pay for the installation on `acme`,
++so its reviews count against your plan. Claiming needs a paid plan first, so
++an account without one is told to run `project hosted subscribe`. An
++installation that already has a payer cannot be claimed, and the command
++says so. Anyone but an admin is refused with the service's words, which can
++also say that an owner of the organization must first accept the app's
++organization members permission in the organization's installation settings
++on GitHub, because the service reads the caller's role through that
++permission.
++
++### Sign out
++
++`project hosted logout` revokes the account token on the service and removes
++it from the keychain. A token the service no longer knows is removed too.
++
++### When the service refuses
++
++Each command prints the service's own words and exits non-zero. A `401`,
++for a token that is missing, expired, or revoked, adds that you run
++`project hosted login`. A `402`, for an account with no paid subscription,
++adds the address the service gives to subscribe at.
++
+ ## Put an iOS app on a device
+ 
+ `project ios` builds a branch or a pull request of the repository's iOS app
+diff --git a/docs/review-in-ci.md b/docs/review-in-ci.md
+index 9598c2d8..21cdecc8 100644
+--- a/docs/review-in-ci.md
++++ b/docs/review-in-ci.md
+@@ -158,6 +158,10 @@ The workflow gives each job only what it needs:
+ | `review` | `contents: read`, `pull-requests: write`, `issues: write`, `statuses: write`, `checks: read`, `actions: read`, and `pages: read` |
+ | `summary` | `contents: write`, `pull-requests: write`, `issues: write`, and `pages: read` |
+ 
++A workflow that posts through a hosted service, as
++[Post as Projector Review through a hosted service](#post-as-projector-review-through-a-hosted-service)
++describes, adds `id-token: write` to both jobs.
++
+ The review job cannot push a branch or a ref, so a misled agent cannot
+ change the code it reviews. The agent's own rules refuse `git push`,
+ `git commit`, `gh pr merge`, `gh pr ready`, and every command that changes
+@@ -206,6 +210,60 @@ the agent and its install scripts included. An input sets no environment
+ variable in a composite action, so only the step that mints the token, the
+ one step that reads `app-private-key`, receives the key.
+ 
++## Post as Projector Review through a hosted service
++
++A hosted Projector service holds the private key of its own public app,
++Projector Review, so your repository holds no key. Install the app on your
++repository, sign in, subscribe, and pass `projector` to `init`:
++
++```sh
++project hosted login
++project hosted subscribe <plan>
++project init --ci-review --ci-app projector
++```
++
++`init` writes the action's `app: projector` input instead of `app-id` and
++`app-private-key`, gives both jobs `id-token: write`, records
++`review.ci_app = "projector"`, and adds `projector-review[bot]` to
++`review.reviewers`. It sets no key secret.
++[Use a hosted Projector service](cli.md#use-a-hosted-projector-service)
++describes the `project hosted` commands.
++
++In each review job and in the summary job, the action's **Request the hosted
++service's token** step asks GitHub Actions for the job's OIDC token, with the
++service's address as its audience. It posts that token to the service's
++`/v1/review-token` with the repository's name and, in a `pull_request` job,
++the number of the pull request the job's `refs/pull/<n>/merge` ref names. A
++manual run names no pull request. The service checks that GitHub issued the
++token to this repository and for that pull request, that the app is
++installed on it, and that the installation is paid for. It answers an installation token that reaches
++only this repository, with the review's permissions, and the login
++`projector-review[bot]`. The step masks the token in the log, and the review
++and the summary post with it, as they do with an app's own token.
++
++When the service refuses, the step fails the job with the service's words. A
++`402` adds the address the service gives to subscribe at, and a `403` says the
++app is not installed on the repository. An organization's installation with
++no payer answers `402` until an admin claims it with
++`project hosted claim <owner>`. A job without `id-token: write` fails
++before it calls the service.
++
++The step sends the OIDC token to `hosted.url`, which defaults to
++`https://api.projector.bot`. To use another instance, set it in the action's
++`config` input, as [Override a setting for CI](#override-a-setting-for-ci)
++describes. `hosted.url` is a destination, and the runner cannot allow a value
++the repository commits, so a committed `hosted.url` fails the step unless the
++`config` input overrides it:
++
++```yaml
++          config: |
++            [override.50.hosted]
++            url = "https://projector.example.com"
++```
++
++The service's token reaches only the reviewed repository, so the action
++mints no context token, and a review reads no context repositories this way.
++
+ ## Give a review other repositories to read
+ 
+ A change often makes sense only beside code in another repository, such as
+@@ -303,3 +361,4 @@ replaces.
+ | `claude-code-version`, `codex-version` | The versions Projector tests | The CLI version the agent runs. The action installs it with `npm` unless the CLI on `PATH` already reports it. |
+ | `app-id` | Empty | Post as this GitHub App. Empty posts as `github-actions[bot]`. |
+ | `app-private-key` | Empty | The private key of the app `app-id` names, from the `PROJECTOR_APP_PRIVATE_KEY` secret. Pass it here, never as `env`, so that only the step that mints the token receives it. |
++| `app` | Empty | `projector` posts as the hosted service's app, with a token the service at `hosted.url` mints for the job's OIDC token. The job needs `id-token: write`, and `app-id` stays empty. |
+diff --git a/src/projector/ci.py b/src/projector/ci.py
+index dce21b7b..044f3e1f 100644
+--- a/src/projector/ci.py
++++ b/src/projector/ci.py
+@@ -51,6 +51,11 @@ def hosted(labels: Optional[list[str]]) -> bool:
+ # The secret holding a GitHub App's private key. The workflow passes it as the action's `app-private-key` input,
+ # never as `env`, which would reach every step of the action, so only the step that mints the app's token gets it.
+ APP_KEY = "PROJECTOR_APP_PRIVATE_KEY"
++# The app slug `--ci-app` takes for the hosted service's app. The action's `app: projector` input trades the job's
++# OIDC token for the service's installation token, so the workflow passes no key, and the reviews post as the
++# service's app.
++HOSTED_APP = "projector"
++HOSTED_LOGIN = "projector-review[bot]"
+ HEADER = "# Written by `project init --ci-review`, which replaces this file while nobody has edited it.\n"
+ DIGEST = re.compile(r"\A" + re.escape(HEADER) + r"# projector-workflow sha256=([0-9a-f]{64})\n")
+ 
+@@ -109,7 +114,7 @@ def format_runs_on(labels: list[str]) -> str:
+     return ", ".join(labels)
+ 
+ 
+-def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
++def body(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] = None,
+          runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
+     if credential == RUNNER and hosted(runs_on):
+         raise UsageError("a GitHub-hosted runner holds no credential of yours, so the runner credential needs "
+@@ -118,8 +123,10 @@ def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
+     template = resources.files("projector").joinpath("templates/review-workflow.yml").read_text(encoding="utf-8")
+     matrix = "\n".join(f"          - agent: {name}" + (f"\n            model: {model}" if model else "")
+                        for name, model in agents.items())
+-    app = ""
+-    if app_id is not None:
++    app = id_token = ""
++    if app_id == HOSTED_APP:
++        app, id_token = f"          app: {HOSTED_APP}\n", "      id-token: write\n"
++    elif app_id is not None:
+         app = f"          app-id: '{app_id}'\n          app-private-key: ${{{{ secrets.{APP_KEY} }}}}\n"
+     # A secret that is not set reads as empty, which would hide the credential a runner's environment holds.
+     env = ""
+@@ -129,15 +136,16 @@ def body(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
+     labels = runs_on or [HOSTED]
+     runner = labels[0] if len(labels) == 1 else f"[{', '.join(labels)}]"
+     return (template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@APP@", app)
+-            .replace("@ENV@", env).replace("@RUNS_ON@", runner))
++            .replace("@ENV@", env).replace("@RUNS_ON@", runner).replace("@ID_TOKEN@", id_token))
+ 
+ 
+-def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int] = None,
++def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] = None,
+                   runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
+     """The review workflow for `agents`, calling the action at `action_ref`, posting as the GitHub App `app_id`
+-    names when it is given, on the runners `runs_on` labels or a GitHub-hosted one, and passing no credential
+-    secret when `credential` is `runner`. Its second line records a digest of the rest, so a later `init` can
+-    tell a file nobody edited, which it replaces, from one somebody did."""
++    names when it is given, or as the hosted service's app when it is `HOSTED_APP`, on the runners `runs_on`
++    labels or a GitHub-hosted one, and passing no credential secret when `credential` is `runner`. Its second
++    line records a digest of the rest, so a later `init` can tell a file nobody edited, which it replaces, from
++    one somebody did."""
+     text = body(action_ref, agents, app_id, runs_on, credential)
+     return f"{HEADER}# projector-workflow sha256={hashlib.sha256(text.encode()).hexdigest()}\n{text}"
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 1462083b..93b10b02 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -27,7 +27,7 @@
+ 
+ from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
+                summary, watch)
+-from . import ci
++from . import ci, hosted
+ from . import run as headless
+ from .permissions import allow_commands
+ from .summary import WORKFLOW_PATH
+@@ -622,7 +622,8 @@ def parser() -> argparse.ArgumentParser:
+                                           "codex needs (default: review.ci_agents, then claude)")
+     init.add_argument("--ci-app", metavar="SLUG",
+                       help="post CI reviews as this public GitHub App, whose private key init asks for as the "
+-                           f"{ci.APP_KEY} secret (default: review.ci_app, then github-actions[bot])")
++                           f"{ci.APP_KEY} secret, or {ci.HOSTED_APP} for the hosted service's app, which needs no "
++                           "key (default: review.ci_app, then github-actions[bot])")
+     init.add_argument("--ci-credential", choices=ci.KINDS,
+                       help="the credential secret init asks for when an agent has none, or runner, for a "
+                            "credential your own runner holds, which the workflow passes no secret for (default: "
+@@ -853,7 +854,8 @@ def parser() -> argparse.ArgumentParser:
+                                                      "name its model (default: review.ci_agents, then claude)")
+     review_ci_workflow.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow "
+                                                                        "runs (default: v0)")
+-    review_ci_workflow.add_argument("--app", metavar="SLUG", help="the public GitHub App the reviews post as "
++    review_ci_workflow.add_argument("--app", metavar="SLUG", help="the public GitHub App the reviews post as, or "
++                                                                  f"{ci.HOSTED_APP} for the hosted service's app "
+                                                                   "(default: review.ci_app, then github-actions[bot])")
+     review_ci_workflow.add_argument("--runs-on", metavar="LABELS",
+                                     help="the labels of the runners the reviews run on, separated by commas "
+@@ -965,6 +967,7 @@ def parser() -> argparse.ArgumentParser:
+     add_ios_parser(subcommands)
+     add_watch_parser(subcommands)
+     add_agent_parser(subcommands)
++    add_hosted_parser(subcommands)
+     worktree = subcommands.add_parser("worktree", help="print the folder of the worktree that has a branch, or a "
+                                                        "pull request's branch, checked out")
+     worktree.add_argument("target", metavar="branch-or-number",
+@@ -1492,6 +1495,52 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+                                               "state"))
+ 
+ 
++def add_hosted_parser(subcommands) -> None:
++    parser = subcommands.add_parser("hosted", help="sign in to the hosted Projector service hosted.url names, show "
++                                                   "the account, subscribe, claim an installation, and sign out")
++    commands = parser.add_subparsers(dest="hosted_command", required=True)
++    commands.add_parser("login", help="sign in through GitHub, keep the account token in the OS keychain, and "
++                                      "register agent.key's public key")
++    add_output(commands.add_parser("status", help="print the account's login, plan, subscription, paid seats, and "
++                                                  "registered keys"))
++    subscribing = commands.add_parser("subscribe", help="open the page that subscribes the account to a plan")
++    subscribing.add_argument("plan", help="the plan, as the service names it")
++    subscribing.add_argument("--seats", type=positive, help=f"the seats to buy, which the {hosted.TEAM} plan needs")
++    subscribing.add_argument("--no-browser", action="store_false", dest="browser",
++                             help="print the page's address instead of opening it")
++    claiming = commands.add_parser("claim", help="pay for the hosted service app's installation on an account or "
++                                                 "organization you administer, which has no payer yet")
++    claiming.add_argument("owner", help="the account or organization the app is installed on")
++    commands.add_parser("logout", help="revoke the account token and remove it from the keychain")
++
++
++def positive(text: str) -> int:
++    if not text.isdigit() or int(text) < 1:
++        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number of at least 1")
++    return int(text)
++
++
++def run_hosted(arguments: argparse.Namespace) -> int:
++    url = hosted.address(here_config())
++    command = arguments.hosted_command
++    if command == "login":
++        key, why = relay.command_key()
++        hosted.login(url, key, why, print)
++    elif command == "status":
++        found = hosted.account(url)
++        if arguments.json_output:
++            print(json_text({"url": url, **found}))
++        else:
++            print("\n".join(hosted.status_lines(url, found)))
++    elif command == "subscribe":
++        print(hosted.subscribe(url, arguments.plan, arguments.seats, arguments.browser))
++    elif command == "claim":
++        print(hosted.claim(url, arguments.owner))
++    else:
++        print(hosted.logout(url))
++    return 0
++
++
+ def terminal_line(prompt: str, deadline: float, outcome: str) -> str:
+     """A line typed at the terminal by `deadline`, of at most `MAX_PASTE` bytes, or an error that ends with
+     `outcome`, such as "nothing was stored". A thread reads standard input's file descriptor a byte at a time, so a
+@@ -3663,17 +3712,21 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
+         record_setting(root, "review.ci_credential", credential)
+     if slug and config.get("review.ci_app") != slug:
+         record_setting(root, "review.ci_app", slug)
+-    if app is not None and config.get("review.ci_app_id") != app:
++    if isinstance(app, int) and config.get("review.ci_app_id") != app:
+         record_setting(root, "review.ci_app_id", app)
+     # An app replaces github-actions[bot], so a workflow posting with its own token no longer counts as a reviewer.
+-    reviewer = f"{slug}[bot]" if slug else CI_REVIEWER
++    reviewer = ci.HOSTED_LOGIN if slug == ci.HOSTED_APP else f"{slug}[bot]" if slug else CI_REVIEWER
+     listed = review.extra_reviewers(config.get("review.reviewers"))
+     kept = [login for login in listed if not (slug and login.lower() == CI_REVIEWER)]
+     if reviewer.lower() not in {login.lower() for login in kept}:
+         kept.append(reviewer)
+     if kept != list(listed):
+         record_setting(root, "review.reviewers", ", ".join(kept))
+-    set_ci_secrets(repo, agents, credential, slug)
++    if slug == ci.HOSTED_APP:
++        print(f"project: the reviews post as {ci.HOSTED_LOGIN} with a token the hosted service mints for each job, "
++              f"so no key secret is set; install its GitHub App on {repo}, and subscribe with "
++              "`project hosted subscribe`", file=sys.stderr)
++    set_ci_secrets(repo, agents, credential, None if slug == ci.HOSTED_APP else slug)
+     site, why = summary.push_decision(repo)
+     if site is None:
+         print(f"project: CI reviews publish no summaries until the site is set up, because {why}", file=sys.stderr)
+@@ -3717,14 +3770,16 @@ def run_interactive(argv: list[str], source: Optional[Path] = None) -> int:
+         return subprocess.call(argv, stdin=handle)
+ 
+ 
+-def ci_app(config: Config, flag: Optional[str]) -> tuple[Optional[str], Optional[int]]:
+-    """The slug and ID of the app the CI reviews post as. The app `flag` names is looked up on GitHub, which
+-    refuses one it does not show publicly. Otherwise the recorded `review.ci_app` comes with the
+-    `review.ci_app_id` init recorded beside it, so a refresh needs no network; only a slug recorded without its
+-    ID is looked up."""
++def ci_app(config: Config, flag: Optional[str]) -> tuple[Optional[str], Optional[int | str]]:
++    """The slug and ID of the app the CI reviews post as, or `ci.HOSTED_APP` twice for the hosted service's app,
++    which needs no ID. The app `flag` names is looked up on GitHub, which refuses one it does not show publicly.
++    Otherwise the recorded `review.ci_app` comes with the `review.ci_app_id` init recorded beside it, so a refresh
++    needs no network; only a slug recorded without its ID is looked up."""
++    slug = flag or config.get("review.ci_app")
++    if slug == ci.HOSTED_APP:
++        return slug, slug
+     if flag:
+         return flag, app_id(flag)
+-    slug = config.get("review.ci_app")
+     if not slug:
+         return None, None
+     recorded = config.get("review.ci_app_id")
+@@ -3950,6 +4005,8 @@ def run(arguments: argparse.Namespace) -> int:
+         return run_agent(arguments)
+     if arguments.command == "worktree":
+         return run_worktree(arguments)
++    if arguments.command == "hosted":
++        return run_hosted(arguments)
+ 
+     # Resolved once and passed down, so configuration and the store agree on
+     # the repository without asking git for it twice.
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 9734fda8..2125ab3e 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -128,6 +128,7 @@
+     "ios.app": str,
+     "ios.project": str,
+     "ios.output": str,
++    "hosted.url": str,
+ }
+ 
+ # The least value `project config set` accepts for each whole-number key. The
+@@ -157,7 +158,7 @@
+ # The settings that say where your data goes. The owner of a repository's
+ # default branch may not be you, so a value read from it applies only once you
+ # allow it with `project config allow`.
+-DESTINATIONS: frozenset[str] = frozenset({"agent.relay", "agent.s3_endpoint", "agent.s3_profile"})
++DESTINATIONS: frozenset[str] = frozenset({"agent.relay", "agent.s3_endpoint", "agent.s3_profile", "hosted.url"})
+ 
+ # The forms `agent.relay` takes: `origin`, the checkout's own repository, a
+ # GitHub repository the relay carries records through, or an S3 bucket and
+@@ -247,6 +248,32 @@ def s3_endpoint(value: str) -> str:
+     return f"https://{host}" + (f":{port}" if port not in (None, 443) else "")
+ 
+ 
++# The hosted Projector service `hosted.url` names when no file sets it.
++HOSTED_URL = "https://api.projector.bot"
++LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
++
++
++def hosted_url(value: str) -> str:
++    """A `hosted.url` value as requests and the review's OIDC audience use it: the scheme, the host in lowercase,
++    and its port unless it is the scheme's own. It takes `https://`, or `http://` for a service on this machine,
++    and refuses a path, query, fragment, or user info."""
++
++    try:
++        parts: Optional[urllib.parse.SplitResult] = urllib.parse.urlsplit(value)
++        port = parts.port if parts else None
++    except ValueError:
++        parts, port = None, None
++    scheme = parts.scheme.lower() if parts else ""
++    host = (parts.hostname or "").lower() if parts else ""
++    if (parts is None or not host or parts.path not in ("", "/") or parts.query or parts.fragment
++            or "@" in parts.netloc or value.endswith(("?", "#"))
++            or not (scheme == "https" or scheme == "http" and host in LOOPBACK)):
++        raise ConfigError(f"hosted.url is {value!r}, and it takes an https:// URL with no path, query, or user info, "
++                          f"such as {HOSTED_URL}, or http:// for a service on this machine")
++    host = f"[{host}]" if ":" in host else host
++    return f"{scheme}://{host}" + (f":{port}" if port not in (None, 443 if scheme == "https" else 80) else "")
++
++
+ def s3_identity(endpoint: Optional[str], bucket: str, prefix: str) -> str:
+     """An S3 location's identity: the path-style URL of its prefix, on AWS when no endpoint names another store."""
+ 
+@@ -460,6 +487,8 @@ def parse_value(key: str, text: str) -> Any:
+             relay_location(text)
+         elif key == "agent.s3_endpoint":
+             s3_endpoint(text)
++        elif key == "hosted.url":
++            hosted_url(text)
+     except ConfigError as error:
+         raise UsageError(str(error)) from None
+     return text
+diff --git a/src/projector/hosted.py b/src/projector/hosted.py
+new file mode 100644
+index 00000000..a9872910
+--- /dev/null
++++ b/src/projector/hosted.py
+@@ -0,0 +1,322 @@
++"""The client of a hosted Projector service, at the address `hosted.url` names.
++
++`project hosted login` signs in through GitHub's device flow and keeps the account token the service returns in
++the OS keychain, under the service name `projector-hosted` and the service's address, so a token goes only to the
++service that issued it. It then registers `agent.key`'s public key: the service seals a labelled random challenge
++to the key, and the CLI opens it with `crypto.unseal`, checks the label, and sends back the random bytes, which
++proves it holds the private key without sending it. `status`, `subscribe`, `claim`, and `logout` call the service
++with that token.
++
++`review_token_step` is the review action's step for its `app: projector` input. It requests the job's GitHub
++Actions OIDC token for the service's address as the audience, and trades it for an installation token that posts
++the review as the service's app, so the workflow holds no private key.
++
++Requests go through `urllib` alone. A refusal reads the service's `error` text, says to run `project hosted
++login` when the token is refused, and gives the address the service names to subscribe at.
++"""
++
++from __future__ import annotations
++
++import base64
++import json
++import os
++import re
++import time
++import urllib.error
++import urllib.parse
++import urllib.request
++import webbrowser
++from pathlib import Path
++from typing import Any, Callable, Optional
++
++from . import crypto, keychain
++from .config import HOSTED_URL, Config, ConfigError, hosted_url, load as load_config
++from .core import ProjectorError
++from .keychain import KeychainError
++
++SERVICE = "projector-hosted"
++TIMEOUT = 30.0
++LOGIN = "run `project hosted login`"
++# The plan sold by the seat, the one plan whose checkout names how many seats it buys.
++TEAM = "team"
++# What a key challenge's plaintext is: this label, then this many random bytes, which alone go back.
++CHALLENGE_PREFIX = b"projector hosted key challenge v1\x00"
++CHALLENGE_BYTES = 32
++# The step's input that has the review post as the hosted service's app.
++APP = "projector"
++
++
++class HostedError(ProjectorError):
++    """A hosted service that cannot be reached or refuses a request."""
++
++
++def address(config: Config) -> str:
++    """The service's address from `hosted.url`, or the default."""
++    value = config.setting("hosted.url")
++    return hosted_url(value) if value else HOSTED_URL
++
++
++def refusal(status: int, answer: dict) -> str:
++    """What a refused request says: the service's own words, with the command or address that fixes it."""
++    text = str(answer.get("error") or f"the service answered HTTP {status}")
++    if status == 401 and "project hosted login" not in text:
++        text += f"; {LOGIN}"
++    if status == 402 and answer.get("subscribe"):
++        text += f"; subscribe at {answer['subscribe']}"
++    return text
++
++
++def call(url: str, method: str, path: str, body: Optional[dict] = None, token: Optional[str] = None,
++         ok: tuple[int, ...] = (200,)) -> tuple[int, dict]:
++    """`method` on the service's `path`, with `body` as JSON and `token` as the bearer, answering the status and
++    the JSON object of the reply. A status outside `ok` raises the refusal."""
++    headers = {"accept": "application/json", "user-agent": "projector"}
++    data = None
++    if body is not None:
++        data = json.dumps(body).encode()
++        headers["content-type"] = "application/json"
++    if token:
++        headers["authorization"] = f"Bearer {token}"
++    request = urllib.request.Request(url + path, data=data, headers=headers, method=method)
++    try:
++        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
++            status, raw = response.status, response.read()
++    except urllib.error.HTTPError as error:
++        status, raw = error.code, error.read()
++    except (urllib.error.URLError, OSError) as error:
++        reason = getattr(error, "reason", error)
++        raise HostedError(f"could not reach {url}: {reason}") from None
++    try:
++        answer = json.loads(raw) if raw else {}
++    except ValueError:
++        answer = {}
++    if not isinstance(answer, dict):
++        answer = {}
++    if status not in ok:
++        raise HostedError(refusal(status, answer))
++    return status, answer
++
++
++# The account token
++
++def stored_token(url: str) -> str:
++    try:
++        return keychain.read(url, service=SERVICE)
++    except KeychainError as error:
++        raise HostedError(f"no account token for {url} in the keychain ({error}); {LOGIN}") from None
++
++
++def account(url: str) -> dict:
++    """`GET /v1/account` with the stored token."""
++    return call(url, "GET", "/v1/account", token=stored_token(url))[1]
++
++
++# Sign-in
++
++def seconds(value: object, default: float) -> float:
++    """A count of seconds from the service, or `default` when it sent none."""
++    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 \
++        else default
++
++
++def sign_in(url: str, say: Callable[[str], None], sleep: Callable[[float], None] = time.sleep) -> dict:
++    """Run the device flow: print the code and where to enter it, then poll until the person approves it, and
++    answer the service's token and login."""
++    started = call(url, "POST", "/v1/login", {})[1]
++    device = started.get("device_code")
++    if not isinstance(device, str) or not device:
++        raise HostedError(f"{url} started no sign-in")
++    say(f"Open {started.get('verification_uri')} and enter the code {started.get('user_code')}")
++    interval = seconds(started.get("interval"), 5)
++    deadline = time.monotonic() + seconds(started.get("expires_in"), 900)
++    while time.monotonic() < deadline:
++        sleep(interval)
++        status, answer = call(url, "POST", "/v1/login/poll", {"device_code": device}, ok=(200, 202))
++        if status == 200:
++            if not isinstance(answer.get("token"), str) or not answer["token"]:
++                raise HostedError(f"{url} signed you in but gave no account token")
++            return answer
++        interval = seconds(answer.get("interval"), interval)
++    raise HostedError(f"the code expired before it was approved; {LOGIN} again")
++
++
++def register_key(url: str, token: str, key: Any) -> str:
++    """Register `key`'s public key to the account by opening the challenge the service seals to it, and answer
++    the key's ID. The service seals from a fresh key of its own, so the sender proves nothing and is not read.
++
++    `agent.key` also opens the relay's records, so a service that passed one off as a challenge would learn its
++    plaintext from the answer. A challenge is therefore exactly `CHALLENGE_PREFIX` and `CHALLENGE_BYTES` random
++    bytes, and only those bytes go back. Anything else is refused before any answer is sent, and never shown."""
++    public = base64.b64encode(key.public).decode("ascii")
++    challenge = call(url, "POST", "/v1/keys", {"public_key": public}, token)[1]
++    try:
++        _, opened = crypto.unseal(key.private, challenge.get("sealed"))
++    except crypto.CryptoError as error:
++        raise HostedError(f"the challenge {url} sealed to key {key.id} does not open: {error}") from None
++    if len(opened) != len(CHALLENGE_PREFIX) + CHALLENGE_BYTES or not opened.startswith(CHALLENGE_PREFIX):
++        raise HostedError(f"{url} sealed something to key {key.id} that is not a key challenge, so nothing was sent "
++                          "back; a service that asks the key to open anything else could read your relay records")
++    answer = call(url, "POST", "/v1/keys", {"public_key": public, "challenge_id": challenge.get("challenge_id"),
++                                            "challenge": base64.b64encode(opened[len(CHALLENGE_PREFIX):])
++                                            .decode("ascii")}, token, ok=(200, 201))[1]
++    return str(answer.get("key_id") or key.id)
++
++
++def login(url: str, key: Any, no_key: str, say: Callable[[str], None]) -> dict:
++    """Sign in, keep the account token in the keychain, and register `key`, or say `no_key` when there is none.
++    Answers what was done."""
++    missing = keychain.usable()
++    if missing:
++        raise HostedError(f"the account token goes in the OS keychain, which cannot be used here: {missing}")
++    signed = sign_in(url, say)
++    try:
++        store = keychain.store(url, signed["token"], service=SERVICE)
++    except KeychainError as error:
++        raise HostedError(f"signed in as {signed.get('login')}, but could not keep the account token: {error}") \
++            from None
++    done = {"url": url, "login": signed.get("login"), "store": store, "key_id": None}
++    if key is None:
++        say(f"signed in to {url} as {signed.get('login')}, and the {store} holds the account token; registered no "
++            f"key, because {no_key}")
++        return done
++    try:
++        done["key_id"] = register_key(url, signed["token"], key)
++    except HostedError as error:
++        raise HostedError(f"signed in as {signed.get('login')}, but could not register key {key.id}: {error}") \
++            from None
++    say(f"signed in to {url} as {signed.get('login')}, the {store} holds the account token, and key "
++        f"{done['key_id']} is registered to the account")
++    return done
++
++
++def logout(url: str) -> str:
++    """Revoke the stored token and remove it from the keychain. A token the service no longer knows is removed
++    too; one that could not be revoked for another reason is kept, so the command can run again."""
++    status, _ = call(url, "POST", "/v1/logout", token=stored_token(url), ok=(200, 204, 401))
++    revoked = "the service no longer knew the account token" if status == 401 else "revoked the account token"
++    try:
++        keychain.delete(url, service=SERVICE)
++    except KeychainError as error:
++        raise HostedError(f"{revoked}, but could not remove it from the keychain: {error}") from None
++    return f"signed out of {url}: {revoked}, and removed it from the keychain"
++
++
++# Installations
++
++def claim(url: str, owner: str) -> str:
++    """Become the payer of the service app's installation on `owner`, which has none, such as one made before the
++    service recorded installations."""
++    status, answer = call(url, "POST", "/v1/installations/claim", {"owner": owner}, stored_token(url),
++                          ok=(200, 402, 409))
++    if status == 402:
++        raise HostedError(f"claiming an installation needs a paid plan first; run `project hosted subscribe`, then "
++                          f"claim it again ({refusal(status, answer)})")
++    if status == 409:
++        raise HostedError(f"the installation on {owner} already has a payer, so it cannot be claimed "
++                          f"({refusal(status, answer)})")
++    return (f"you now pay for the installation on {answer.get('owner') or owner}, so its reviews count against your "
++            "plan")
++
++
++# Subscription
++
++def checkout(url: str, plan: str, seats: Optional[int]) -> str:
++    """The address of the page that subscribes the account to `plan`, refusing a team plan without seats, and
++    seats for any other plan, before any request."""
++    if plan == TEAM and seats is None:
++        raise HostedError(f"the {TEAM} plan is sold by the seat; pass --seats with how many")
++    if plan != TEAM and seats is not None:
++        raise HostedError(f"only the {TEAM} plan is sold by the seat, so --seats goes only with {TEAM}")
++    body: dict[str, Any] = {"plan": plan}
++    if seats is not None:
++        body["seats"] = seats
++    answer = call(url, "POST", "/v1/billing/checkout", body, stored_token(url))[1]
++    found = answer.get("url")
++    if not isinstance(found, str) or not found:
++        raise HostedError(f"{url} gave no address to subscribe at")
++    return found
++
++
++def subscribe(url: str, plan: str, seats: Optional[int], browser: bool,
++              open_url: Callable[[str], Any] = webbrowser.open) -> str:
++    page = checkout(url, plan, seats)
++    if browser:
++        try:
++            if open_url(page):
++                return f"opened {page} in your browser; finish subscribing there"
++        except (webbrowser.Error, OSError):
++            pass
++    return f"open {page} to finish subscribing"
++
++
++def status_lines(url: str, found: dict) -> list[str]:
++    keys = found.get("keys") or []
++    listed = ", ".join(f"{entry.get('key_id')} (registered {entry.get('registered')})"
++                       for entry in keys if isinstance(entry, dict)) or "none"
++    return [f"service: {url}", f"login: {found.get('login')}", f"plan: {found.get('plan') or 'none'}",
++            f"subscription: {found.get('subscription_status') or 'none'}",
++            f"paid seats: {found.get('paid_seats') or 0}", f"keys: {listed}"]
++
++
++# The review action's step
++
++def review_token_step(environ: Optional[dict] = None, cwd: Optional[Path] = None) -> int:
++    """The review action's step for `app: projector`: trade the job's OIDC token for the service's installation
++    token, mask it, and write it and its login to the step's outputs. Any refusal fails the step with the
++    service's words."""
++    environ = os.environ if environ is None else environ
++    app, app_id = environ.get("APP", ""), environ.get("APP_ID", "")
++    if app != APP:
++        return failed(f"the app input takes {APP}, for the hosted service's app, not {app!r}")
++    if app_id:
++        return failed("give the action app or app-id, not both")
++    request_url, request_token = environ.get("ACTIONS_ID_TOKEN_REQUEST_URL"), environ.get(
++        "ACTIONS_ID_TOKEN_REQUEST_TOKEN")
++    if not request_url or not request_token:
++        return failed("the job cannot request an OIDC token; give it `permissions: id-token: write`")
++    try:
++        url = address(load_config(cwd or Path.cwd(), environ=dict(environ)))
++        oidc = actions_token(request_url, request_token, url)
++        answer = call(url, "POST", "/v1/review-token", review_request(environ), oidc)[1]
++    except (ConfigError, HostedError) as error:
++        return failed(str(error))
++    token, login = answer.get("token"), answer.get("login")
++    if not isinstance(token, str) or not token or not isinstance(login, str) or not login:
++        return failed(f"{url} answered with no token or no login")
++    print(f"::add-mask::{token}", flush=True)
++    with open(environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
++        output.write(f"token={token}\nlogin={login}\n")
++    print(f"the review posts as {login}, with a token {url} minted until {answer.get('expires_at')}")
++    return 0
++
++
++def review_request(environ: dict) -> dict:
++    """The body of `/v1/review-token`: the repository, and the pull request a `pull_request` job's merge ref names,
++    as a number, which the service checks against the OIDC token's ref. A `workflow_dispatch` job names none, and
++    the service counts the user who started the run."""
++    body: dict[str, Any] = {"repository": environ.get("GITHUB_REPOSITORY", "")}
++    merge = re.fullmatch(r"refs/pull/(\d+)/merge", environ.get("GITHUB_REF", ""))
++    if merge:
++        body["pull_request"] = int(merge.group(1))
++    return body
++
++
++def actions_token(request_url: str, request_token: str, audience: str) -> str:
++    """The job's OIDC token for `audience`, from the endpoint GitHub Actions gives a job with `id-token: write`."""
++    separator = "&" if "?" in request_url else "?"
++    request = urllib.request.Request(f"{request_url}{separator}audience={urllib.parse.quote(audience, safe='')}",
++                                     headers={"authorization": f"Bearer {request_token}",
++                                              "accept": "application/json"})
++    try:
++        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
++            value = json.loads(response.read()).get("value")
++    except (urllib.error.URLError, OSError, ValueError, AttributeError) as error:
++        raise HostedError(f"GitHub Actions gave no OIDC token: {getattr(error, 'reason', error)}") from None
++    if not isinstance(value, str) or not value:
++        raise HostedError("GitHub Actions gave no OIDC token")
++    return value
++
++
++def failed(message: str) -> int:
++    print(f"::error::{message}", flush=True)
++    return 1
+diff --git a/src/projector/keychain.py b/src/projector/keychain.py
+index b001c26d..4ad61a14 100644
+--- a/src/projector/keychain.py
++++ b/src/projector/keychain.py
+@@ -6,6 +6,9 @@
+   `ctypes`, with a generic credential.
+ - **Linux** runs `secret-tool`, which reads the secret to store from standard input.
+ 
++Each item is stored under a service name and an account, its key ID: `projector-agent` for the relay's key, and
++another service name for another secret, such as a hosted service's account token.
++
+ No backend passes the key as an argument, where the process list would show it. Every call is bounded by a
+ timeout, because a locked keychain may not answer: `security` shows an unlock dialog and waits for a person, so a
+ process that runs past the timeout is killed, and a Windows call runs on a worker thread that is no longer waited
+@@ -63,16 +66,16 @@ class MacOS:
+     def usable(self) -> str:
+         return "" if Path(SECURITY).is_file() else "security: not installed"
+ 
+-    def store(self, key_id: str, secret: str, timeout: float) -> None:
+-        command = f"add-generic-password -U -s {SERVICE} -a {key_id} -w {secret}\n"
++    def store(self, key_id: str, secret: str, timeout: float, service: str = SERVICE) -> None:
++        command = f"add-generic-password -U -s {service} -a {key_id} -w {secret}\n"
+         run("security", [SECURITY, "-i"], timeout, input=command.encode(), secret=secret)
+ 
+-    def read(self, key_id: str, timeout: float) -> str:
+-        found = run("security", [SECURITY, "find-generic-password", "-s", SERVICE, "-a", key_id, "-w"], timeout)
++    def read(self, key_id: str, timeout: float, service: str = SERVICE) -> str:
++        found = run("security", [SECURITY, "find-generic-password", "-s", service, "-a", key_id, "-w"], timeout)
+         return found.decode("utf-8", "replace").strip()
+ 
+-    def delete(self, key_id: str, timeout: float) -> None:
+-        run("security", [SECURITY, "delete-generic-password", "-s", SERVICE, "-a", key_id], timeout)
++    def delete(self, key_id: str, timeout: float, service: str = SERVICE) -> None:
++        run("security", [SECURITY, "delete-generic-password", "-s", service, "-a", key_id], timeout)
+ 
+ 
+ class Linux:
+@@ -81,16 +84,17 @@ class Linux:
+     def usable(self) -> str:
+         return "" if shutil.which(SECRET_TOOL) else "secret-tool: not installed"
+ 
+-    def store(self, key_id: str, secret: str, timeout: float) -> None:
+-        run("secret-tool", [SECRET_TOOL, "store", f"--label=Projector agent key {key_id}", "service", SERVICE,
+-                            "key", key_id], timeout, input=secret.encode(), secret=secret)
++    def store(self, key_id: str, secret: str, timeout: float, service: str = SERVICE) -> None:
++        label = f"Projector agent key {key_id}" if service == SERVICE else f"{service} {key_id}"
++        run("secret-tool", [SECRET_TOOL, "store", f"--label={label}", "service", service, "key", key_id], timeout,
++            input=secret.encode(), secret=secret)
+ 
+-    def read(self, key_id: str, timeout: float) -> str:
+-        found = run("secret-tool", [SECRET_TOOL, "lookup", "service", SERVICE, "key", key_id], timeout)
++    def read(self, key_id: str, timeout: float, service: str = SERVICE) -> str:
++        found = run("secret-tool", [SECRET_TOOL, "lookup", "service", service, "key", key_id], timeout)
+         return found.decode("utf-8", "replace").strip()
+ 
+-    def delete(self, key_id: str, timeout: float) -> None:
+-        run("secret-tool", [SECRET_TOOL, "clear", "service", SERVICE, "key", key_id], timeout)
++    def delete(self, key_id: str, timeout: float, service: str = SERVICE) -> None:
++        run("secret-tool", [SECRET_TOOL, "clear", "service", service, "key", key_id], timeout)
+ 
+ 
+ class FILETIME(ctypes.Structure):
+@@ -156,14 +160,14 @@ def usable(self) -> str:
+         return ""
+ 
+     @staticmethod
+-    def target(key_id: str) -> str:
+-        return f"{SERVICE}:{key_id}"
++    def target(key_id: str, service: str = SERVICE) -> str:
++        return f"{service}:{key_id}"
+ 
+-    def store(self, key_id: str, secret: str, timeout: float) -> None:
++    def store(self, key_id: str, secret: str, timeout: float, service: str = SERVICE) -> None:
+         def write() -> None:
+             data = secret.encode("utf-8")
+             blob = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+-            credential = CREDENTIAL(Type=CRED_TYPE_GENERIC, TargetName=self.target(key_id),
++            credential = CREDENTIAL(Type=CRED_TYPE_GENERIC, TargetName=self.target(key_id, service),
+                                     CredentialBlobSize=len(data),
+                                     CredentialBlob=ctypes.cast(blob, ctypes.POINTER(ctypes.c_ubyte)),
+                                     Persist=CRED_PERSIST_LOCAL_MACHINE, UserName=key_id)
+@@ -171,11 +175,11 @@ def write() -> None:
+                 raise KeychainError(f"Credential Manager: CredWriteW failed with error {last_error()}")
+         bounded(write, timeout)
+ 
+-    def read(self, key_id: str, timeout: float) -> str:
++    def read(self, key_id: str, timeout: float, service: str = SERVICE) -> str:
+         def lookup() -> str:
+             found = ctypes.POINTER(CREDENTIAL)()
+             api = self.library()
+-            if not api.CredReadW(self.target(key_id), CRED_TYPE_GENERIC, 0, ctypes.pointer(found)):
++            if not api.CredReadW(self.target(key_id, service), CRED_TYPE_GENERIC, 0, ctypes.pointer(found)):
+                 raise KeychainError(f"Credential Manager: CredReadW failed with error {last_error()}")
+             try:
+                 credential = found.contents
+@@ -184,9 +188,9 @@ def lookup() -> str:
+                 api.CredFree(found)
+         return str(bounded(lookup, timeout))
+ 
+-    def delete(self, key_id: str, timeout: float) -> None:
++    def delete(self, key_id: str, timeout: float, service: str = SERVICE) -> None:
+         def remove() -> None:
+-            if not self.library().CredDeleteW(self.target(key_id), CRED_TYPE_GENERIC, 0):
++            if not self.library().CredDeleteW(self.target(key_id, service), CRED_TYPE_GENERIC, 0):
+                 raise KeychainError(f"Credential Manager: CredDeleteW failed with error {last_error()}")
+         bounded(remove, timeout)
+ 
+@@ -200,16 +204,16 @@ def backend():
+     return Linux()
+ 
+ 
+-def store(key_id: str, secret: str, timeout: Optional[float] = None) -> str:
+-    """Store `secret` under `key_id` and read it back, and answer the keychain's name. A backend counts as usable
+-    only when both succeed in time."""
++def store(key_id: str, secret: str, timeout: Optional[float] = None, *, service: str = SERVICE) -> str:
++    """Store `secret` under `key_id` in `service` and read it back, and answer the keychain's name. A backend
++    counts as usable only when both succeed in time."""
+     chosen = backend()
+     missing = chosen.usable()
+     if missing:
+         raise KeychainError(missing)
+     timeout = TIMEOUT if timeout is None else timeout
+-    chosen.store(key_id, secret, timeout)
+-    if chosen.read(key_id, timeout) != secret:
++    chosen.store(key_id, secret, timeout, service)
++    if chosen.read(key_id, timeout, service) != secret:
+         raise KeychainError(f"{chosen.name}: the stored key did not read back")
+     return chosen.name
+ 
+@@ -219,16 +223,16 @@ def usable() -> str:
+     return backend().usable()
+ 
+ 
+-def read(key_id: str, timeout: Optional[float] = None) -> str:
++def read(key_id: str, timeout: Optional[float] = None, *, service: str = SERVICE) -> str:
+     chosen = backend()
+     missing = chosen.usable()
+     if missing:
+         raise KeychainError(missing)
+-    found = chosen.read(key_id, TIMEOUT if timeout is None else timeout)
++    found = chosen.read(key_id, TIMEOUT if timeout is None else timeout, service)
+     if not found:
+         raise KeychainError(f"{chosen.name}: holds no key {key_id}")
+     return found
+ 
+ 
+-def delete(key_id: str, timeout: Optional[float] = None) -> None:
+-    backend().delete(key_id, TIMEOUT if timeout is None else timeout)
++def delete(key_id: str, timeout: Optional[float] = None, *, service: str = SERVICE) -> None:
++    backend().delete(key_id, TIMEOUT if timeout is None else timeout, service)
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index f5861b3a..88bb38fc 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -122,7 +122,8 @@
+        "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
+        "Bash(project inbox decline *)", "Bash(project inbox start *)",
+        "Bash(project inbox unclear *)", "Bash(project inbox discuss *)", "Bash(project console)",
+-       "Bash(project console *)", "Bash(project ios *allow-untrusted*)", "Bash(project review run *)")
++       "Bash(project console *)", "Bash(project ios *allow-untrusted*)", "Bash(project review run *)",
++       "Bash(project hosted *)")
+ # The narrower rules Projector wrote before `Bash(project *)` covered them,
+ # which `init` removes from `permissions.allow`.
+ SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
+@@ -133,7 +134,7 @@
+ 
+ ASKED = ("`project init`, `project upgrade`, `project config set`, `unset`, and `allow`, `project site` with "
+          "`--prepare` or `--allow-prepare`, `project ios build --allow-untrusted`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
+-         "`decline`, `start`, `unclear`, and `discuss`, `project console`, and `project review run`")
++         "`decline`, `start`, `unclear`, and `discuss`, `project console`, `project review run`, and `project hosted`")
+ COMMANDS = "every `project` command but the few that reach outside Projector's own state"
+ 
+ # Each pattern Codex may run without asking, and outside its sandbox, with the
+@@ -192,6 +193,7 @@
+     "# editor, `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
+     "# the command line names, `project ios build` and `logs`, which run the repository's build scripts or\n"
+     "# `sudo`, `project review run`, which starts an agent or the command review.runner names,\n"
++    "# `project hosted`, which signs in to a hosted service, holds its account token, and subscribes,\n"
+     "# `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
+     "# `unclear`, and `discuss`, which record the person's choice or words, `project console`, which\n"
+     "# records them from a terminal, and a command line that starts with an option.\n"
+diff --git a/src/projector/templates/review-workflow.yml b/src/projector/templates/review-workflow.yml
+index f47b8ee1..7b0957ac 100644
+--- a/src/projector/templates/review-workflow.yml
++++ b/src/projector/templates/review-workflow.yml
+@@ -37,7 +37,7 @@ jobs:
+       checks: read
+       actions: read
+       pages: read
+-    strategy:
++@ID_TOKEN@    strategy:
+       fail-fast: false
+       # An agent with no model runs the action's default for it.
+       matrix:
+@@ -64,7 +64,7 @@ jobs:
+       pull-requests: write
+       issues: write
+       pages: read
+-    concurrency:
++@ID_TOKEN@    concurrency:
+       group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
+     runs-on: @RUNS_ON@
+     timeout-minutes: 10
+diff --git a/tests/test_ci.py b/tests/test_ci.py
+index 84d7a09b..20e5cdc5 100644
+--- a/tests/test_ci.py
++++ b/tests/test_ci.py
+@@ -165,6 +165,28 @@ def test_a_later_init_refreshes_the_app_workflow_without_github_but_ci_app_still
+         self.assertNotEqual(0, named, "--ci-app always asks GitHub, so it can refuse an app GitHub does not show")
+         self.assertIn("could not look up the GitHub App projector-review", named_err)
+ 
++    def test_the_hosted_app_has_each_job_request_an_oidc_token_and_passes_no_key(self) -> None:
++        # The hosted service mints the token for the job's OIDC token, so a workflow without id-token: write
++        # cannot post, and one that still passed the key input would ask for a secret nobody has.
++        code, out, err = self.init("--ci-review", "--ci-app", ci.HOSTED_APP)
++        again, out_again, _ = self.init()
++        printed, shown, _ = self.invoke("review", "ci-workflow")
++
++        self.assertEqual((0, 0, 0), (code, again, printed), err)
++        text = self.workflow().read_text()
++        self.assertEqual([(ci.HOSTED_APP, None, None)],
++                         [(job.get("app"), job.get("app-id"), job.get("app-private-key")) for job in review_jobs(text)])
++        self.assertNotIn(ci.APP_KEY, text + err)
++        jobs = text.split("\n  summary:\n")
++        self.assertEqual([True, True], [re.search(r"\n    permissions:\n(      .+\n)*      id-token: write\n", job)
++                                        is not None for job in jobs], "both jobs request the service's token")
++        self.assertIn(f"\n          app: {ci.HOSTED_APP}\n", jobs[1])
++        self.assertTrue(ci.unedited(text))
++        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again)
++        self.assertEqual(text, shown, "project review ci-workflow prints the workflow init wrote")
++        self.assertEqual((ci.HOSTED_APP, ci.HOSTED_LOGIN), (self.recorded()["ci_app"], self.recorded()["reviewers"]))
++        self.assertNotIn("ci_app_id", self.recorded())
++
+     def test_an_app_recorded_without_its_id_is_left_as_it_is_when_github_cannot_answer(self) -> None:
+         (self.root / ".projector.toml").write_text('[review]\nci = true\nci_app = "projector-review"\n')
+         self.offline = True
+@@ -559,14 +581,17 @@ def test_the_review_and_its_summary_post_as_the_app_whose_token_they_use(self) -
+         # GitHub refuses `gh api user` to a token of no user, so a step without the login fails once it posts.
+         steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
+         minted = re.search(r"\n      id: (\S+)\n", steps["Mint the app's token"]).group(1)
+-        self.assertNotIn("inputs.step", steps["Mint the app's token"].split("uses:")[0],
+-                         "the summary job mints the app's token too")
++        hosted = re.search(r"\n      id: (\S+)\n", steps["Request the hosted service's token"]).group(1)
++        for minting in ("Mint the app's token", "Request the hosted service's token"):
++            self.assertNotIn("inputs.step", steps[minting].split("run:")[0].split("uses:")[0],
++                             "the summary job mints the app's token too")
+         for name in ("Review the pull request", "Publish the summaries"):
+             with self.subTest(step=name):
+-                self.assertIn(f"GH_TOKEN: ${{{{ steps.{minted}.outputs.token || github.token }}}}", steps[name])
++                self.assertIn(f"GH_TOKEN: ${{{{ steps.{minted}.outputs.token || steps.{hosted}.outputs.token || "
++                              "github.token }}", steps[name])
+                 self.assertIn(f"{review.TOKEN_LOGIN}: ${{{{ steps.{minted}.outputs.app-slug && "
+-                              f"format('{{0}}[bot]', steps.{minted}.outputs.app-slug) || '{cli.CI_REVIEWER}' }}}}",
+-                              steps[name])
++                              f"format('{{0}}[bot]', steps.{minted}.outputs.app-slug) || "
++                              f"steps.{hosted}.outputs.login || '{cli.CI_REVIEWER}' }}}}", steps[name])
+         self.assertIn(f"{summary.DISPATCH_TOKEN}: ${{{{ github.token }}}}", steps["Publish the summaries"],
+                       "the rebuild event goes out on the workflow's token, which can send it")
+ 
+diff --git a/tests/test_hosted.py b/tests/test_hosted.py
+new file mode 100644
+index 00000000..4bbd750d
+--- /dev/null
++++ b/tests/test_hosted.py
+@@ -0,0 +1,412 @@
++"""The hosted service's client: `project hosted login`, `status`, `subscribe`, and `logout` against a fake service on
++a local port, the account token's keychain items, and the review action's step for `app: projector`."""
++
++from __future__ import annotations
++
++import base64
++import json
++import os
++import secrets
++import shutil
++import subprocess
++import tempfile
++import threading
++import unittest
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from pathlib import Path
++from typing import Any, Optional
++from unittest import mock
++from urllib.parse import parse_qs, urlsplit
++
++from projector import crypto, hosted, keychain, relay
++from tests.test_ci import step_script
++from tests.test_projector import RepositoryTestCase
++from tests.test_relay import FakeAdvapi32
++
++ROOT = Path(__file__).parents[1]
++TOKEN = "pjh_account"
++CHECKOUT = "https://billing.example/checkout/1"
++SUBSCRIBE = "https://billing.example/subscribe"
++
++
++class FakeService:
++    """A hosted service on a local port that answers the calls the client makes, as the service's code does, and
++    the OIDC endpoint GitHub Actions gives a job. It records each request it answered."""
++
++    def __init__(self) -> None:
++        self.seen: list[dict[str, Any]] = []
++        self.pending = 1
++        self.tokens = {TOKEN}
++        self.challenges: dict[str, tuple[str, bytes]] = {}
++        self.registered: list[str] = []
++        # What the service seals in place of a key challenge, and from which key, as one replaying a record
++        # sealed to the key would.
++        self.sealing: Optional[bytes] = None
++        self.sender: Optional[bytes] = None
++        self.paid = True
++        self.subscribed = True
++        self.claims: dict[str, tuple[int, dict]] = {
++            "acme": (200, {"owner": "acme", "installation_id": 1}),
++            "acme-pending": (403, {"error": "the app cannot read acme-pending's members yet: an owner of "
++                                            "acme-pending must accept the app's organization members permission in "
++                                            "the organization's installation settings"}),
++            "acme-claimed": (409, {"error": "the installation on acme-claimed already has a payer"}),
++        }
++        self.account ={"login": "octocat", "github_id": 1, "plan": "solo", "subscription_status": "active",
++                        "paid_seats": 3, "keys": [{"key_id": "0123456789abcdef", "registered": "2026-11-01"}]}
++        service = self
++
++        class Handler(BaseHTTPRequestHandler):
++            def log_message(self, *args: object) -> None:
++                pass
++
++            def do_GET(self) -> None:
++                service.answer(self)
++
++            def do_POST(self) -> None:
++                service.answer(self)
++
++        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
++        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
++        threading.Thread(target=self.server.serve_forever, args=(0.05,), daemon=True).start()
++
++    def close(self) -> None:
++        self.server.shutdown()
++        self.server.server_close()
++
++    def answer(self, handler: BaseHTTPRequestHandler) -> None:
++        length = int(handler.headers.get("content-length") or 0)
++        raw = handler.rfile.read(length) if length else b""
++        body = json.loads(raw) if raw else {}
++        bearer = (handler.headers.get("authorization") or "").removeprefix("Bearer ")
++        parts = urlsplit(handler.path)
++        self.seen.append({"method": handler.command, "path": parts.path, "body": body, "bearer": bearer})
++        status, answer = self.route(handler.command, parts.path, parse_qs(parts.query), body, bearer)
++        data = b"" if answer is None else json.dumps(answer).encode()
++        handler.send_response(status)
++        handler.send_header("content-type", "application/json")
++        handler.send_header("content-length", str(len(data)))
++        handler.end_headers()
++        handler.wfile.write(data)
++
++    def route(self, method: str, path: str, query: dict, body: dict, bearer: str) -> tuple[int, Optional[dict]]:
++        if path == "/oidc":
++            if bearer != "request-token":
++                return 401, {"message": "bad request token"}
++            return 200, {"value": f"oidc-for-{query['audience'][0]}"}
++        if path == "/v1/login":
++            return 200, {"device_code": "device", "user_code": "ABCD-1234", "interval": 0, "expires_in": 60,
++                         "verification_uri": "https://github.com/login/device"}
++        if path == "/v1/login/poll":
++            if self.pending:
++                self.pending -= 1
++                return 202, {"status": "pending", "interval": 0}
++            return 200, {"token": TOKEN, "login": "octocat", "expires_at": "2027-02-17T00:00:00Z"}
++        if path == "/v1/review-token":
++            if bearer != f"oidc-for-{self.url}":
++                return 401, {"error": "the Actions token is refused"}
++            # The OIDC token's ref is refs/pull/7/merge, and the service refuses a body that names another pull
++            # request, or names it as anything but a JSON number.
++            named = body.get("pull_request", 7)
++            if type(named) is not int or named != 7:
++                return 401, {"error": f"the Actions token was issued for pull request 7, not {named!r}"}
++            if not self.paid:
++                return 402, {"error": "the installation on acme is not paid for", "subscribe": SUBSCRIBE}
++            return 200, {"token": "ghs_minted", "expires_at": "2026-11-19T01:00:00Z",
++                         "login": "projector-review[bot]"}
++        if bearer not in self.tokens:
++            # The client, not the service, names the command that fixes this.
++            return 401, {"error": "the account token is unknown, expired, or revoked"}
++        if path == "/v1/keys":
++            public = base64.b64decode(body["public_key"])
++            if "challenge_id" not in body:
++                challenge, made = secrets.token_hex(8), secrets.token_bytes(hosted.CHALLENGE_BYTES)
++                self.challenges[challenge] = (body["public_key"], made)
++                plaintext = hosted.CHALLENGE_PREFIX + made if self.sealing is None else self.sealing
++                return 200, {"challenge_id": challenge,
++                             "sealed": crypto.seal(self.sender or crypto.new_private_key(), public, plaintext)}
++            sealed_to, made = self.challenges.pop(body["challenge_id"], ("", b""))
++            if sealed_to != body["public_key"] or base64.b64decode(body["challenge"]) != made:
++                return 401, {"error": "the challenge does not match"}
++            self.registered.append(crypto.key_id(public))
++            return 201, {"key_id": crypto.key_id(public)}
++        if path == "/v1/account":
++            return 200, self.account
++        if path == "/v1/billing/checkout":
++            return 200, {"url": CHECKOUT}
++        if path == "/v1/logout":
++            self.tokens.discard(bearer)
++            return 204, None
++        if path == "/v1/installations/claim":
++            if not self.subscribed:
++                return 402, {"error": "claiming an installation needs a subscription to pay for it",
++                             "subscribe": SUBSCRIBE}
++            return self.claims.get(body.get("owner"), (404, {"error": "the app is not installed there"}))
++        return 404, {"error": "no such route"}
++
++
++class HostedCommandTests(RepositoryTestCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.service = FakeService()
++        self.addCleanup(self.service.close)
++        (self.home / ".projector.toml").write_text(f'[hosted]\nurl = "{self.service.url}"\n')
++        self.items: dict[tuple[str, str], str] = {}
++        self.enterContext(mock.patch.object(keychain, "usable", return_value=""))
++        self.enterContext(mock.patch.object(keychain, "store", side_effect=self.store))
++        self.enterContext(mock.patch.object(keychain, "read", side_effect=self.read))
++        self.enterContext(mock.patch.object(keychain, "delete", side_effect=self.delete))
++        self.key = relay.Key(crypto.new_private_key(), "keychain")
++        self.enterContext(mock.patch.object(relay, "command_key", return_value=(self.key, "")))
++
++    def store(self, account: str, secret: str, timeout: Optional[float] = None, *,
++              service: str = keychain.SERVICE) -> str:
++        self.items[(service, account)] = secret
++        return "fake keychain"
++
++    def read(self, account: str, timeout: Optional[float] = None, *, service: str = keychain.SERVICE) -> str:
++        if (service, account) not in self.items:
++            raise keychain.KeychainError(f"fake keychain: holds no key {account}")
++        return self.items[(service, account)]
++
++    def delete(self, account: str, timeout: Optional[float] = None, *, service: str = keychain.SERVICE) -> None:
++        self.items.pop((service, account), None)
++
++    def signed_in(self) -> None:
++        self.items[(hosted.SERVICE, self.service.url)] = TOKEN
++
++    def requests(self) -> list[str]:
++        return [f"{seen['method']} {seen['path']}" for seen in self.service.seen]
++
++    def test_login_keeps_the_token_in_the_keychain_and_registers_the_key_by_opening_its_sealed_challenge(self) -> None:
++        # The service registers a key only for an answer that opens its challenge, so a client that sent back
++        # anything else, or kept no token, signs in to an account it then cannot use.
++        code, out, err = self.invoke("hosted", "login")
++
++        self.assertEqual(0, code, err)
++        self.assertIn("enter the code ABCD-1234", out)
++        self.assertEqual({(hosted.SERVICE, self.service.url): TOKEN}, self.items,
++                         "the token is kept under the hosted service name and the address that issued it")
++        self.assertEqual([self.key.id], self.service.registered)
++        self.assertEqual(["POST /v1/login", "POST /v1/login/poll", "POST /v1/login/poll", "POST /v1/keys",
++                          "POST /v1/keys"], self.requests(), "the client polls past a pending answer")
++        self.assertIn(f"key {self.key.id} is registered", out)
++        answered = base64.b64decode(self.service.seen[-1]["body"]["challenge"])
++        self.assertEqual(hosted.CHALLENGE_BYTES, len(answered),
++                         "only the random part goes back, never the label it was sealed with")
++
++    def refused_challenge(self, sealed: bytes, secret: bytes) -> None:
++        """Log in against a service that seals `sealed` in place of a key challenge, and check that the client
++        refuses it, sends nothing back, and shows `secret` nowhere."""
++        self.service.sealing = sealed
++
++        code, out, err = self.invoke("hosted", "login")
++
++        self.assertNotEqual(0, code)
++        self.assertIn("is not a key challenge", err)
++        self.assertEqual(1, self.requests().count("POST /v1/keys"), "no answer goes back to the service")
++        self.assertEqual([], self.service.registered)
++        self.assertNotIn(secret.decode(), out + err)
++
++    def test_login_refuses_to_open_a_relay_record_the_service_passes_off_as_a_challenge(self) -> None:
++        # agent.key opens the relay's records, so a service that replayed one would learn its plaintext.
++        record = json.dumps({"secret": "relay-plaintext"}).encode()
++        self.service.sender = self.key.private
++
++        self.refused_challenge(record, b"relay-plaintext")
++
++    def test_login_refuses_a_challenge_with_the_label_and_the_wrong_length(self) -> None:
++        # Past the label, the service could fit a record's own bytes in any length it chose.
++        self.refused_challenge(hosted.CHALLENGE_PREFIX + b"relay-plaintext", b"relay-plaintext")
++
++    def test_login_without_agent_key_keeps_the_token_and_says_why_no_key_is_registered(self) -> None:
++        with mock.patch.object(relay, "command_key", return_value=(None, relay.NO_KEY)):
++            code, out, err = self.invoke("hosted", "login")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(TOKEN, self.items[(hosted.SERVICE, self.service.url)])
++        self.assertNotIn("POST /v1/keys", self.requests())
++        self.assertIn(relay.NO_KEY, out)
++
++    def test_status_prints_each_field_of_the_account(self) -> None:
++        self.signed_in()
++
++        code, out, err = self.invoke("hosted", "status")
++        _, as_json, _ = self.invoke("hosted", "status", "--json")
++
++        self.assertEqual(0, code, err)
++        for shown in ("login: octocat", "plan: solo", "subscription: active", "paid seats: 3",
++                      "keys: 0123456789abcdef (registered 2026-11-01)"):
++            self.assertIn(shown, out)
++        self.assertEqual({"url": self.service.url, **self.service.account},
++                         {name: value for name, value in json.loads(as_json).items() if name != "schema_version"})
++        self.assertEqual(TOKEN, self.service.seen[0]["bearer"])
++
++    def test_a_refused_token_says_to_run_login(self) -> None:
++        self.items[(hosted.SERVICE, self.service.url)] = "pjh_revoked"
++
++        code, _, err = self.invoke("hosted", "status")
++        self.items.clear()
++        _, _, missing = self.invoke("hosted", "status")
++
++        self.assertNotEqual(0, code)
++        self.assertIn("the account token is unknown, expired, or revoked; run `project hosted login`", err)
++        self.assertIn("run `project hosted login`", missing, "no token at all says the same")
++
++    def test_subscribe_refuses_a_team_plan_without_seats_before_calling_the_service(self) -> None:
++        self.signed_in()
++
++        code, _, err = self.invoke("hosted", "subscribe", hosted.TEAM)
++
++        self.assertNotEqual(0, code)
++        self.assertIn("--seats", err)
++        self.assertEqual([], self.service.seen, "no checkout starts for a plan the service would refuse")
++
++    def test_subscribe_asks_for_the_seats_and_prints_the_page_without_a_browser(self) -> None:
++        self.signed_in()
++
++        with mock.patch("webbrowser.open") as opened:
++            code, out, err = self.invoke("hosted", "subscribe", hosted.TEAM, "--seats", "4", "--no-browser")
++
++        self.assertEqual(0, code, err)
++        self.assertIn(CHECKOUT, out)
++        opened.assert_not_called()
++        self.assertEqual({"plan": hosted.TEAM, "seats": 4}, self.service.seen[-1]["body"])
++
++    def test_claim_names_the_installation_the_caller_now_pays_for(self) -> None:
++        self.signed_in()
++
++        code, out, err = self.invoke("hosted", "claim", "acme")
++
++        self.assertEqual(0, code, err)
++        self.assertIn("you now pay for the installation on acme", out)
++        self.assertEqual(({"owner": "acme"}, TOKEN), (self.service.seen[-1]["body"], self.service.seen[-1]["bearer"]))
++
++    def test_claim_refused_for_the_members_permission_says_what_the_owner_must_accept(self) -> None:
++        # The fix is on GitHub, in the organization's settings, so only the service's words name it.
++        self.signed_in()
++
++        code, _, err = self.invoke("hosted", "claim", "acme-pending")
++
++        self.assertNotEqual(0, code)
++        self.assertIn("must accept the app's organization members permission", err)
++
++    def test_claim_of_an_installation_with_a_payer_says_it_has_one(self) -> None:
++        self.signed_in()
++
++        code, _, err = self.invoke("hosted", "claim", "acme-claimed")
++
++        self.assertNotEqual(0, code)
++        self.assertIn("the installation on acme-claimed already has a payer", err)
++
++    def test_claim_without_a_paid_plan_says_to_subscribe_first(self) -> None:
++        self.signed_in()
++        self.service.subscribed = False
++
++        code, _, err = self.invoke("hosted", "claim", "acme")
++
++        self.assertNotEqual(0, code)
++        self.assertIn("needs a paid plan first; run `project hosted subscribe`", err)
++        self.assertIn(SUBSCRIBE, err)
++
++    def test_logout_revokes_the_token_and_removes_it_from_the_keychain(self) -> None:
++        self.signed_in()
++
++        code, out, err = self.invoke("hosted", "logout")
++
++        self.assertEqual(0, code, err)
++        self.assertNotIn(TOKEN, self.service.tokens, "the service no longer honors the token")
++        self.assertEqual({}, self.items)
++
++
++class KeychainServiceTests(unittest.TestCase):
++    def test_every_backend_keeps_the_account_token_apart_from_the_relay_key(self) -> None:
++        # A backend that ignored the service name would keep the token among the relay's keys, where removing
++        # one removes the other.
++        for system in ("darwin", "linux"):
++            with self.subTest(system=system):
++                ran: list[str] = []
++
++                def run(tool: str, args: list[str], timeout: float, *, input: Optional[bytes] = None,
++                        secret: str = "") -> bytes:
++                    ran.append(" ".join(args) + " " + (input or b"").decode())
++                    return b"pjh_account\n"
++
++                with mock.patch.object(keychain, "SYSTEM", system), mock.patch.object(keychain, "run", run), \
++                        mock.patch.object(keychain.MacOS, "usable", return_value=""), \
++                        mock.patch.object(keychain.Linux, "usable", return_value=""):
++                    keychain.store("https://hosted.example", "pjh_account", service=hosted.SERVICE)
++                    keychain.read("https://hosted.example", service=hosted.SERVICE)
++                    keychain.delete("https://hosted.example", service=hosted.SERVICE)
++                self.assertEqual(4, len(ran))
++                self.assertEqual([], [call for call in ran if keychain.SERVICE in call])
++                self.assertTrue(all(hosted.SERVICE in call for call in ran), ran)
++        fake = FakeAdvapi32()
++        with mock.patch.object(keychain, "SYSTEM", "win32"), \
++                mock.patch.object(keychain, "load_advapi32", return_value=fake):
++            keychain.store("https://hosted.example", "pjh_account", service=hosted.SERVICE)
++            keychain.delete("https://hosted.example", service=hosted.SERVICE)
++        self.assertTrue(all(call == "CredFree" or f" {hosted.SERVICE}:https://hosted.example" in call
++                            for call in fake.calls), fake.calls)
++
++
++@unittest.skipIf(shutil.which("bash") is None, "the action's steps run in bash")
++class ReviewTokenStepTests(unittest.TestCase):
++    def setUp(self) -> None:
++        self.service = FakeService()
++        self.addCleanup(self.service.close)
++        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
++        (self.home / ".projector.toml").write_text(f'[hosted]\nurl = "{self.service.url}"\n')
++        self.output = self.home / "output"
++        self.output.write_text("")
++
++    def step(self, **given: str) -> subprocess.CompletedProcess:
++        environment = {"PATH": os.environ["PATH"], "HOME": str(self.home), "PROJECTOR_ROOT": str(ROOT),
++                       "APP": hosted.APP, "APP_ID": "", "GITHUB_REPOSITORY": "acme/app",
++                       "GITHUB_OUTPUT": str(self.output), "XDG_STATE_HOME": str(self.home / "state"),
++                       "ACTIONS_ID_TOKEN_REQUEST_URL": f"{self.service.url}/oidc?api-version=2.0",
++                       "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token", "GITHUB_REF": "refs/pull/7/merge", **given}
++        return subprocess.run(["bash", "-eo", "pipefail", "-c", step_script("Request the hosted service's token")],
++                              cwd=self.home, env=environment, capture_output=True, text=True)
++
++    def outputs(self) -> dict[str, str]:
++        return dict(line.partition("=")[::2] for line in self.output.read_text().splitlines())
++
++    def test_the_step_trades_the_jobs_oidc_token_for_the_review_token_and_its_login(self) -> None:
++        result = self.step()
++
++        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
++        self.assertEqual({"token": "ghs_minted", "login": "projector-review[bot]"}, self.outputs())
++        self.assertLess(result.stdout.index("::add-mask::ghs_minted"),
++                        result.stdout.index("projector-review[bot]"), "the token is masked before any line names it")
++        traded = self.service.seen[-1]
++        self.assertEqual(("/v1/review-token", f"oidc-for-{self.service.url}"), (traded["path"], traded["bearer"]),
++                         "the OIDC token's audience is the service's own address")
++        self.assertEqual({"repository": "acme/app", "pull_request": 7}, traded["body"])
++        self.assertIs(int, type(traded["body"]["pull_request"]), "the service refuses the number as a string")
++
++    def test_a_manual_run_names_no_pull_request_so_the_service_counts_who_started_it(self) -> None:
++        result = self.step(GITHUB_REF="refs/heads/main")
++
++        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
++        self.assertEqual({"repository": "acme/app"}, self.service.seen[-1]["body"])
++
++    def test_an_unpaid_installation_fails_the_job_with_the_services_words_and_where_to_subscribe(self) -> None:
++        self.service.paid = False
++
++        result = self.step()
++
++        self.assertEqual(1, result.returncode)
++        self.assertIn(f"::error::the installation on acme is not paid for; subscribe at {SUBSCRIBE}", result.stdout)
++        self.assertEqual({}, self.outputs(), "no token reaches the review step")
++
++    def test_a_job_without_id_token_write_is_told_to_add_it(self) -> None:
++        result = self.step(ACTIONS_ID_TOKEN_REQUEST_URL="", ACTIONS_ID_TOKEN_REQUEST_TOKEN="")
++
++        self.assertEqual(1, result.returncode)
++        self.assertIn("id-token: write", result.stdout)
++        self.assertEqual([], self.service.seen)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 10289fa3..234998d4 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -129,7 +129,7 @@
+ 
+ # What the Codex rules leave to Codex's usual approval: each command with the
+ # subcommands left out, or None where the whole command is.
+-CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None,
++CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None, "hosted": None,
+                   "agent": {"key", "peer", "relay"},
+                   "config": {"set", "unset", "allow"},
+                   "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},

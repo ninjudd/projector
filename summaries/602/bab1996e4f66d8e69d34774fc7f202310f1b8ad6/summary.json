@@ -1,0 +1,186 @@
+{
+ "version": 1,
+ "name": "Hosted service client",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 602,
+  "title": "Sign in to a hosted Projector service, and post CI reviews as its app with no private key",
+  "head": "bab1996e4f66d8e69d34774fc7f202310f1b8ad6",
+  "headRef": "hosted-client",
+  "base": "8a05582753af6babc2f56f212eb362e23333cd43",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector can review pull requests in GitHub Actions and post each review under a GitHub App's name. Until now that meant registering your own app and storing its private key as a repository secret. This pull request adds the client side of a <b>hosted Projector service</b>: a server that holds the private key of its own app, <i>Projector Review</i>, and hands each CI job a short-lived token for the one repository the job runs in, once someone pays for the installation.",
+   "It adds two things:",
+   "<ol><li><b>The <code>project hosted</code> commands</b>, which sign you in to the service through GitHub, keep the account token in the OS keychain, register your <code>agent.key</code> by answering a sealed challenge, and show, subscribe, claim, and sign out the account.</li><li><b>An <code>app: projector</code> input on the review action</b>, which trades the job's GitHub Actions OIDC token for the service's installation token, so the workflow stores no private key. <code>project init --ci-review --ci-app projector</code> writes that workflow.</li></ol>",
+   "The server is not in this pull request; the tests run every command against a fake service on a local port."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Hosted service</b>: the server at <code>hosted.url</code>, by default <code>https://api.projector.bot</code>.</li><li><b>Account token</b>: what the service returns after sign-in, kept in the keychain under the service name <code>projector-hosted</code>, keyed by the service's address.</li><li><b>OIDC token</b>: a signed token GitHub Actions gives a job with <code>id-token: write</code>, naming the repository and ref, for an audience the job chooses.</li><li><b>Destination</b>: a setting that says where your data goes; a value a repository commits applies only after <code>project config allow</code>.</li><li><b><code>agent.key</code></b>: the X25519 key the relay uses to seal messages and state end to end.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "What the review found",
+    "html": "<ul class=\"tight\"><li>The earlier finding is fixed. <code>register_key</code> now opens only a labelled challenge of exactly 32 random bytes and sends back only those bytes, so a relay record passed off as a challenge is refused.</li><li>One blocking finding: on macOS, the account token the service returns goes unquoted into the commands <code>security -i</code> reads. A token with a newline in it runs a second keychain command. It is flagged on <code>src/projector/keychain.py</code>.</li><li>One suggestion: rewrap two over-long prose lines in the new section of <code>docs/cli.md</code>.</li><li>The gate and the <code>check</code> job passed.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "client",
+   "title": "The hosted service client",
+   "kicker": "The new hosted module and the project hosted commands that drive it",
+   "intro": [
+    "<code>hosted.py</code> is the whole client. Every request goes through one helper, <code>call</code>, which uses <code>urllib</code> alone, so the CLI still has no dependencies. When the service refuses a request, the error carries the service's own words, and a <code>401</code> or <code>402</code> adds the command or address that fixes it.",
+    "Sign-in is GitHub's device flow, run through the service: the CLI prints a code, polls until you approve it, stores the token, and then registers <code>agent.key</code>. To prove it holds the private key, it opens a challenge the service sealed to the key. The challenge is the label <code>projector hosted key challenge v1</code>, a NUL byte, and 32 random bytes, and the CLI sends back only the random bytes. The same key opens your relay records, so the CLI refuses anything else the service seals to it and sends nothing back.",
+    "The same module holds <code>review_token_step</code>, the action step for <code>app: projector</code>, described in the CI group."
+   ],
+   "files": [
+    {
+     "path": "src/projector/hosted.py",
+     "note": "New module: the HTTP helper, sign-in, key registration, account, claim, subscribe, logout, and the action's token step.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 156,
+       "text": "<code>register_key</code> refuses a plaintext that is not <code>CHALLENGE_PREFIX</code> followed by exactly <code>CHALLENGE_BYTES</code> bytes, before it sends any answer. Checked by reading the new tests: they refuse a relay-shaped record sealed from <code>agent.key</code> itself and a labelled record of the wrong length, each with one <code>POST /v1/keys</code> and nothing registered."
+      },
+      {
+       "kind": "verify",
+       "line": 278,
+       "text": "In CI, <code>address</code> raises <code>NotAllowed</code>, a <code>ConfigError</code>, for a <code>hosted.url</code> the repository commits, so a pull request cannot point the OIDC token at another server; the step fails instead. Checked by reading <code>Config.setting</code>."
+      },
+      {
+       "kind": "context",
+       "line": 298,
+       "text": "Only a <code>pull_request</code> job's <code>refs/pull/&lt;n&gt;/merge</code> ref yields a pull request number; a manual run sends only the repository."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>hosted</code> subcommands and <code>run_hosted</code>, and teaches <code>ci_app</code> and <code>init_ci_review</code> the <code>projector</code> app, which needs no ID or key secret."
+    }
+   ]
+  },
+  {
+   "id": "keychain",
+   "title": "A service name for keychain items",
+   "kicker": "The keychain stores the account token apart from the relay's keys",
+   "intro": [
+    "Before this change the keychain module stored only the relay's private keys, under one fixed service name. Each backend now takes a <code>service</code> argument, which defaults to the relay's, so the account token lives under <code>projector-hosted</code> and every existing caller is unchanged."
+   ],
+   "files": [
+    {
+     "path": "src/projector/keychain.py",
+     "note": "Threads a keyword-only <code>service</code> through the macOS, Linux, and Windows backends and the module's <code>store</code>, <code>read</code>, and <code>delete</code>.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 70,
+       "text": "<code>MacOS.store</code> writes <code>-w {secret}</code> unquoted into the lines <code>security -i</code> reads from standard input, and the account token comes straight from the service. <code>sign_in</code> checks only that it is a non-empty string. A token holding a newline runs a second <code>security</code> command, such as one that deletes the relay's key. The fix is to have <code>sign_in</code> refuse a token outside a strict token alphabet, and have <code>MacOS.store</code> refuse whitespace, quotes, and control characters."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "config",
+   "title": "The hosted.url setting",
+   "kicker": "A new destination setting that names the service",
+   "intro": [
+    "<code>hosted.url</code> says which service the commands and the action talk to. It is a <b>destination</b>, because the account token goes there, so a value a repository commits applies only once you allow it. <code>hosted_url</code> accepts an <code>https://</code> address with no path, query, or user info, or <code>http://</code> on this machine, and normalizes it, because the normalized form is both the keychain account and the OIDC audience."
+   ],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers <code>hosted.url</code>, adds it to <code>DESTINATIONS</code>, and adds the <code>hosted_url</code> validator."
+    }
+   ]
+  },
+  {
+   "id": "ci",
+   "title": "Posting CI reviews as the hosted app",
+   "kicker": "The action's app input and the workflow init writes for it",
+   "intro": [
+    "With <code>app: projector</code>, the review action runs a new step that asks GitHub Actions for the job's OIDC token, with the service's address as the audience, and posts it to <code>/v1/review-token</code>. The service answers an installation token and its login. The step masks the token, and the review and summary steps use it in place of an app's own token.",
+    "<code>init --ci-app projector</code> writes <code>app: projector</code> instead of the key inputs, gives both jobs <code>id-token: write</code>, and adds <code>projector-review[bot]</code> to <code>review.reviewers</code>. A workflow for any other app renders byte for byte as before."
+   ],
+   "files": [
+    {
+     "path": "actions/review/action.yml",
+     "note": "Adds the <code>app</code> input and the token step, and falls back to its outputs for <code>GH_TOKEN</code> and the login.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The context-repository steps still run only with <code>app-id</code>, so a review through the hosted app reads no context repositories, as the docs say."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/ci.py",
+     "note": "Adds <code>HOSTED_APP</code> and <code>HOSTED_LOGIN</code>, and renders the app input and <code>id-token: write</code> for the hosted app."
+    },
+    {
+     "path": "src/projector/templates/review-workflow.yml",
+     "note": "Adds an <code>@ID_TOKEN@</code> placeholder after each job's permissions, which renders empty for other apps."
+    }
+   ]
+  },
+  {
+   "id": "permissions",
+   "title": "Agent permissions",
+   "kicker": "Agents ask before running project hosted",
+   "intro": [
+    "<code>project hosted</code> holds a credential and can start a subscription, so Claude Code asks before it and the Codex rules leave it to Codex's approval."
+   ],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds <code>Bash(project hosted *)</code> to the ask rules and names the command in the Codex rules' comment."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "A fake service, the action step in bash, and the workflow init writes",
+   "intro": [
+    "<code>test_hosted.py</code> runs each command against a fake service on a local port that seals real challenges, and runs the action step's script in bash against a fake OIDC endpoint. <code>test_ci.py</code> checks the workflow <code>init --ci-app projector</code> writes."
+   ],
+   "files": [
+    {
+     "path": "tests/test_hosted.py"
+    },
+    {
+     "path": "tests/test_ci.py"
+    },
+    {
+     "path": "tests/test_permissions.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "How to sign in and how to post CI reviews through the service",
+   "intro": [
+    "<code>docs/cli.md</code> gains a <i>Use a hosted Projector service</i> section and the <code>hosted.url</code> row. <code>docs/review-in-ci.md</code> gains <i>Post as Projector Review through a hosted service</i>, including how to set <code>hosted.url</code> through the action's <code>config</code> input."
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/review-in-ci.md"
+    }
+   ]
+  }
+ ]
+}
