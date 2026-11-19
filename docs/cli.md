@@ -5042,9 +5042,13 @@ refuses to start when the keychain cannot be used, as `project agent key init`
 describes for the relay's key.
 
 It then registers `agent.key`'s public key to the account. The service seals
-a random challenge to the key, and the command opens it with the private key
-and sends it back, which proves the machine holds the key without sending it.
-A key belongs to one account, and the service refuses one that another
+a challenge to the key: the label `projector hosted key challenge v1` and a
+NUL byte, then 32 random bytes. The command opens it with the private key and
+sends back only the 32 random bytes, which proves the machine holds the key
+without sending it. The same key opens your relay records, so the command
+refuses anything else the service seals to it, sends nothing back, and shows
+none of it: a service that passed off a relay record as a challenge learns
+nothing from the answer. A key belongs to one account, and the service refuses one that another
 account registered. Without `agent.key`, the command keeps the token and
 registers no key, and says why; run `project agent key init`, then
 `project hosted login` again.

@@ -2,9 +2,10 @@
 
 `project hosted login` signs in through GitHub's device flow and keeps the account token the service returns in
 the OS keychain, under the service name `projector-hosted` and the service's address, so a token goes only to the
-service that issued it. It then registers `agent.key`'s public key: the service seals a random challenge to the
-key, and the CLI opens it with `crypto.unseal` and sends it back, which proves it holds the private key without
-sending it. `status`, `subscribe`, and `logout` call the service with that token.
+service that issued it. It then registers `agent.key`'s public key: the service seals a labelled random challenge
+to the key, and the CLI opens it with `crypto.unseal`, checks the label, and sends back the random bytes, which
+proves it holds the private key without sending it. `status`, `subscribe`, `claim`, and `logout` call the service
+with that token.
 
 `review_token_step` is the review action's step for its `app: projector` input. It requests the job's GitHub
 Actions OIDC token for the service's address as the audience, and trades it for an installation token that posts
@@ -38,6 +39,9 @@ TIMEOUT = 30.0
 LOGIN = "run `project hosted login`"
 # The plan sold by the seat, the one plan whose checkout names how many seats it buys.
 TEAM = "team"
+# What a key challenge's plaintext is: this label, then this many random bytes, which alone go back.
+CHALLENGE_PREFIX = b"projector hosted key challenge v1\x00"
+CHALLENGE_BYTES = 32
 # The step's input that has the review post as the hosted service's app.
 APP = "projector"
 
@@ -138,16 +142,23 @@ def sign_in(url: str, say: Callable[[str], None], sleep: Callable[[float], None]
 
 def register_key(url: str, token: str, key: Any) -> str:
     """Register `key`'s public key to the account by opening the challenge the service seals to it, and answer
-    the key's ID. The service seals from a fresh key of its own, so the sender proves nothing and is not read."""
+    the key's ID. The service seals from a fresh key of its own, so the sender proves nothing and is not read.
+
+    `agent.key` also opens the relay's records, so a service that passed one off as a challenge would learn its
+    plaintext from the answer. A challenge is therefore exactly `CHALLENGE_PREFIX` and `CHALLENGE_BYTES` random
+    bytes, and only those bytes go back. Anything else is refused before any answer is sent, and never shown."""
     public = base64.b64encode(key.public).decode("ascii")
     challenge = call(url, "POST", "/v1/keys", {"public_key": public}, token)[1]
     try:
         _, opened = crypto.unseal(key.private, challenge.get("sealed"))
     except crypto.CryptoError as error:
         raise HostedError(f"the challenge {url} sealed to key {key.id} does not open: {error}") from None
+    if len(opened) != len(CHALLENGE_PREFIX) + CHALLENGE_BYTES or not opened.startswith(CHALLENGE_PREFIX):
+        raise HostedError(f"{url} sealed something to key {key.id} that is not a key challenge, so nothing was sent "
+                          "back; a service that asks the key to open anything else could read your relay records")
     answer = call(url, "POST", "/v1/keys", {"public_key": public, "challenge_id": challenge.get("challenge_id"),
-                                            "challenge": base64.b64encode(opened).decode("ascii")}, token,
-                  ok=(200, 201))[1]
+                                            "challenge": base64.b64encode(opened[len(CHALLENGE_PREFIX):])
+                                            .decode("ascii")}, token, ok=(200, 201))[1]
     return str(answer.get("key_id") or key.id)
 
 

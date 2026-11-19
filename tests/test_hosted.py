@@ -39,6 +39,10 @@ class FakeService:
         self.tokens = {TOKEN}
         self.challenges: dict[str, tuple[str, bytes]] = {}
         self.registered: list[str] = []
+        # What the service seals in place of a key challenge, and from which key, as one replaying a record
+        # sealed to the key would.
+        self.sealing: Optional[bytes] = None
+        self.sender: Optional[bytes] = None
         self.paid = True
         self.subscribed = True
         self.claims: dict[str, tuple[int, dict]] = {
@@ -116,10 +120,11 @@ class FakeService:
         if path == "/v1/keys":
             public = base64.b64decode(body["public_key"])
             if "challenge_id" not in body:
-                challenge, made = secrets.token_hex(8), secrets.token_bytes(32)
+                challenge, made = secrets.token_hex(8), secrets.token_bytes(hosted.CHALLENGE_BYTES)
                 self.challenges[challenge] = (body["public_key"], made)
+                plaintext = hosted.CHALLENGE_PREFIX + made if self.sealing is None else self.sealing
                 return 200, {"challenge_id": challenge,
-                             "sealed": crypto.seal(crypto.new_private_key(), public, made)}
+                             "sealed": crypto.seal(self.sender or crypto.new_private_key(), public, plaintext)}
             sealed_to, made = self.challenges.pop(body["challenge_id"], ("", b""))
             if sealed_to != body["public_key"] or base64.b64decode(body["challenge"]) != made:
                 return 401, {"error": "the challenge does not match"}
@@ -186,6 +191,33 @@ class HostedCommandTests(RepositoryTestCase):
         self.assertEqual(["POST /v1/login", "POST /v1/login/poll", "POST /v1/login/poll", "POST /v1/keys",
                           "POST /v1/keys"], self.requests(), "the client polls past a pending answer")
         self.assertIn(f"key {self.key.id} is registered", out)
+        answered = base64.b64decode(self.service.seen[-1]["body"]["challenge"])
+        self.assertEqual(hosted.CHALLENGE_BYTES, len(answered),
+                         "only the random part goes back, never the label it was sealed with")
+
+    def refused_challenge(self, sealed: bytes, secret: bytes) -> None:
+        """Log in against a service that seals `sealed` in place of a key challenge, and check that the client
+        refuses it, sends nothing back, and shows `secret` nowhere."""
+        self.service.sealing = sealed
+
+        code, out, err = self.invoke("hosted", "login")
+
+        self.assertNotEqual(0, code)
+        self.assertIn("is not a key challenge", err)
+        self.assertEqual(1, self.requests().count("POST /v1/keys"), "no answer goes back to the service")
+        self.assertEqual([], self.service.registered)
+        self.assertNotIn(secret.decode(), out + err)
+
+    def test_login_refuses_to_open_a_relay_record_the_service_passes_off_as_a_challenge(self) -> None:
+        # agent.key opens the relay's records, so a service that replayed one would learn its plaintext.
+        record = json.dumps({"secret": "relay-plaintext"}).encode()
+        self.service.sender = self.key.private
+
+        self.refused_challenge(record, b"relay-plaintext")
+
+    def test_login_refuses_a_challenge_with_the_label_and_the_wrong_length(self) -> None:
+        # Past the label, the service could fit a record's own bytes in any length it chose.
+        self.refused_challenge(hosted.CHALLENGE_PREFIX + b"relay-plaintext", b"relay-plaintext")
 
     def test_login_without_agent_key_keeps_the_token_and_says_why_no_key_is_registered(self) -> None:
         with mock.patch.object(relay, "command_key", return_value=(None, relay.NO_KEY)):
