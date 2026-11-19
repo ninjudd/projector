@@ -4,9 +4,10 @@ name: Projector review
 # `project review run`, one job for each agent, and publishes each review's
 # summary from a second job that runs no agent. `project review run` refuses a
 # fork's pull request and a draft however the workflow starts, so a manual run
-# cannot review either. Each agent's job reads the one credential secret that
-# is set for it: a subscription's or an API key. Secrets that are not set read
-# as empty.
+# cannot review either. Each agent's job reads the one credential that is set
+# for it, a subscription's or an API key, from the secrets its review step
+# passes, or from the runner when the step passes none. Secrets that are not
+# set read as empty.
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
@@ -45,7 +46,7 @@ jobs:
     concurrency:
       group: projector-review-${{ github.event.pull_request.number || inputs.pr }}-${{ matrix.agent }}
       cancel-in-progress: true
-    runs-on: ubuntu-latest
+    runs-on: @RUNS_ON@
     timeout-minutes: 60
     steps:
       - uses: ninjudd/projector/actions/review@@REF@
@@ -54,9 +55,7 @@ jobs:
           model: ${{ matrix.model }}
           pr: ${{ github.event.pull_request.number || inputs.pr }}
           rereview: ${{ inputs.rereview || false }}
-@APP@        env:
-@ENV@
-
+@APP@@ENV@
   summary:
     needs: review
     if: ${{ !cancelled() && needs.review.result != 'skipped' }}
@@ -67,7 +66,7 @@ jobs:
       pages: read
     concurrency:
       group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
-    runs-on: ubuntu-latest
+    runs-on: @RUNS_ON@
     timeout-minutes: 10
     steps:
       - uses: ninjudd/projector/actions/review@@REF@

@@ -216,6 +216,68 @@ class InitCiReviewTests(RepositoryTestCase):
         self.assertIs(False, self.recorded()["ci"])
         self.assertFalse(self.workflow().exists())
 
+    def test_both_jobs_run_on_the_labels_you_name_and_a_later_init_keeps_them(self) -> None:
+        # A refresh that forgot the labels would move the reviews back to a hosted runner, away from the
+        # credential and network the repository's own runner holds.
+        code, _, err = self.init("--ci-review", "--ci-runs-on", "self-hosted, linux,projector")
+        again, out_again, _ = self.init()
+
+        self.assertEqual((0, 0), (code, again), err)
+        self.assertEqual(["[self-hosted, linux, projector]"] * 2, runs_on(self.workflow().read_text()))
+        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again)
+        self.assertEqual("self-hosted, linux, projector", self.recorded()["ci_runs_on"])
+
+        named, _, named_err = self.init("--ci-runs-on", "ubuntu-latest")
+        self.assertEqual(0, named, named_err)
+        self.assertEqual(["ubuntu-latest"] * 2, runs_on(self.workflow().read_text()),
+                         "naming the hosted runner moves the reviews back to it")
+
+    def test_a_runner_credential_passes_no_secret_and_sets_none(self) -> None:
+        # An unset secret reads as empty, and an empty variable in the step's env hides the runner's own.
+        self.at_a_terminal()
+
+        code, _, err = self.init("--ci-review", "--ci-agents", "claude,codex=gpt-5.5", "--ci-runs-on", "self-hosted",
+                                 "--ci-credential", "runner")
+        again, out_again, _ = self.init()
+
+        self.assertEqual((0, 0), (code, again), err)
+        self.assertNotIn("secrets.", self.workflow().read_text())
+        self.assertEqual(([], []), (self.set, self.gh_calls), "no secret is listed or set")
+        self.assertIn("the codex review reads its credential from your runner: run `codex login`", err)
+        self.assertEqual("runner", self.recorded()["ci_credential"])
+        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again, "a refresh keeps passing no secret")
+
+    def test_a_runner_credential_on_a_hosted_runner_is_refused_before_anything_is_written(self) -> None:
+        # A hosted runner holds no credential of yours, so every review would stop at the credential check.
+        for labels in ((), ("--ci-runs-on", "ubuntu-latest"), ("--ci-runs-on", "macos-latest"),
+                       ("--ci-runs-on", "ubuntu-24.04,windows-2025")):
+            with self.subTest(labels=labels):
+                code, _, err = self.init("--ci-review", "--ci-credential", "runner", *labels)
+
+                self.assertNotEqual(0, code)
+                self.assertIn("--ci-runs-on", err)
+                self.assertFalse(self.workflow().exists())
+                self.assertEqual((None, None), (self.recorded().get("ci"), self.recorded().get("ci_credential")))
+
+    def test_moving_a_runner_credential_back_to_a_hosted_runner_asks_for_a_secret_kind(self) -> None:
+        # Naming the hosted runner alone would keep the recorded `runner` and write a workflow with no secret.
+        self.assertEqual(0, self.init("--ci-review", "--ci-runs-on", "self-hosted", "--ci-credential", "runner")[0])
+        written = self.workflow().read_text()
+
+        code, _, err = self.init("--ci-runs-on", "ubuntu-latest")
+        moved, _, moved_err = self.init("--ci-runs-on", "ubuntu-latest", "--ci-credential", "api-key")
+
+        self.assertNotEqual(0, code)
+        self.assertIn("--ci-credential", err)
+        self.assertEqual(0, moved, moved_err)
+        self.assertNotEqual(written, self.workflow().read_text())
+        self.assertIn("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}", self.workflow().read_text())
+
+
+def runs_on(workflow: str) -> list[str]:
+    """The `runs-on` value of each job in `workflow`, in order."""
+    return re.findall(r"^    runs-on: (.*)$", workflow, re.M)
+
 
 class WorkflowTests(unittest.TestCase):
     def test_a_workflow_init_wrote_reads_as_unedited_with_any_agents_and_ref(self) -> None:
@@ -235,6 +297,23 @@ class WorkflowTests(unittest.TestCase):
                 with self.subTest(agent=agent, name=name):
                     self.assertIn(f"          {name}: ${{{{ secrets.{name} }}}}\n", text)
         self.assertIn("uses: ninjudd/projector/actions/review@v0\n", text)
+        self.assertEqual([ci.HOSTED] * 2, runs_on(text), "with no labels, both jobs run on a hosted runner")
+
+    def test_a_runner_credential_runs_on_any_runner_github_does_not_host(self) -> None:
+        # An Actions Runner Controller scale set carries only its own name, and a runner registered with
+        # --no-default-labels has no `self-hosted`, so a guard that wants that label would refuse both.
+        for labels in (["arc-runner-set"], ["projector", "linux"], ["self-hosted", "ubuntu-24.04"], ["Self-Hosted"]):
+            with self.subTest(labels=labels):
+                self.assertNotIn("secrets.CLAUDE", ci.workflow_text("v0", {"claude": ""}, None, labels, ci.RUNNER))
+
+    def test_parse_runs_on_reads_what_format_runs_on_records_and_refuses_the_rest(self) -> None:
+        labels = ci.parse_runs_on(" self-hosted,linux , self-hosted,gpu.large_1")
+        self.assertEqual(["self-hosted", "linux", "gpu.large_1"], labels)
+        self.assertEqual(labels, ci.parse_runs_on(ci.format_runs_on(labels)))
+        # Each of these would break the workflow's YAML or name no runner at all.
+        for text in ("", " , ", "self-hosted, [linux]", "a: b", "my runner", "-x"):
+            with self.subTest(text=text), self.assertRaises(UsageError):
+                ci.parse_runs_on(text)
 
     def test_parse_agents_reads_what_format_agents_records_and_refuses_the_rest(self) -> None:
         agents = ci.parse_agents("codex = gpt-5.5, claude, codex=other")
@@ -268,7 +347,8 @@ def review_jobs(workflow: str) -> list[dict[str, str]]:
         key, _, value = line.strip().removeprefix("- ").partition(": ")
         entries[-1][key] = value
     start = lines.index("        with:") + 1
-    given = dict(line.strip().partition(": ")[::2] for line in lines[start:lines.index("        env:", start)])
+    end = next(i for i in range(start, len(lines)) if not lines[i].startswith("          "))
+    given = dict(line.strip().partition(": ")[::2] for line in lines[start:end])
     expression = re.compile(r"\$\{\{ matrix\.(\w+) \}\}")
     return [{name: expression.sub(lambda found: entry.get(found.group(1), ""), value)
              for name, value in given.items()} for entry in entries]
@@ -306,6 +386,82 @@ class ActionTests(unittest.TestCase):
         self.assertIn("delete the secret", self.check("claude", CLAUDE_CODE_OAUTH_TOKEN="s",
                                                       ANTHROPIC_API_KEY="k").stdout)
         self.assertEqual(0, self.check("command").returncode, "a command the repository names brings its own")
+
+    def test_a_codex_login_on_the_runner_counts_as_its_one_credential(self) -> None:
+        home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (home / ".codex").mkdir()
+        (home / ".codex" / "auth.json").write_text("{}")
+        elsewhere = home / "runner-2"
+        elsewhere.mkdir()
+        (elsewhere / "auth.json").write_text("{}")
+        for given, passes in (({"HOME": str(home)}, True),
+                              ({"HOME": str(elsewhere.parent / "nobody"), "CODEX_HOME": str(elsewhere)}, True),
+                              ({"HOME": str(home), "OPENAI_API_KEY": "k"}, False),
+                              ({"HOME": str(home), "CODEX_AUTH_JSON": "{}"}, True),
+                              ({"HOME": str(elsewhere)}, False)):
+            with self.subTest(given=sorted(given)):
+                result = self.check("codex", **given)
+                self.assertEqual(passes, result.returncode == 0, result.stdout)
+        self.assertIn("run `codex login` as the runner's user", self.check("codex", HOME=str(elsewhere)).stdout,
+                      "a runner with nothing says what to set up on it")
+        self.assertIn("the Codex login in", self.check("codex", HOME=str(home), OPENAI_API_KEY="k").stdout)
+
+    def install(self, agent: str, prints: str | None, home: Path, **given: str) -> tuple[list[str], dict[str, str]]:
+        """Run the action's install step for `agent` with a fake CLI on PATH that prints `prints` for `--version`,
+        or none when it is None, and a fake npm. Returns the commands the fakes ran and what the step put in
+        GITHUB_ENV."""
+        stub = home / "bin"
+        stub.mkdir(exist_ok=True)
+        ran = home / "ran"
+        ran.write_text("")
+        (stub / "npm").write_text(f'#!/bin/sh\necho "npm $*" >> "{ran}"\n')
+        (stub / "npm").chmod(0o755)
+        (stub / agent).unlink(missing_ok=True)
+        if prints is not None:
+            (stub / agent).write_text(f'#!/bin/sh\n[ "$1" = --version ] && {{ echo "{prints}"; exit 0; }}\n'
+                                      f'cat > /dev/null\necho "{agent} $*" >> "{ran}"\n')
+            (stub / agent).chmod(0o755)
+        environment = {"PATH": f"{stub}{os.pathsep}/usr/bin{os.pathsep}/bin", "HOME": str(home), "AGENT": agent,
+                       "CLAUDE_VERSION": "2.1.327", "CODEX_VERSION": "0.169.0", "RUNNER_TEMP": str(home / "temp"),
+                       "GITHUB_ENV": str(home / "github-env"), "PROJECTOR_ROOT": str(home / "projector"), **given}
+        (home / "temp").mkdir(exist_ok=True)
+        (home / "github-env").write_text("")
+        result = subprocess.run(["bash", "-eo", "pipefail", "-c", step_script("Install the agent")], env=environment,
+                                capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        exported = dict(line.partition("=")[::2] for line in (home / "github-env").read_text().splitlines())
+        return ran.read_text().splitlines(), exported
+
+    def test_a_cli_already_at_the_pinned_version_is_not_installed_again(self) -> None:
+        # A self-hosted runner's user may have no write access where npm installs globally.
+        for agent, prints, installs in (("claude", "2.1.327 (Claude Code)", False), ("codex", "codex-cli 0.169.0", False),
+                                        ("claude", "2.1.3270 (Claude Code)", True), ("claude", "2.1.32 (Claude Code)", True),
+                                        ("codex", "codex-cli 0.169.0-alpha.1", True), ("claude", None, True)):
+            with self.subTest(agent=agent, prints=prints), tempfile.TemporaryDirectory() as home:
+                ran, _ = self.install(agent, prints, Path(home), OPENAI_API_KEY="k")
+                self.assertEqual(installs, any(line.startswith("npm install --global") for line in ran), ran)
+
+    def test_a_codex_login_on_the_runner_is_used_in_place_and_never_replaced(self) -> None:
+        # Codex refreshes the login in place, so a copy, or a home the job throws away, makes it go stale.
+        home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (home / "projector" / "skills").mkdir(parents=True)
+        codex = home / ".codex"
+        (codex / "skills" / ".system").mkdir(parents=True)
+        (codex / "auth.json").write_text('{"tokens": "refreshed"}')
+
+        for run in (1, 2):
+            with self.subTest(run=run):
+                ran, exported = self.install("codex", "codex-cli 0.169.0", home)
+                self.assertEqual(str(codex), exported["CODEX_HOME"])
+                self.assertEqual('{"tokens": "refreshed"}', (codex / "auth.json").read_text())
+                self.assertEqual([], ran, "nothing logs in over the runner's login")
+                self.assertEqual(home / "projector" / "skills", (codex / "skills" / "projector").readlink())
+                self.assertEqual([".system", "projector"], sorted(path.name for path in (codex / "skills").iterdir()),
+                                 "the runner's own skills stay, and a second job links nothing inside the link")
+
+        ran, exported = self.install("codex", "codex-cli 0.169.0", home, OPENAI_API_KEY="k")
+        self.assertEqual(str(home / "temp" / "codex-home"), exported["CODEX_HOME"], "a key still gets a home of its own")
+        self.assertEqual(["codex login --with-api-key"], ran)
 
     def test_every_job_the_generated_workflow_runs_reaches_the_review_with_a_model(self) -> None:
         # The workflow's matrix and `with:` are one side of the seam, and the action's review step the other.
