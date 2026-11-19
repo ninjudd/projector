@@ -165,6 +165,28 @@ class InitCiReviewTests(RepositoryTestCase):
         self.assertNotEqual(0, named, "--ci-app always asks GitHub, so it can refuse an app GitHub does not show")
         self.assertIn("could not look up the GitHub App projector-review", named_err)
 
+    def test_the_hosted_app_has_each_job_request_an_oidc_token_and_passes_no_key(self) -> None:
+        # The hosted service mints the token for the job's OIDC token, so a workflow without id-token: write
+        # cannot post, and one that still passed the key input would ask for a secret nobody has.
+        code, out, err = self.init("--ci-review", "--ci-app", ci.HOSTED_APP)
+        again, out_again, _ = self.init()
+        printed, shown, _ = self.invoke("review", "ci-workflow")
+
+        self.assertEqual((0, 0, 0), (code, again, printed), err)
+        text = self.workflow().read_text()
+        self.assertEqual([(ci.HOSTED_APP, None, None)],
+                         [(job.get("app"), job.get("app-id"), job.get("app-private-key")) for job in review_jobs(text)])
+        self.assertNotIn(ci.APP_KEY, text + err)
+        jobs = text.split("\n  summary:\n")
+        self.assertEqual([True, True], [re.search(r"\n    permissions:\n(      .+\n)*      id-token: write\n", job)
+                                        is not None for job in jobs], "both jobs request the service's token")
+        self.assertIn(f"\n          app: {ci.HOSTED_APP}\n", jobs[1])
+        self.assertTrue(ci.unedited(text))
+        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again)
+        self.assertEqual(text, shown, "project review ci-workflow prints the workflow init wrote")
+        self.assertEqual((ci.HOSTED_APP, ci.HOSTED_LOGIN), (self.recorded()["ci_app"], self.recorded()["reviewers"]))
+        self.assertNotIn("ci_app_id", self.recorded())
+
     def test_an_app_recorded_without_its_id_is_left_as_it_is_when_github_cannot_answer(self) -> None:
         (self.root / ".projector.toml").write_text('[review]\nci = true\nci_app = "projector-review"\n')
         self.offline = True
@@ -559,14 +581,17 @@ class ActionTests(unittest.TestCase):
         # GitHub refuses `gh api user` to a token of no user, so a step without the login fails once it posts.
         steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
         minted = re.search(r"\n      id: (\S+)\n", steps["Mint the app's token"]).group(1)
-        self.assertNotIn("inputs.step", steps["Mint the app's token"].split("uses:")[0],
-                         "the summary job mints the app's token too")
+        hosted = re.search(r"\n      id: (\S+)\n", steps["Request the hosted service's token"]).group(1)
+        for minting in ("Mint the app's token", "Request the hosted service's token"):
+            self.assertNotIn("inputs.step", steps[minting].split("run:")[0].split("uses:")[0],
+                             "the summary job mints the app's token too")
         for name in ("Review the pull request", "Publish the summaries"):
             with self.subTest(step=name):
-                self.assertIn(f"GH_TOKEN: ${{{{ steps.{minted}.outputs.token || github.token }}}}", steps[name])
+                self.assertIn(f"GH_TOKEN: ${{{{ steps.{minted}.outputs.token || steps.{hosted}.outputs.token || "
+                              "github.token }}", steps[name])
                 self.assertIn(f"{review.TOKEN_LOGIN}: ${{{{ steps.{minted}.outputs.app-slug && "
-                              f"format('{{0}}[bot]', steps.{minted}.outputs.app-slug) || '{cli.CI_REVIEWER}' }}}}",
-                              steps[name])
+                              f"format('{{0}}[bot]', steps.{minted}.outputs.app-slug) || "
+                              f"steps.{hosted}.outputs.login || '{cli.CI_REVIEWER}' }}}}", steps[name])
         self.assertIn(f"{summary.DISPATCH_TOKEN}: ${{{{ github.token }}}}", steps["Publish the summaries"],
                       "the rebuild event goes out on the workflow's token, which can send it")
 

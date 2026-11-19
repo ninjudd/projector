@@ -27,7 +27,7 @@ from urllib.request import Request, url2pathname, urlopen
 
 from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
                summary, watch)
-from . import ci
+from . import ci, hosted
 from . import run as headless
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
@@ -622,7 +622,8 @@ def parser() -> argparse.ArgumentParser:
                                           "codex needs (default: review.ci_agents, then claude)")
     init.add_argument("--ci-app", metavar="SLUG",
                       help="post CI reviews as this public GitHub App, whose private key init asks for as the "
-                           f"{ci.APP_KEY} secret (default: review.ci_app, then github-actions[bot])")
+                           f"{ci.APP_KEY} secret, or {ci.HOSTED_APP} for the hosted service's app, which needs no "
+                           "key (default: review.ci_app, then github-actions[bot])")
     init.add_argument("--ci-credential", choices=ci.KINDS,
                       help="the credential secret init asks for when an agent has none, or runner, for a "
                            "credential your own runner holds, which the workflow passes no secret for (default: "
@@ -853,7 +854,8 @@ def parser() -> argparse.ArgumentParser:
                                                      "name its model (default: review.ci_agents, then claude)")
     review_ci_workflow.add_argument("--action-ref", default="v0", help="the projector tag or commit the workflow "
                                                                        "runs (default: v0)")
-    review_ci_workflow.add_argument("--app", metavar="SLUG", help="the public GitHub App the reviews post as "
+    review_ci_workflow.add_argument("--app", metavar="SLUG", help="the public GitHub App the reviews post as, or "
+                                                                  f"{ci.HOSTED_APP} for the hosted service's app "
                                                                   "(default: review.ci_app, then github-actions[bot])")
     review_ci_workflow.add_argument("--runs-on", metavar="LABELS",
                                     help="the labels of the runners the reviews run on, separated by commas "
@@ -965,6 +967,7 @@ def parser() -> argparse.ArgumentParser:
     add_ios_parser(subcommands)
     add_watch_parser(subcommands)
     add_agent_parser(subcommands)
+    add_hosted_parser(subcommands)
     worktree = subcommands.add_parser("worktree", help="print the folder of the worktree that has a branch, or a "
                                                        "pull request's branch, checked out")
     worktree.add_argument("target", metavar="branch-or-number",
@@ -1490,6 +1493,52 @@ def add_agent_parser(subcommands) -> None:
     add_output(relays.add_parser("show", help="print the relay location this directory resolves to, the file that "
                                               "set it, whether it waits for `project config allow`, and its last "
                                               "state"))
+
+
+def add_hosted_parser(subcommands) -> None:
+    parser = subcommands.add_parser("hosted", help="sign in to the hosted Projector service hosted.url names, show "
+                                                   "the account, subscribe, claim an installation, and sign out")
+    commands = parser.add_subparsers(dest="hosted_command", required=True)
+    commands.add_parser("login", help="sign in through GitHub, keep the account token in the OS keychain, and "
+                                      "register agent.key's public key")
+    add_output(commands.add_parser("status", help="print the account's login, plan, subscription, paid seats, and "
+                                                  "registered keys"))
+    subscribing = commands.add_parser("subscribe", help="open the page that subscribes the account to a plan")
+    subscribing.add_argument("plan", help="the plan, as the service names it")
+    subscribing.add_argument("--seats", type=positive, help=f"the seats to buy, which the {hosted.TEAM} plan needs")
+    subscribing.add_argument("--no-browser", action="store_false", dest="browser",
+                             help="print the page's address instead of opening it")
+    claiming = commands.add_parser("claim", help="pay for the hosted service app's installation on an account or "
+                                                 "organization you administer, which has no payer yet")
+    claiming.add_argument("owner", help="the account or organization the app is installed on")
+    commands.add_parser("logout", help="revoke the account token and remove it from the keychain")
+
+
+def positive(text: str) -> int:
+    if not text.isdigit() or int(text) < 1:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number of at least 1")
+    return int(text)
+
+
+def run_hosted(arguments: argparse.Namespace) -> int:
+    url = hosted.address(here_config())
+    command = arguments.hosted_command
+    if command == "login":
+        key, why = relay.command_key()
+        hosted.login(url, key, why, print)
+    elif command == "status":
+        found = hosted.account(url)
+        if arguments.json_output:
+            print(json_text({"url": url, **found}))
+        else:
+            print("\n".join(hosted.status_lines(url, found)))
+    elif command == "subscribe":
+        print(hosted.subscribe(url, arguments.plan, arguments.seats, arguments.browser))
+    elif command == "claim":
+        print(hosted.claim(url, arguments.owner))
+    else:
+        print(hosted.logout(url))
+    return 0
 
 
 def terminal_line(prompt: str, deadline: float, outcome: str) -> str:
@@ -3663,17 +3712,21 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
         record_setting(root, "review.ci_credential", credential)
     if slug and config.get("review.ci_app") != slug:
         record_setting(root, "review.ci_app", slug)
-    if app is not None and config.get("review.ci_app_id") != app:
+    if isinstance(app, int) and config.get("review.ci_app_id") != app:
         record_setting(root, "review.ci_app_id", app)
     # An app replaces github-actions[bot], so a workflow posting with its own token no longer counts as a reviewer.
-    reviewer = f"{slug}[bot]" if slug else CI_REVIEWER
+    reviewer = ci.HOSTED_LOGIN if slug == ci.HOSTED_APP else f"{slug}[bot]" if slug else CI_REVIEWER
     listed = review.extra_reviewers(config.get("review.reviewers"))
     kept = [login for login in listed if not (slug and login.lower() == CI_REVIEWER)]
     if reviewer.lower() not in {login.lower() for login in kept}:
         kept.append(reviewer)
     if kept != list(listed):
         record_setting(root, "review.reviewers", ", ".join(kept))
-    set_ci_secrets(repo, agents, credential, slug)
+    if slug == ci.HOSTED_APP:
+        print(f"project: the reviews post as {ci.HOSTED_LOGIN} with a token the hosted service mints for each job, "
+              f"so no key secret is set; install its GitHub App on {repo}, and subscribe with "
+              "`project hosted subscribe`", file=sys.stderr)
+    set_ci_secrets(repo, agents, credential, None if slug == ci.HOSTED_APP else slug)
     site, why = summary.push_decision(repo)
     if site is None:
         print(f"project: CI reviews publish no summaries until the site is set up, because {why}", file=sys.stderr)
@@ -3717,14 +3770,16 @@ def run_interactive(argv: list[str], source: Optional[Path] = None) -> int:
         return subprocess.call(argv, stdin=handle)
 
 
-def ci_app(config: Config, flag: Optional[str]) -> tuple[Optional[str], Optional[int]]:
-    """The slug and ID of the app the CI reviews post as. The app `flag` names is looked up on GitHub, which
-    refuses one it does not show publicly. Otherwise the recorded `review.ci_app` comes with the
-    `review.ci_app_id` init recorded beside it, so a refresh needs no network; only a slug recorded without its
-    ID is looked up."""
+def ci_app(config: Config, flag: Optional[str]) -> tuple[Optional[str], Optional[int | str]]:
+    """The slug and ID of the app the CI reviews post as, or `ci.HOSTED_APP` twice for the hosted service's app,
+    which needs no ID. The app `flag` names is looked up on GitHub, which refuses one it does not show publicly.
+    Otherwise the recorded `review.ci_app` comes with the `review.ci_app_id` init recorded beside it, so a refresh
+    needs no network; only a slug recorded without its ID is looked up."""
+    slug = flag or config.get("review.ci_app")
+    if slug == ci.HOSTED_APP:
+        return slug, slug
     if flag:
         return flag, app_id(flag)
-    slug = config.get("review.ci_app")
     if not slug:
         return None, None
     recorded = config.get("review.ci_app_id")
@@ -3950,6 +4005,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_agent(arguments)
     if arguments.command == "worktree":
         return run_worktree(arguments)
+    if arguments.command == "hosted":
+        return run_hosted(arguments)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.

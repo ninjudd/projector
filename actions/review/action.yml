@@ -40,6 +40,9 @@ inputs:
   app-private-key:
     description: The private key of the app app-id names, from the PROJECTOR_APP_PRIVATE_KEY secret. Only the step that mints the app's token reads it.
     default: ''
+  app:
+    description: "`projector` posts the review as the hosted Projector service's app, with a token the service at hosted.url mints for the job's OIDC token, so no private key is involved. The job needs `id-token: write`. Leave app-id empty."
+    default: ''
 runs:
   using: composite
   steps:
@@ -127,6 +130,18 @@ runs:
         permission-checks: read
         permission-actions: read
         permission-pages: read
+    # The hosted service mints the app's token for the repository the job's OIDC token names, so this step holds
+    # no key. A 402 or 403 fails the job with the service's words, such as where to subscribe.
+    - name: Request the hosted service's token
+      id: hosted
+      if: inputs.app != ''
+      shell: bash
+      env:
+        APP: ${{ inputs.app }}
+        APP_ID: ${{ inputs.app-id }}
+      run: |
+        PYTHONPATH="$PROJECTOR_ROOT/src" python3 -P -c \
+          'import sys; from projector import hosted; sys.exit(hosted.review_token_step())'
     # The context repositories a review reads, from the committed .projector.toml as Projector reads it, from the
     # default branch, so a pull request cannot widen what its own review's clone token reaches. An installation
     # token reaches one account's repositories, so only those of this repository's owner are listed.
@@ -215,8 +230,8 @@ runs:
       if: inputs.step == 'review'
       shell: bash
       env:
-        GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
-        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
+        GH_TOKEN: ${{ steps.app.outputs.token || steps.hosted.outputs.token || github.token }}
+        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || steps.hosted.outputs.login || 'github-actions[bot]' }}
         # Only the review step hands its summary off; the summary job's publish pushes it.
         PROJECTOR_SUMMARY_HANDOFF: ${{ runner.temp }}/projector-summary
         # Outside /tmp, which Codex's sandbox lets the agent write.
@@ -274,8 +289,8 @@ runs:
       # The links post as the app when there is one. Its token cannot push, so the summaries ref goes up with the
       # checkout's own credentials and the site's rebuild event with the workflow's token.
       env:
-        GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
-        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
+        GH_TOKEN: ${{ steps.app.outputs.token || steps.hosted.outputs.token || github.token }}
+        PROJECTOR_TOKEN_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || steps.hosted.outputs.login || 'github-actions[bot]' }}
         PROJECTOR_DISPATCH_TOKEN: ${{ github.token }}
         PR: ${{ inputs.pr }}
       run: |

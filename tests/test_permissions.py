@@ -129,7 +129,7 @@ DECISIONS = (
 
 # What the Codex rules leave to Codex's usual approval: each command with the
 # subcommands left out, or None where the whole command is.
-CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None,
+CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "console": None, "hosted": None,
                   "agent": {"key", "peer", "relay"},
                   "config": {"set", "unset", "allow"},
                   "inbox": {"answer", "decline", "discuss", "dismiss", "done", "snooze", "start", "unclear"},

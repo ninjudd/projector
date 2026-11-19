@@ -158,6 +158,10 @@ The workflow gives each job only what it needs:
 | `review` | `contents: read`, `pull-requests: write`, `issues: write`, `statuses: write`, `checks: read`, `actions: read`, and `pages: read` |
 | `summary` | `contents: write`, `pull-requests: write`, `issues: write`, and `pages: read` |
 
+A workflow that posts through a hosted service, as
+[Post as Projector Review through a hosted service](#post-as-projector-review-through-a-hosted-service)
+describes, adds `id-token: write` to both jobs.
+
 The review job cannot push a branch or a ref, so a misled agent cannot
 change the code it reviews. The agent's own rules refuse `git push`,
 `git commit`, `gh pr merge`, `gh pr ready`, and every command that changes
@@ -205,6 +209,60 @@ caller's `env` reaches every step of a composite action, the steps that run
 the agent and its install scripts included. An input sets no environment
 variable in a composite action, so only the step that mints the token, the
 one step that reads `app-private-key`, receives the key.
+
+## Post as Projector Review through a hosted service
+
+A hosted Projector service holds the private key of its own public app,
+Projector Review, so your repository holds no key. Install the app on your
+repository, sign in, subscribe, and pass `projector` to `init`:
+
+```sh
+project hosted login
+project hosted subscribe <plan>
+project init --ci-review --ci-app projector
+```
+
+`init` writes the action's `app: projector` input instead of `app-id` and
+`app-private-key`, gives both jobs `id-token: write`, records
+`review.ci_app = "projector"`, and adds `projector-review[bot]` to
+`review.reviewers`. It sets no key secret.
+[Use a hosted Projector service](cli.md#use-a-hosted-projector-service)
+describes the `project hosted` commands.
+
+In each review job and in the summary job, the action's **Request the hosted
+service's token** step asks GitHub Actions for the job's OIDC token, with the
+service's address as its audience. It posts that token to the service's
+`/v1/review-token` with the repository's name and, in a `pull_request` job,
+the number of the pull request the job's `refs/pull/<n>/merge` ref names. A
+manual run names no pull request. The service checks that GitHub issued the
+token to this repository and for that pull request, that the app is
+installed on it, and that the installation is paid for. It answers an installation token that reaches
+only this repository, with the review's permissions, and the login
+`projector-review[bot]`. The step masks the token in the log, and the review
+and the summary post with it, as they do with an app's own token.
+
+When the service refuses, the step fails the job with the service's words. A
+`402` adds the address the service gives to subscribe at, and a `403` says the
+app is not installed on the repository. An organization's installation with
+no payer answers `402` until an admin claims it with
+`project hosted claim <owner>`. A job without `id-token: write` fails
+before it calls the service.
+
+The step sends the OIDC token to `hosted.url`, which defaults to
+`https://api.projector.bot`. To use another instance, set it in the action's
+`config` input, as [Override a setting for CI](#override-a-setting-for-ci)
+describes. `hosted.url` is a destination, and the runner cannot allow a value
+the repository commits, so a committed `hosted.url` fails the step unless the
+`config` input overrides it:
+
+```yaml
+          config: |
+            [override.50.hosted]
+            url = "https://projector.example.com"
+```
+
+The service's token reaches only the reviewed repository, so the action
+mints no context token, and a review reads no context repositories this way.
 
 ## Give a review other repositories to read
 
@@ -303,3 +361,4 @@ replaces.
 | `claude-code-version`, `codex-version` | The versions Projector tests | The CLI version the agent runs. The action installs it with `npm` unless the CLI on `PATH` already reports it. |
 | `app-id` | Empty | Post as this GitHub App. Empty posts as `github-actions[bot]`. |
 | `app-private-key` | Empty | The private key of the app `app-id` names, from the `PROJECTOR_APP_PRIVATE_KEY` secret. Pass it here, never as `env`, so that only the step that mints the token receives it. |
+| `app` | Empty | `projector` posts as the hosted service's app, with a token the service at `hosted.url` mints for the job's OIDC token. The job needs `id-token: write`, and `app-id` stays empty. |

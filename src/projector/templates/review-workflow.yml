@@ -37,7 +37,7 @@ jobs:
       checks: read
       actions: read
       pages: read
-    strategy:
+@ID_TOKEN@    strategy:
       fail-fast: false
       # An agent with no model runs the action's default for it.
       matrix:
@@ -64,7 +64,7 @@ jobs:
       pull-requests: write
       issues: write
       pages: read
-    concurrency:
+@ID_TOKEN@    concurrency:
       group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
     runs-on: @RUNS_ON@
     timeout-minutes: 10
