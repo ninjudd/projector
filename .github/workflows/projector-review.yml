@@ -61,10 +61,10 @@ jobs:
           pr: ${{ github.event.pull_request.number || inputs.pr }}
           rereview: ${{ inputs.rereview || false }}
           # The gate's hooks/typecheck.sh compiles against declarations only an interactive Claude Code session
-          # writes, and no CI job here runs `claude plugin test`, so a review on a runner runs the rest.
+          # writes, so a review on a runner runs the rest of the gate without it.
           config: |
             [override.50.review]
-            gate = 'claude plugin validate . && claude plugin validate skills && git diff --check "$2" HEAD'
+            gate = 'claude plugin validate . && claude plugin validate skills && claude plugin test . && git diff --check "$2" HEAD'
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
