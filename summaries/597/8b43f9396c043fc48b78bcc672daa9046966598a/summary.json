@@ -1,0 +1,149 @@
+{
+ "version": 1,
+ "name": "Relabel a reviewed head in CI",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 597,
+  "title": "Put the clean label back when project review run refuses a head already reviewed clean, such as one a force-push returned to",
+  "head": "8b43f9396c043fc48b78bcc672daa9046966598a",
+  "headRef": "review-run-relabel",
+  "base": "89b6e38c28ecabaa2c001dde25b9ca5b37dc868f",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector marks a pull request with the <code>clean</code> label when its current head is <b>signed off</b>, meaning the newest Projector verdict on that commit is clean and no finding thread is open. Until now only <code>project review publish</code> added the label, at the end of a review. In CI, <code>project review run</code> starts an agent to review each new head, and it refuses a head that this model has already reviewed, so a rerun posts nothing.",
+   "Those two rules leave a gap. Suppose a branch is force-pushed away from a commit that was reviewed clean and then back to it. The first push takes <code>clean</code> off, correctly. On the second push, the CI run refuses the commit as already reviewed, so no <code>publish</code> runs and nothing puts the label back. The pull request looks unreviewed until someone forces a full rereview.",
+   "This change makes that one refusal re-sync the label before it exits 0. The run adds <code>clean</code> when the head is signed off and removes a stale <code>clean</code> when it is not. It decides with the code <code>publish</code> uses, which this change moves into two shared helpers, so the two paths cannot disagree."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Signed off</b>: the newest counted Projector verdict on the head is clean and no finding thread is open.</li><li><b>Refusal</b>: <code>project review run</code> exits 0 without starting an agent, as for a draft, a fork, a closed pull request, or a head this model already reviewed.</li><li><b><code>review.reviewers</code></b>: extra logins whose verdicts count, such as the account a CI review posts as.</li></ul>"
+   },
+   {
+    "id": "scope",
+    "title": "What stays as it was",
+    "html": "<ul class=\"tight\"><li>The <code>reviewing</code> label: the refusal never adds or removes it.</li><li>The <code>projector/review</code> commit status: it belongs to the commit and is still on it.</li><li>The draft, closed, merged, and fork refusals: they change no label.</li><li><code>review.labels = false</code> turns the re-sync off.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Sign-off and labels shared with publish",
+   "kicker": "Two helpers lifted out of publish, plus the entry point the run calls",
+   "intro": [
+    "<code>publish</code> used to work out the sign-off and edit the labels inline. This group moves both steps into functions, so the CI run can make exactly the same decision without running a review.",
+    "<code>head_sign_off</code> lists every counted verdict on the pull request and the open finding threads, then asks <code>sign_off</code> whether the head is signed off. <code>label_sign_off</code> adds or removes <code>clean</code> to match. If it added the label, it reads the head again and takes <code>clean</code> back off when a push landed during the edit. <code>relabel_head</code> is the run's entry point: it calls both and turns any failed read into a warning."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "I read the old inline <code>publish</code> code against the new calls. They behave the same: the review just posted is still dropped from the listing by id and added back, and the <code>reviewing</code> removal now comes in through <code>remove</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>head_sign_off</code>, <code>label_sign_off</code>, and <code>relabel_head</code>, and has <code>publish</code> call the first two.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A review passed as <code>posted</code> counts even when GitHub's review listing does not show it yet. Only <code>publish</code> passes it.",
+       "line": 954
+      },
+      {
+       "kind": "context",
+       "text": "The re-read after adding <code>clean</code> is the existing guard against a push that lands during the edit, moved here unchanged.",
+       "line": 1032
+      },
+      {
+       "kind": "verify",
+       "text": "Every failure from reading the verdicts, the threads, or the reviewer's token is a <code>ReviewError</code>, which this function catches and turns into a warning. <code>change_labels</code> already returns a refused edit as a warning, so a re-sync never fails the run.",
+       "line": 1055
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "run",
+   "title": "The run's refusal re-syncs the label",
+   "kicker": "Where project review run calls the new helper, and how review.reviewers reaches it",
+   "intro": [
+    "<code>run</code> checks for the other refusals first, then checks whether this model already reviewed the head. Only that last refusal calls <code>relabel_head</code>, and only while labels are on. The CLI now passes the logins from <code>review.reviewers</code> as <code>also</code>, so a teammate's or a CI account's verdict counts here as it does in <code>publish</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/run.py",
+     "note": "Calls <code>relabel_head</code> after the already-reviewed refusal prints its reason, and still returns 0.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>refusal</code> runs earlier and returns for a closed, fork, or draft pull request, so none of those reaches this line.",
+       "line": 384
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Passes <code>review.reviewers</code> to <code>run</code> as <code>also</code>."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Four run tests against a fake GitHub that now serves review threads",
+   "intro": [
+    "The fake <code>gh</code> in <code>tests/test_run.py</code> now answers the GraphQL thread query, so <code>census</code> can run inside it. The new tests cover four cases: a clean head gets <code>clean</code> back, an open finding takes a stale <code>clean</code> off, <code>review.labels = false</code> makes no edit, and a draft refusal makes no edit."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The <code>check</code> workflow, which runs the whole test suite, passed on this head. <code>project review gate</code> also passed locally."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_run.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and plan",
+   "kicker": "The CLI reference, the CI guide, the plugin panel, and the plan's decision list",
+   "intro": [
+    "The CLI reference describes the re-sync and its output. The CI guide and the plugin page say that the run can put <code>clean</code> back. The plan <code>review-in-ci</code> is <code>in-progress</code>, and this change adds the decision to its list of fixes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Adds <code>run</code> to the commands <code>review.labels</code> governs, and a section on the refusal's re-sync.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The <code>review.reviewers</code> row in the settings table does not list <code>run</code> among the commands that read it. The review left this as a suggestion.",
+       "line": 2794
+      }
+     ]
+    },
+    {
+     "path": "docs/review-in-ci.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md"
+    }
+   ]
+  }
+ ]
+}

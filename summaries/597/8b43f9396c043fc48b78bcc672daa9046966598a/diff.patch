@@ -1,0 +1,334 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 951222e1..92bc78cf 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2325,9 +2325,9 @@ people's approval. A label stays on the pull
+ request through a push, so `setup` removes a stale `clean` when the next
+ review starts. `publish` reads the head again after it adds `clean`, and
+ takes the label back off when a push moved the head during the edit. Set
+-`review.labels` to `false` to keep `setup`, `publish`, and `finish` from
+-adding or removing either label, as in a repository whose own `clean` or
+-`reviewing` label means something else.
++`review.labels` to `false` to keep `setup`, `publish`, `finish`, and `run`
++from adding or removing either label, as in a repository whose own `clean`
++or `reviewing` label means something else.
+ 
+ `publish` prints what it did:
+ 
+@@ -2781,7 +2781,8 @@ request, however the run was started. It also refuses a head the reviewer
+ already has a verdict on by this model, and names that review's address, so
+ a rerun of a finished job posts nothing. Pass `--rereview` to review the
+ head again. A refusal means there is nothing to review here, so the command
+-prints the reason and exits 0, and it posts no comment and adds no label.
++prints the reason and exits 0, and it posts no comment and never adds the
++`reviewing` label.
+ Under GitHub Actions, where `GITHUB_ACTIONS` is `true`, it also prints the
+ reason as a `::notice::` line, which the job's summary shows:
+ 
+@@ -2790,6 +2791,25 @@ $ project review run 66 --model claude-opus-5-5
+ owner/example#66 is not reviewed here: it is a draft, and a draft waits on its author
+ ```
+ 
++When the command refuses a head it already reviewed, it brings the `clean`
++label in line with that head's sign-off before it exits, as `publish` would
++after a review. A branch force-pushed back to a commit reviewed clean loses
++`clean` at the push that left the commit, and no `publish` runs to add it
++back. So the command adds `clean` when the newest Projector verdict on the
++head is clean and no finding thread is open, and removes it otherwise,
++counting the verdicts of every login `review.reviewers` names. It prints
++each label it changed:
++
++```console
++$ project review run 66 --model claude-opus-5-5
++github-actions[bot] already reviewed owner/example#66 at 3f2a91c with claude-opus-5-5: https://github.com/owner/example/pull/66#pullrequestreview-2211; pass --rereview to review it again
++added the clean label
++```
++
++It leaves the `reviewing` label and the `projector/review` status alone,
++because the status belongs to the commit and is still on it. The other
++refusals change no label, and `review.labels = false` turns this off too.
++
+ A live start comment by this reviewer and model on the head can only be a
+ cancelled run's, so the agent's `setup` replaces it.
+ 
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 03ad0f08..e9076d7a 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -321,7 +321,9 @@ review wants something:
+ - **`reviewing`**, in orange, while the pull request carries the
+   `reviewing` label, which `project review setup` adds when a review starts.
+ - **`clean`**, in green, while it carries the `clean` label, which
+-  `project review publish` adds once a review signs off the current head.
++  `project review publish` adds once a review signs off the current head,
++  and `project review run` puts back on a signed-off head it refuses to
++  review again.
+ - **`draft`**, in the default text color, while it is a draft.
+ - **`ready`**, in light blue, while it is ready for review and carries
+   neither label. That covers a pull request no review has read yet, and also
+diff --git a/docs/projects/review-in-ci/readme.md b/docs/projects/review-in-ci/readme.md
+index dbec1adc..8d536f35 100644
+--- a/docs/projects/review-in-ci/readme.md
++++ b/docs/projects/review-in-ci/readme.md
+@@ -1076,6 +1076,15 @@ These tests fail before the change, and each catches the bug it names:
+   run takes the label off with `clear_reviewing`, which keeps it while a
+   live start comment, such as another loop's, means a review is in
+   progress.
++- **A reviewed head's refusal brings `clean` in line.** A branch
++  force-pushed away from a commit reviewed clean and back to it lost
++  `clean` at the first push, and the job for the second push refused the
++  reviewed head, so nothing put the label back until someone forced a
++  rereview. Only that refusal now sets `clean` by the head's sign-off
++  before it exits 0, through the `head_sign_off` and `label_sign_off` that
++  `publish` uses, counting the logins in `review.reviewers`. It changes
++  neither `reviewing` nor the `projector/review` status, which stays on the
++  commit, and the draft, closed, and fork refusals still change no label.
+ 
+ ## 10. Self-hosted runners
+ 
+diff --git a/docs/review-in-ci.md b/docs/review-in-ci.md
+index c6d15b64..9598c2d8 100644
+--- a/docs/review-in-ci.md
++++ b/docs/review-in-ci.md
+@@ -113,7 +113,10 @@ number. Each job:
+    to review, so the job passes and shows the reason as a notice. A job
+    that started for the previous head can still find the pull request a
+    draft, because its author held it to push a fix, and that job passes
+-   too.
++   too. When the job refuses a head this model already reviewed, such as a
++   commit a force-push returned the branch to, it also puts `clean` back on
++   or takes it off by that head's sign-off, as a review's `publish` does,
++   because the push that left the commit took the label off.
+ 2. **Cancels a superseded review.** One job runs for each pull request and
+    agent. A new push cancels the job for the head it replaces.
+ 3. **Restores the review state** from the Actions cache, so a small push
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index a37de6e4..1462083b 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -2510,7 +2510,8 @@ def review_run(arguments: argparse.Namespace) -> int:
+                         configured_reviewer=username if isinstance(username, str) and username else None,
+                         effort=arguments.effort, mode=arguments.permission_mode, timeout_minutes=arguments.timeout,
+                         rereview=arguments.rereview, loop=arguments.loop, plugin_dir=arguments.plugin_dir,
+-                        labels=labels_enabled(checkout), context_listed=config.get("review.context_repos"))
++                        labels=labels_enabled(checkout), context_listed=config.get("review.context_repos"),
++                        also=review.extra_reviewers(config.get("review.reviewers")))
+ 
+ 
+ def run_review(arguments: argparse.Namespace) -> int:
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 2cf8cd42..6eb09bbc 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -951,6 +951,18 @@ def sign_off(head: str, reviews: list[dict], open_threads: int) -> dict:
+             "signed_off": newest is not None and newest["verdict"] == "clean" and not open_threads}
+ 
+ 
++def head_sign_off(repo: str, number: int, reviewer: str, sha: str, pr: dict, also: tuple[str, ...] = (),
++                  posted: Optional[dict] = None) -> tuple[dict, list[dict]]:
++    """Whether `sha` is signed off, as `sign_off` decides from every counted verdict on the pull request `pr`
++    and its finding threads open now, with the verdicts it counted. A review `posted` counts as given, whether
++    or not the listing shows it yet."""
++    counted = [r for r in verdicts(repo, number, reviewer, repo_visibility(pr), also)
++               if posted is None or r.get("id") != posted["id"]]
++    if posted is not None:
++        counted.append(posted)
++    return sign_off(sha, counted, census(repo, number)["open"]), counted
++
++
+ def label_names(pr: dict) -> set[str]:
+     """The labels on `pr`, a pull request as GitHub's REST API gives it, lowercased, as GitHub matches them."""
+     return {(label.get("name") or "").lower() for label in pr.get("labels") or []}
+@@ -1017,6 +1029,42 @@ def label_lines(labeled: Optional[dict]) -> list[str]:
+     return lines + ([f"warning: {labeled['warning']}"] if labeled["warning"] else [])
+ 
+ 
++def label_sign_off(repo: str, number: int, sha: str, current: dict, signed_off: bool, remove: set[str],
++                   token: Optional[str]) -> dict:
++    """Set `clean` when `sha` is signed off and is still the head of `current`, the pull request as just read,
++    and take it off otherwise, removing `remove` in the same edit, as `change_labels` does."""
++    # The labels describe the pull request's current head, so a push since the verdict takes `clean` off.
++    clean = signed_off and (current.get("head") or {}).get("sha") == sha
++    labeled = change_labels(repo, number, label_names(current), {CLEAN_LABEL} if clean else set(),
++                            (set() if clean else {CLEAN_LABEL}) | remove, token)
++    if CLEAN_LABEL in labeled["added"]:
++        # A push between the read above and the edit queued its label workflow with an event that lists no
++        # `clean`, so that job skips and leaves the label on a head no review has read. The head as it is
++        # now decides; a push after this read lists `clean`, and its workflow takes the label off. The labels
++        # never fail the command, so a read that fails leaves them as the edit made them.
++        moved = {"head": {"sha": sha}}
++        with suppress(ReviewError):
++            moved = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or moved
++        if (moved.get("head") or {}).get("sha") != sha:
++            taken = change_labels(repo, number, label_names(moved), set(), {CLEAN_LABEL}, token)
++            labeled = {"added": [name for name in labeled["added"] if name not in taken["removed"]],
++                       "removed": labeled["removed"], "warning": labeled["warning"] or taken["warning"]}
++    return labeled
++
++
++def relabel_head(repo: str, number: int, reviewer: str, pr: dict, also: tuple[str, ...] = ()) -> dict:
++    """Bring `clean` in line with whether the head of `pr` is signed off, as `publish` does, for a head
++    reviewed before, such as one a force-push returned to. It leaves `reviewing` and the commit status alone,
++    and gives a `warning` rather than raising when the verdicts cannot be read."""
++    sha = pr["head"]["sha"]
++    try:
++        verdict, _ = head_sign_off(repo, number, reviewer, sha, pr, also)
++        token = reviewer_token(reviewer)
++    except ReviewError as exc:
++        return {"added": [], "removed": [], "warning": f"left the labels on {repo}#{number} as they were: {exc}"}
++    return label_sign_off(repo, number, sha, pr, verdict["signed_off"], set(), token)
++
++
+ def reviews_in_progress(repo: str, number: int, reviewer: str, reviews: list[dict],
+                         exclude: Optional[int] = None) -> bool:
+     """Whether a start comment of the reviewer's on the pull request, other than `exclude`, still means a review
+@@ -2923,10 +2971,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+     posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
+               "login": reviewer, "body": read["body"]}
+     current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
+-    counted = [r for r in verdicts(repo, number, reviewer, repo_visibility(current), also)
+-               if r.get("id") != review_id]
+-    counted.append(posted)
+-    verdict_now = sign_off(sha, counted, census(repo, number)["open"])
++    verdict_now, counted = head_sign_off(repo, number, reviewer, sha, current, also, posted)
+     newest, signed_off = verdict_now["newest"], verdict_now["signed_off"]
+     standing = [] if published.get("self") else standing_change_requests(repo, number, reviewer)
+     dismissed = []
+@@ -2938,24 +2983,9 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+     status = post_status(repo, sha, verdict_now, token) if requires_check(repo, branch) else None
+     labeled = None
+     if labels:
+-        # The labels describe the pull request's current head, so a push since the submit takes `clean` off.
+-        clean = signed_off and (current.get("head") or {}).get("sha") == sha
+         others = reviews_in_progress(repo, number, reviewer, counted, (state.get("start_comment") or {}).get("id"))
+-        labeled = change_labels(repo, number, label_names(current), {CLEAN_LABEL} if clean else set(),
+-                                (set() if clean else {CLEAN_LABEL}) | (set() if others else {REVIEWING_LABEL}),
+-                                token)
+-        if CLEAN_LABEL in labeled["added"]:
+-            # A push between the read above and the edit queued its label workflow with an event that lists no
+-            # `clean`, so that job skips and leaves the label on a head no review has read. The head as it is
+-            # now decides; a push after this read lists `clean`, and its workflow takes the label off. The labels
+-            # never fail the publish, so a read that fails leaves them as the edit made them.
+-            moved = {"head": {"sha": sha}}
+-            with suppress(ReviewError):
+-                moved = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or moved
+-            if (moved.get("head") or {}).get("sha") != sha:
+-                taken = change_labels(repo, number, label_names(moved), set(), {CLEAN_LABEL}, token)
+-                labeled = {"added": [name for name in labeled["added"] if name not in taken["removed"]],
+-                           "removed": labeled["removed"], "warning": labeled["warning"] or taken["warning"]}
++        labeled = label_sign_off(repo, number, sha, current, signed_off, set() if others else {REVIEWING_LABEL},
++                                 token)
+     if loop is not None:
+         with locked(loop_record(root, loop).parent):
+             record = read_record(root, loop)
+diff --git a/src/projector/run.py b/src/projector/run.py
+index 1de9dfec..c12afa7c 100644
+--- a/src/projector/run.py
++++ b/src/projector/run.py
+@@ -355,11 +355,12 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
+         configured_runner: object = None, configured_reviewer: Optional[str] = None, effort: str = DEFAULT_EFFORT,
+         mode: str = "auto", timeout_minutes: float = DEFAULT_TIMEOUT_MINUTES, rereview: bool = False,
+         loop: str = DEFAULT_LOOP, plugin_dir: Optional[Path] = None, labels: bool = True,
+-        context_listed: object = None, environ: Optional[dict[str, str]] = None) -> int:
++        context_listed: object = None, also: tuple[str, ...] = (), environ: Optional[dict[str, str]] = None) -> int:
+     """Review the head of pull request `number` in the repository of `checkout` with an agent, as
+     docs/projects/review-in-ci/readme.md § 2.1 step 6 describes. Returns the exit code: 0 once a verdict on the
+     head stands, the run published one on a head pushed while it ran, or the pull request has nothing to review
+-    here, and 1 when the agent published none."""
++    here, and 1 when the agent published none. A head this model already reviewed gets its labels back in line
++    with its sign-off, counting the verdicts of the logins in `also`, which `review.reviewers` names."""
+     review.model_key(model)
+     review.valid_loop(loop)
+     if mode not in MODES:
+@@ -376,8 +377,12 @@ def run(root: Path, number: int, checkout: Path, *, model: str, agent: Optional[
+     reviews = review.reviewer_reviews(repo, number, reviewer)
+     earlier = verdicts_on(reviews, head, model)
+     if earlier and not rereview:
+-        return skip(f"{reviewer} already reviewed {repo}#{number} at {head[:7]} with {model}: "
++        code = skip(f"{reviewer} already reviewed {repo}#{number} at {head[:7]} with {model}: "
+                     f"{earlier[0].get('url')}; pass --rereview to review it again", base)
++        if labels:
++            # No `publish` runs, so a head a force-push returned to would keep the labels of the head it left.
++            print_labels(review.relabel_head(repo, number, reviewer, pr, also))
++        return code
+     replace = stale_start(review.start_comments(repo, number, reviewer), reviews, head, model)
+     token = review.reviewer_token(reviewer)
+ 
+diff --git a/tests/test_run.py b/tests/test_run.py
+index e181f489..cabe2c58 100644
+--- a/tests/test_run.py
++++ b/tests/test_run.py
+@@ -60,6 +60,8 @@ def __init__(self, agent_folder: Path) -> None:
+                    "head": {"sha": HEAD, "ref": "feature", "repo": {"full_name": REPO}},
+                    "base": {"ref": "main", "repo": {"full_name": REPO}}}
+         self.reviews: list[dict] = []
++        # Review threads as GitHub's GraphQL API gives them.
++        self.threads: list[dict] = []
+         self.starts: list[dict] = []
+         self.posted: list[str] = []
+         self.deleted: list[str] = []
+@@ -89,6 +91,9 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+             return f"token-{args[3]}\n"
+         if args[:3] == ["api", "--paginate", f"repos/{REPO}/pulls/1/reviews"]:
+             return "".join(json.dumps(r) + "\n" for r in self.listed_reviews())
++        if args[:2] == ["api", "graphql"]:
++            return json.dumps({"data": {"repository": {"pullRequest": {"reviewThreads": {
++                "nodes": self.threads, "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}})
+         if args[:3] == ["api", "--paginate", f"repos/{REPO}/issues/1/comments"]:
+             if self.on_cleanup is not None and (self.agent_folder / "seen.json").exists():
+                 self.on_cleanup()
+@@ -406,6 +411,54 @@ def test_a_refused_run_adds_no_label(self) -> None:
+                 self.assertEqual([], self.github.edits, why)
+                 self.assertFalse(self.started())
+ 
++    def returned_to_a_clean_head(self) -> None:
++        """The head is a commit this reviewer and model reviewed clean, as a force-push back to it leaves it."""
++        self.github.reviews.append({"id": 900, "url": "https://example.test/900", "at": "2026-11-18T10:00:00Z",
++                                    "login": "operator", "body": verdict_body(HEAD)})
++
++    def test_a_head_a_force_push_returned_to_gets_clean_back_without_an_agent(self) -> None:
++        # The run refused the reviewed head and nothing else adds `clean`, so the label stayed off a head its
++        # newest verdict signs off until someone forced a --rereview.
++        self.returned_to_a_clean_head()
++
++        self.assertEqual(0, self.review_run())
++
++        self.assertFalse(self.started())
++        self.assertEqual(["clean"], self.labels())
++        self.assertEqual([("--add-label clean", False)], self.github.edits, "a refused run never adds reviewing")
++        self.assertIn("added the clean label", self.out.getvalue())
++
++    def test_an_open_finding_keeps_clean_off_a_head_a_force_push_returned_to(self) -> None:
++        # A clean verdict signs a head off only while no finding thread is open, as `publish` decides.
++        self.returned_to_a_clean_head()
++        self.github.threads.append({"id": "T1", "path": "app.py", "line": 3, "isOutdated": False, "isResolved": False,
++                                    "comments": {"nodes": [{"databaseId": 1, "body": "<!-- projector-finding v=1 "
++                                                            f"priority=P1 sha={HEAD} model={MODEL} -->\nA bug."}]}})
++        self.github.pr["labels"] = [{"name": "clean"}]
++
++        self.assertEqual(0, self.review_run())
++
++        self.assertFalse(self.started())
++        self.assertEqual([], self.labels(), "a stale clean comes off")
++        self.assertIn("removed the clean label", self.out.getvalue())
++
++    def test_review_labels_false_keeps_a_refused_run_off_the_labels(self) -> None:
++        self.returned_to_a_clean_head()
++
++        self.assertEqual(0, self.review_run(labels=False))
++
++        self.assertEqual([], self.github.edits)
++
++    def test_a_draft_refusal_changes_no_label_even_on_a_signed_off_head(self) -> None:
++        # Only the refusal of a head already reviewed brings the labels in line; a draft's author is still working.
++        self.returned_to_a_clean_head()
++        self.github.pr["draft"] = True
++
++        self.assertEqual(0, self.review_run())
++
++        self.assertEqual([], self.github.edits)
++        self.assertFalse(self.started())
++
+     def test_review_labels_false_keeps_the_run_off_the_labels(self) -> None:
+         # The early label ignored `review.labels = false`, which turns every review command's labels off.
+         for behavior in ("publish", "nothing"):
