@@ -1,0 +1,91 @@
+{
+ "version": 1,
+ "name": "Non-automatic review setting",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 610,
+  "title": "Hear no UNREVIEWED in a repository whose review.automatic is false",
+  "head": "afff60822aed12f5e5ad0073f9a04c8b36b6a482",
+  "headRef": "review-automatic",
+  "base": "c732f8dd9e717a90ee18aac109841f4289fea9d9",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector watch daemon is a background process that polls the pull requests a session subscribes to and sends each session one-line events. A session that fixes a pull request, its <em>fixer</em>, hears an <code>UNREVIEWED</code> line once per head when the pull request is ready for review, its head is not signed off, and no session the daemon can see is reviewing it.",
+   "In a repository where pull requests get a Projector review only when someone asks for one, that line arrives for every ready pull request and tells the user nothing new. This pull request adds a repository setting, <code>review.automatic</code>, a boolean that defaults to <code>true</code>. When it is <code>false</code>, the daemon sends no <code>UNREVIEWED</code> line for that repository's pull requests. Every other fixer event still arrives.",
+   "<ul class=\"tight\"><li><b>Where the daemon reads it:</b> the same places it already reads <code>review.ci</code> and <code>review.reviewers</code>. That is a checkout of the repository that a live session works in, or otherwise the <code>.projector.toml</code> committed on the default branch, layered under <code>~/.projector.toml</code>.</li><li><b>Refactor:</b> the daemon kept these per-repository settings as a <code>(reviewers, ci)</code> tuple. They are now a small frozen <code>ReviewSettings</code> dataclass, so callers read named fields instead of indexes.</li></ul>"
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "The daemon reads the setting and holds back the line",
+   "kicker": "The settings dataclass, the new config key, and the check in route_fix",
+   "intro": [
+    "<code>review_settings</code> turns a loaded configuration into a <code>ReviewSettings</code>. <code>automatic</code> is off only when the key is explicitly <code>false</code>, so a missing key, a repository with no <code>.projector.toml</code>, and a failed read all leave it on.",
+    "<code>route_fix</code> builds the fixer's events for one pull request. The new test sits in the outer condition beside the draft and reviewer checks, so it holds back only the <code>UNREVIEWED</code> line and no other event."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers <code>review.automatic</code> as a known boolean key, so <code>project config get</code> and <code>set</code> accept it."
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Adds <code>ReviewSettings</code>, moves every reader of the old tuple to its fields, and checks <code>automatic</code> before sending <code>UNREVIEWED</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Every reader of the old tuple (<code>committed_settings</code>, <code>settings_of</code>, <code>counted_logins</code>, <code>reviewed_in_ci</code>) now reads the dataclass. A search of <code>src</code> and <code>tests</code> found no other index into it."
+      },
+      {
+       "kind": "context",
+       "line": 1932,
+       "text": "Unlike a hold-back for <code>review.ci</code>, this check sits in the outer condition, so the head's announced key is dropped rather than kept. Setting <code>automatic</code> back to <code>true</code> on the same head sends the line again. The comment above it says a held-back head keeps its key, and the review listed that mismatch as a suggestion."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "One repository commits <code>automatic = false</code> and another commits nothing. Only the second hears <code>UNREVIEWED</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The test fails if the <code>automatic</code> check is removed from <code>route_fix</code>, and also if the setting reaches the other repository. The <code>check</code> job passed on this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the fix-pr skill",
+   "kicker": "The configuration table, the event table, and what fixers tell the user",
+   "intro": [
+    "<code>docs/cli.md</code> adds the key to the configuration table and names the new exception in the <code>UNREVIEWED</code> row of the event table. When the fix-pr skill relays an <code>UNREVIEWED</code> line, it now tells the user that <code>project config set review.automatic false</code> in the repository's checkout stops these lines. It also counts such a repository among those that report nothing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the key and the event's new exception.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 3890,
+       "text": "The sentence \"A repository that commits none has neither setting\" now covers three settings. The review suggested rewording it."
+      }
+     ]
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Tells the fixer to name the setting when it relays an <code>UNREVIEWED</code> line."
+    }
+   ]
+  }
+ ]
+}
