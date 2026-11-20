@@ -5882,13 +5882,19 @@ test('holds the events that arrive while a batch waits for the session, and send
   expect(session.files[EVENTS]).toBe('')
 })
 
-test('passes the output of a push, a new pull request, or a stack command to project watch add --from-output', async ($, on) => {
+test('passes the output of a push, a new pull request, or a stack command to project watch add --from-output, even an empty one', async ($, on) => {
   const pushed = { stdout: '', stderr: 'To github.com:x/y.git\n   1111111..2222222  fix-branch -> fix-branch\n' }
   const opened = { stdout: 'https://github.com/x/y/pull/7\n', stderr: 'Creating pull request for fix-branch into main in x/y\n' }
   const session = watchWorld(on, {
     files: cached('x/y', given('x/y', 7)),
     bash: command =>
-      command.startsWith('gh pr create') ? opened : command.includes('push') ? pushed : { stdout: 'push\n', stderr: '' },
+      command.startsWith('gh pr create')
+        ? opened
+        : command.includes(' -q ')
+          ? { stdout: '', stderr: '' }
+          : command.includes('push')
+            ? pushed
+            : { stdout: 'push\n', stderr: '' },
   })
   await startSession($, session.clock)
   const ui = await $.ui.mount(PANEL)
@@ -5901,6 +5907,8 @@ test('passes the output of a push, a new pull request, or a stack command to pro
     'cd /w && git push -u origin fix-branch',
     'gh pr create --fill',
     'gh stack push',
+    // A quiet push piped through `tail` prints nothing, and the CLI looks the checkout's branch up instead.
+    'git push -q origin fix-branch 2>&1 | tail -2',
   ]
   for (const command of commands) {
     await $.tool.call({ tool: 'Bash', command })
@@ -5911,6 +5919,7 @@ test('passes the output of a push, a new pull request, or a stack command to pro
     { argv: add, stdin: `\n${pushed.stderr}` },
     { argv: add, stdin: `${opened.stdout}\n${opened.stderr}` },
     { argv: add, stdin: `\n${pushed.stderr}` },
+    { argv: add, stdin: '\n' },
   ])
 
   // The new pull request's subscription shows the panel, which names the session its fixer.

@@ -3704,6 +3704,20 @@ GitHub for the open pull request whose head is that branch, one REST
 request, and subscribes to it. A branch with no open pull request adds
 nothing, and a pull request the session drops from `fix` is skipped.
 
+Output that names no pull request and no pushed branch, as a push's does
+when a pipe such as `| tail -2` cuts its lines or `--quiet` prints none,
+falls back to the current directory's checkout. The command asks GitHub
+for the open pull request from the checked-out branch, one REST request,
+and subscribes to it when its head is the checkout's `HEAD`, as it is
+right after the push. A push of another branch leaves that pull request's
+head behind the checkout's, so it adds nothing:
+
+```console
+$ git push -q 2>&1 | tail -2 | project watch add --from-output -
+added acme/app#12 fix auto
+events: mod
+```
+
 A URL counts only when its repository is one the output shows a push to,
 in a `To <remote>` line, or a pull request opened in, in the
 `Creating pull request for <branch> into <base> in <owner>/<repo>` line

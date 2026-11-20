@@ -304,7 +304,8 @@ class FakeGitHub:
             return self.answer(200, [{"number": number, "state": "open" if pull["node"]["state"] == "OPEN" else "closed",
                                       "merged_at": pull["node"]["mergedAt"] or (LATER if pull["node"]["state"] == "MERGED"
                                                                                 else None),
-                                      "base": {"ref": pull["node"]["baseRefName"]}}
+                                      "base": {"ref": pull["node"]["baseRefName"]},
+                                      "head": {"ref": branch, "sha": pull["node"]["headRefOid"]}}
                                      for number, pull in listed if pull["node"]["headRefName"] == branch],
                                include, etag)
         if tail == ["pulls"] and query == {"state": "open", "per_page": "100", "page": query.get("page", "")}:
@@ -3163,6 +3164,48 @@ for line in sys.stdin:
         self.assertEqual(0, code, err)
         self.assertEqual(["acme/app#42 fix auto"], self.lines())
         self.assertIn("project: could not look up acme/app#123: gh: Not Found (HTTP 404)", err)
+
+    def checked_out_commit(self, branch: str = "feature") -> str:
+        """Check out `branch` in the origin checkout with one commit, and give that commit."""
+        self.origin("git@github.com:acme/app.git")
+        for args in (["checkout", "-q", "-b", branch],
+                     ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "x"]):
+            subprocess.run(["git", *args], cwd=self.cwd, check=True, capture_output=True)
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.cwd, check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    def test_add_from_output_that_names_nothing_takes_the_checked_out_branchs_pull_request(self) -> None:
+        # Catches a push piped through `tail`, or run with `--quiet`, leaving the pull request it pushed to out of
+        # the panel, because its output no longer names the pull request or the branch.
+        self.github.pull_request(12, ref="feature", head=self.checked_out_commit())
+
+        code, out, err = self.project("add", "--from-output", "-", "--json", stdin="\n")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(["acme/app#12 fix auto"], self.lines())
+        self.assertEqual([["api", "repos/acme/app/pulls?head=acme:feature&state=open"]], self.github.calls)
+
+    def test_add_from_output_that_names_nothing_skips_a_branch_whose_pull_request_has_another_head(self) -> None:
+        # Catches the fallback subscribing to the checked-out branch's pull request after a push of another
+        # branch, which leaves that pull request's head behind the checkout's.
+        self.checked_out_commit()
+        self.github.pull_request(12, ref="feature", head=SHA_B)
+
+        code, out, err = self.project("add", "--from-output", "-", stdin="Everything up-to-date\n")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([], self.lines())
+
+    def test_add_from_output_that_names_a_push_does_not_look_up_the_checked_out_branch(self) -> None:
+        # Catches the fallback asking GitHub about the checkout when the output already named what was pushed.
+        self.github.pull_request(12, ref="feature", head=self.checked_out_commit())
+        output = "To github.com:acme/app.git\n   1a2b3c4..5d6e7f8  other -> other\n"
+
+        code, out, err = self.project("add", "--from-output", "-", stdin=output)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([], self.lines())
+        self.assertEqual([["api", "repos/acme/app/pulls?head=acme:other&state=open"]], self.github.calls)
 
     def test_add_from_output_adds_nothing_when_auto_start_is_off(self) -> None:
         (self.home / ".projector.toml").write_text("[watch]\nauto_start = false\n")
