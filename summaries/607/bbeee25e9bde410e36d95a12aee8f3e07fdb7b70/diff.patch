@@ -1,0 +1,140 @@
+diff --git a/.github/workflows/projector-review.yml b/.github/workflows/projector-review.yml
+index 08d09c3a..e0d36446 100644
+--- a/.github/workflows/projector-review.yml
++++ b/.github/workflows/projector-review.yml
+@@ -38,6 +38,7 @@ jobs:
+       checks: read
+       actions: read
+       pages: read
++      id-token: write
+     strategy:
+       fail-fast: false
+       # An agent with no model runs the action's default for it.
+@@ -60,8 +61,7 @@ jobs:
+           model: ${{ matrix.model }}
+           pr: ${{ github.event.pull_request.number || inputs.pr }}
+           rereview: ${{ inputs.rereview || false }}
+-          app-id: '5827721'
+-          app-private-key: ${{ secrets.PROJECTOR_APP_PRIVATE_KEY }}
++          app: projector
+           # The gate's hooks/typecheck.sh compiles against declarations only an interactive Claude Code session
+           # writes, so a review on a runner runs the rest of the gate without it.
+           config: |
+@@ -79,6 +79,7 @@ jobs:
+       pull-requests: write
+       issues: write
+       pages: read
++      id-token: write
+     concurrency:
+       group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
+     runs-on: ubuntu-latest
+@@ -89,5 +90,4 @@ jobs:
+         with:
+           step: summary
+           pr: ${{ github.event.pull_request.number || inputs.pr }}
+-          app-id: '5827721'
+-          app-private-key: ${{ secrets.PROJECTOR_APP_PRIVATE_KEY }}
++          app: projector
+diff --git a/.projector.toml b/.projector.toml
+index f83d1681..8820e750 100644
+--- a/.projector.toml
++++ b/.projector.toml
+@@ -5,9 +5,9 @@ gate_checks = "check"
+ # The steps of the gate in AGENTS.md that CI cannot run, run on the review's worktree against the merge base.
+ gate = 'claude plugin validate . && claude plugin validate skills && claude plugin test . && hooks/typecheck.sh && git diff --check "$2" HEAD'
+ # Each pull request whose head is in this repository is reviewed in GitHub Actions by
+-# .github/workflows/projector-review.yml, which posts as the Projector Review app.
++# .github/workflows/projector-review.yml, which posts as the Projector Review app
++# with a token the hosted service mints for each job.
+ ci = true
+ ci_agents = "claude"
+-ci_app = "projector-review"
+-ci_app_id = 5827721
++ci_app = "projector"
+ reviewers = "projector-review[bot]"
+diff --git a/docs/cli.md b/docs/cli.md
+index f2022b07..679b624a 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -632,8 +632,8 @@ as
+ [Post as a GitHub App](review-in-ci.md#post-as-a-github-app) describes.
+ `--ci-app projector` posts them as the hosted service's app instead: the
+ workflow passes `app: projector` and gives both jobs `id-token: write`,
+-`init` adds `projector-review[bot]` to `review.reviewers` and sets no key
+-secret, as
++`init` adds `projector-review[bot]` to `review.reviewers`, sets no key
++secret, and removes a `review.ci_app_id` an earlier app left, as
+ [Post as Projector Review through a hosted service](review-in-ci.md#post-as-projector-review-through-a-hosted-service)
+ describes.
+ Once `review.ci` is `true`, every later `init`
+diff --git a/docs/review-in-ci.md b/docs/review-in-ci.md
+index 21cdecc8..286175cd 100644
+--- a/docs/review-in-ci.md
++++ b/docs/review-in-ci.md
+@@ -225,7 +225,9 @@ project init --ci-review --ci-app projector
+ `init` writes the action's `app: projector` input instead of `app-id` and
+ `app-private-key`, gives both jobs `id-token: write`, records
+ `review.ci_app = "projector"`, and adds `projector-review[bot]` to
+-`review.reviewers`. It sets no key secret.
++`review.reviewers`. It sets no key secret. When the repository posted as
++an app of your own before, `init` also removes `review.ci_app_id`, and once
++the change merges you can delete the `PROJECTOR_APP_PRIVATE_KEY` secret.
+ [Use a hosted Projector service](cli.md#use-a-hosted-projector-service)
+ describes the `project hosted` commands.
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 93b10b02..ba0b3db4 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -3714,6 +3714,10 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
+         record_setting(root, "review.ci_app", slug)
+     if isinstance(app, int) and config.get("review.ci_app_id") != app:
+         record_setting(root, "review.ci_app_id", app)
++    elif app == ci.HOSTED_APP and config.get("review.ci_app_id") is not None:
++        # The hosted app needs no ID, so one left from a self-managed app would only mislead a reader.
++        change = unset_value(root / CONFIG_NAME, "review.ci_app_id")
++        print(f"project: {change.action} review.ci_app_id in {change.path}", file=sys.stderr)
+     # An app replaces github-actions[bot], so a workflow posting with its own token no longer counts as a reviewer.
+     reviewer = ci.HOSTED_LOGIN if slug == ci.HOSTED_APP else f"{slug}[bot]" if slug else CI_REVIEWER
+     listed = review.extra_reviewers(config.get("review.reviewers"))
+diff --git a/tests/test_ci.py b/tests/test_ci.py
+index 20e5cdc5..2fb6d413 100644
+--- a/tests/test_ci.py
++++ b/tests/test_ci.py
+@@ -187,6 +187,17 @@ def test_the_hosted_app_has_each_job_request_an_oidc_token_and_passes_no_key(sel
+         self.assertEqual((ci.HOSTED_APP, ci.HOSTED_LOGIN), (self.recorded()["ci_app"], self.recorded()["reviewers"]))
+         self.assertNotIn("ci_app_id", self.recorded())
+ 
++    def test_switching_to_the_hosted_app_drops_the_old_apps_id(self) -> None:
++        # The hosted app needs no ID, so an ID left from a self-managed app would read as the one reviews post with.
++        self.assertEqual(0, self.init("--ci-review", "--ci-app", "projector-review")[0])
++
++        code, _, err = self.init("--ci-app", ci.HOSTED_APP)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(ci.HOSTED_APP, self.recorded()["ci_app"])
++        self.assertNotIn("ci_app_id", self.recorded())
++        self.assertIn("unset review.ci_app_id", err)
++
+     def test_an_app_recorded_without_its_id_is_left_as_it_is_when_github_cannot_answer(self) -> None:
+         (self.root / ".projector.toml").write_text('[review]\nci = true\nci_app = "projector-review"\n')
+         self.offline = True
+@@ -561,13 +572,14 @@ def test_an_app_workflow_gives_the_action_the_app_and_its_key(self) -> None:
+     def test_the_app_key_reaches_only_the_step_that_mints_its_token(self) -> None:
+         # A caller's env reaches every step of a composite action, the agent's and npm's install scripts included,
+         # and a composite action's inputs set no environment variable. So the workflow passes the key only as an
+-        # input, and only the step that mints the token reads that input.
++        # input, and only the step that mints the token reads that input. This repository's own workflow gets its
++        # token from the hosted service and passes no key, but must never pass one any other way.
+         own = Path(__file__).parents[1] / ".github" / "workflows" / "projector-review.yml"
+         for name, workflow in (("generated", ci.workflow_text("v0", {"claude": ""}, 5827721)), ("own", own.read_text())):
+             with self.subTest(workflow=name):
+-                self.assertEqual({f"app-private-key: ${{{{ secrets.{ci.APP_KEY} }}}}"},
+-                                 {line.strip() for line in workflow.splitlines() if ci.APP_KEY in line},
+-                                 "the key is in no job's or step's env, only each job's input")
++                self.assertLessEqual({line.strip() for line in workflow.splitlines() if ci.APP_KEY in line},
++                                     {f"app-private-key: ${{{{ secrets.{ci.APP_KEY} }}}}"},
++                                     "the key is in no job's or step's env, only each job's input")
+         steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
+         minting = ["Mint the app's token", "Mint the context token"]
+         self.assertEqual(minting,
