@@ -98,6 +98,23 @@ with `--ci-runs-on`, such as `--ci-runs-on self-hosted,linux,projector`.
 runner needs, how it holds the agent's credential, how a review reaches your
 internal tools from it, and how to keep it safe.
 
+## Set the reasoning effort
+
+Each agent runs at `high` effort unless you name another level with
+`--ci-effort`:
+
+```sh
+project init --ci-review --ci-effort medium
+```
+
+`init` writes the level into the workflow as the action's `effort` input and
+records it as `review.ci_effort`, so a later `init` keeps it. One level
+applies to every agent's job, so `init` refuses a level one of them does not
+accept: `claude` takes `low`, `medium`, `high`, `xhigh`, and `max`, and
+`codex` takes `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`. A
+lower level costs less and reads the change less closely. To change it, run
+`init` again with another `--ci-effort`.
+
 ## What a review job does
 
 The workflow runs on `opened`, `reopened`, `synchronize`, and
@@ -355,7 +372,7 @@ replaces.
 | `pr` | The event's pull request | The pull request to review |
 | `agent` | `claude` | `claude`, `codex`, or `command`, which runs the command `review.runner` names |
 | `model` | `claude-opus-5-5` for `claude` | The model the agent runs and the review records. `codex` and `command` need one. The workflow `init` writes passes the model `review.ci_agents` names for the job's agent. |
-| `effort` | `high` | The agent's reasoning effort |
+| `effort` | `high` | The agent's reasoning effort. The workflow `init` writes passes the level `review.ci_effort` names, and leaves it out when none is set. |
 | `permission-mode` | `auto` | `auto`, or `allowlist`, which refuses whatever no rule allows |
 | `rereview` | `false` | Review a head this model already reviewed |
 | `config` | Empty | TOML for the runner's `~/.projector.toml` |

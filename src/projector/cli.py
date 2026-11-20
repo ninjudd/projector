@@ -631,6 +631,9 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--ci-runs-on", metavar="LABELS",
                       help="run the CI reviews on your own runners with these labels, separated by commas, such as "
                            f"self-hosted,linux (default: review.ci_runs_on, then {ci.HOSTED})")
+    init.add_argument("--ci-effort", metavar="LEVEL",
+                      help="the reasoning effort every CI review agent runs at, such as medium, which each agent "
+                           "must accept (default: review.ci_effort, then the action's default, high)")
     rule_choice = init.add_mutually_exclusive_group()
     rule_choice.add_argument(
         "--publish-rule",
@@ -863,6 +866,9 @@ def parser() -> argparse.ArgumentParser:
     review_ci_workflow.add_argument("--credential", choices=ci.KINDS,
                                     help="runner passes no credential secret, for a runner that holds its own "
                                          "(default: review.ci_credential)")
+    review_ci_workflow.add_argument("--effort", metavar="LEVEL",
+                                    help="the reasoning effort every agent runs at (default: review.ci_effort, "
+                                         "then the action's default, high)")
     review_status = review_commands.add_parser(
         "status", help="report the newest Projector verdict on a pull request's current head"
     )
@@ -2571,9 +2577,10 @@ def run_review(arguments: argparse.Namespace) -> int:
         return 0
     if arguments.review_command == "ci-workflow":
         config = load_config(discover_git_root(Path.cwd()))
-        agents = arguments.agents or config.get("review.ci_agents") or "claude"
-        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents), ci_app(config, arguments.app)[1],
-                               ci_runs_on(config, arguments.runs_on), ci_credential(config, arguments.credential)),
+        agents = ci.parse_agents(arguments.agents or config.get("review.ci_agents") or "claude")
+        print(ci.workflow_text(arguments.action_ref, agents, ci_app(config, arguments.app)[1],
+                               ci_runs_on(config, arguments.runs_on), ci_credential(config, arguments.credential),
+                               ci_effort(config, arguments.effort, agents)),
               end="")
         return 0
     if arguments.review_command in ("hold", "ready"):
@@ -3691,6 +3698,7 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
     agents = ci.parse_agents(arguments.ci_agents or config.get("review.ci_agents") or "claude")
     runs_on = ci_runs_on(config, arguments.ci_runs_on)
     credential = ci_credential(config, arguments.ci_credential)
+    effort = ci_effort(config, arguments.ci_effort, agents)
     try:
         slug, app = ci_app(config, arguments.ci_app)
     except UsageError as error:
@@ -3701,7 +3709,8 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
         print(f"project: {error}; left the CI review as it is, and `project init --ci-app "
               f"{config.get('review.ci_app')}` records the app's ID so a refresh needs no lookup", file=sys.stderr)
         return
-    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents, app, runs_on, credential)))
+    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents, app, runs_on, credential,
+                                                         effort)))
     if recorded is not True:
         record_setting(root, "review.ci", True)
     if config.get("review.ci_agents") != ci.format_agents(agents):
@@ -3710,6 +3719,8 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
         record_setting(root, "review.ci_runs_on", ci.format_runs_on(runs_on))
     if credential and config.get("review.ci_credential") != credential:
         record_setting(root, "review.ci_credential", credential)
+    if effort and config.get("review.ci_effort") != effort:
+        record_setting(root, "review.ci_effort", effort)
     if slug and config.get("review.ci_app") != slug:
         record_setting(root, "review.ci_app", slug)
     if isinstance(app, int) and config.get("review.ci_app_id") != app:
@@ -3804,6 +3815,13 @@ def ci_credential(config: Config, flag: Optional[str]) -> Optional[str]:
     if kind is not None and kind not in ci.KINDS:
         raise UsageError(f"review.ci_credential must be {', '.join(ci.KINDS)}; got {kind!r}")
     return kind
+
+
+def ci_effort(config: Config, flag: Optional[str], agents: dict[str, str]) -> Optional[str]:
+    """The reasoning effort every CI review agent runs at, from `flag`, then `review.ci_effort`, or None for the
+    action's default."""
+    text = flag if flag is not None else config.get("review.ci_effort")
+    return None if text is None else ci.parse_effort(text, agents)
 
 
 def app_id(slug: str) -> int:

@@ -107,6 +107,7 @@ SETTINGS: dict[str, type] = {
     "review.ci_app_id": int,
     "review.ci_runs_on": str,
     "review.ci_credential": str,
+    "review.ci_effort": str,
     "review.context_repos": str,
     "fix.resolve_human_threads": bool,
     "watch.auto_start": bool,
