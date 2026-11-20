@@ -3709,8 +3709,10 @@ when a pipe such as `| tail -2` cuts its lines or `--quiet` prints none,
 falls back to the current directory's checkout. The command asks GitHub
 for the open pull request from the checked-out branch, one REST request,
 and subscribes to it when its head is the checkout's `HEAD`, as it is
-right after the push. A push of another branch leaves that pull request's
-head behind the checkout's, so it adds nothing:
+right after the push. A checkout with commits its pull request lacks adds
+nothing. The output cannot say which branch a quiet push named, so a quiet
+push of another branch subscribes to that pull request too whenever the
+checked-out branch is in sync with it:
 
 ```console
 $ git push -q 2>&1 | tail -2 | project watch add --from-output -

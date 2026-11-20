@@ -570,8 +570,9 @@ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tupl
 
     Output that names no pull request and no pushed branch, as a push's does when a pipe such as `| tail -2`
     cut its lines or `--quiet` printed none, falls back to the checkout: the open pull request from its
-    checked-out branch counts when its head is the checkout's `HEAD`, as it is right after the push, so a
-    push of another branch adds nothing."""
+    checked-out branch counts when its head is the checkout's `HEAD`, as it is right after the push. The
+    output cannot say which branch a quiet push named, so a quiet push of another branch counts that pull
+    request too while the checked-out branch is in sync with it."""
     pulls, branches, targets = pushed(text)
     if any(repo.lower() not in targets for repo, _ in pulls):
         with contextlib.suppress(review.ReviewError):

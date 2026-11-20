@@ -575,7 +575,8 @@ the daemon's events into the conversation, so no watcher runs in it:
   pushed to, in the checkout's repository or one the output pushed to, and
   adds nothing when `watch.auto_start` is `false`. When a pipe or `--quiet`
   left the output naming none, it subscribes to the open pull request from
-  the checked-out branch whose head is the checkout's `HEAD`. It also asks the watch
+  the checked-out branch whose head is the checkout's `HEAD`, whichever
+  branch the push named. It also asks the watch
   daemon to read each of those pull requests again right away, so the
   panel shows the push within seconds rather than at the next pass. The command's result does not
   wait for it.

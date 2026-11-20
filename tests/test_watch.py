@@ -3186,8 +3186,8 @@ for line in sys.stdin:
         self.assertEqual([["api", "repos/acme/app/pulls?head=acme:feature&state=open"]], self.github.calls)
 
     def test_add_from_output_that_names_nothing_skips_a_branch_whose_pull_request_has_another_head(self) -> None:
-        # Catches the fallback subscribing to the checked-out branch's pull request after a push of another
-        # branch, which leaves that pull request's head behind the checkout's.
+        # Catches the fallback subscribing to the checked-out branch's pull request when the checkout has commits
+        # that pull request lacks, as after a quiet push that failed or named another branch.
         self.checked_out_commit()
         self.github.pull_request(12, ref="feature", head=SHA_B)
 
