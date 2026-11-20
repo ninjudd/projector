@@ -1,0 +1,54 @@
+diff --git a/.github/workflows/projector-review.yml b/.github/workflows/projector-review.yml
+index 08d09c3a..e0d36446 100644
+--- a/.github/workflows/projector-review.yml
++++ b/.github/workflows/projector-review.yml
+@@ -38,6 +38,7 @@ jobs:
+       checks: read
+       actions: read
+       pages: read
++      id-token: write
+     strategy:
+       fail-fast: false
+       # An agent with no model runs the action's default for it.
+@@ -60,8 +61,7 @@ jobs:
+           model: ${{ matrix.model }}
+           pr: ${{ github.event.pull_request.number || inputs.pr }}
+           rereview: ${{ inputs.rereview || false }}
+-          app-id: '5827721'
+-          app-private-key: ${{ secrets.PROJECTOR_APP_PRIVATE_KEY }}
++          app: projector
+           # The gate's hooks/typecheck.sh compiles against declarations only an interactive Claude Code session
+           # writes, so a review on a runner runs the rest of the gate without it.
+           config: |
+@@ -79,6 +79,7 @@ jobs:
+       pull-requests: write
+       issues: write
+       pages: read
++      id-token: write
+     concurrency:
+       group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
+     runs-on: ubuntu-latest
+@@ -89,5 +90,4 @@ jobs:
+         with:
+           step: summary
+           pr: ${{ github.event.pull_request.number || inputs.pr }}
+-          app-id: '5827721'
+-          app-private-key: ${{ secrets.PROJECTOR_APP_PRIVATE_KEY }}
++          app: projector
+diff --git a/.projector.toml b/.projector.toml
+index f83d1681..8e5eed74 100644
+--- a/.projector.toml
++++ b/.projector.toml
+@@ -5,9 +5,10 @@ gate_checks = "check"
+ # The steps of the gate in AGENTS.md that CI cannot run, run on the review's worktree against the merge base.
+ gate = 'claude plugin validate . && claude plugin validate skills && claude plugin test . && hooks/typecheck.sh && git diff --check "$2" HEAD'
+ # Each pull request whose head is in this repository is reviewed in GitHub Actions by
+-# .github/workflows/projector-review.yml, which posts as the Projector Review app.
++# .github/workflows/projector-review.yml, which posts as the Projector Review app
++# with a token the hosted service mints for each job.
+ ci = true
+ ci_agents = "claude"
+-ci_app = "projector-review"
++ci_app = "projector"
+ ci_app_id = 5827721
+ reviewers = "projector-review[bot]"
