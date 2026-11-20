@@ -1,0 +1,108 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index e69925a9..84eee70a 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -151,7 +151,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 32 -->
++<!-- projector:begin 33 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -212,6 +212,13 @@ waiting for someone to notice that nothing is fixing them. Write each plan
+ with the `spec` skill, whose hand-over opens the plan's pull request the
+ same way.
+ 
++Projector's skills write their prose by its writing guide. Write the rest
++with the `write` skill, which reads the guide first: each comment, reply,
++and issue you post on GitHub, each commit message and pull request body you
++write outside `implement`, `spec`, or `fix-pr`, and each comment and
++docstring in code you change outside them. Use it whether or not the person
++asked for prose.
++
+ Open every pull request as a draft, each layer of a stack included, and mark
+ it ready with `project review ready` once your work on it is done. A draft
+ says its author is still working, so marking it ready is what asks for its
+diff --git a/docs/plugins.md b/docs/plugins.md
+index cb5d8022..4cfd1abc 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -52,7 +52,9 @@ docstring in the code it changes, follows the writing guide in
+ `skills/writing.md`. The code guidelines make that guide a rule for
+ comments, so a review flags a comment that breaks it, such as one that
+ recounts the change's history. `write` applies the same guide to any other
+-prose you ask for, such as `/projector:write a README section on the site`.
++prose. That includes what you ask for, such as
++`/projector:write a README section on the site`, and what an agent writes on
++its own, such as a reply to a review comment or an issue it opens.
+ `rewrite` revises text that already exists, such as a file, a pull request
+ description, a comment, or a Slack message, and writes the result back where
+ the text lives when it can, such as
+diff --git a/skills/write/SKILL.md b/skills/write/SKILL.md
+index 790d1a7a..c8d8e79f 100644
+--- a/skills/write/SKILL.md
++++ b/skills/write/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: write
+-description: Write prose for people to read so that it follows Projector's writing guide. That includes documentation, a README section, a code comment or docstring, a pull request body, a commit message, an issue, and a reply. Use when the user asks to write or draft prose, or to check text against the writing guide. To rewrite text that already exists, use rewrite.
++description: Write prose for people to read so that it follows Projector's writing guide. That includes documentation, a README section, a code comment or docstring, a pull request body, a commit message, an issue, and a reply. Use when the user asks to write or draft prose, or to check text against the writing guide, and whenever you write such prose yourself outside a Projector skill that already applies the guide, such as a reply to a review comment or an issue you open. To rewrite text that already exists, use rewrite.
+ ---
+ 
+ # Write
+@@ -47,7 +47,13 @@ subject.
+ 
+ Edit a file in place, and match the line wrapping around the edit. Do not
+ hard-wrap text bound for GitHub, such as a pull request body or a comment,
+-because GitHub renders line breaks. For text the user pasted, give the
+-revised text. Then say in a few lines what changed and why, and cite the
+-guide's sections. Name each fact that you cut, so that the user can put back
+-one they need. Do not commit, push, or post the text unless the user asks.
++because GitHub renders line breaks. Then finish by who the text is for:
++
++- **Prose the user asked for.** For text the user pasted, give the revised
++  text. Then say in a few lines what changed and why, and cite the guide's
++  sections. Name each fact that you cut, so that the user can put back one
++  they need. Do not commit, push, or post the text unless the user asks.
++- **Prose a step of your own task needs**, such as a reply to a review
++  comment, an issue you open, or a commit message. Commit, push, or post it
++  as that task requires, and give no report of what changed, because nobody
++  asked for one.
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 697ce603..1b2ab2bd 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 32 -->
++<!-- projector:begin 33 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -76,6 +76,13 @@ waiting for someone to notice that nothing is fixing them. Write each plan
+ with the `spec` skill, whose hand-over opens the plan's pull request the
+ same way.
+ 
++Projector's skills write their prose by its writing guide. Write the rest
++with the `write` skill, which reads the guide first: each comment, reply,
++and issue you post on GitHub, each commit message and pull request body you
++write outside `implement`, `spec`, or `fix-pr`, and each comment and
++docstring in code you change outside them. Use it whether or not the person
++asked for prose.
++
+ Open every pull request as a draft, each layer of a stack included, and mark
+ it ready with `project review ready` once your work on it is done. A draft
+ says its author is still working, so marking it ready is what asks for its
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 4310fc83..49a6e593 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -44,6 +44,7 @@
+     30: "abc1ff1385e9c85377ab06d716d1118ce504637845d02a9249b3eba2faf13d57",
+     31: "1f15d5b03db14f17ad4d09f2e1de72e4799ca19a057a2466f5f884f5c3ad25da",
+     32: "3d7d344cdc97f0cf53bbe86a7701656347b19cc84559bd1f3a560de86c5d1cb5",
++    33: "a44203f4af2c4f5acbf872b2b93ec9addc7cc776f1bfd3bdc2624e64ecc915ee",
+ }
+ 
+ 
