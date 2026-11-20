@@ -1,0 +1,92 @@
+{
+ "version": 1,
+ "name": "Review automatic hold-back key",
+ "project": "watch-daemon",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 613,
+  "title": "Keep a head's UNREVIEWED key while review.automatic is false",
+  "head": "2508dd84f1d38aee717e69c44afa65e32108baa2",
+  "headRef": "review-automatic-key",
+  "base": "9fbde3e52b42747d09fbd7a89198f57fe428b2cd",
+  "baseRef": "push-without-output",
+  "basePr": 611
+ },
+ "overview": {
+  "summary": [
+   "The watch daemon is the one process per machine that polls the pull requests agent sessions work on and sends each session events. One of those events, <code>UNREVIEWED</code>, tells the session fixing a pull request that its head is ready for review and that nothing will review it. The daemon sends it once per head. It remembers each head it announced by a key, <code>unreviewed:&lt;number&gt;:&lt;head&gt;</code>, in the fixer's state, and a head whose key is still there is not announced again.",
+   "Each pass, the daemon either keeps or drops that key. It drops the key when the head no longer needs a review at all: the pull request became a draft or the head was signed off. It keeps the key when the head still needs a review but something else will give it one, such as a live start comment or <code>review.ci</code>. The repository setting <code>review.automatic = false</code>, which means its pull requests get a review only when someone asks, belongs with the second kind, and the code comment already said so. But the check sat with the first kind, so turning the setting off and back on announced a head the fixer had already heard about.",
+   "This pull request moves the check to the kept-key branch, adds a test that turns the setting off and on, and rewords the <code>UNREVIEWED</code> row in <code>docs/cli.md</code>."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One review, of <code>2508dd8</code>: changes requested, with one open P2 thread on <code>docs/cli.md</code>.</li><li>The code change and the new test hold. The test fails at the merge base and passes at the head.</li><li>The new sentence in the docs says <code>review.automatic</code> stays <code>true</code> for a repository with no <code>.projector.toml</code>. That is wrong when your <code>~/.projector.toml</code> sets it to <code>false</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "Holding a head back keeps its key",
+   "kicker": "Where route_fix checks review.automatic, and the test that pins it",
+   "intro": [
+    "<code>Pass.route_fix</code> works out what the fixer of one pull request should hear on this pass. For <code>UNREVIEWED</code> it has two nested conditions:",
+    "<ol><li><b>The outer condition</b> asks whether the head needs a review at all: not a draft, no review requested of named reviewers, and not signed off. When it fails, the key is not carried into <code>kept</code>, so it is dropped.</li><li><b>The inner condition</b> asks whether something else will review the head: a live start comment from an account whose review counts, a session on another machine, or GitHub Actions under <code>review.ci</code>. When it holds, the key is carried over if the head was already announced. Otherwise the daemon announces the head.</li></ol>",
+    "The change moves <code>not self.settings_of(repo).automatic</code> from the outer condition to the front of the inner one. A head never announced is still not announced while the setting is <code>false</code>, because the kept-key branch copies only keys already in <code>announced</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "<code>route_fix</code>: the <code>review.automatic</code> check moves into the hold-back condition.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1964,
+       "text": "<code>not automatic</code> short-circuits before <code>counted_reviews</code>, <code>reviewed_remotely</code>, and <code>reviewed_in_ci</code>. <code>live_starts</code> still runs before it, but it only reads the pull request's comments. Checked by reading <code>live_starts</code>."
+      },
+      {
+       "kind": "context",
+       "line": 1963,
+       "text": "<code>counted</code> is new, but the outer condition still calls <code>self.counted_logins(repo)</code> itself. The review lists reusing it as a suggestion."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "A test that announces a head, commits <code>automatic = false</code>, then <code>automatic = true</code>, and expects one announcement.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The test fails with <code>watch.py</code> from the merge base and passes at the head, and all 57 <code>FixRoleTests</code> pass. Checked by running both."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The UNREVIEWED row in the CLI reference",
+   "kicker": "Rewording what a repository with no .projector.toml gets",
+   "intro": [
+    "The <code>UNREVIEWED</code> row of the watch events table in <code>docs/cli.md</code> lists three settings the daemon reads: <code>review.ci</code>, <code>review.automatic</code>, and <code>review.reviewers</code>. It said a repository committing no <code>.projector.toml</code> \"has neither setting\". The new wording says \"none of these settings\" and adds that <code>review.automatic</code> then stays <code>true</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "One sentence of the <code>UNREVIEWED</code> row changes.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 3906,
+       "text": "Open P2 finding: when the repository commits no <code>.projector.toml</code>, <code>committed_settings</code> still layers <code>~/.projector.toml</code>, so <code>review.automatic = false</code> there holds back <code>UNREVIEWED</code>. \"stays <code>true</code>\" is wrong in that case, and contradicts \"under your <code>~/.projector.toml</code>\" earlier in the row."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

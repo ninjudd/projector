@@ -1,0 +1,63 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 8faea145..255d2a31 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3903,7 +3903,7 @@ records it.
+ | `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped, nor a failed check run of a cancelled workflow run that started at or after the cancel, as an `if: always()` job that gathers the others does, or that a newer run of the same workflow on the head tests again, by still running or by running a check of the same name rather than skipping or cancelling it. The cancel is when the first of the run's check runs that concluded `CANCELLED` ended |
+ | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
+ | `LABEL` | `fix` | A `clean` or `reviewing` label added or removed since the owner last saw the pull request, as `+clean` or `-reviewing` |
+-| `UNREVIEWED` | `fix`, when no session the daemon can see reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, that no live session of the operator's on another machine reviews through the relay, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head. A pull request whose head is in a repository whose `review.ci` is `true` gets none, because GitHub Actions reviews that head and a failed review there arrives as a failed check; a fork's pull request still does, because the workflow skips it. Neither does a pull request in a repository whose `review.automatic` is `false`, which expects no review unless you ask for one. The daemon reads `review.ci`, `review.automatic`, and `review.reviewers` from a checkout of the repository that a live session works in, on each pass. When no live session has one, it reads the `.projector.toml` the default branch commits on GitHub, under your `~/.projector.toml`, at most once every 10 minutes; never a pull request's head. A repository that commits none has neither setting, and a read that fails keeps the settings the last one found. The line says `no session on this machine`, or, while the relay is on and has polled the repository within the last hour, `no session on this machine or on your other machines that share this repository's relay`; see [What a presence carries](#what-a-presence-carries) |
++| `UNREVIEWED` | `fix`, when no session the daemon can see reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, that no live session of the operator's on another machine reviews through the relay, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head. A pull request whose head is in a repository whose `review.ci` is `true` gets none, because GitHub Actions reviews that head and a failed review there arrives as a failed check; a fork's pull request still does, because the workflow skips it. Neither does a pull request in a repository whose `review.automatic` is `false`, which expects no review unless you ask for one. The daemon reads `review.ci`, `review.automatic`, and `review.reviewers` from a checkout of the repository that a live session works in, on each pass. When no live session has one, it reads the `.projector.toml` the default branch commits on GitHub, under your `~/.projector.toml`, at most once every 10 minutes; never a pull request's head. A repository that commits none has none of these settings, so `review.automatic` stays `true`, and a read that fails keeps the settings the last one found. The line says `no session on this machine`, or, while the relay is on and has polled the repository within the last hour, `no session on this machine or on your other machines that share this repository's relay`; see [What a presence carries](#what-a-presence-carries) |
+ | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed; under a repository subscription, only once the pull request is ready for review |
+ | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
+ | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 8ff3e1e0..ee0eed95 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -1955,12 +1955,14 @@ def standing(key: str, first: str, again: Optional[str], revision: object = None
+         # no review unless someone asks for one, so it waits on no session either. Held back, the head keeps its
+         # key, so it is still announced only once. A draft waits on its author, not on a review.
+         unreviewed = f"unreviewed:{number}:{head}"
+-        if not pr.get("isDraft") and not reviewers and self.settings_of(repo).automatic \
++        if not pr.get("isDraft") and not reviewers \
+                 and not head_sign_off(pr, head, self.daemon.operator or "", visibility,
+                                       self.counted_logins(repo))["signed_off"]:
+             starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
+                       for comment, _ in self.live_starts(pr, head)]
+-            if review.counted_reviews(starts, self.daemon.operator or "", visibility, self.counted_logins(repo)) \
++            counted = self.counted_logins(repo)
++            if not self.settings_of(repo).automatic \
++                    or review.counted_reviews(starts, self.daemon.operator or "", visibility, counted) \
+                     or self.reviewed_remotely(repo, number) or self.reviewed_in_ci(repo, pr):
+                 if unreviewed in announced:
+                     kept[unreviewed] = announced[unreviewed]
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index 7d1a1238..f1edfc2c 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -671,6 +671,24 @@ def test_a_repository_whose_reviews_are_not_automatic_hears_no_unreviewed(self)
+         self.assertEqual([unreviewed(1, repo="acme/other")], events["fixer"],
+                          "acme/app's review.automatic = false holds back its UNREVIEWED, and acme/other commits none")
+ 
++    def test_a_head_announced_unreviewed_is_not_announced_again_after_review_automatic_turns_off_and_on(self) -> None:
++        # Catches review.automatic = false dropping the head's key, so turning the setting back on announces a head
++        # the fixer already heard about.
++        self.github.pull_request(1, draft=False)
++        self.fixer("acme/app#1 fix")
++
++        first = self.cycle()
++        self.github.committed("[review]\nautomatic = false\n")
++        self.advance(600)
++        off = self.cycle()
++        self.github.committed("[review]\nautomatic = true\n")
++        self.advance(600)
++        on = self.cycle()
++
++        self.assertEqual([unreviewed(1)], first["fixer"])
++        self.assertEqual([], off["fixer"], "review.automatic = false holds the head back")
++        self.assertEqual([], on["fixer"], "the head was announced once, before the setting turned off")
++
+     def test_a_repository_that_commits_no_projector_toml_still_hears_unreviewed(self) -> None:
+         self.github.pull_request(1, draft=False)
+         self.fixer("acme/app#1 fix")
