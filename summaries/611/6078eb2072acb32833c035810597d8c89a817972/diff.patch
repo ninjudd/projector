@@ -1,0 +1,238 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 2ebb2634..8faea145 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3704,6 +3704,22 @@ GitHub for the open pull request whose head is that branch, one REST
+ request, and subscribes to it. A branch with no open pull request adds
+ nothing, and a pull request the session drops from `fix` is skipped.
+ 
++Output that names no pull request and no pushed branch, as a push's does
++when a pipe such as `| tail -2` cuts its lines or `--quiet` prints none,
++falls back to the current directory's checkout. The command asks GitHub
++for the open pull request from the checked-out branch, one REST request,
++and subscribes to it when its head is the checkout's `HEAD`, as it is
++right after the push. A checkout with commits its pull request lacks adds
++nothing. The output cannot say which branch a quiet push named, so a quiet
++push of another branch subscribes to that pull request too whenever the
++checked-out branch is in sync with it:
++
++```console
++$ git push -q 2>&1 | tail -2 | project watch add --from-output -
++added acme/app#12 fix auto
++events: mod
++```
++
+ A URL counts only when its repository is one the output shows a push to,
+ in a `To <remote>` line, or a pull request opened in, in the
+ `Creating pull request for <branch> into <base> in <owner>/<repo>` line
+diff --git a/docs/plugins.md b/docs/plugins.md
+index f0beb98a..ede4a843 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -573,7 +573,10 @@ the daemon's events into the conversation, so no watcher runs in it:
+   output to `project watch add --from-output -`. The CLI subscribes the
+   session to fix each open pull request that the output shows it opened or
+   pushed to, in the checkout's repository or one the output pushed to, and
+-  adds nothing when `watch.auto_start` is `false`. It also asks the watch
++  adds nothing when `watch.auto_start` is `false`. When a pipe or `--quiet`
++  left the output naming none, it subscribes to the open pull request from
++  the checked-out branch whose head is the checkout's `HEAD`, whichever
++  branch the push named. It also asks the watch
+   daemon to read each of those pull requests again right away, so the
+   panel shows the push within seconds rather than at the next pass. The command's result does not
+   wait for it.
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 7e6c737d..1f00d713 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -5882,13 +5882,19 @@ test('holds the events that arrive while a batch waits for the session, and send
+   expect(session.files[EVENTS]).toBe('')
+ })
+ 
+-test('passes the output of a push, a new pull request, or a stack command to project watch add --from-output', async ($, on) => {
++test('passes the output of a push, a new pull request, or a stack command to project watch add --from-output, even an empty one', async ($, on) => {
+   const pushed = { stdout: '', stderr: 'To github.com:x/y.git\n   1111111..2222222  fix-branch -> fix-branch\n' }
+   const opened = { stdout: 'https://github.com/x/y/pull/7\n', stderr: 'Creating pull request for fix-branch into main in x/y\n' }
+   const session = watchWorld(on, {
+     files: cached('x/y', given('x/y', 7)),
+     bash: command =>
+-      command.startsWith('gh pr create') ? opened : command.includes('push') ? pushed : { stdout: 'push\n', stderr: '' },
++      command.startsWith('gh pr create')
++        ? opened
++        : command.includes(' -q ')
++          ? { stdout: '', stderr: '' }
++          : command.includes('push')
++            ? pushed
++            : { stdout: 'push\n', stderr: '' },
+   })
+   await startSession($, session.clock)
+   const ui = await $.ui.mount(PANEL)
+@@ -5901,6 +5907,8 @@ test('passes the output of a push, a new pull request, or a stack command to pro
+     'cd /w && git push -u origin fix-branch',
+     'gh pr create --fill',
+     'gh stack push',
++    // A quiet push piped through `tail` prints nothing, and the CLI looks the checkout's branch up instead.
++    'git push -q origin fix-branch 2>&1 | tail -2',
+   ]
+   for (const command of commands) {
+     await $.tool.call({ tool: 'Bash', command })
+@@ -5911,6 +5919,7 @@ test('passes the output of a push, a new pull request, or a stack command to pro
+     { argv: add, stdin: `\n${pushed.stderr}` },
+     { argv: add, stdin: `${opened.stdout}\n${opened.stderr}` },
+     { argv: add, stdin: `\n${pushed.stderr}` },
++    { argv: add, stdin: '\n' },
+   ])
+ 
+   // The new pull request's subscription shows the panel, which names the session its fixer.
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 66736f55..4ffe1477 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1130,11 +1130,12 @@ const watchSoon = ($: Engine) => $.clock.after(1, () => void $.clock.now().then(
+ /**
+  * Subscribes the session to fix each pull request a command's output shows
+  * it opened or pushed to. The CLI finds them, and adds nothing when
+- * `watch.auto_start` is off.
++ * `watch.auto_start` is off. Output that a pipe or `--quiet` emptied still
++ * goes, because the CLI then looks up the checked-out branch's pull request.
+  */
+ async function subscribeFrom($: Engine, output: string): Promise<void> {
+   const session = await sessionOf($)
+-  if (session === undefined || output.trim() === '') return
++  if (session === undefined) return
+   const ran = await project($, ['watch', 'add', '--from-output', '-', '--session', session], output)
+   if (ran.exitCode === 0) watchSoon($)
+   else $.ui.log(`projector: project watch add --from-output failed: ${errorOf(ran)}`, { to: 'debug' })
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 10da2c6a..5a5cd99c 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -546,6 +546,18 @@ def unique(pairs: list[tuple[str, object]]) -> list[tuple[str, object]]:
+     return kept
+ 
+ 
++def checked_out(checkout: Path) -> Optional[tuple[str, str, str]]:
++    """The checkout's origin repository, its checked-out branch, and its `HEAD`, or None outside a checkout of a
++    GitHub repository and on a detached `HEAD`."""
++    try:
++        repo = review.origin_repo(checkout)
++        branch = review.git("-C", str(checkout), "symbolic-ref", "--short", "-q", "HEAD")
++        head = review.git("-C", str(checkout), "rev-parse", "HEAD")
++    except review.ReviewError:
++        return None
++    return (repo, branch, head) if branch and head else None
++
++
+ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tuple[list[str], list[str], bool]:
+     """Subscribe the session to `fix auto` on each pull request the output opened or pushed to, ask the
+     daemon to refresh each one, and answer the lines added, a problem for each pull request that could not be
+@@ -554,7 +566,13 @@ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tupl
+ 
+     A linked pull request counts only in a repository the output pushed to or opened a pull request in, or
+     the checkout's origin, so a link to another repository, or an example in help text, adds nothing. Each
+-    one the session does not already hold must be open on GitHub, which one REST request confirms."""
++    one the session does not already hold must be open on GitHub, which one REST request confirms.
++
++    Output that names no pull request and no pushed branch, as a push's does when a pipe such as `| tail -2`
++    cut its lines or `--quiet` printed none, falls back to the checkout: the open pull request from its
++    checked-out branch counts when its head is the checkout's `HEAD`, as it is right after the push. The
++    output cannot say which branch a quiet push named, so a quiet push of another branch counts that pull
++    request too while the checked-out branch is in sync with it."""
+     pulls, branches, targets = pushed(text)
+     if any(repo.lower() not in targets for repo, _ in pulls):
+         with contextlib.suppress(review.ReviewError):
+@@ -588,6 +606,18 @@ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tupl
+             continue
+         found += [(repo, pull["number"]) for pull in listed if isinstance(pull, dict)
+                   and isinstance(pull.get("number"), int)]
++    current = None if pulls or branches else checked_out(checkout)
++    if current is not None:
++        repo, branch, head = current
++        owner = repo.split("/")[0]
++        result = run_gh(["api", f"repos/{repo}/pulls?head={quote(f'{owner}:{branch}', safe=':')}&state=open"])
++        listed = json_of(result)
++        if isinstance(listed, list):
++            found += [(repo, pull["number"]) for pull in listed if isinstance(pull, dict)
++                      and isinstance(pull.get("number"), int) and (pull.get("head") or {}).get("sha") == head]
++        else:
++            problems.append(f"could not look up the pull request for {repo} {branch}: "
++                            f"{(result.stderr or result.stdout).strip() or 'gh failed'}")
+     added = []
+     refreshed = []
+     for repo, number in unique(found):
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index dea9d82a..ea8d0aaf 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -304,7 +304,8 @@ def rest(self, path: str, include: bool, etag: Optional[str], paginate: bool) ->
+             return self.answer(200, [{"number": number, "state": "open" if pull["node"]["state"] == "OPEN" else "closed",
+                                       "merged_at": pull["node"]["mergedAt"] or (LATER if pull["node"]["state"] == "MERGED"
+                                                                                 else None),
+-                                      "base": {"ref": pull["node"]["baseRefName"]}}
++                                      "base": {"ref": pull["node"]["baseRefName"]},
++                                      "head": {"ref": branch, "sha": pull["node"]["headRefOid"]}}
+                                      for number, pull in listed if pull["node"]["headRefName"] == branch],
+                                include, etag)
+         if tail == ["pulls"] and query == {"state": "open", "per_page": "100", "page": query.get("page", "")}:
+@@ -3164,6 +3165,61 @@ def test_add_from_output_skips_a_link_that_is_no_open_pull_request(self) -> None
+         self.assertEqual(["acme/app#42 fix auto"], self.lines())
+         self.assertIn("project: could not look up acme/app#123: gh: Not Found (HTTP 404)", err)
+ 
++    def checked_out_commit(self, branch: str = "feature") -> str:
++        """Check out `branch` in the origin checkout with one commit, and give that commit."""
++        self.origin("git@github.com:acme/app.git")
++        for args in (["checkout", "-q", "-b", branch],
++                     ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "x"]):
++            subprocess.run(["git", *args], cwd=self.cwd, check=True, capture_output=True)
++        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.cwd, check=True, capture_output=True,
++                              text=True).stdout.strip()
++
++    def test_add_from_output_that_names_nothing_takes_the_checked_out_branchs_pull_request(self) -> None:
++        # Catches a push piped through `tail`, or run with `--quiet`, leaving the pull request it pushed to out of
++        # the panel, because its output no longer names the pull request or the branch.
++        self.github.pull_request(12, ref="feature", head=self.checked_out_commit())
++
++        code, out, err = self.project("add", "--from-output", "-", "--json", stdin="\n")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(["acme/app#12 fix auto"], self.lines())
++        self.assertEqual([["api", "repos/acme/app/pulls?head=acme:feature&state=open"]], self.github.calls)
++
++    def test_add_from_output_that_names_nothing_skips_a_branch_whose_pull_request_has_another_head(self) -> None:
++        # Catches the fallback subscribing to the checked-out branch's pull request when the checkout has commits
++        # that pull request lacks, as after a quiet push that failed or named another branch.
++        self.checked_out_commit()
++        self.github.pull_request(12, ref="feature", head=SHA_B)
++
++        code, out, err = self.project("add", "--from-output", "-", stdin="Everything up-to-date\n")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([], self.lines())
++
++    def test_add_from_output_that_names_nothing_reports_a_failed_lookup_of_the_checked_out_branch(self) -> None:
++        # Catches a quiet push under failing credentials printing only that the output shows nothing to fix, when
++        # the lookup of the checked-out branch's pull request never reached GitHub's answer.
++        self.github.pull_request(12, ref="feature", head=self.checked_out_commit())
++        self.github.failing["repos/acme/app/pulls"] = 500
++
++        code, out, err = self.project("add", "--from-output", "-", stdin="\n")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([], self.lines())
++        self.assertIn("project: could not look up the pull request for acme/app feature: ", err)
++        self.assertIn("(HTTP 500)", err)
++
++    def test_add_from_output_that_names_a_push_does_not_look_up_the_checked_out_branch(self) -> None:
++        # Catches the fallback asking GitHub about the checkout when the output already named what was pushed.
++        self.github.pull_request(12, ref="feature", head=self.checked_out_commit())
++        output = "To github.com:acme/app.git\n   1a2b3c4..5d6e7f8  other -> other\n"
++
++        code, out, err = self.project("add", "--from-output", "-", stdin=output)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([], self.lines())
++        self.assertEqual([["api", "repos/acme/app/pulls?head=acme:other&state=open"]], self.github.calls)
++
+     def test_add_from_output_adds_nothing_when_auto_start_is_off(self) -> None:
+         (self.home / ".projector.toml").write_text("[watch]\nauto_start = false\n")
+ 
