@@ -187,6 +187,17 @@ class InitCiReviewTests(RepositoryTestCase):
         self.assertEqual((ci.HOSTED_APP, ci.HOSTED_LOGIN), (self.recorded()["ci_app"], self.recorded()["reviewers"]))
         self.assertNotIn("ci_app_id", self.recorded())
 
+    def test_switching_to_the_hosted_app_drops_the_old_apps_id(self) -> None:
+        # The hosted app needs no ID, so an ID left from a self-managed app would read as the one reviews post with.
+        self.assertEqual(0, self.init("--ci-review", "--ci-app", "projector-review")[0])
+
+        code, _, err = self.init("--ci-app", ci.HOSTED_APP)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(ci.HOSTED_APP, self.recorded()["ci_app"])
+        self.assertNotIn("ci_app_id", self.recorded())
+        self.assertIn("unset review.ci_app_id", err)
+
     def test_an_app_recorded_without_its_id_is_left_as_it_is_when_github_cannot_answer(self) -> None:
         (self.root / ".projector.toml").write_text('[review]\nci = true\nci_app = "projector-review"\n')
         self.offline = True
@@ -561,13 +572,14 @@ class ActionTests(unittest.TestCase):
     def test_the_app_key_reaches_only_the_step_that_mints_its_token(self) -> None:
         # A caller's env reaches every step of a composite action, the agent's and npm's install scripts included,
         # and a composite action's inputs set no environment variable. So the workflow passes the key only as an
-        # input, and only the step that mints the token reads that input.
+        # input, and only the step that mints the token reads that input. This repository's own workflow gets its
+        # token from the hosted service and passes no key, but must never pass one any other way.
         own = Path(__file__).parents[1] / ".github" / "workflows" / "projector-review.yml"
         for name, workflow in (("generated", ci.workflow_text("v0", {"claude": ""}, 5827721)), ("own", own.read_text())):
             with self.subTest(workflow=name):
-                self.assertEqual({f"app-private-key: ${{{{ secrets.{ci.APP_KEY} }}}}"},
-                                 {line.strip() for line in workflow.splitlines() if ci.APP_KEY in line},
-                                 "the key is in no job's or step's env, only each job's input")
+                self.assertLessEqual({line.strip() for line in workflow.splitlines() if ci.APP_KEY in line},
+                                     {f"app-private-key: ${{{{ secrets.{ci.APP_KEY} }}}}"},
+                                     "the key is in no job's or step's env, only each job's input")
         steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
         minting = ["Mint the app's token", "Mint the context token"]
         self.assertEqual(minting,

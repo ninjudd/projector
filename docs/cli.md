@@ -632,8 +632,8 @@ as
 [Post as a GitHub App](review-in-ci.md#post-as-a-github-app) describes.
 `--ci-app projector` posts them as the hosted service's app instead: the
 workflow passes `app: projector` and gives both jobs `id-token: write`,
-`init` adds `projector-review[bot]` to `review.reviewers` and sets no key
-secret, as
+`init` adds `projector-review[bot]` to `review.reviewers`, sets no key
+secret, and removes a `review.ci_app_id` an earlier app left, as
 [Post as Projector Review through a hosted service](review-in-ci.md#post-as-projector-review-through-a-hosted-service)
 describes.
 Once `review.ci` is `true`, every later `init`

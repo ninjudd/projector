@@ -38,6 +38,7 @@ jobs:
       checks: read
       actions: read
       pages: read
+      id-token: write
     strategy:
       fail-fast: false
       # An agent with no model runs the action's default for it.
@@ -60,8 +61,7 @@ jobs:
           model: ${{ matrix.model }}
           pr: ${{ github.event.pull_request.number || inputs.pr }}
           rereview: ${{ inputs.rereview || false }}
-          app-id: '5827721'
-          app-private-key: ${{ secrets.PROJECTOR_APP_PRIVATE_KEY }}
+          app: projector
           # The gate's hooks/typecheck.sh compiles against declarations only an interactive Claude Code session
           # writes, so a review on a runner runs the rest of the gate without it.
           config: |
@@ -79,6 +79,7 @@ jobs:
       pull-requests: write
       issues: write
       pages: read
+      id-token: write
     concurrency:
       group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
     runs-on: ubuntu-latest
@@ -89,5 +90,4 @@ jobs:
         with:
           step: summary
           pr: ${{ github.event.pull_request.number || inputs.pr }}
-          app-id: '5827721'
-          app-private-key: ${{ secrets.PROJECTOR_APP_PRIVATE_KEY }}
+          app: projector

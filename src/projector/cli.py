@@ -3714,6 +3714,10 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
         record_setting(root, "review.ci_app", slug)
     if isinstance(app, int) and config.get("review.ci_app_id") != app:
         record_setting(root, "review.ci_app_id", app)
+    elif app == ci.HOSTED_APP and config.get("review.ci_app_id") is not None:
+        # The hosted app needs no ID, so one left from a self-managed app would only mislead a reader.
+        change = unset_value(root / CONFIG_NAME, "review.ci_app_id")
+        print(f"project: {change.action} review.ci_app_id in {change.path}", file=sys.stderr)
     # An app replaces github-actions[bot], so a workflow posting with its own token no longer counts as a reviewer.
     reviewer = ci.HOSTED_LOGIN if slug == ci.HOSTED_APP else f"{slug}[bot]" if slug else CI_REVIEWER
     listed = review.extra_reviewers(config.get("review.reviewers"))
