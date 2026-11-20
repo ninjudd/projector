@@ -1,0 +1,173 @@
+{
+ "version": 1,
+ "name": "Vercel preview link",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 608,
+  "title": "Link a pull request's Vercel preview in its drawer, between GitHub and its Projector summary",
+  "head": "494734ddb1a7d6ac9e9ba6753035982682c6c71f",
+  "headRef": "vercel-preview-link",
+  "base": "f6d225c832a94895e9385e885bce9802237e9817",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel in Claude Code and its terminal console both list the pull requests a session watches. Each row opens a <b>drawer</b>, a panel of details and links: <code>open in github</code>, and <code>open in projector</code> when a summary page exists. Vercel deploys a preview of each head for repositories it builds, such as this one's <code>web/</code> site. Until now, reaching that preview meant opening the pull request on GitHub and finding Vercel's deployment there.",
+   "This change adds an <code>open in vercel</code> link between the other two. The console gives it the key <code>d</code>, for deployment. It appears only when the head commit has a successful Vercel preview.",
+   "<h4>How the preview is found</h4>",
+   "Vercel's GitHub integration records each preview as a GitHub <b>deployment</b> on the head commit. The <code>vercel</code> bot creates the deployment, and the latest status of the deployment carries the preview's address in <code>environmentUrl</code>. The watch daemon's GraphQL query now asks for the head commit's last 10 deployments. Projector has two copies of the row model, TypeScript for the panel and Python for the console. Each picks the same deployment:",
+   "<ol><li>the <code>vercel</code> bot created it, so a GitHub Pages or hand-made deployment never counts;</li><li>its latest status is <code>SUCCESS</code>, so a newer build that failed or is still running leaves the last good preview linked;</li><li>its URL is <code>http</code> or <code>https</code>;</li><li>it is the newest that passes, since GitHub lists a commit's deployments oldest first.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review",
+    "html": "<ul class=\"tight\"><li>One Projector review, at <code>494734d</code>: clean, with no finding threads.</li><li>The <code>check</code> CI job and the review gate passed on this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "query",
+   "title": "The daemon asks GitHub for the head's deployments",
+   "kicker": "One more field in the watch daemon's pull request query",
+   "intro": [
+    "The <b>watch daemon</b> is the background process that polls GitHub for every pull request a session watches, and caches each answer for the panel and the console to read. Its single GraphQL query now also reads <code>deployments(last:10)</code> on the head commit, with each deployment's creator and latest status."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Adds <code>deployments</code> to <code>QUERY</code> and explains it in the comment above.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 136,
+       "text": "I ran <code>QUERY</code> against #607. It returned no errors and a cost of 2. It listed a <code>vercel</code> deployment and a <code>ninjudd</code> one, both <code>SUCCESS</code>, so the creator check is what keeps the second one out."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rows",
+   "title": "Both row models pick the newest good preview",
+   "kicker": "The same rule in the panel's TypeScript and the console's Python",
+   "intro": [
+    "A <b>row model</b> turns the daemon's cached answer into the fields a drawer shows. The panel reads it in <code>hooks/github.ts</code> and the console in <code>src/projector/rows.py</code>. The two are kept in step by shared fixtures under <code>tests/fixtures/rows/</code> that run through both. Each gains a <code>preview_url</code> (<code>previewUrl</code> in TypeScript) that is <code>null</code> when no deployment passes the rule. Every existing fixture now expects <code>preview_url: null</code>."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The two functions, <code>previewOf</code> and <code>preview_of</code>, must apply the same rule. The new case in <code>facts.ts</code> is what holds them together."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds <code>previewUrl</code> to <code>PullRequest</code>."
+    },
+    {
+     "path": "hooks/github.ts",
+     "note": "Adds <code>previewOf</code> and sets <code>previewUrl</code> from the head commit."
+    },
+    {
+     "path": "src/projector/rows.py",
+     "note": "Adds <code>preview_of</code> and the <code>preview_url</code> field on <code>Pull</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>to_pull</code> is the only place that constructs <code>Pull</code>, so the new field, which has no default, cannot be left out elsewhere."
+      }
+     ]
+    },
+    {
+     "path": "tests/fixtures/rows/facts.ts",
+     "note": "A head with six deployments: two good previews, then a failed one, a <code>javascript:</code> URL, one with no status, and a person's GitHub Pages deployment. The expected result is the second good preview."
+    },
+    {
+     "path": "hooks/rows.test.ts"
+    },
+    {
+     "path": "hooks/parse.test.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/checks.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/labels.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/loading.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/malformed.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/notes.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/roles.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/sections.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/states.ts"
+    }
+   ]
+  },
+  {
+   "id": "ui",
+   "title": "The drawer shows the link",
+   "kicker": "The panel's link row and the console's <code>d</code> action",
+   "intro": [
+    "The panel renders <code>open in vercel</code> between the GitHub and Projector links. The console adds a <code>d: Open in Vercel</code> action in the same place, which opens the preview through the same <code>visit</code> path as <code>o</code> and <code>p</code>. Over SSH, <code>visit</code> shows the URL in place of opening a browser. The console already uses <code>v</code> to show and hide the conversation, so the action takes <code>d</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Renders the link only when <code>previewUrl</code> is set."
+    },
+    {
+     "path": "src/projector/console.py",
+     "note": "Adds the <code>d</code> control between <code>o</code> and <code>p</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 807,
+       "text": "<code>panel_key</code> handles <code>v</code> and the navigation keys before a drawer's controls, and no other control uses <code>d</code>."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Checks that the links read github, vercel, projector, in that order."
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "Checks the console's action order and that <code>d</code> opens the preview."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The new link and key in the panel and console docs",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the panel's new link, and <code>docs/cli.md</code> describes the console's <code>d</code> key."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/cli.md"
+    }
+   ]
+  }
+ ]
+}

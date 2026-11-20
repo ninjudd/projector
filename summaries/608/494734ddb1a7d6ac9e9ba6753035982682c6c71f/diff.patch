@@ -1,0 +1,837 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 679b624a..4202189f 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3392,8 +3392,9 @@ to open its drawer:
+   the checks, and the labels, then the unresolved review threads by file.
+   `7` sends the session a message about the pull request, `8` asks before it
+   stops this session watching the pull request, `o` opens the pull request
+-  on GitHub, and `p` opens its Projector summary when its description links
+-  one. Over SSH or mosh, `o` and `p` show the URL under the actions instead,
++  on GitHub, `d` opens the head's newest Vercel preview when Vercel deployed
++  one, and `p` opens its Projector summary when its description links one.
++  Over SSH or mosh, `o`, `d`, and `p` show the URL under the actions instead,
+   whole, so you can click it in your terminal; it stays until your next key.
+   They also send it to your clipboard with an OSC 52 escape sequence, passed
+   through tmux when `TMUX` is set, where your terminal allows it. Nothing
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 4cfd1abc..f0beb98a 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -289,7 +289,7 @@ not subscribed to before.
+    #258 findings grace Name the reviewed head in a rev… reviewing · passing 5m
+         reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
+         7: Discuss  8: Dismiss
+-        open in github  open in projector
++        open in github  open in vercel  open in projector
+         - src/review.py 1 finding
+           :412 · ada · P2 · The signature names the base, not the head
+         + docs/cli.md 1 finding
+@@ -468,6 +468,9 @@ review threads, gathered under their files:
+   such as `stopped fixing and reviewing acme/app#258`. `9`, closing the
+   drawer, or opening another keeps it.
+ - **open in github** opens the pull request on GitHub.
++- **open in vercel** opens the head's Vercel preview, when Vercel deployed
++  one: the newest deployment that the `vercel` bot made on the head commit
++  whose latest status succeeded.
+ - **open in projector** opens its Projector summary, when the pull
+   request's description links one.
+ - **Each file with an unresolved review thread** is a line that names the
+@@ -512,8 +515,9 @@ terminal, or merged, so the line comes back with its drawer closed.
+ On the main screen, which Claude Code uses under tmux and when
+ `CLAUDE_CODE_NO_FLICKER=0` is set, use the panel from the keyboard, as
+ [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+-describes. The **open in github**, **open in projector**, and thread links take
+-no press there; the terminal opens them the way it opens any other link.
++describes. The **open in github**, **open in vercel**, **open in projector**,
++and thread links take no press there; the terminal opens them the way it
++opens any other link.
+ 
+ The panel lists only this session's subscriptions. The CLI keeps them in
+ `sessions/<session>/subscriptions` under the daemon's folder,
+diff --git a/hooks/github.ts b/hooks/github.ts
+index ef1155e3..39674c0e 100644
+--- a/hooks/github.ts
++++ b/hooks/github.ts
+@@ -239,6 +239,23 @@ function cancelledOf(commit: Record<string, unknown>): boolean {
+   return newestRuns(contexts).some(run => run.conclusion === 'CANCELLED')
+ }
+ 
++const PREVIEW_URL = /^https?:\/\/\S+$/
++
++/**
++ * The head's newest Vercel preview: the URL of the last deployment the
++ * `vercel` bot made whose latest status succeeded. GitHub lists a commit's
++ * deployments oldest first.
++ */
++function previewOf(commit: Record<string, unknown>): string | null {
++  const urls = nodesOf(commit.deployments).flatMap(node => {
++    if (!isRecord(node) || !isRecord(node.creator) || node.creator.login !== 'vercel') return []
++    const status = isRecord(node.latestStatus) ? node.latestStatus : {}
++    const url = stringOf(status.environmentUrl)
++    return status.state === 'SUCCESS' && url !== null && PREVIEW_URL.test(url) ? [url] : []
++  })
++  return urls.at(-1) ?? null
++}
++
+ const LABEL_COLOR = /^[0-9a-f]{6}$/i
+ 
+ function labelOf(node: unknown): Label[] {
+@@ -277,6 +294,7 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
+     labels: nodesOf(node.labels).flatMap(labelOf),
+     updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
+     summaryUrl: summary?.[1] ?? null,
++    previewUrl: previewOf(headOf(node)),
+   }
+ }
+ 
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 82e9095d..7e6c737d 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -43,6 +43,7 @@ const NOW = Date.UTC(2026, 9, 12, 12, 0)
+ const VIEWER = 'ada'
+ const SEVEN = 'https://github.com/x/y/pull/7'
+ const SUMMARY = 'https://example.com/site/reviews/7'
++const PREVIEW = 'https://y-git-fix-branch.vercel.app'
+ 
+ const pr = (number: number, title: string, fields: Record<string, unknown> = {}) => ({
+   number,
+@@ -236,7 +237,16 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+       deletions: 3,
+       changedFiles: 2,
+       updatedAt: new Date(NOW - 5 * 60_000).toISOString(),
+-      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
++      commits: {
++        nodes: [
++          {
++            commit: {
++              statusCheckRollup: { state: 'SUCCESS' },
++              deployments: { nodes: [{ creator: { login: 'vercel' }, latestStatus: { state: 'SUCCESS', environmentUrl: PREVIEW } }] },
++            },
++          },
++        ],
++      },
+       body: `Why.\n\n<!-- projector-summary v=1 sha=${'b'.repeat(40)} -->\n📽️ **Projector summary** of bbbbbbb: ${SUMMARY}\n`,
+     }),
+   },
+@@ -1008,8 +1018,9 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+     expect([row?.props.flexDirection, row?.props.columnGap]).toEqual(['row', 2])
+     return ((row?.children ?? []) as unknown[]).flat().map(part => (part as Line).props?.key)
+   }
+-  expect(await linksOf('x/y#7')).toEqual(['github:x/y#7', 'projector:x/y#7'])
++  expect(await linksOf('x/y#7')).toEqual(['github:x/y#7', 'vercel:x/y#7', 'projector:x/y#7'])
+   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
++  expect((await ui.find({ key: 'vercel:x/y#7' }))?.props.text).toBe(`[open in vercel](${PREVIEW})`)
+   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
+   expect(await threadsOf(ui)).toEqual([
+     {
+diff --git a/hooks/parse.test.ts b/hooks/parse.test.ts
+index b81ad40e..a1ddc255 100644
+--- a/hooks/parse.test.ts
++++ b/hooks/parse.test.ts
+@@ -65,6 +65,7 @@ describe('GitHub', () => {
+       ],
+       updatedAt: Date.UTC(2026, 9, 12, 12, 0),
+       summaryUrl: 'https://example.com/site/reviews/1',
++      previewUrl: null,
+     })
+     expect(parseCache({ repo: 'x/y', number: 3 }, third)).toMatchObject({
+       state: 'MERGED',
+@@ -518,6 +519,7 @@ describe('the daemon’s files', () => {
+       labels: [{ name: 'clean', color: null }],
+       updatedAt: Date.UTC(2026, 9, 30, 11),
+       summaryUrl: null,
++      previewUrl: null,
+     })
+     expect(parseCache({ repo: 'acme/app', number: 12 }, '')).toBeNull()
+     expect(parseCache({ repo: 'acme/app', number: 12 }, '{"repository": {"pullRequest": null}}')).toBeNull()
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 6f86a97a..66736f55 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -2453,6 +2453,9 @@ export const register: Register = on => {
+           )}
+           <Box key={`links:${key}`} flexDirection="row" columnGap={2}>
+             <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
++            {pr.previewUrl !== null && (
++              <Markdown key={`vercel:${key}`} text={`[open in vercel](${pr.previewUrl})`} />
++            )}
+             {pr.summaryUrl !== null && (
+               <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
+             )}
+diff --git a/hooks/rows.test.ts b/hooks/rows.test.ts
+index 3ca98e88..ec17d811 100644
+--- a/hooks/rows.test.ts
++++ b/hooks/rows.test.ts
+@@ -48,6 +48,7 @@ const pullOf = (pr: PullRequest) => ({
+   is_cancelled: pr.isCancelled,
+   labels: pr.labels.map(label => label.name),
+   summary_url: pr.summaryUrl,
++  preview_url: pr.previewUrl,
+   is_loading: pr.isLoading === true,
+ })
+ 
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 6db4c997..b8a3f9ee 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -50,6 +50,8 @@ export type PullRequest = {
+   updatedAt: number | null
+   /** The Projector summary the description links, when one was published. */
+   summaryUrl: string | null
++  /** The head's newest successful Vercel preview, when Vercel deployed one. */
++  previewUrl: string | null
+   /** Whether the daemon has yet to give a result for the pull request, which then holds only its reference. */
+   isLoading?: boolean
+ }
+diff --git a/src/projector/console.py b/src/projector/console.py
+index 99e42df3..630b4ef4 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -802,6 +802,9 @@ def pull_controls(self, row: rows.Row) -> list[Control]:
+         controls = [Control("7", "Discuss", lambda: self.open_field("pr", reference, f"Discuss {reference}: ")),
+                     Control("8", "Dismiss", lambda: self.ask("dismiss")),
+                     Control("o", "Open in GitHub", lambda: self.visit("o", pull.url))]
++        if pull.preview_url is not None:
++            preview = pull.preview_url
++            controls.append(Control("d", "Open in Vercel", lambda: self.visit("d", preview)))
+         if pull.summary_url is not None:
+             summary = pull.summary_url
+             controls.append(Control("p", "Open in Projector", lambda: self.visit("p", summary)))
+diff --git a/src/projector/rows.py b/src/projector/rows.py
+index 8882c326..9db4ffea 100644
+--- a/src/projector/rows.py
++++ b/src/projector/rows.py
+@@ -47,6 +47,8 @@
+ SUMMARY = re.compile(r"^<!-- " + summary.SUMMARY_MARKER + r" v=1 sha=[0-9a-f]{40} -->\r?\n"
+                      r"\S* ?\*\*Projector summary\*\* [^\r\n]*?(https?://\S+)\s*$", re.M)
+ 
++PREVIEW_URL = re.compile(r"https?://\S+")
++
+ # GitHub counts `comments` under `reviewThreads(first: 100)` as 100 requests, so only an open drawer asks
+ # for these, and only for its own pull request.
+ THREAD_FIELDS = ("reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine\n"
+@@ -80,6 +82,7 @@ class Pull:
+     is_cancelled: bool
+     labels: list[str]
+     summary_url: Optional[str]
++    preview_url: Optional[str]
+     is_loading: bool = False
+ 
+ 
+@@ -241,6 +244,20 @@ def cancelled_of(commit: dict) -> bool:
+     return "CANCELLED" in newest_runs(context_nodes(commit))
+ 
+ 
++def preview_of(commit: dict) -> Optional[str]:
++    """The head's newest Vercel preview: the URL of the last deployment the `vercel` bot made whose latest
++    status succeeded. GitHub lists a commit's deployments oldest first."""
++    urls = []
++    for node in nodes_of(commit.get("deployments")):
++        if not isinstance(node, dict) or record_of(node.get("creator")).get("login") != "vercel":
++            continue
++        status = record_of(node.get("latestStatus"))
++        url = string_of(status.get("environmentUrl"))
++        if status.get("state") == "SUCCESS" and url is not None and PREVIEW_URL.fullmatch(url):
++            urls.append(url)
++    return urls[-1] if urls else None
++
++
+ def to_pull(repo: str, number: int, node: dict) -> Pull:
+     """A pull request from the node the daemon's query returned for it, as the panel's `toPullRequest` reads
+     it: a field of the wrong type reads as missing."""
+@@ -272,6 +289,7 @@ def to_pull(repo: str, number: int, node: dict) -> Pull:
+         labels=[label["name"] for label in nodes_of(node.get("labels"))
+                 if isinstance(label, dict) and isinstance(label.get("name"), str)],
+         summary_url=found.group(1) if found else None,
++        preview_url=preview_of(head),
+     )
+ 
+ 
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 3431d54e..2ffbcccf 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -119,6 +119,8 @@
+ # it too, to take it out of the counts. Each check run's suite says whether its workflow run was cancelled, and
+ # the check run's start, beside when the run's cancelled jobs ended, says whether the cancel caused its failure.
+ # The run's workflow and start say whether a newer run of that workflow on the head tests the code again.
++# The head's deployments give the panel the Vercel preview it links: the newest the `vercel` bot made whose
++# latest status succeeded, at that status's `environmentUrl`.
+ CONTEXT_NODES = ("nodes{ __typename ... on CheckRun{ name conclusion startedAt completedAt checkSuite{ conclusion"
+                  " workflowRun{ databaseId createdAt workflow{ databaseId } } } } ... on StatusContext{ context state } }")
+ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
+@@ -130,7 +132,8 @@
+       labels(first:20){ nodes{ name color } }
+       commits(last:1){ nodes{ commit{ status{ context(name:%s){ state } }
+         statusCheckRollup{ state contexts(first:20){ checkRunCountsByState{ state count }
+-          statusContextCountsByState{ state count } pageInfo{ hasNextPage endCursor } %s } } } } }
++          statusContextCountsByState{ state count } pageInfo{ hasNextPage endCursor } %s } }
++        deployments(last:10){ nodes{ creator{ login } latestStatus{ state environmentUrl } } } } } }
+       comments(last:100){ nodes{ databaseId author{ login } authorAssociation body createdAt updatedAt } }
+       reviews(last:100){ nodes{ author{ login } authorAssociation submittedAt body } }
+       changesRequested: reviews(states:[CHANGES_REQUESTED], last:1){ nodes{ author{ login } body commit{ oid } } }
+diff --git a/tests/fixtures/rows/checks.ts b/tests/fixtures/rows/checks.ts
+index d1a5b619..66cdea83 100644
+--- a/tests/fixtures/rows/checks.ts
++++ b/tests/fixtures/rows/checks.ts
+@@ -299,7 +299,7 @@ export default [
+           "repo": "acme/app", "number": 10, "title": "", "url": "https://github.com/acme/app/pull/10",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -312,7 +312,7 @@ export default [
+           "repo": "acme/app", "number": 9, "title": "", "url": "https://github.com/acme/app/pull/9", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -325,7 +325,7 @@ export default [
+           "repo": "acme/app", "number": 8, "title": "", "url": "https://github.com/acme/app/pull/8", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "cancelled",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -338,7 +338,7 @@ export default [
+           "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "cancelled",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -351,7 +351,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -364,7 +364,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -377,7 +377,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "pending",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -390,7 +390,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "pending",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -403,7 +403,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -416,7 +416,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/facts.ts b/tests/fixtures/rows/facts.ts
+index b60a054f..f980c692 100644
+--- a/tests/fixtures/rows/facts.ts
++++ b/tests/fixtures/rows/facts.ts
+@@ -1,6 +1,6 @@
+ export default [
+   {
+-    "name": "a row carries the drawer's facts and the link to its summary",
++    "name": "a row carries the drawer's facts, the link to its summary, and the head's newest successful Vercel preview",
+     "session": "s1",
+     "files": {
+       "daemon.json": {"operator": "ada"},
+@@ -17,6 +17,14 @@ export default [
+             "deletions": 8,
+             "changedFiles": 4,
+             "labels": {"nodes": [{"name": "enhancement", "color": "a2eeef"}]},
++            "commits": {"nodes": [{"commit": {"deployments": {"nodes": [
++              {"creator": {"login": "vercel"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "https://app-old.vercel.app"}},
++              {"creator": {"login": "vercel"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "https://app-new.vercel.app"}},
++              {"creator": {"login": "vercel"}, "latestStatus": {"state": "FAILURE", "environmentUrl": "https://app-failed.vercel.app"}},
++              {"creator": {"login": "vercel"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "javascript:alert(1)"}},
++              {"creator": {"login": "vercel"}, "latestStatus": null},
++              {"creator": {"login": "ada"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "https://acme.github.io/app/"}}
++            ]}}}]},
+             "body": "Adds rows.\r\n\r\n<!-- projector-summary v=1 sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\r\n📽️ **Projector summary** of aaaaaaa: https://projector.bot/acme/app/reviews/12 \r\n"
+           }
+         }
+@@ -44,7 +52,8 @@ export default [
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "console/rows", "additions": 120, "deletions": 8, "changed_files": 4,
+           "checks": null, "is_cancelled": false, "labels": ["enhancement"],
+-          "summary_url": "https://projector.bot/acme/app/reviews/12", "is_loading": false
++          "summary_url": "https://projector.bot/acme/app/reviews/12",
++          "preview_url": "https://app-new.vercel.app", "is_loading": false
+         }
+       },
+       {
+@@ -57,7 +66,7 @@ export default [
+           "repo": "acme/app", "number": 11, "title": "Fix the cache", "url": "https://github.com/acme/app/pull/11",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "bob", "branch": "fix-cache", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/labels.ts b/tests/fixtures/rows/labels.ts
+index 04cf58b0..d401f2cf 100644
+--- a/tests/fixtures/rows/labels.ts
++++ b/tests/fixtures/rows/labels.ts
+@@ -14,7 +14,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -27,7 +27,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       }
+     ]
+@@ -47,7 +47,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -60,7 +60,7 @@ export default [
+           "repo": "acme/web", "number": 5, "title": "", "url": "https://github.com/acme/web/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       }
+     ]
+@@ -80,7 +80,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -93,7 +93,7 @@ export default [
+           "repo": "acme/web", "number": 1, "title": "", "url": "https://github.com/acme/web/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -106,7 +106,7 @@ export default [
+           "repo": "other/app", "number": 4, "title": "", "url": "https://github.com/other/app/pull/4",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": true
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/loading.ts b/tests/fixtures/rows/loading.ts
+index 7c119ea9..90046b6a 100644
+--- a/tests/fixtures/rows/loading.ts
++++ b/tests/fixtures/rows/loading.ts
+@@ -22,7 +22,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -35,7 +35,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -48,7 +48,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -61,7 +61,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/malformed.ts b/tests/fixtures/rows/malformed.ts
+index 7007a4e1..02a9ba9b 100644
+--- a/tests/fixtures/rows/malformed.ts
++++ b/tests/fixtures/rows/malformed.ts
+@@ -55,7 +55,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 1, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 2.5, "checks": "passing",
+-          "is_cancelled": false, "labels": ["CLEAN"], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["CLEAN"], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/notes.ts b/tests/fixtures/rows/notes.ts
+index 6577f293..309a46ad 100644
+--- a/tests/fixtures/rows/notes.ts
++++ b/tests/fixtures/rows/notes.ts
+@@ -62,7 +62,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": true, "review_decision": "APPROVED", "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": ["clean"], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["clean"], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -75,7 +75,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": "APPROVED", "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/roles.ts b/tests/fixtures/rows/roles.ts
+index 9684fe9d..ae5c9e97 100644
+--- a/tests/fixtures/rows/roles.ts
++++ b/tests/fixtures/rows/roles.ts
+@@ -17,7 +17,7 @@ export default [
+           "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -30,7 +30,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -43,7 +43,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -56,7 +56,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       }
+     ]
+@@ -79,7 +79,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/sections.ts b/tests/fixtures/rows/sections.ts
+index d87ae9d4..15628f6b 100644
+--- a/tests/fixtures/rows/sections.ts
++++ b/tests/fixtures/rows/sections.ts
+@@ -26,7 +26,7 @@ export default [
+           "repo": "acme/app_b", "number": 9, "title": "", "url": "https://github.com/acme/app_b/pull/9",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -39,7 +39,7 @@ export default [
+           "repo": "acme/app_b", "number": 3, "title": "", "url": "https://github.com/acme/app_b/pull/3",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": true
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -52,7 +52,7 @@ export default [
+           "repo": "acme/app_b", "number": 2, "title": "", "url": "https://github.com/acme/app_b/pull/2",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -65,7 +65,7 @@ export default [
+           "repo": "acme/app-b", "number": 1, "title": "", "url": "https://github.com/acme/app-b/pull/1",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -78,7 +78,7 @@ export default [
+           "repo": "acme/app1", "number": 4, "title": "", "url": "https://github.com/acme/app1/pull/4",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -91,7 +91,7 @@ export default [
+           "repo": "acme/app_b", "number": 7, "title": "", "url": "https://github.com/acme/app_b/pull/7",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -104,7 +104,7 @@ export default [
+           "repo": "acme/app_b", "number": 10, "title": "", "url": "https://github.com/acme/app_b/pull/10",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "Ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -117,7 +117,7 @@ export default [
+           "repo": "acme/app_b", "number": 8, "title": "", "url": "https://github.com/acme/app_b/pull/8",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "bob", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -130,7 +130,7 @@ export default [
+           "repo": "acme/app-b", "number": 6, "title": "", "url": "https://github.com/acme/app-b/pull/6",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "Bob", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -143,7 +143,7 @@ export default [
+           "repo": "acme/app_b", "number": 5, "title": "", "url": "https://github.com/acme/app_b/pull/5",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "carol", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       }
+     ]
+@@ -168,7 +168,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": "ada",
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -181,7 +181,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": "bob",
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/states.ts b/tests/fixtures/rows/states.ts
+index c42cd1b3..f2aee14c 100644
+--- a/tests/fixtures/rows/states.ts
++++ b/tests/fixtures/rows/states.ts
+@@ -64,7 +64,7 @@ export default [
+           "repo": "acme/app", "number": 8, "title": "", "url": "https://github.com/acme/app/pull/8", "state": "OPEN",
+           "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": true, "open_threads": 1,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -77,7 +77,7 @@ export default [
+           "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
+           "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": false, "open_threads": 1,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -90,7 +90,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": false, "open_threads": 1,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -103,7 +103,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 1, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++          "labels": ["reviewing", "clean"], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -116,7 +116,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": ["Reviewing", "clean"], "summary_url": null, "is_loading": false
++          "labels": ["Reviewing", "clean"], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -129,7 +129,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": ["clean"], "summary_url": null, "is_loading": false
++          "labels": ["clean"], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -142,7 +142,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -155,7 +155,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/test_console.py b/tests/test_console.py
+index 8ba7cd9b..33779946 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -35,10 +35,10 @@ def __call__(self) -> float:
+         return self.now
+ 
+ 
+-def pull_node(number: int, *, author: str = "operator", threads: int = 0) -> dict:
++def pull_node(number: int, *, author: str = "operator", threads: int = 0, **fields) -> dict:
+     return {"repository": {"pullRequest": {
+         "title": f"Pull request {number}", "state": "OPEN", "author": {"login": author}, "headRefName": "feature",
+-        "reviewThreads": {"nodes": [{"isResolved": False} for _ in range(threads)]}}}}
++        "reviewThreads": {"nodes": [{"isResolved": False} for _ in range(threads)]}, **fields}}}
+ 
+ 
+ class ConsoleCase(unittest.TestCase):
+@@ -400,6 +400,26 @@ def test_o_opens_the_pull_request_in_a_browser_and_shows_no_url_on_a_local_machi
+         self.assertEqual((["https://github.com/acme/app/pull/12"], False),
+                          (self.opened, "https://github.com" in self.screen()))
+ 
++    def test_d_opens_the_vercel_preview_whose_action_comes_between_github_and_projector(self) -> None:
++        # Catches a drawer that offers no preview, puts it out of the links' order, or opens the wrong URL.
++        preview = "https://app-git-console.vercel.app"
++        deployment = {"creator": {"login": "vercel"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": preview}}
++        self.claude("s1")
++        self.subscribe("s1", "acme/app#12 fix")
++        self.cache("acme/app", 12, commits={"nodes": [{"commit": {"deployments": {"nodes": [deployment]}}}]},
++                   body="<!-- projector-summary v=1 sha=" + "a" * 40 + " -->\n"
++                        "**Projector summary** of aaaaaaa: https://projector.bot/acme/app/reviews/12\n")
++        self.open_entry("s1", "pr:acme/app#12")
++        seen = []
++        for _ in range(5):
++            self.press("down")
++            seen.append(self.focused())
++
++        self.press("d")
++
++        self.assertEqual(([["7: Discuss"], ["8: Dismiss"], ["o: Open in GitHub"], ["d: Open in Vercel"],
++                           ["p: Open in Projector"]], [preview]), (seen, self.opened))
++
+     def test_a_remote_console_shows_the_whole_url_under_the_actions_until_the_next_key(self) -> None:
+         # Catches a remote console opening a browser on the far machine, a URL cut at the window's edge, or one
+         # that stays after the next key.
