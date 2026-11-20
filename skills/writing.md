@@ -1,9 +1,10 @@
 # Writing guide
 
 Projector's skills write prose for people to read: plans, reviews, pull
-request summaries, and commit messages. Each of those skills follows this
-guide. The `write` skill applies it to any other prose a user asks for,
-and the `rewrite` skill applies it to text that already exists.
+request summaries, commit messages, and the comments and docstrings in the
+code they change. Each of those skills follows this guide. The `write`
+skill applies it to any other prose a user asks for, and the `rewrite`
+skill applies it to text that already exists.
 
 The guide follows the Google developer documentation style, which
 Projector's own documentation also uses. A skill states any rules its own
@@ -278,3 +279,45 @@ There, `git log` and `git blame` keep it next to the change that made it.
   summary or a review explains what a change does, so the old behavior is
   part of its content. A plan's rejected alternatives are not history
   either. They explain its decisions.
+
+## 12. Write code comments for the next maintainer
+
+A code comment or a docstring is prose too, and the sections above apply to
+it, except § 3 and § 10. `guidelines.md § 1` says when code needs a comment
+at all. This section says how to write the comments that it keeps.
+
+- **Say why, in the present tense.** Give the constraint or the reason that
+  the code cannot carry: "GitHub returns at most 100 threads, so this pages
+  until `hasNextPage` is false." Describe the code as it stands, not the
+  change that made it (§ 11). Leave out "now", "no longer", "instead of",
+  the old behavior that the code replaced, and the review or pull request
+  that prompted the change. Name an old behavior only when a reader still
+  meets it, such as data an older release wrote: then say what they meet
+  and what the code does with it (§ 11).
+- **Write for someone who meets the code cold.** The maintainer reads the
+  comment beside the code, without the pull request, the plan, or the
+  conversation that produced it. Define each term that the code does not
+  (§ 2), and name the external system or rule behind a constraint.
+- **Open a docstring with what the caller gets.** Say what the function
+  returns or does, then what a caller must know: what an argument means, an
+  error it raises, or a side effect. Do not restate the name or open with
+  "This function" (§ 8).
+- **Keep it short and keep it true.** One or two sentences carry most
+  reasons. A comment that needs a paragraph often marks code to simplify.
+  When you change code, update or delete each comment that describes it.
+
+For example, do not write this:
+
+```ts
+// Changed to use a timer instead of awaiting the refresh directly, as the
+// review suggested, so that the hook no longer blocks.
+setTimeout(refresh, 0)
+```
+
+Write this:
+
+```ts
+// The engine waits for each hook to return, so the refresh runs from a
+// timer and the hook returns at once.
+setTimeout(refresh, 0)
+```

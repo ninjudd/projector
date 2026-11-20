@@ -23,15 +23,19 @@ usually a sign the block should be two.
 Add a comment only to preserve a constraint, requirement, or reason a future
 maintainer could not recover from the code and its history: a limit an
 external system imposes, an order two operations must keep, a case that looks
-redundant and is not. Keep it short and in plain language, and put it beside
-the code it protects.
+redundant and is not. Put it beside the code it protects, and write it, and
+every docstring, by the writing guide in `writing.md`, § 12 in particular:
+say why, in the present tense, for a maintainer who never saw the change.
 
 Never use a comment to narrate what the code beneath it plainly does, to
 excuse complexity the change could have removed, or to assert that a decision
 is correct rather than say why it was made. A review flags each of those as a
 violation of a written rule, a P2 thread under the written-rules pass citing
 this section; the fix is to delete the comment, or to simplify the code until
-nothing is left to explain. A comment that misstates what the code does is a
+nothing is left to explain. A comment or docstring that breaks the writing
+guide is the same kind of finding and cites the section it breaks, such as
+`writing.md § 12` for a comment that tells the change's history rather than
+the code's reason. A comment that misstates what the code does is a
 correctness finding, because a maintainer who trusts it changes the wrong
 thing.
 

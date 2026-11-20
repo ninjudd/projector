@@ -609,9 +609,10 @@ Prose qualifies only when a full review would pass it, so read it the two ways
 a full review does. Read it as `method.md` § 2 reads documentation: against
 the code it describes at the head, for accuracy, broken references, and
 contradictions. Read each added or changed comment and docstring against
-`../guidelines.md` § 1 as well. A comment that misstates the code is a
-correctness finding there, and one that narrates the code beneath it, excuses
-complexity, or asserts that a decision is correct is a written-rules finding.
+`../guidelines.md` § 1 and `../writing.md` § 12 as well. A comment that
+misstates the code is a correctness finding there, and one that narrates the
+code beneath it, excuses complexity, asserts that a decision is correct, or
+tells the change's history is a written-rules finding.
 
 How the head moved, the `kind` that `interdiff` prints, also guides the
 decision:
