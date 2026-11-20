@@ -318,6 +318,40 @@ class InitCiReviewTests(RepositoryTestCase):
         self.assertNotEqual(written, self.workflow().read_text())
         self.assertIn("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}", self.workflow().read_text())
 
+    def test_every_review_job_runs_at_the_effort_you_name_and_a_later_init_keeps_it(self) -> None:
+        # A refresh that forgot the effort would put the reviews back at the action's default, and its cost.
+        code, _, err = self.init("--ci-review", "--ci-agents", "claude,codex=gpt-5.5", "--ci-effort", "medium")
+        again, out_again, _ = self.init()
+        printed, shown, _ = self.invoke("review", "ci-workflow")
+
+        self.assertEqual((0, 0, 0), (code, again, printed), err)
+        text = self.workflow().read_text()
+        review_job, summary_job = text.split("\n  summary:\n")
+        self.assertEqual(1, review_job.count("\n          effort: medium\n"), "one step runs every agent's job")
+        self.assertNotIn("effort:", summary_job, "the summary job runs no agent")
+        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again)
+        self.assertEqual(text, shown, "project review ci-workflow prints the workflow init wrote")
+        self.assertEqual("medium", self.recorded()["ci_effort"])
+
+        self.assertEqual(0, self.init("--ci-effort", "high")[0])
+        self.assertIn("\n          effort: high\n", self.workflow().read_text())
+        self.assertEqual("high", self.recorded()["ci_effort"])
+
+    def test_without_an_effort_the_workflow_leaves_it_to_the_action(self) -> None:
+        self.assertEqual(0, self.init("--ci-review")[0])
+
+        self.assertNotIn("effort:", self.workflow().read_text())
+        self.assertNotIn("ci_effort", self.recorded())
+
+    def test_an_effort_an_agent_does_not_accept_is_refused_before_anything_is_written(self) -> None:
+        # Codex has no `max`, so its job would stop before every review.
+        code, _, err = self.init("--ci-review", "--ci-agents", "claude,codex=gpt-5.5", "--ci-effort", "max")
+
+        self.assertNotEqual(0, code)
+        self.assertIn("the codex review's effort must be", err)
+        self.assertFalse(self.workflow().exists())
+        self.assertEqual((None, None), (self.recorded().get("ci"), self.recorded().get("ci_effort")))
+
 
 def runs_on(workflow: str) -> list[str]:
     """The `runs-on` value of each job in `workflow`, in order."""
@@ -359,6 +393,15 @@ class WorkflowTests(unittest.TestCase):
         for text in ("", " , ", "self-hosted, [linux]", "a: b", "my runner", "-x"):
             with self.subTest(text=text), self.assertRaises(UsageError):
                 ci.parse_runs_on(text)
+
+    def test_parse_effort_takes_a_level_every_agent_accepts(self) -> None:
+        self.assertEqual("medium", ci.parse_effort(" medium ", {"claude": "", "codex": "gpt-5.5"}))
+        self.assertEqual("max", ci.parse_effort("max", {"claude": ""}))
+        self.assertEqual("minimal", ci.parse_effort("minimal", {"codex": "gpt-5.5"}))
+        for text, agents in (("max", {"codex": "gpt-5.5"}), ("minimal", {"claude": ""}), ("", {"claude": ""}),
+                             ("High", {"claude": ""}), ("medium: x", {"claude": ""})):
+            with self.subTest(text=text, agents=agents), self.assertRaises(UsageError):
+                ci.parse_effort(text, agents)
 
     def test_parse_agents_reads_what_format_agents_records_and_refuses_the_rest(self) -> None:
         agents = ci.parse_agents("codex = gpt-5.5, claude, codex=other")

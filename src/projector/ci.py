@@ -67,6 +67,21 @@ DEFAULT_MODEL = {"claude": "claude-opus-5-5"}
 MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*\Z")
 
 
+# The reasoning efforts each agent's CLI accepts: Claude Code's `--effort` and Codex's `model_reasoning_effort`.
+EFFORTS = {"claude": ("low", "medium", "high", "xhigh", "max"),
+           "codex": ("none", "minimal", "low", "medium", "high", "xhigh")}
+
+
+def parse_effort(text: str, agents: dict[str, str]) -> str:
+    """The reasoning effort `text` names, which every agent in `agents` must accept, since one effort applies to
+    every agent's job."""
+    effort = text.strip()
+    for name in agents:
+        if effort not in EFFORTS[name]:
+            raise UsageError(f"the {name} review's effort must be {', '.join(EFFORTS[name])}; got {text!r}")
+    return effort
+
+
 def parse_agents(text: str) -> dict[str, str]:
     """The agents a comma-separated list names, in order and once each, each with the model an `agent=model`
     entry gives it, or "" for the action's default. Refuses a name that is not an agent, a model that is not a
@@ -115,7 +130,7 @@ def format_runs_on(labels: list[str]) -> str:
 
 
 def body(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] = None,
-         runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
+         runs_on: Optional[list[str]] = None, credential: Optional[str] = None, effort: Optional[str] = None) -> str:
     if credential == RUNNER and hosted(runs_on):
         raise UsageError("a GitHub-hosted runner holds no credential of yours, so the runner credential needs "
                          "your own runner's labels, such as self-hosted, from --ci-runs-on or review.ci_runs_on; "
@@ -135,18 +150,22 @@ def body(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] = 
                                          for agent in agents for name in CREDENTIALS[agent].values())
     labels = runs_on or [HOSTED]
     runner = labels[0] if len(labels) == 1 else f"[{', '.join(labels)}]"
-    return (template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@APP@", app)
+    level = f"          effort: {effort}\n" if effort else ""
+    return (template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@EFFORT@", level)
+            .replace("@APP@", app)
             .replace("@ENV@", env).replace("@RUNS_ON@", runner).replace("@ID_TOKEN@", id_token))
 
 
 def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] = None,
-                  runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
+                  runs_on: Optional[list[str]] = None, credential: Optional[str] = None,
+                  effort: Optional[str] = None) -> str:
     """The review workflow for `agents`, calling the action at `action_ref`, posting as the GitHub App `app_id`
     names when it is given, or as the hosted service's app when it is `HOSTED_APP`, on the runners `runs_on`
-    labels or a GitHub-hosted one, and passing no credential secret when `credential` is `runner`. Its second
+    labels or a GitHub-hosted one, passing no credential secret when `credential` is `runner`, and running each
+    agent at `effort`, or at the action's default when it is None. Its second
     line records a digest of the rest, so a later `init` can tell a file nobody edited, which it replaces, from
     one somebody did."""
-    text = body(action_ref, agents, app_id, runs_on, credential)
+    text = body(action_ref, agents, app_id, runs_on, credential, effort)
     return f"{HEADER}# projector-workflow sha256={hashlib.sha256(text.encode()).hexdigest()}\n{text}"
 
 

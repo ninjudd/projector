@@ -624,6 +624,11 @@ refuses `runner` while the labels name a GitHub-hosted runner, either no
 labels or only labels of GitHub's images such as `ubuntu-latest` without
 `self-hosted`, because a hosted runner holds no credential of yours, as
 [Run reviews on your own runners](self-hosted-runners.md) describes.
+`--ci-effort <level>` sets the reasoning effort every review job's agent
+runs at, and `init` records it as `review.ci_effort`; without it the action
+runs at `high`. `init` refuses a level an agent's CLI does not accept:
+`claude` takes `low`, `medium`, `high`, `xhigh`, and `max`, and `codex`
+takes `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`.
 `--ci-app <slug>` posts the reviews as that public GitHub App:
 `init` looks the app's ID up on GitHub, records the slug as `review.ci_app`
 and the ID as `review.ci_app_id`, adds `<slug>[bot]` to `review.reviewers`
@@ -639,8 +644,9 @@ describes.
 Once `review.ci` is `true`, every later `init`
 refreshes the workflow, replacing one nobody edited and keeping an edited
 one. A refresh takes the app's ID from `review.ci_app_id`, the runner
-labels from `review.ci_runs_on`, and the credential kind from
-`review.ci_credential`, so it needs no network; only `--ci-app` looks an
+labels from `review.ci_runs_on`, the credential kind from
+`review.ci_credential`, and the effort from `review.ci_effort`, so it needs
+no network; only `--ci-app` looks an
 app up. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
 setup, the credentials, and what each job does.
 
@@ -1100,6 +1106,7 @@ reads, which are these:
 | `review.ci_app_id` | whole number | none | `init` and `project review ci-workflow`, as the ID of the app `review.ci_app` names, which `init --ci-app` looks up and records so a later refresh needs no lookup; set both with `init --ci-app` |
 | `review.ci_runs_on` | string | none | `init` and `project review ci-workflow`, as the labels of your own runners the CI review jobs run on, separated by commas, such as `self-hosted, linux, projector`; none runs them on `ubuntu-latest`; set it with `init --ci-runs-on` |
 | `review.ci_credential` | string | none | `init` and `project review ci-workflow`, as the kind of credential the CI reviews read: `subscription` or `api-key` picks the secret `init` asks for, and `runner` sets no secret and has the workflow pass none, for a runner that holds the credential itself; none asks for a subscription for `claude` and an API key for `codex`; set it with `init --ci-credential` |
+| `review.ci_effort` | string | none | `init` and `project review ci-workflow`, as the reasoning effort every CI review agent runs at, such as `medium`, which each agent in `review.ci_agents` must accept; none runs them at the action's default, `high`; set it with `init --ci-effort` |
 | `review.context_repos` | string | none | `project review run` and the review action, as the repositories, each `owner/name` and separated by commas, that a review reads as context; the action reads it from the default branch, and a review keeps only those of the reviewed repository's owner whose visibility allows it, as [Give a review other repositories to read](review-in-ci.md#give-a-review-other-repositories-to-read) describes |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
@@ -2648,9 +2655,10 @@ directory. `ci-workflow` prints the `.github/workflows/projector-review.yml`
 that `init --ci-review` writes, for `--agents`, then `review.ci_agents`, then
 `claude`, at `--action-ref`, `v0` by default, and posting as the app
 `--app`, then `review.ci_app`, names, on the runners `--runs-on`, then
-`review.ci_runs_on`, labels, and passing no credential secret when
-`--credential`, then `review.ci_credential`, is `runner`, so you can compare
-it with a copy you edited.
+`review.ci_runs_on`, labels, passing no credential secret when
+`--credential`, then `review.ci_credential`, is `runner`, and running the
+agents at `--effort`, then `review.ci_effort`, so you can compare it with a
+copy you edited.
 
 No command takes a SHA: each comes from GitHub or the state file. `setup` works
 from the checkout containing the working directory, or `--checkout`, and

@@ -1175,3 +1175,23 @@ it leaves no label and no failure comment behind.
 The job still fails when something went wrong: the agent published no
 verdict, ran out of time, or could not start, or an argument is missing or
 invalid.
+
+## 12. The effort is a setting
+
+The action took an `effort` input from the start, but the workflow `init`
+writes never passed one, so every CI review ran at `high`. Changing it meant
+editing the workflow, and an edited workflow is one `init` no longer
+refreshes. Effort weighs on a review's cost as much as its model does, so it
+is a setting, as the model is.
+
+`init --ci-effort <level>` records `review.ci_effort`, and `init` and
+`project review ci-workflow` write it as the review step's `effort` input.
+With no level set, the workflow leaves the input out and the action's
+default applies, so an existing workflow keeps its digest and stays one
+`init` replaces.
+
+One level applies to every agent, like `review.ci_runs_on` and unlike the
+per-agent model in `review.ci_agents`. Claude Code and Codex accept
+different levels, so `init` refuses a level that any listed agent's CLI
+does not accept rather than write a job that would fail before every
+review.
