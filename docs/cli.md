@@ -1121,6 +1121,7 @@ reads, which are these:
 | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
 | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
 | `hosted.url` | string | `https://api.projector.bot` | `project hosted` and the review action's `app: projector` input, as the address of the hosted Projector service: an `https://` URL with no path, query, or user info, or `http://` for a service on this machine. A destination, so a committed file's value applies only once you allow it; see [Use a hosted Projector service](#use-a-hosted-projector-service) |
+| `hosted.relay` | string | `https://relay.projector.bot` | `project hosted login` and `project hosted relay`, as the `https://` URL, with no path, query, or user info, of the hosted service's relay, which they write to `agent.s3_endpoint`. A destination, so a committed file's value applies only once you allow it; see [Relay through the hosted service](#relay-through-the-hosted-service) |
 | `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, relative to the checkout's root, inside the checkout or the state directory unless `~/.projector.toml` sets it |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
@@ -5009,9 +5010,10 @@ yours as unknown senders, beside the number of peers.
 ## Use a hosted Projector service
 
 A hosted Projector service runs the parts of Projector that need a server,
-such as posting CI reviews as its own app, for an account you sign in to with
-GitHub. `project hosted` signs you in, shows the account, subscribes it,
-claims an installation of the service's app for it, and signs you out.
+such as posting CI reviews as its own app and relaying agent messages, for an
+account you sign in to with GitHub. `project hosted` signs you in, shows the
+account, subscribes it, claims an installation of the service's app for it,
+points the relay at the service, and signs you out.
 Every command talks to the service `hosted.url` names, which defaults to
 `https://api.projector.bot`. Set it to use another instance:
 
@@ -5053,6 +5055,10 @@ nothing from the answer. A key belongs to one account, and the service
 refuses one that another account registered. Without `agent.key`, the
 command keeps the token and registers no key, and says why; run
 `project agent key init`, then `project hosted login` again.
+
+Once the key is registered, the command points the relay at the hosted
+relay, as [Relay through the hosted service](#relay-through-the-hosted-service)
+describes.
 
 The account token must be `pjh_` and 43 characters of base64url, the form the
 service issues. The command keeps nothing else in the keychain, because a
@@ -5111,17 +5117,84 @@ organization members permission in the organization's installation settings
 on GitHub, because the service reads the caller's role through that
 permission.
 
+### Relay through the hosted service
+
+The hosted service runs an S3 relay, so your machines and peers can exchange
+agent messages without a bucket or repository of your own. After it registers
+your key, `project hosted login` writes three settings to `~/.projector.toml`:
+
+```toml
+[agent]
+relay = "s3://projector"
+s3_endpoint = "https://relay.projector.bot"
+s3_profile = "projector-hosted"
+```
+
+`agent.s3_endpoint` is the value of `hosted.relay`, which defaults to
+`https://relay.projector.bot`. The command also writes the AWS profile
+`projector-hosted` to `~/.aws/config`, or to the file `AWS_CONFIG_FILE`
+names:
+
+```ini
+[profile projector-hosted]
+credential_process = /Users/you/.local/bin/project hosted credentials
+```
+
+The command names the `project` that ran it by its absolute path, so the
+watch daemon finds it without your `PATH`. Every other line of both files
+stays as it was. From then on, the relay works as
+[Relay through an S3 bucket](#relay-through-an-s3-bucket) describes, with
+keys the service issues for a short time.
+
+When `~/.projector.toml` already sets `agent.relay`, `agent.s3_endpoint`, or
+`agent.s3_profile` to another value, login changes none of them, writes no
+profile, and names the command that switches:
+
+```console
+$ project hosted login
+...
+left the relay as /Users/you/.projector.toml sets it, agent.relay = 'github:acme/agents'; run `project hosted relay` to switch to the hosted relay
+```
+
+`project hosted relay` writes the settings and the profile whatever the file
+set before, and signs nothing in.
+
+The profile's `credential_process` runs `project hosted credentials`. That
+command posts the account token and this machine's ID to the service, and
+prints the service's answer unchanged: the JSON a `credential_process`
+prints, with `Version`, `AccessKeyId`, `SecretAccessKey`, `SessionToken`, and
+`Expiration`. The S3 client runs it again 5 minutes before the keys expire.
+The machine ID is 16 random bytes in base64url, made the first time the
+command runs and kept in `$XDG_STATE_HOME/projector/hosted/machine`, or
+`~/.local/state/projector/hosted/machine`, with mode 0600. Paired machines
+share `agent.key`, so the ID, not the key, tells the service which machine
+asks.
+
+The relay turns off when the keys stop coming, with the fix in its notice.
+A token the service refuses needs `project hosted login`, and an account
+whose subscription lapsed needs `project hosted subscribe`. The relay also
+turns off with the `project hosted subscribe` fix when the hosted relay
+answers a request with `402`, as it does for a subscription that lapses
+while keys are still valid.
+
 ### Sign out
 
 `project hosted logout` revokes the account token on the service and removes
 it from the keychain. A token the service no longer knows is removed too.
+
+It also removes what login wrote for the relay, where it still holds the
+hosted relay's values: each of the three settings that still has its hosted
+value, and the profile's `credential_process` while it still runs
+`project hosted credentials`. A setting you changed since stays, and so does
+the profile when it holds a line of yours, without the `credential_process`.
 
 ### When the service refuses
 
 Each command prints the service's own words and exits non-zero. A `401`,
 for a token that is missing, expired, or revoked, adds that you run
 `project hosted login`. A `402`, for an account with no paid subscription,
-adds the address the service gives to subscribe at.
+adds the address the service gives to subscribe at, and
+`project hosted credentials` adds that you run `project hosted subscribe`.
 
 ## Put an iOS app on a device
 

@@ -1,16 +1,22 @@
-"""The hosted service's client: `project hosted login`, `status`, `subscribe`, and `logout` against a fake service on
-a local port, the account token's keychain items, and the review action's step for `app: projector`."""
+"""The hosted service's client: `project hosted login`, `status`, `subscribe`, `credentials`, and `logout` against a
+fake service on a local port, the hosted relay's settings and AWS profile, the account token's keychain items, and
+the review action's step for `app: projector`."""
 
 from __future__ import annotations
 
 import base64
+import configparser
 import json
 import os
 import secrets
+import shlex
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 import threading
+import tomllib
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,7 +24,8 @@ from typing import Any, Optional
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
-from projector import crypto, hosted, keychain, relay
+from projector import config, crypto, hosted, keychain, relay, s3
+from tests.fake_s3 import FakeS3, plain
 from tests.test_ci import step_script
 from tests.test_projector import RepositoryTestCase
 from tests.test_relay import FakeAdvapi32
@@ -28,6 +35,19 @@ ROOT = Path(__file__).parents[1]
 TOKEN = "pjh_" + base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode()
 CHECKOUT = "https://billing.example/checkout/1"
 SUBSCRIBE = "https://billing.example/subscribe"
+SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+# The keys `/v1/credentials` answers, spaced as no JSON encoder here writes them, so a client that parsed and
+# printed them again would not print these bytes.
+KEYS = (b'{"Version":1,  "AccessKeyId":"ASIAHOSTED", "SecretAccessKey":"' + SECRET.encode()
+        + b'", "SessionToken":"hosted-session", "Expiration":"2099-01-01T00:00:00Z"}\n')
+# A `project` that prints `credentials.json` beside it, as `project hosted credentials` prints the service's keys,
+# and logs the arguments of each run.
+STUB = '''import json, pathlib, sys
+here = pathlib.Path(__file__).parent
+with (here / "runs.jsonl").open("a") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\\n")
+sys.stdout.write((here / "credentials.json").read_text())
+'''
 
 
 class FakeService:
@@ -82,16 +102,17 @@ class FakeService:
         body = json.loads(raw) if raw else {}
         bearer = (handler.headers.get("authorization") or "").removeprefix("Bearer ")
         parts = urlsplit(handler.path)
-        self.seen.append({"method": handler.command, "path": parts.path, "body": body, "bearer": bearer})
+        self.seen.append({"method": handler.command, "path": parts.path, "body": body, "bearer": bearer,
+                          "machine": handler.headers.get(hosted.MACHINE_HEADER)})
         status, answer = self.route(handler.command, parts.path, parse_qs(parts.query), body, bearer)
-        data = b"" if answer is None else json.dumps(answer).encode()
+        data = answer if isinstance(answer, bytes) else b"" if answer is None else json.dumps(answer).encode()
         handler.send_response(status)
         handler.send_header("content-type", "application/json")
         handler.send_header("content-length", str(len(data)))
         handler.end_headers()
         handler.wfile.write(data)
 
-    def route(self, method: str, path: str, query: dict, body: dict, bearer: str) -> tuple[int, Optional[dict]]:
+    def route(self, method: str, path: str, query: dict, body: dict, bearer: str) -> tuple[int, dict | bytes | None]:
         if path == "/oidc":
             if bearer != "request-token":
                 return 401, {"message": "bad request token"}
@@ -134,6 +155,10 @@ class FakeService:
             return 201, {"key_id": crypto.key_id(public)}
         if path == "/v1/account":
             return 200, self.account
+        if path == "/v1/credentials":
+            if not self.subscribed:
+                return 402, {"error": "the account has no active subscription", "subscribe": SUBSCRIBE}
+            return 200, KEYS
         if path == "/v1/billing/checkout":
             return 200, {"url": CHECKOUT}
         if path == "/v1/logout":
@@ -160,6 +185,18 @@ class HostedCommandTests(RepositoryTestCase):
         self.enterContext(mock.patch.object(keychain, "delete", side_effect=self.delete))
         self.key = relay.Key(crypto.new_private_key(), "keychain")
         self.enterContext(mock.patch.object(relay, "command_key", return_value=(self.key, "")))
+        for name in ("XDG_STATE_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE"):
+            os.environ.pop(name, None)
+        # The running `project`, in a folder whose name holds a space, which the profile's command must quote.
+        self.bin = self.home / "bin dir"
+        self.bin.mkdir()
+        self.project = self.bin / "project"
+        self.project.write_text(f"#!{sys.executable}\n{STUB}")
+        self.project.chmod(0o755)
+        (self.bin / "credentials.json").write_bytes(KEYS)
+        self.enterContext(mock.patch.object(sys, "argv", [str(self.project), "hosted", "login"]))
+        self.toml = self.home / ".projector.toml"
+        self.aws = self.home / ".aws" / "config"
 
     def store(self, account: str, secret: str, timeout: Optional[float] = None, *,
               service: str = keychain.SERVICE) -> str:
@@ -334,6 +371,177 @@ class HostedCommandTests(RepositoryTestCase):
         self.assertEqual(0, code, err)
         self.assertNotIn(TOKEN, self.service.tokens, "the service no longer honors the token")
         self.assertEqual({}, self.items)
+
+    # The hosted relay
+
+    def user_layer(self) -> dict:
+        return tomllib.loads(self.toml.read_text())
+
+    def profiles(self) -> dict[str, dict[str, str]]:
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read_string(self.aws.read_text())
+        return {name: dict(parser[name]) for name in parser.sections()}
+
+    def command(self) -> str:
+        return shlex.join([str(self.project), "hosted", "credentials"])
+
+    def test_login_points_the_relay_at_the_hosted_relay_and_keeps_every_other_line(self) -> None:
+        # A login that rewrote either file would drop the comments and profiles you keep there.
+        toml = (f'# my settings\n[hosted]\nurl = "{self.service.url}"\n\n[review]\nusername = "octocat"  # me\n')
+        aws = "# my profiles\n[default]\nregion = us-west-2\n\n[profile work]\nsso_session = acme\n"
+        self.toml.write_text(toml)
+        self.aws.parent.mkdir()
+        self.aws.write_text(aws)
+
+        code, out, err = self.invoke("hosted", "login")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({"relay": hosted.RELAY, "s3_endpoint": config.HOSTED_RELAY, "s3_profile": hosted.PROFILE},
+                         self.user_layer()["agent"])
+        self.assertTrue(self.toml.read_text().startswith(toml), "every line before the new settings stays as it was")
+        self.assertTrue(self.aws.read_text().startswith(aws))
+        self.assertEqual({"credential_process": self.command()}, self.profiles()[f"profile {hosted.PROFILE}"],
+                         "the command names the running project by its absolute path, quoted for its space")
+        self.assertEqual({"region": "us-west-2"}, self.profiles()["default"])
+        self.assertIn("the relay now goes through the hosted relay", out)
+
+        code, out, err = self.invoke("hosted", "logout")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({}, self.user_layer()["agent"], "the settings go, as `project config unset` removes them")
+        self.assertTrue(self.toml.read_text().startswith(toml))
+        self.assertEqual(aws, self.aws.read_text(), "logout removes the profile and the blank line before it")
+        self.assertIn("removed agent.relay, agent.s3_endpoint, agent.s3_profile, AWS profile projector-hosted", out)
+
+    def test_login_leaves_another_relay_alone_and_names_the_command_that_switches(self) -> None:
+        # Login moving a relay you chose would send your records somewhere you never asked for.
+        self.toml.write_text(f'[hosted]\nurl = "{self.service.url}"\n\n[agent]\nrelay = "github:acme/agents"\n')
+        before = self.toml.read_text()
+
+        code, out, err = self.invoke("hosted", "login")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(before, self.toml.read_text())
+        self.assertFalse(self.aws.exists(), "no profile is written for a relay that is not used")
+        self.assertIn("agent.relay = 'github:acme/agents'; run `project hosted relay` to switch", out)
+
+        code, out, err = self.invoke("hosted", "relay")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(hosted.RELAY, self.user_layer()["agent"]["relay"])
+        self.assertEqual(self.command(), self.profiles()[f"profile {hosted.PROFILE}"]["credential_process"])
+
+    def test_login_without_agent_key_leaves_the_relay_alone(self) -> None:
+        with mock.patch.object(relay, "command_key", return_value=(None, relay.NO_KEY)):
+            code, _, err = self.invoke("hosted", "login")
+
+        self.assertEqual(0, code, err)
+        self.assertNotIn("agent", self.user_layer())
+        self.assertFalse(self.aws.exists())
+
+    def test_logout_removes_only_the_values_that_are_still_the_hosted_relays(self) -> None:
+        self.invoke("hosted", "login")
+        config.write_value(self.toml, "agent.relay", "github:acme/agents")
+        self.aws.write_text(self.aws.read_text().replace("credential_process", "region = us-east-1\ncredential_process"))
+        work = "\n[profile work]\ncredential_process = aws configure export-credentials --profile work\n"
+        self.aws.write_text(self.aws.read_text() + work)
+
+        code, out, err = self.invoke("hosted", "logout")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual({"relay": "github:acme/agents"}, self.user_layer()["agent"])
+        self.assertEqual({"region": "us-east-1"}, self.profiles()[f"profile {hosted.PROFILE}"],
+                         "a profile holding a line of yours keeps it")
+        self.assertTrue(self.aws.read_text().endswith(work))
+
+        self.aws.write_text(f"[profile {hosted.PROFILE}]\ncredential_process = my-own-command\n")
+        self.signed_in()
+        self.service.tokens.add(TOKEN)
+        code, _, err = self.invoke("hosted", "logout")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(f"[profile {hosted.PROFILE}]\ncredential_process = my-own-command\n", self.aws.read_text(),
+                         "a credential_process that no longer runs project hosted credentials is yours")
+
+    def test_credentials_prints_the_services_keys_unchanged_for_a_machine_id_kept_private(self) -> None:
+        self.signed_in()
+
+        first = self.invoke("hosted", "credentials")
+        second = self.invoke("hosted", "credentials")
+
+        self.assertEqual((0, KEYS.decode(), ""), first, "the body is printed byte for byte, and nothing on stderr")
+        self.assertEqual(first, second)
+        calls = [seen for seen in self.service.seen if seen["path"] == "/v1/credentials"]
+        self.assertEqual([("POST", TOKEN)] * 2, [(seen["method"], seen["bearer"]) for seen in calls])
+        machine = calls[0]["machine"]
+        self.assertRegex(machine, r"\A[A-Za-z0-9_-]{1,64}\Z")
+        self.assertEqual(machine, calls[1]["machine"], "a machine keeps its ID")
+        kept = self.home / ".local" / "state" / "projector" / "hosted" / "machine"
+        self.assertEqual(machine, kept.read_text().strip())
+        if os.name == "posix":
+            self.assertEqual(0o600, stat.S_IMODE(kept.stat().st_mode))
+
+    def test_credentials_refused_say_what_fixes_them_and_fail(self) -> None:
+        # The S3 client turns the failure into the relay's notice, so its last line must name the fix.
+        self.items[(hosted.SERVICE, self.service.url)] = "pjh_revoked"
+        code, out, err = self.invoke("hosted", "credentials")
+
+        self.assertNotEqual(0, code)
+        self.assertEqual("", out)
+        self.assertIn("run `project hosted login`", err)
+
+        self.signed_in()
+        self.service.subscribed = False
+        code, out, err = self.invoke("hosted", "credentials")
+
+        self.assertNotEqual(0, code)
+        self.assertEqual("", out)
+        self.assertIn("the subscription lapsed", err)
+        self.assertIn("run `project hosted subscribe`", err)
+        self.assertIn(SUBSCRIBE, err)
+        self.assertNotIn(TOKEN, err)
+
+    def test_the_s3_client_signs_with_the_keys_the_written_profile_gets_from_project_hosted_credentials(self) -> None:
+        server = FakeS3()
+        self.addCleanup(server.close)
+        server.grant("ASIAHOSTED", SECRET, "hosted-session")
+        self.enterContext(mock.patch.object(s3, "connect", plain))
+        self.toml.write_text(f'[hosted]\nurl = "{self.service.url}"\nrelay = "{server.endpoint}"\n')
+        self.invoke("hosted", "login")
+        agent = self.user_layer()["agent"]
+        found = config.relay_location(agent["relay"])
+        assert isinstance(found, config.S3Relay)
+        # The daemon's environment, which need not have the PATH that finds project.
+        client = s3.Client(found.bucket, endpoint=agent["s3_endpoint"], profile=agent["s3_profile"],
+                           environ={"HOME": str(self.home)})
+
+        client.put_object("k/agents/a", b"{}", if_none_match=True)
+
+        self.assertEqual(["ASIAHOSTED"], [seen.signed_by for seen in server.seen("PUT", "projector")])
+        self.assertEqual("hosted-session", server.seen("PUT")[0].headers["x-amz-security-token"])
+        runs = (self.bin / "runs.jsonl").read_text().splitlines()
+        self.assertEqual([["hosted", "credentials"]], [json.loads(line) for line in runs])
+        self.assertEqual("project hosted login", client.credentials.sign_in_fix(),
+                         "a lapsed sign-in is fixed by logging in to the service, not by aws sso login")
+
+    def test_hosted_relay_takes_an_https_url_and_login_writes_it_as_an_endpoint(self) -> None:
+        code, _, err = self.invoke("config", "set", "hosted.relay", "http://relay.example/path")
+        self.assertNotEqual(0, code)
+        self.assertIn("hosted.relay is 'http://relay.example/path'", err)
+
+        self.toml.write_text(f'[hosted]\nurl = "{self.service.url}"\nrelay = "https://Relay.Example:443/"\n')
+        self.invoke("hosted", "login")
+
+        self.assertEqual("https://relay.example", self.user_layer()["agent"]["s3_endpoint"])
+
+    def test_a_402_from_the_relay_turns_it_off_with_the_subscribe_fix(self) -> None:
+        lapsed = relay.store_error(s3.S3Error("PUT relay.example/projector/k answered 402", 402),
+                                   f"profile {hosted.PROFILE}")
+
+        self.assertIsInstance(lapsed, relay.Lapsed)
+        assert isinstance(lapsed, relay.Lapsed)
+        self.assertEqual("project hosted subscribe", lapsed.fix)
+        self.assertIn("subscription lapsed", str(lapsed))
 
 
 class KeychainServiceTests(unittest.TestCase):

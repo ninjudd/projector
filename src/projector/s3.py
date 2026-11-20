@@ -280,8 +280,9 @@ class Provider:
                                f"{self.profile} has no keys and no credential_process", "missing", source)
 
     def sign_in_fix(self) -> str:
-        """The command that signs in again for the profile's `credential_process`: `aws sso login` for the profile
-        its command names, else for this profile."""
+        """The command that signs in again for the profile's `credential_process`: `project hosted login` for the
+        hosted relay's `project hosted credentials`, else `aws sso login` for the profile its command names, else
+        for this profile."""
         try:
             keys, configured = self.sections()
         except CredentialsError:
@@ -291,6 +292,8 @@ class Provider:
             words = shlex.split(command, posix=os.name != "nt")
         except ValueError:
             words = []
+        if words[-2:] == ["hosted", "credentials"]:
+            return "project hosted login"
         named = next((words[index + 1] for index, word in enumerate(words[:-1]) if word == "--profile"), None)
         return f"aws sso login --profile {named or self.profile}" if command else ""
 

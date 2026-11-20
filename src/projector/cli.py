@@ -1497,10 +1497,16 @@ def add_agent_parser(subcommands) -> None:
 
 def add_hosted_parser(subcommands) -> None:
     parser = subcommands.add_parser("hosted", help="sign in to the hosted Projector service hosted.url names, show "
-                                                   "the account, subscribe, claim an installation, and sign out")
+                                                   "the account, subscribe, claim an installation, relay through "
+                                                   "the service, and sign out")
     commands = parser.add_subparsers(dest="hosted_command", required=True)
-    commands.add_parser("login", help="sign in through GitHub, keep the account token in the OS keychain, and "
-                                      "register agent.key's public key")
+    commands.add_parser("login", help="sign in through GitHub, keep the account token in the OS keychain, "
+                                      "register agent.key's public key, and point the relay at the hosted relay "
+                                      "unless ~/.projector.toml names another")
+    commands.add_parser("relay", help="point the relay at the hosted relay in ~/.projector.toml and write its AWS "
+                                      "profile, replacing the relay that file names")
+    commands.add_parser("credentials", help="print short-lived keys for the hosted relay, as the JSON an AWS "
+                                            "credential_process prints")
     add_output(commands.add_parser("status", help="print the account's login, plan, subscription, paid seats, and "
                                                   "registered keys"))
     subscribing = commands.add_parser("subscribe", help="open the page that subscribes the account to a plan")
@@ -1511,7 +1517,8 @@ def add_hosted_parser(subcommands) -> None:
     claiming = commands.add_parser("claim", help="pay for the hosted service app's installation on an account or "
                                                  "organization you administer, which has no payer yet")
     claiming.add_argument("owner", help="the account or organization the app is installed on")
-    commands.add_parser("logout", help="revoke the account token and remove it from the keychain")
+    commands.add_parser("logout", help="revoke the account token, remove it from the keychain, and remove the "
+                                       "hosted relay's settings where they are still the hosted relay's")
 
 
 def positive(text: str) -> int:
@@ -1521,11 +1528,17 @@ def positive(text: str) -> int:
 
 
 def run_hosted(arguments: argparse.Namespace) -> int:
-    url = hosted.address(here_config())
+    config = here_config()
+    url = hosted.address(config)
     command = arguments.hosted_command
     if command == "login":
+        settings = hosted.relay_settings(config)
         key, why = relay.command_key()
-        hosted.login(url, key, why, print)
+        hosted.login(url, key, why, print, settings)
+    elif command == "relay":
+        print(hosted.use_relay(hosted.relay_settings(config), switch=True))
+    elif command == "credentials":
+        sys.stdout.write(hosted.credentials(url))
     elif command == "status":
         found = hosted.account(url)
         if arguments.json_output:
@@ -1537,7 +1550,7 @@ def run_hosted(arguments: argparse.Namespace) -> int:
     elif command == "claim":
         print(hosted.claim(url, arguments.owner))
     else:
-        print(hosted.logout(url))
+        print(hosted.logout(url, hosted.relay_settings(config)))
     return 0
 
 
