@@ -1,0 +1,104 @@
+{
+ "version": 1,
+ "name": "Agent prose by the writing guide",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 606,
+  "title": "Write GitHub comments and issues an agent posts on its own by the writing guide",
+  "head": "b74ec10d9ce786d3ad5208fc81903a7a648c2ec7",
+  "headRef": "write-github-prose-by-the-writing-guide",
+  "base": "231406008a8efc65f04b518ffd953e4bc5133154",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector ships a writing guide, <code>skills/writing.md</code>, and its skills, such as <code>implement</code> and <code>fix-pr</code>, read it before they write a pull request body, a commit message, or a reply. An agent also writes prose outside those skills: a reply to a reviewer, an issue it opens, a commit message for a change it makes by hand, or a comment in code it edits directly. Until now nothing pointed that prose at the guide.",
+   "This pull request closes the gap in two places:",
+   "<ol><li><b>The generated conventions block.</b> <code>project init</code> writes a <code>## Projector conventions</code> section into each repository's <code>AGENTS.md</code> from a template. The template, now version 33, gains a paragraph telling an agent to write that other prose with the <code>write</code> skill, whether or not the person asked for prose.</li><li><b>The <code>write</code> skill's description.</b> A host picks a skill by its description, so the description now says to use <code>write</code> for prose the agent writes on its own. That reaches Codex, and repositories whose block predates version 33.</li></ol>",
+   "The review found one open question: the <code>write</code> skill's final step still says not to post or commit text unless the user asks, which conflicts with the new trigger."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Conventions block</b>: the section between <code>projector:begin</code> and <code>projector:end</code> markers that <code>project init</code> writes into <code>AGENTS.md</code>. Its integer is the template version.</li><li><b>Writing guide</b>: <code>skills/writing.md</code>, the prose rules every Projector skill follows.</li><li><b>Pinned hash</b>: a test records a hash of each template version, so the text cannot change without the version moving.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "trigger",
+   "title": "When an agent uses the write skill",
+   "kicker": "The skill description that decides when a host invokes write",
+   "intro": [
+    "Claude Code and Codex choose a skill by matching the task against each skill's <code>description</code>. The old description limited <code>write</code> to prose the user asked for, so an agent replying to a review comment on its own never reached for it. The new sentence adds prose the agent writes itself, outside a Projector skill that already applies the guide."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/write/SKILL.md",
+     "note": "The description gains the on-its-own trigger; the skill body is unchanged.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 3,
+       "text": "The skill's \"Hand it over\" section still ends \"Do not commit, push, or post the text unless the user asks\" and asks for a report of what changed. An agent that posts a reply or opens an issue on its own, the case this description now targets, either holds the text back or skips that step. The review asks for the hand-over to treat prose the agent writes as a step of its own task differently."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "block",
+   "title": "The conventions block, version 33",
+   "kicker": "The template paragraph, the regenerated AGENTS.md, and the pinned hash",
+   "intro": [
+    "The template's paragraph sits under \"Projector skills\", the part of the block that applies only where the plugin is installed, because the guide and the <code>write</code> skill ship with the plugin. The sentence about Google developer documentation style, earlier in the block, still applies everywhere.",
+    "<code>AGENTS.md</code> in this repository is the template's output, and <code>CLAUDE.md</code> is a symlink to it, so both diffs carry the same paragraph."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The review's gate ran <code>claude plugin validate</code>, <code>claude plugin test</code>, and <code>git diff --check</code>, and the Check workflow, which runs the Python tests and <code>project check</code>, passed on this head. So the hash pinned for version 33 matches the template, and <code>AGENTS.md</code> is not stale."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The begin marker moves to 33 and the new paragraph follows the <code>spec</code> sentence.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 79,
+       "text": "\"The rest\" means prose outside Projector's skills. The commit-message and pull-request-body clause repeats the exception for <code>implement</code>, <code>spec</code>, and <code>fix-pr</code>, which write those themselves."
+      }
+     ]
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "Regenerated from the template; the same paragraph and version."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins the version 33 hash beside the earlier versions."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Plugin documentation",
+   "kicker": "What docs/plugins.md says the write skill covers",
+   "intro": [
+    "The plugin guide now says <code>write</code> covers both prose a person asks for and prose an agent writes on its own, with a reply to a review comment and an opened issue as examples."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "One sentence widened to name prose an agent writes on its own."
+    }
+   ]
+  }
+ ]
+}
