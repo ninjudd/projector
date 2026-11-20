@@ -1,0 +1,129 @@
+{
+ "version": 1,
+ "name": "Hosted relay client",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 609,
+  "title": "Point the relay at the hosted service on login, with keys that project hosted credentials asks it for",
+  "head": "e32bb249362d6512bda823bc8b28b7449927fd9f",
+  "headRef": "hosted-relay-client",
+  "base": "f6d225c832a94895e9385e885bce9802237e9817",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's relay carries agent messages between your machines and your peers' machines. It can run through a GitHub repository or an S3 bucket you own. A hosted Projector service can now run an S3 relay for you, so you need neither. This pull request is the CLI's side of that: it signs the relay in to the hosted relay and gets it short-lived keys.",
+   "<ol><li><b>Login points the relay at the hosted relay.</b> After <code>project hosted login</code> registers your <code>agent.key</code>, it writes <code>agent.relay = \"s3://projector\"</code>, <code>agent.s3_endpoint</code>, and <code>agent.s3_profile = \"projector-hosted\"</code> to <code>~/.projector.toml</code>. It also writes an AWS profile whose <code>credential_process</code> runs <code>project hosted credentials</code>. When your user file already names another relay, login leaves it alone and names <code>project hosted relay</code>, which switches.</li><li><b><code>project hosted credentials</code> asks the service for keys.</b> It posts the account token and a per-machine ID and prints the service's JSON unchanged, which is the form a <code>credential_process</code> prints. The relay's S3 client already runs such a command and refreshes the keys 5 minutes before they expire.</li><li><b>Logout undoes what login wrote</b>, but only the values that still hold what login wrote.</li><li><b>A named profile now signs ahead of environment keys.</b> When <code>agent.s3_profile</code> names a profile, the S3 client now skips <code>AWS_ACCESS_KEY_ID</code> in the environment, as AWS's SDKs do. Without that change, keys left in a developer's shell would sign hosted requests, and the hosted relay would refuse them.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Relay</b>: where agent messages travel, set by <code>agent.relay</code>.</li><li><b>User layer</b>: <code>~/.projector.toml</code>. Nearer <code>.projector.toml</code> files, in a directory or a repository, override it key by key.</li><li><b><code>credential_process</code></b>: an AWS profile option that names a command printing temporary keys as JSON.</li><li><b>Machine ID</b>: 16 random bytes kept in the state directory. Paired machines share <code>agent.key</code>, so the key alone cannot tell the service which machine is asking.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first Projector review of <code>e32bb24</code> requested changes, with two findings:</p><ul class=\"tight\"><li>Login checks only the user layer before it writes the hosted endpoint and profile. A nearer layer's S3 <code>agent.relay</code> then picks those two up and moves to the hosted store.</li><li>On Windows, a <code>project</code> path that contains a space produces a <code>credential_process</code> that the S3 client cannot start.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "s3",
+   "title": "Which credentials sign",
+   "kicker": "The S3 client's credential order, and the relay's reading of a 402",
+   "intro": [
+    "The relay's S3 client finds keys in a fixed order: first the environment, then the profile's files, then the profile's <code>credential_process</code>. Now, when <code>agent.s3_profile</code> names a profile, the client skips the environment, so the hosted profile's keys sign even when your shell holds AWS keys of your own. When the profile comes only from <code>AWS_PROFILE</code> or <code>default</code>, the environment still comes first.",
+    "The relay already turns off with a notice when its credentials fail or S3 answers <code>403</code>. Now it also turns off on a <code>402</code>, which the hosted relay sends when a subscription lapses while keys are still valid, and the notice tells you to run <code>project hosted subscribe</code>."
+   ],
+   "files": [
+    {
+     "path": "src/projector/s3.py",
+     "note": "<code>Provider.find</code> skips environment keys when the profile is named, and <code>sign_in_fix</code> answers <code>project hosted login</code> for the hosted profile.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 300,
+       "text": "Finding from the review: on Windows, this file splits a <code>credential_process</code> with <code>shlex.split(posix=False)</code>, here and in <code>run_process</code>. That split keeps the quotes that <code>list2cmdline</code> put around a path with a space, so <code>run_process</code> cannot start the command that <code>hosted.credentials_command</code> writes."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/relay.py",
+     "note": "<code>store_error</code> reads a <code>402</code> as a lapse whose fix is <code>project hosted subscribe</code>."
+    },
+    {
+     "path": "tests/test_s3.py"
+    }
+   ]
+  },
+  {
+   "id": "config",
+   "title": "The hosted.relay setting",
+   "kicker": "Where the hosted relay's store lives",
+   "intro": [
+    "<code>hosted.relay</code> names the hosted relay's S3 endpoint, <code>https://relay.projector.bot</code> by default, and login writes it to <code>agent.s3_endpoint</code>. It counts as a destination, like <code>hosted.url</code>, so a value in a committed file applies only once you allow it. It accepts the same <code>https://</code> form as <code>agent.s3_endpoint</code>, so <code>s3_endpoint</code> now takes the name of the setting it reports errors for."
+   ],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds <code>hosted.relay</code> to <code>SETTINGS</code> and <code>DESTINATIONS</code>, and its default, <code>HOSTED_RELAY</code>."
+    }
+   ]
+  },
+  {
+   "id": "hosted",
+   "title": "Login, relay, credentials, and logout",
+   "kicker": "What the hosted commands write, ask for, and remove",
+   "intro": [
+    "<code>use_relay</code> holds the same lock as every other change to <code>~/.projector.toml</code>. It writes the AWS profile first, then the three settings. Without <code>switch</code>, which only <code>project hosted relay</code> passes, a user file that already sets any of the three to another value stays as it is.",
+    "The AWS config file gets a line edit, not a rewrite: <code>find_profile</code> locates the hosted profile and its <code>credential_process</code>, and <code>write_profiles</code> writes the file only when <code>configparser</code> reads it back with nothing changed outside that profile.",
+    "<code>credentials</code> prints the service's body byte for byte. When the service answers <code>402</code>, the error leaves out the service's own words, because the S3 client reads a last line that says \"expired\" as an AWS sign-in to renew."
+   ],
+   "files": [
+    {
+     "path": "src/projector/hosted.py",
+     "note": "The new commands' logic: the relay settings, the AWS profile edit, the machine ID, and the credentials call.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 279,
+       "text": "Finding from the review: the check that a relay is already chosen reads only <code>~/.projector.toml</code>, but the relay reads <code>agent.s3_endpoint</code> and <code>agent.s3_profile</code> from any layer. A nearer layer that sets <code>agent.relay = \"s3://acme-agents/relay\"</code> moves to <code>https://relay.projector.bot/acme-agents/relay</code> after login. The review reproduced this in a temporary home."
+      },
+      {
+       "kind": "flag",
+       "line": 314,
+       "text": "Finding from the review: on Windows, a path with a space is quoted here with <code>list2cmdline</code>, and <code>s3.Provider.run_process</code> cannot start the quoted command."
+      },
+      {
+       "kind": "context",
+       "text": "<code>machine_id</code> links a temporary file into place, so two first runs at once keep one ID. A file system without hard links falls back to a replace, where two concurrent first runs can each keep a different ID."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Wires up <code>hosted relay</code> and <code>hosted credentials</code>, and passes the relay settings to <code>login</code> and <code>logout</code>."
+    },
+    {
+     "path": "tests/test_hosted.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The new section in the CLI reference",
+   "intro": [
+    "<code>docs/cli.md</code> adds <code>hosted.relay</code> to the settings table, the new credential order, and a section called \"Relay through the hosted service\". The section shows what login writes, when it leaves your relay alone, and what logout removes."
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    }
+   ]
+  }
+ ]
+}

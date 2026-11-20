@@ -1,0 +1,1086 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 679b624a..346970f5 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1116,11 +1116,12 @@ reads, which are these:
+ | `agent.relay` | string | `origin` | `project agent register`, from the checkout the session works in, as where its relay records travel through: `origin`, the checkout's own repository, `github:<owner>/<repo>`, or `s3://<bucket>/<prefix>`. A destination, so a committed file's value applies only once you allow it; see [Relay through a repository you choose](#relay-through-a-repository-you-choose) and [Relay through an S3 bucket](#relay-through-an-s3-bucket) |
+ | `agent.s3_region` | string | `AWS_REGION`, `AWS_DEFAULT_REGION`, the profile's `region`, then `us-east-1` | `project agent register`, from the checkout the session works in, as the region of the bucket an S3 `agent.relay` names |
+ | `agent.s3_endpoint` | string | AWS | `project agent register`, from the checkout the session works in, as the `https://` URL, with no path, query, or user info, of a store that speaks S3, such as Cloudflare R2 or MinIO, which requests reach path-style. A destination, so a committed file's value applies only once you allow it |
+-| `agent.s3_profile` | string | `AWS_PROFILE`, then `default` | `project agent register`, from the checkout the session works in, as the AWS profile whose credentials sign an S3 location's requests. A destination, so a committed file's value applies only once you allow it |
++| `agent.s3_profile` | string | `AWS_PROFILE`, then `default` | `project agent register`, from the checkout the session works in, as the AWS profile whose credentials sign an S3 location's requests, ahead of AWS keys in the environment, which sign only when no file sets it. A destination, so a committed file's value applies only once you allow it |
+ | `agent.s3_poll` | whole number | `10` | the watch daemon, from each registration's checkout, as the seconds between polls of its S3 location; at least `2` |
+ | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
+ | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
+ | `hosted.url` | string | `https://api.projector.bot` | `project hosted` and the review action's `app: projector` input, as the address of the hosted Projector service: an `https://` URL with no path, query, or user info, or `http://` for a service on this machine. A destination, so a committed file's value applies only once you allow it; see [Use a hosted Projector service](#use-a-hosted-projector-service) |
++| `hosted.relay` | string | `https://relay.projector.bot` | `project hosted login` and `project hosted relay`, as the `https://` URL, with no path, query, or user info, of the hosted service's relay, which they write to `agent.s3_endpoint`. A destination, so a committed file's value applies only once you allow it; see [Relay through the hosted service](#relay-through-the-hosted-service) |
+ | `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to, relative to the checkout's root, inside the checkout or the state directory unless `~/.projector.toml` sets it |
+ 
+ `review.allow_approve` is off unless it is exactly `true`; an unset key means
+@@ -4670,7 +4671,10 @@ of these that holds credentials. It never prints, logs, or passes a secret
+ as a process argument:
+ 
+ 1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`
+-   in the daemon's environment.
++   in the daemon's environment, unless `agent.s3_profile` names a profile.
++   A named profile passes over the environment, as AWS's SDKs do for a
++   profile that code names, so keys you keep in your shell never sign for
++   the profile the relay chose.
+ 2. The profile `agent.s3_profile` names, else `AWS_PROFILE`, else
+    `default`, in `~/.aws/credentials` and `~/.aws/config`, or the files
+    `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE` name.
+@@ -5009,9 +5013,10 @@ yours as unknown senders, beside the number of peers.
+ ## Use a hosted Projector service
+ 
+ A hosted Projector service runs the parts of Projector that need a server,
+-such as posting CI reviews as its own app, for an account you sign in to with
+-GitHub. `project hosted` signs you in, shows the account, subscribes it,
+-claims an installation of the service's app for it, and signs you out.
++such as posting CI reviews as its own app and relaying agent messages, for an
++account you sign in to with GitHub. `project hosted` signs you in, shows the
++account, subscribes it, claims an installation of the service's app for it,
++points the relay at the service, and signs you out.
+ Every command talks to the service `hosted.url` names, which defaults to
+ `https://api.projector.bot`. Set it to use another instance:
+ 
+@@ -5054,6 +5059,10 @@ refuses one that another account registered. Without `agent.key`, the
+ command keeps the token and registers no key, and says why; run
+ `project agent key init`, then `project hosted login` again.
+ 
++Once the key is registered, the command points the relay at the hosted
++relay, as [Relay through the hosted service](#relay-through-the-hosted-service)
++describes.
++
+ The account token must be `pjh_` and 43 characters of base64url, the form the
+ service issues. The command keeps nothing else in the keychain, because a
+ token comes from a server, and the macOS keychain stores it through a script
+@@ -5111,17 +5120,84 @@ organization members permission in the organization's installation settings
+ on GitHub, because the service reads the caller's role through that
+ permission.
+ 
++### Relay through the hosted service
++
++The hosted service runs an S3 relay, so your machines and peers can exchange
++agent messages without a bucket or repository of your own. After it registers
++your key, `project hosted login` writes three settings to `~/.projector.toml`:
++
++```toml
++[agent]
++relay = "s3://projector"
++s3_endpoint = "https://relay.projector.bot"
++s3_profile = "projector-hosted"
++```
++
++`agent.s3_endpoint` is the value of `hosted.relay`, which defaults to
++`https://relay.projector.bot`. The command also writes the AWS profile
++`projector-hosted` to `~/.aws/config`, or to the file `AWS_CONFIG_FILE`
++names:
++
++```ini
++[profile projector-hosted]
++credential_process = /Users/you/.local/bin/project hosted credentials
++```
++
++The command names the `project` that ran it by its absolute path, so the
++watch daemon finds it without your `PATH`. Every other line of both files
++stays as it was. From then on, the relay works as
++[Relay through an S3 bucket](#relay-through-an-s3-bucket) describes, with
++keys the service issues for a short time.
++
++When `~/.projector.toml` already sets `agent.relay`, `agent.s3_endpoint`, or
++`agent.s3_profile` to another value, login changes none of them, writes no
++profile, and names the command that switches:
++
++```console
++$ project hosted login
++...
++left the relay as /Users/you/.projector.toml sets it, agent.relay = 'github:acme/agents'; run `project hosted relay` to switch to the hosted relay
++```
++
++`project hosted relay` writes the settings and the profile whatever the file
++set before, and signs nothing in.
++
++The profile's `credential_process` runs `project hosted credentials`. That
++command posts the account token and this machine's ID to the service, and
++prints the service's answer unchanged: the JSON a `credential_process`
++prints, with `Version`, `AccessKeyId`, `SecretAccessKey`, `SessionToken`, and
++`Expiration`. The S3 client runs it again 5 minutes before the keys expire.
++The machine ID is 16 random bytes in base64url, made the first time the
++command runs and kept in `$XDG_STATE_HOME/projector/hosted/machine`, or
++`~/.local/state/projector/hosted/machine`, with mode 0600. Paired machines
++share `agent.key`, so the ID, not the key, tells the service which machine
++asks.
++
++The relay turns off when the keys stop coming, with the fix in its notice.
++A token the service refuses needs `project hosted login`, and an account
++whose subscription lapsed needs `project hosted subscribe`. The relay also
++turns off with the `project hosted subscribe` fix when the hosted relay
++answers a request with `402`, as it does for a subscription that lapses
++while keys are still valid.
++
+ ### Sign out
+ 
+ `project hosted logout` revokes the account token on the service and removes
+ it from the keychain. A token the service no longer knows is removed too.
+ 
++It also removes what login wrote for the relay, where it still holds the
++hosted relay's values: each of the three settings that still has its hosted
++value, and the profile's `credential_process` while it still runs
++`project hosted credentials`. A setting you changed since stays, and so does
++the profile when it holds a line of yours, without the `credential_process`.
++
+ ### When the service refuses
+ 
+ Each command prints the service's own words and exits non-zero. A `401`,
+ for a token that is missing, expired, or revoked, adds that you run
+ `project hosted login`. A `402`, for an account with no paid subscription,
+-adds the address the service gives to subscribe at.
++adds the address the service gives to subscribe at, and
++`project hosted credentials` adds that you run `project hosted subscribe`.
+ 
+ ## Put an iOS app on a device
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index ba0b3db4..bc3883eb 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1497,10 +1497,16 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+ 
+ def add_hosted_parser(subcommands) -> None:
+     parser = subcommands.add_parser("hosted", help="sign in to the hosted Projector service hosted.url names, show "
+-                                                   "the account, subscribe, claim an installation, and sign out")
++                                                   "the account, subscribe, claim an installation, relay through "
++                                                   "the service, and sign out")
+     commands = parser.add_subparsers(dest="hosted_command", required=True)
+-    commands.add_parser("login", help="sign in through GitHub, keep the account token in the OS keychain, and "
+-                                      "register agent.key's public key")
++    commands.add_parser("login", help="sign in through GitHub, keep the account token in the OS keychain, "
++                                      "register agent.key's public key, and point the relay at the hosted relay "
++                                      "unless ~/.projector.toml names another")
++    commands.add_parser("relay", help="point the relay at the hosted relay in ~/.projector.toml and write its AWS "
++                                      "profile, replacing the relay that file names")
++    commands.add_parser("credentials", help="print short-lived keys for the hosted relay, as the JSON an AWS "
++                                            "credential_process prints")
+     add_output(commands.add_parser("status", help="print the account's login, plan, subscription, paid seats, and "
+                                                   "registered keys"))
+     subscribing = commands.add_parser("subscribe", help="open the page that subscribes the account to a plan")
+@@ -1511,7 +1517,8 @@ def add_hosted_parser(subcommands) -> None:
+     claiming = commands.add_parser("claim", help="pay for the hosted service app's installation on an account or "
+                                                  "organization you administer, which has no payer yet")
+     claiming.add_argument("owner", help="the account or organization the app is installed on")
+-    commands.add_parser("logout", help="revoke the account token and remove it from the keychain")
++    commands.add_parser("logout", help="revoke the account token, remove it from the keychain, and remove the "
++                                       "hosted relay's settings where they are still the hosted relay's")
+ 
+ 
+ def positive(text: str) -> int:
+@@ -1521,11 +1528,17 @@ def positive(text: str) -> int:
+ 
+ 
+ def run_hosted(arguments: argparse.Namespace) -> int:
+-    url = hosted.address(here_config())
++    config = here_config()
++    url = hosted.address(config)
+     command = arguments.hosted_command
+     if command == "login":
++        settings = hosted.relay_settings(config)
+         key, why = relay.command_key()
+-        hosted.login(url, key, why, print)
++        hosted.login(url, key, why, print, settings)
++    elif command == "relay":
++        print(hosted.use_relay(hosted.relay_settings(config), switch=True))
++    elif command == "credentials":
++        sys.stdout.write(hosted.credentials(url))
+     elif command == "status":
+         found = hosted.account(url)
+         if arguments.json_output:
+@@ -1537,7 +1550,7 @@ def run_hosted(arguments: argparse.Namespace) -> int:
+     elif command == "claim":
+         print(hosted.claim(url, arguments.owner))
+     else:
+-        print(hosted.logout(url))
++        print(hosted.logout(url, hosted.relay_settings(config)))
+     return 0
+ 
+ 
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 2125ab3e..2455c9d6 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -129,6 +129,7 @@
+     "ios.project": str,
+     "ios.output": str,
+     "hosted.url": str,
++    "hosted.relay": str,
+ }
+ 
+ # The least value `project config set` accepts for each whole-number key. The
+@@ -158,7 +159,8 @@
+ # The settings that say where your data goes. The owner of a repository's
+ # default branch may not be you, so a value read from it applies only once you
+ # allow it with `project config allow`.
+-DESTINATIONS: frozenset[str] = frozenset({"agent.relay", "agent.s3_endpoint", "agent.s3_profile", "hosted.url"})
++DESTINATIONS: frozenset[str] = frozenset({"agent.relay", "agent.s3_endpoint", "agent.s3_profile", "hosted.url",
++                                          "hosted.relay"})
+ 
+ # The forms `agent.relay` takes: `origin`, the checkout's own repository, a
+ # GitHub repository the relay carries records through, or an S3 bucket and
+@@ -230,9 +232,10 @@ def relay_location(value: str) -> Optional[str | S3Relay]:
+                       "github:acme/agents, or s3://<bucket>/<prefix>, such as s3://acme-agents/relay")
+ 
+ 
+-def s3_endpoint(value: str) -> str:
+-    """An `agent.s3_endpoint` value as a location's identity writes it: `https://`, the host in lowercase, and its
+-    port unless it is 443. A value with a path, query, fragment, or user info is refused."""
++def s3_endpoint(value: str, key: str = "agent.s3_endpoint") -> str:
++    """An `agent.s3_endpoint` value, or that of the setting `key` names, as a location's identity writes it:
++    `https://`, the host in lowercase, and its port unless it is 443. A value with a path, query, fragment, or user
++    info is refused."""
+ 
+     try:
+         parts: Optional[urllib.parse.SplitResult] = urllib.parse.urlsplit(value)
+@@ -241,15 +244,17 @@ def s3_endpoint(value: str) -> str:
+         parts, port = None, None
+     if (parts is None or parts.scheme.lower() != "https" or not parts.hostname or parts.path not in ("", "/")
+             or parts.query or parts.fragment or "@" in parts.netloc or value.endswith(("?", "#"))):
+-        raise ConfigError(f"agent.s3_endpoint is {value!r}, and it takes an https:// URL with no path, query, or "
++        raise ConfigError(f"{key} is {value!r}, and it takes an https:// URL with no path, query, or "
+                           "user info, such as https://s3.example.com")
+     host = parts.hostname.lower()
+     host = f"[{host}]" if ":" in host else host
+     return f"https://{host}" + (f":{port}" if port not in (None, 443) else "")
+ 
+ 
+-# The hosted Projector service `hosted.url` names when no file sets it.
++# The hosted Projector service `hosted.url` names when no file sets it, and the store of its relay, which
++# `hosted.relay` names.
+ HOSTED_URL = "https://api.projector.bot"
++HOSTED_RELAY = "https://relay.projector.bot"
+ LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+ 
+ 
+@@ -489,6 +494,8 @@ def parse_value(key: str, text: str) -> Any:
+             s3_endpoint(text)
+         elif key == "hosted.url":
+             hosted_url(text)
++        elif key == "hosted.relay":
++            s3_endpoint(text, key)
+     except ConfigError as error:
+         raise UsageError(str(error)) from None
+     return text
+diff --git a/src/projector/hosted.py b/src/projector/hosted.py
+index 9add544a..82f28542 100644
+--- a/src/projector/hosted.py
++++ b/src/projector/hosted.py
+@@ -7,6 +7,11 @@
+ proves it holds the private key without sending it. `status`, `subscribe`, `claim`, and `logout` call the service
+ with that token.
+ 
++Login then points the relay at the hosted relay: `agent.relay`, `agent.s3_endpoint`, and `agent.s3_profile` in
++`~/.projector.toml`, and an AWS profile whose `credential_process` runs `project hosted credentials`, which trades
++the token and this machine's ID for short-lived keys. It leaves a relay that file already names elsewhere alone,
++and logout removes only the values that are still the hosted relay's.
++
+ `review_token_step` is the review action's step for its `app: projector` input. It requests the job's GitHub
+ Actions OIDC token for the service's address as the audience, and trades it for an installation token that posts
+ the review as the service's app, so the workflow holds no private key.
+@@ -18,9 +23,14 @@
+ from __future__ import annotations
+ 
+ import base64
++import configparser
+ import json
+ import os
+ import re
++import secrets
++import shlex
++import subprocess
++import sys
+ import time
+ import urllib.error
+ import urllib.parse
+@@ -29,9 +39,10 @@
+ from pathlib import Path
+ from typing import Any, Callable, Optional
+ 
+-from . import crypto, keychain
+-from .config import HOSTED_URL, Config, ConfigError, hosted_url, load as load_config
+-from .core import ProjectorError
++from . import crypto, keychain, relay, s3
++from .config import (HOSTED_RELAY, HOSTED_URL, Config, ConfigError, hosted_url, load as load_config, s3_endpoint,
++                     user_config_path, user_value, write_value)
++from .core import ProjectorError, state_home, write_through
+ from .keychain import KeychainError
+ 
+ SERVICE = "projector-hosted"
+@@ -47,6 +58,18 @@
+ ACCOUNT_TOKEN = re.compile(r"pjh_[A-Za-z0-9_-]{43}")
+ # The step's input that has the review post as the hosted service's app.
+ APP = "projector"
++# The hosted relay: the bucket `agent.relay` names on the store `hosted.relay` names, signed with the keys the AWS
++# profile's `credential_process` asks the service for.
++RELAY = "s3://projector"
++PROFILE = "projector-hosted"
++CREDENTIALS = ["hosted", "credentials"]
++# What names this machine to the service. Paired machines share `agent.key`, so the key cannot.
++MACHINE_HEADER = "projector-machine"
++MACHINE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
++MACHINE_BYTES = 16
++# A section header and an option's name in the AWS config file, as `configparser` reads them.
++SECTION = re.compile(r"\[(?P<name>.+)\]")
++OPTION = re.compile(r"(?P<name>[^=:]+?)\s*[=:]")
+ 
+ 
+ class HostedError(ProjectorError):
+@@ -69,32 +92,43 @@ def refusal(status: int, answer: dict) -> str:
+     return text
+ 
+ 
+-def call(url: str, method: str, path: str, body: Optional[dict] = None, token: Optional[str] = None,
+-         ok: tuple[int, ...] = (200,)) -> tuple[int, dict]:
+-    """`method` on the service's `path`, with `body` as JSON and `token` as the bearer, answering the status and
+-    the JSON object of the reply. A status outside `ok` raises the refusal."""
+-    headers = {"accept": "application/json", "user-agent": "projector"}
++def send(url: str, method: str, path: str, body: Optional[dict] = None, token: Optional[str] = None,
++         headers: Optional[dict[str, str]] = None) -> tuple[int, bytes]:
++    """`method` on the service's `path`, with `body` as JSON, `token` as the bearer, and `headers` besides,
++    answering the status and the bytes of the reply."""
++    sent = {"accept": "application/json", "user-agent": "projector", **(headers or {})}
+     data = None
+     if body is not None:
+         data = json.dumps(body).encode()
+-        headers["content-type"] = "application/json"
++        sent["content-type"] = "application/json"
+     if token:
+-        headers["authorization"] = f"Bearer {token}"
+-    request = urllib.request.Request(url + path, data=data, headers=headers, method=method)
++        sent["authorization"] = f"Bearer {token}"
++    request = urllib.request.Request(url + path, data=data, headers=sent, method=method)
+     try:
+         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+-            status, raw = response.status, response.read()
++            return response.status, response.read()
+     except urllib.error.HTTPError as error:
+-        status, raw = error.code, error.read()
++        return error.code, error.read()
+     except (urllib.error.URLError, OSError) as error:
+         reason = getattr(error, "reason", error)
+         raise HostedError(f"could not reach {url}: {reason}") from None
++
++
++def parsed(raw: bytes) -> dict:
++    """The JSON object a reply holds, or an empty one."""
+     try:
+         answer = json.loads(raw) if raw else {}
+     except ValueError:
+         answer = {}
+-    if not isinstance(answer, dict):
+-        answer = {}
++    return answer if isinstance(answer, dict) else {}
++
++
++def call(url: str, method: str, path: str, body: Optional[dict] = None, token: Optional[str] = None,
++         ok: tuple[int, ...] = (200,)) -> tuple[int, dict]:
++    """`method` on the service's `path`, with `body` as JSON and `token` as the bearer, answering the status and
++    the JSON object of the reply. A status outside `ok` raises the refusal."""
++    status, raw = send(url, method, path, body, token)
++    answer = parsed(raw)
+     if status not in ok:
+         raise HostedError(refusal(status, answer))
+     return status, answer
+@@ -166,9 +200,10 @@ def register_key(url: str, token: str, key: Any) -> str:
+     return str(answer.get("key_id") or key.id)
+ 
+ 
+-def login(url: str, key: Any, no_key: str, say: Callable[[str], None]) -> dict:
++def login(url: str, key: Any, no_key: str, say: Callable[[str], None], settings: dict[str, str]) -> dict:
+     """Sign in, keep the account token in the keychain, and register `key`, or say `no_key` when there is none.
+-    Answers what was done."""
++    Once the key is registered, point the relay at the hosted relay's `settings`, unless `~/.projector.toml`
++    already names another relay. Answers what was done."""
+     missing = keychain.usable()
+     if missing:
+         raise HostedError(f"the account token goes in the OS keychain, which cannot be used here: {missing}")
+@@ -190,19 +225,249 @@ def login(url: str, key: Any, no_key: str, say: Callable[[str], None]) -> dict:
+             from None
+     say(f"signed in to {url} as {signed.get('login')}, the {store} holds the account token, and key "
+         f"{done['key_id']} is registered to the account")
++    try:
++        say(use_relay(settings, switch=False))
++    except (ProjectorError, OSError) as error:
++        raise HostedError(f"signed in and registered key {done['key_id']}, but could not point the relay at the "
++                          f"hosted relay: {error}") from None
+     return done
+ 
+ 
+-def logout(url: str) -> str:
+-    """Revoke the stored token and remove it from the keychain. A token the service no longer knows is removed
+-    too; one that could not be revoked for another reason is kept, so the command can run again."""
+-    status, _ = call(url, "POST", "/v1/logout", token=stored_token(url), ok=(200, 204, 401))
++def logout(url: str, settings: dict[str, str]) -> str:
++    """Remove the hosted relay's `settings` and profile where they still hold what login wrote, then revoke the
++    stored token and remove it from the keychain. A token the service no longer knows is removed too; one that
++    could not be revoked for another reason is kept, so the command can run again."""
++    removed = drop_relay(settings)
++    dropped = f"; removed {', '.join(removed)}, which pointed the relay at the hosted relay" if removed else ""
++    try:
++        status, _ = call(url, "POST", "/v1/logout", token=stored_token(url), ok=(200, 204, 401))
++    except HostedError as error:
++        raise HostedError(f"{error}{dropped}") from None
+     revoked = "the service no longer knew the account token" if status == 401 else "revoked the account token"
+     try:
+         keychain.delete(url, service=SERVICE)
+     except KeychainError as error:
+-        raise HostedError(f"{revoked}, but could not remove it from the keychain: {error}") from None
+-    return f"signed out of {url}: {revoked}, and removed it from the keychain"
++        raise HostedError(f"{revoked}, but could not remove it from the keychain: {error}{dropped}") from None
++    return f"signed out of {url}: {revoked}, and removed it from the keychain{dropped}"
++
++
++# The hosted relay
++
++def relay_settings(config: Config) -> dict[str, str]:
++    """The settings that point the relay at the hosted relay, on the store `hosted.relay` names."""
++    value = config.setting("hosted.relay")
++    return {"agent.relay": RELAY, "agent.s3_endpoint": s3_endpoint(value, "hosted.relay") if value else HOSTED_RELAY,
++            "agent.s3_profile": PROFILE}
++
++
++def holds(key: str, value: Any, wanted: str) -> bool:
++    """Whether a setting's `value` is the hosted relay's, reading an endpoint as a location's identity does."""
++    if key == "agent.s3_endpoint" and isinstance(value, str):
++        try:
++            return s3_endpoint(value) == wanted
++        except ConfigError:
++            return False
++    return value == wanted
++
++
++def use_relay(settings: dict[str, str], *, switch: bool) -> str:
++    """Write the hosted relay's AWS profile, then its `settings` to `~/.projector.toml`. Without `switch`, a file
++    that already sets any of them to another value is left alone, so a relay never moves unless you ask, and the
++    answer names the command that switches."""
++    path = user_config_path()
++    with relay.config_lock():
++        taken = {key: value for key in settings
++                 if (value := user_value(key)) is not None and not holds(key, value, settings[key])}
++        if taken and not switch:
++            named = ", ".join(f"{key} = {value!r}" for key, value in taken.items())
++            return (f"left the relay as {path} sets it, {named}; run `project hosted relay` to switch to the hosted "
++                    "relay")
++        write_profile(s3.aws_files(dict(os.environ))[1], credentials_command())
++        for key, value in settings.items():
++            write_value(path, key, value)
++    return (f"the relay now goes through the hosted relay, {RELAY} on {settings['agent.s3_endpoint']}, with keys "
++            f"from AWS profile {PROFILE}, whose credential_process runs `project hosted credentials`")
++
++
++def drop_relay(settings: dict[str, str]) -> list[str]:
++    """Remove each of `settings` that `~/.projector.toml` still sets to the hosted relay's value, and the AWS
++    profile's `credential_process` while it still runs `project hosted credentials`. Answers what was removed."""
++    path = user_config_path()
++    removed = []
++    with relay.config_lock():
++        for key, wanted in settings.items():
++            if holds(key, user_value(key), wanted):
++                write_value(path, key, None)
++                removed.append(key)
++        if remove_profile(s3.aws_files(dict(os.environ))[1]):
++            removed.append(f"AWS profile {PROFILE}")
++    return removed
++
++
++def credentials_command() -> str:
++    """The command the hosted profile's `credential_process` runs: the `project` running now, by its absolute
++    path, so a daemon without your PATH finds it, or else this Python running the package, quoted as the S3 client
++    splits it."""
++    running = Path(sys.argv[0])
++    words = ([os.path.abspath(running), *CREDENTIALS] if running.stem == "project" and running.is_file()
++             else [sys.executable, "-m", "projector", *CREDENTIALS])
++    return subprocess.list2cmdline(words) if os.name == "nt" else shlex.join(words)
++
++
++def runs_credentials(command: Any) -> bool:
++    """Whether a `credential_process` runs `project hosted credentials`."""
++    try:
++        return isinstance(command, str) and shlex.split(command, posix=os.name != "nt")[-2:] == CREDENTIALS
++    except ValueError:
++        return False
++
++
++def machine_id() -> str:
++    """This machine's ID for the service, made once from random bytes and kept in Projector's state directory
++    with mode 0600. When two runs make one at once, both keep the first, because a link never replaces a file."""
++    path = state_home() / "hosted" / "machine"
++    for _ in range(2):
++        try:
++            found = path.read_text(encoding="ascii").strip()
++        except FileNotFoundError:
++            found = ""
++        except (OSError, UnicodeError) as error:
++            raise HostedError(f"{path} could not be read: {type(error).__name__}") from None
++        if MACHINE_ID.fullmatch(found):
++            return found
++        path.parent.mkdir(parents=True, exist_ok=True)
++        made = path.with_name(f".machine.{secrets.token_hex(8)}")
++        descriptor = os.open(made, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
++        with os.fdopen(descriptor, "w", encoding="ascii") as stream:
++            stream.write(base64.urlsafe_b64encode(secrets.token_bytes(MACHINE_BYTES)).rstrip(b"=").decode() + "\n")
++        try:
++            if path.exists():
++                # A file that holds no ID, such as one cut short, is replaced.
++                os.replace(made, path)
++            else:
++                os.link(made, path)
++        except FileExistsError:
++            pass
++        except OSError:
++            # A file system without hard links, where a replace is the closest step.
++            os.replace(made, path)
++        finally:
++            made.unlink(missing_ok=True)
++    raise HostedError(f"{path} holds no machine ID after one was written")
++
++
++def credentials(url: str) -> str:
++    """The keys the hosted relay signs with, exactly as the service answers them: the JSON a
++    `credential_process` prints. A refusal says what fixes it and holds no secret."""
++    status, raw = send(url, "POST", "/v1/credentials", token=stored_token(url),
++                       headers={MACHINE_HEADER: machine_id()})
++    if status == 402:
++        # The S3 client reads a last line that says "expired" as an AWS sign-in to renew, so the service's own
++        # words, which could say it, stay out of this one.
++        page = parsed(raw).get("subscribe")
++        raise HostedError("the subscription lapsed, so the hosted relay gives no keys; run `project hosted "
++                          "subscribe`" + (f", or subscribe at {page}" if page else ""))
++    if status != 200:
++        raise HostedError(refusal(status, parsed(raw)))
++    try:
++        return raw.decode("utf-8")
++    except UnicodeDecodeError:
++        raise HostedError(f"{url} answered credentials that are not UTF-8") from None
++
++
++# The AWS config file
++
++def read_profiles(path: Path) -> tuple[list[str], dict[str, dict[str, str]]]:
++    """The AWS config file's lines and each section's options."""
++    try:
++        text = path.read_text(encoding="utf-8")
++    except FileNotFoundError:
++        text = ""
++    except (OSError, UnicodeError) as error:
++        raise HostedError(f"{path} could not be read: {type(error).__name__}") from None
++    return text.splitlines(keepends=True), sections(text, path)
++
++
++def sections(text: str, path: Path) -> dict[str, dict[str, str]]:
++    """Each section's options as `configparser` reads them, refusing a file it cannot read, because the S3
++    client could not read it either."""
++    parser = configparser.ConfigParser(interpolation=None)
++    try:
++        parser.read_string(text, source=str(path))
++    except configparser.Error as error:
++        raise HostedError(f"{path} does not read as an AWS config file ({type(error).__name__}), so it is "
++                          "unchanged") from None
++    return {name: dict(parser[name]) for name in parser.sections()}
++
++
++def find_profile(lines: list[str]) -> tuple[Optional[int], int, Optional[tuple[int, int]]]:
++    """The line of the hosted profile's header, the line its section ends before, and the span of its
++    `credential_process` with the indented lines that continue it."""
++    header: Optional[int] = None
++    option: Optional[tuple[int, int]] = None
++    for index, line in enumerate(lines):
++        indented = line[:1].isspace()
++        named = None if indented else SECTION.fullmatch(line.strip())
++        if named and header is not None:
++            return header, index, option
++        if named:
++            header = index if named["name"] == f"profile {PROFILE}" else None
++        elif header is not None and option is not None and option[1] == index and indented and line.strip():
++            option = (option[0], index + 1)
++        elif header is not None and option is None and not indented:
++            found = OPTION.match(line)
++            if found and found["name"].strip().lower() == "credential_process":
++                option = (index, index + 1)
++    return header, len(lines), option
++
++
++def write_profiles(path: Path, lines: list[str], expected: dict[str, dict[str, str]]) -> None:
++    """Write `lines` once they read back as `expected`, so no other profile or option changes."""
++    text = "".join(lines)
++    if sections(text, path) != expected:
++        raise HostedError(f"{path} would not read back with only profile {PROFILE} changed, so it is unchanged")
++    path.parent.mkdir(parents=True, exist_ok=True)
++    write_through(path, text)
++
++
++def write_profile(path: Path, command: str) -> None:
++    """Set the hosted profile's `credential_process` to `command`, adding the profile when the file has none."""
++    lines, before = read_profiles(path)
++    section = f"profile {PROFILE}"
++    if before.get(section, {}).get("credential_process") == command:
++        return
++    header, _, option = find_profile(lines)
++    line = f"credential_process = {command}\n"
++    if option is not None:
++        lines[option[0]:option[1]] = [line]
++    elif header is not None:
++        lines.insert(header + 1, line)
++    else:
++        if lines and not lines[-1].endswith("\n"):
++            lines[-1] += "\n"
++        lines += [*(["\n"] if lines else []), f"[{section}]\n", line]
++    write_profiles(path, lines, {**before, section: {**before.get(section, {}), "credential_process": command}})
++
++
++def remove_profile(path: Path) -> bool:
++    """Remove the hosted profile's `credential_process` while it runs `project hosted credentials`, and the
++    profile with it when nothing else is left in it. Answers whether anything was removed."""
++    lines, before = read_profiles(path)
++    section = f"profile {PROFILE}"
++    header, end, option = find_profile(lines)
++    if header is None or option is None or not runs_credentials(before[section].get("credential_process")):
++        return False
++    del lines[option[0]:option[1]]
++    end -= option[1] - option[0]
++    expected = {**before, section: {name: value for name, value in before[section].items()
++                                    if name != "credential_process"}}
++    if not expected[section] and not any(line.strip() for line in lines[header + 1:end]):
++        # The blank line login wrote before the profile goes with it when the profile ends the file.
++        start = header - 1 if header and end == len(lines) and not lines[header - 1].strip() else header
++        del lines[start:end]
++        del expected[section]
++    write_profiles(path, lines, expected)
++    return True
+ 
+ 
+ # Installations
+diff --git a/src/projector/relay.py b/src/projector/relay.py
+index e79acaa8..07cfcaf2 100644
+--- a/src/projector/relay.py
++++ b/src/projector/relay.py
+@@ -1014,12 +1014,15 @@ class S3Store:
+ 
+ 
+ def store_error(error: s3.S3Error, source: str) -> RelayError:
+-    """An S3 error as the relay reports it: a lapse when credentials failed or S3 refused them with a `403`,
+-    otherwise an error for the job."""
++    """An S3 error as the relay reports it: a lapse when credentials failed, S3 refused them with a `403`, or the
++    hosted relay refused them with a `402` for a subscription that lapsed, otherwise an error for the job."""
+     if isinstance(error, s3.CredentialsError):
+         return Lapsed(str(error), error.cause, error.source, error.fix)
+     if error.status == 403:
+         return Lapsed(f"S3 refused the credentials from {source}: {error}", "forbidden", source)
++    if error.status == 402:
++        return Lapsed(f"the relay refused the credentials from {source} because the subscription lapsed: {error}",
++                      "unpaid", source, "project hosted subscribe")
+     return RelayError(str(error))
+ 
+ 
+diff --git a/src/projector/s3.py b/src/projector/s3.py
+index ce911534..0ae3b48c 100644
+--- a/src/projector/s3.py
++++ b/src/projector/s3.py
+@@ -6,7 +6,8 @@
+ 
+ Credentials come from the first of these that holds them:
+ 
+-1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` in the environment.
++1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` in the environment, unless
++   `agent.s3_profile` names a profile, which then passes over them, as AWS's SDKs do for a profile code names.
+ 2. The profile `agent.s3_profile` names, else `AWS_PROFILE`, else `default`, in `~/.aws/credentials` and
+    `~/.aws/config`, or the files `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE` name.
+ 3. That profile's `credential_process`, run with a 30-second timeout, whose JSON gives the keys and when they
+@@ -262,8 +263,11 @@ def get(self) -> Credentials:
+             return cached
+ 
+     def find(self) -> Credentials:
++        """Keys from the environment, unless `agent.s3_profile` named a profile, then from the profile's files,
++        then from its `credential_process`. A named profile passes over the environment, as AWS's SDKs do for a
++        profile the code names, so keys left in a shell cannot sign for the profile the relay chose."""
+         environ = self.environ
+-        if environ.get("AWS_ACCESS_KEY_ID") and environ.get("AWS_SECRET_ACCESS_KEY"):
++        if not self.explicit and environ.get("AWS_ACCESS_KEY_ID") and environ.get("AWS_SECRET_ACCESS_KEY"):
+             token = environ.get("AWS_SESSION_TOKEN") or ""
+             return Credentials(environ["AWS_ACCESS_KEY_ID"], environ["AWS_SECRET_ACCESS_KEY"], token,
+                                source="environment", refreshable=not token)
+@@ -276,12 +280,14 @@ def find(self) -> Credentials:
+         command = keys.get("credential_process") or configured.get("credential_process")
+         if command:
+             return self.run_process(command)
+-        raise CredentialsError(f"no AWS credentials: the environment has no AWS_ACCESS_KEY_ID, and profile "
+-                               f"{self.profile} has no keys and no credential_process", "missing", source)
++        said = "" if self.explicit else "the environment has no AWS_ACCESS_KEY_ID, and "
++        raise CredentialsError(f"no AWS credentials: {said}profile {self.profile} has no keys and no "
++                               "credential_process", "missing", source)
+ 
+     def sign_in_fix(self) -> str:
+-        """The command that signs in again for the profile's `credential_process`: `aws sso login` for the profile
+-        its command names, else for this profile."""
++        """The command that signs in again for the profile's `credential_process`: `project hosted login` for the
++        hosted relay's `project hosted credentials`, else `aws sso login` for the profile its command names, else
++        for this profile."""
+         try:
+             keys, configured = self.sections()
+         except CredentialsError:
+@@ -291,6 +297,8 @@ def sign_in_fix(self) -> str:
+             words = shlex.split(command, posix=os.name != "nt")
+         except ValueError:
+             words = []
++        if words[-2:] == ["hosted", "credentials"]:
++            return "project hosted login"
+         named = next((words[index + 1] for index, word in enumerate(words[:-1]) if word == "--profile"), None)
+         return f"aws sso login --profile {named or self.profile}" if command else ""
+ 
+diff --git a/tests/test_hosted.py b/tests/test_hosted.py
+index 1cb058ce..9dca6597 100644
+--- a/tests/test_hosted.py
++++ b/tests/test_hosted.py
+@@ -1,16 +1,22 @@
+-"""The hosted service's client: `project hosted login`, `status`, `subscribe`, and `logout` against a fake service on
+-a local port, the account token's keychain items, and the review action's step for `app: projector`."""
++"""The hosted service's client: `project hosted login`, `status`, `subscribe`, `credentials`, and `logout` against a
++fake service on a local port, the hosted relay's settings and AWS profile, the account token's keychain items, and
++the review action's step for `app: projector`."""
+ 
+ from __future__ import annotations
+ 
+ import base64
++import configparser
+ import json
+ import os
+ import secrets
++import shlex
+ import shutil
++import stat
+ import subprocess
++import sys
+ import tempfile
+ import threading
++import tomllib
+ import unittest
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+ from pathlib import Path
+@@ -18,7 +24,8 @@
+ from unittest import mock
+ from urllib.parse import parse_qs, urlsplit
+ 
+-from projector import crypto, hosted, keychain, relay
++from projector import config, crypto, hosted, keychain, relay, s3
++from tests.fake_s3 import FakeS3, plain
+ from tests.test_ci import step_script
+ from tests.test_projector import RepositoryTestCase
+ from tests.test_relay import FakeAdvapi32
+@@ -28,6 +35,19 @@
+ TOKEN = "pjh_" + base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode()
+ CHECKOUT = "https://billing.example/checkout/1"
+ SUBSCRIBE = "https://billing.example/subscribe"
++SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
++# The keys `/v1/credentials` answers, spaced as no JSON encoder here writes them, so a client that parsed and
++# printed them again would not print these bytes.
++KEYS = (b'{"Version":1,  "AccessKeyId":"ASIAHOSTED", "SecretAccessKey":"' + SECRET.encode()
++        + b'", "SessionToken":"hosted-session", "Expiration":"2099-01-01T00:00:00Z"}\n')
++# A `project` that prints `credentials.json` beside it, as `project hosted credentials` prints the service's keys,
++# and logs the arguments of each run.
++STUB = '''import json, pathlib, sys
++here = pathlib.Path(__file__).parent
++with (here / "runs.jsonl").open("a") as log:
++    log.write(json.dumps(sys.argv[1:]) + "\\n")
++sys.stdout.write((here / "credentials.json").read_text())
++'''
+ 
+ 
+ class FakeService:
+@@ -82,16 +102,17 @@ def answer(self, handler: BaseHTTPRequestHandler) -> None:
+         body = json.loads(raw) if raw else {}
+         bearer = (handler.headers.get("authorization") or "").removeprefix("Bearer ")
+         parts = urlsplit(handler.path)
+-        self.seen.append({"method": handler.command, "path": parts.path, "body": body, "bearer": bearer})
++        self.seen.append({"method": handler.command, "path": parts.path, "body": body, "bearer": bearer,
++                          "machine": handler.headers.get(hosted.MACHINE_HEADER)})
+         status, answer = self.route(handler.command, parts.path, parse_qs(parts.query), body, bearer)
+-        data = b"" if answer is None else json.dumps(answer).encode()
++        data = answer if isinstance(answer, bytes) else b"" if answer is None else json.dumps(answer).encode()
+         handler.send_response(status)
+         handler.send_header("content-type", "application/json")
+         handler.send_header("content-length", str(len(data)))
+         handler.end_headers()
+         handler.wfile.write(data)
+ 
+-    def route(self, method: str, path: str, query: dict, body: dict, bearer: str) -> tuple[int, Optional[dict]]:
++    def route(self, method: str, path: str, query: dict, body: dict, bearer: str) -> tuple[int, dict | bytes | None]:
+         if path == "/oidc":
+             if bearer != "request-token":
+                 return 401, {"message": "bad request token"}
+@@ -134,6 +155,10 @@ def route(self, method: str, path: str, query: dict, body: dict, bearer: str) ->
+             return 201, {"key_id": crypto.key_id(public)}
+         if path == "/v1/account":
+             return 200, self.account
++        if path == "/v1/credentials":
++            if not self.subscribed:
++                return 402, {"error": "the account has no active subscription", "subscribe": SUBSCRIBE}
++            return 200, KEYS
+         if path == "/v1/billing/checkout":
+             return 200, {"url": CHECKOUT}
+         if path == "/v1/logout":
+@@ -160,6 +185,18 @@ def setUp(self) -> None:
+         self.enterContext(mock.patch.object(keychain, "delete", side_effect=self.delete))
+         self.key = relay.Key(crypto.new_private_key(), "keychain")
+         self.enterContext(mock.patch.object(relay, "command_key", return_value=(self.key, "")))
++        for name in ("XDG_STATE_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE"):
++            os.environ.pop(name, None)
++        # The running `project`, in a folder whose name holds a space, which the profile's command must quote.
++        self.bin = self.home / "bin dir"
++        self.bin.mkdir()
++        self.project = self.bin / "project"
++        self.project.write_text(f"#!{sys.executable}\n{STUB}")
++        self.project.chmod(0o755)
++        (self.bin / "credentials.json").write_bytes(KEYS)
++        self.enterContext(mock.patch.object(sys, "argv", [str(self.project), "hosted", "login"]))
++        self.toml = self.home / ".projector.toml"
++        self.aws = self.home / ".aws" / "config"
+ 
+     def store(self, account: str, secret: str, timeout: Optional[float] = None, *,
+               service: str = keychain.SERVICE) -> str:
+@@ -335,6 +372,179 @@ def test_logout_revokes_the_token_and_removes_it_from_the_keychain(self) -> None
+         self.assertNotIn(TOKEN, self.service.tokens, "the service no longer honors the token")
+         self.assertEqual({}, self.items)
+ 
++    # The hosted relay
++
++    def user_layer(self) -> dict:
++        return tomllib.loads(self.toml.read_text())
++
++    def profiles(self) -> dict[str, dict[str, str]]:
++        parser = configparser.ConfigParser(interpolation=None)
++        parser.read_string(self.aws.read_text())
++        return {name: dict(parser[name]) for name in parser.sections()}
++
++    def command(self) -> str:
++        return shlex.join([str(self.project), "hosted", "credentials"])
++
++    def test_login_points_the_relay_at_the_hosted_relay_and_keeps_every_other_line(self) -> None:
++        # A login that rewrote either file would drop the comments and profiles you keep there.
++        toml = (f'# my settings\n[hosted]\nurl = "{self.service.url}"\n\n[review]\nusername = "octocat"  # me\n')
++        aws = "# my profiles\n[default]\nregion = us-west-2\n\n[profile work]\nsso_session = acme\n"
++        self.toml.write_text(toml)
++        self.aws.parent.mkdir()
++        self.aws.write_text(aws)
++
++        code, out, err = self.invoke("hosted", "login")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({"relay": hosted.RELAY, "s3_endpoint": config.HOSTED_RELAY, "s3_profile": hosted.PROFILE},
++                         self.user_layer()["agent"])
++        self.assertTrue(self.toml.read_text().startswith(toml), "every line before the new settings stays as it was")
++        self.assertTrue(self.aws.read_text().startswith(aws))
++        self.assertEqual({"credential_process": self.command()}, self.profiles()[f"profile {hosted.PROFILE}"],
++                         "the command names the running project by its absolute path, quoted for its space")
++        self.assertEqual({"region": "us-west-2"}, self.profiles()["default"])
++        self.assertIn("the relay now goes through the hosted relay", out)
++
++        code, out, err = self.invoke("hosted", "logout")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({}, self.user_layer()["agent"], "the settings go, as `project config unset` removes them")
++        self.assertTrue(self.toml.read_text().startswith(toml))
++        self.assertEqual(aws, self.aws.read_text(), "logout removes the profile and the blank line before it")
++        self.assertIn("removed agent.relay, agent.s3_endpoint, agent.s3_profile, AWS profile projector-hosted", out)
++
++    def test_login_leaves_another_relay_alone_and_names_the_command_that_switches(self) -> None:
++        # Login moving a relay you chose would send your records somewhere you never asked for.
++        self.toml.write_text(f'[hosted]\nurl = "{self.service.url}"\n\n[agent]\nrelay = "github:acme/agents"\n')
++        before = self.toml.read_text()
++
++        code, out, err = self.invoke("hosted", "login")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(before, self.toml.read_text())
++        self.assertFalse(self.aws.exists(), "no profile is written for a relay that is not used")
++        self.assertIn("agent.relay = 'github:acme/agents'; run `project hosted relay` to switch", out)
++
++        code, out, err = self.invoke("hosted", "relay")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(hosted.RELAY, self.user_layer()["agent"]["relay"])
++        self.assertEqual(self.command(), self.profiles()[f"profile {hosted.PROFILE}"]["credential_process"])
++
++    def test_login_without_agent_key_leaves_the_relay_alone(self) -> None:
++        with mock.patch.object(relay, "command_key", return_value=(None, relay.NO_KEY)):
++            code, _, err = self.invoke("hosted", "login")
++
++        self.assertEqual(0, code, err)
++        self.assertNotIn("agent", self.user_layer())
++        self.assertFalse(self.aws.exists())
++
++    def test_logout_removes_only_the_values_that_are_still_the_hosted_relays(self) -> None:
++        self.invoke("hosted", "login")
++        config.write_value(self.toml, "agent.relay", "github:acme/agents")
++        self.aws.write_text(self.aws.read_text().replace("credential_process", "region = us-east-1\ncredential_process"))
++        work = "\n[profile work]\ncredential_process = aws configure export-credentials --profile work\n"
++        self.aws.write_text(self.aws.read_text() + work)
++
++        code, out, err = self.invoke("hosted", "logout")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({"relay": "github:acme/agents"}, self.user_layer()["agent"])
++        self.assertEqual({"region": "us-east-1"}, self.profiles()[f"profile {hosted.PROFILE}"],
++                         "a profile holding a line of yours keeps it")
++        self.assertTrue(self.aws.read_text().endswith(work))
++
++        self.aws.write_text(f"[profile {hosted.PROFILE}]\ncredential_process = my-own-command\n")
++        self.signed_in()
++        self.service.tokens.add(TOKEN)
++        code, _, err = self.invoke("hosted", "logout")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(f"[profile {hosted.PROFILE}]\ncredential_process = my-own-command\n", self.aws.read_text(),
++                         "a credential_process that no longer runs project hosted credentials is yours")
++
++    def test_credentials_prints_the_services_keys_unchanged_for_a_machine_id_kept_private(self) -> None:
++        self.signed_in()
++
++        first = self.invoke("hosted", "credentials")
++        second = self.invoke("hosted", "credentials")
++
++        self.assertEqual((0, KEYS.decode(), ""), first, "the body is printed byte for byte, and nothing on stderr")
++        self.assertEqual(first, second)
++        calls = [seen for seen in self.service.seen if seen["path"] == "/v1/credentials"]
++        self.assertEqual([("POST", TOKEN)] * 2, [(seen["method"], seen["bearer"]) for seen in calls])
++        machine = calls[0]["machine"]
++        self.assertRegex(machine, r"\A[A-Za-z0-9_-]{1,64}\Z")
++        self.assertEqual(machine, calls[1]["machine"], "a machine keeps its ID")
++        kept = self.home / ".local" / "state" / "projector" / "hosted" / "machine"
++        self.assertEqual(machine, kept.read_text().strip())
++        if os.name == "posix":
++            self.assertEqual(0o600, stat.S_IMODE(kept.stat().st_mode))
++
++    def test_credentials_refused_say_what_fixes_them_and_fail(self) -> None:
++        # The S3 client turns the failure into the relay's notice, so its last line must name the fix.
++        self.items[(hosted.SERVICE, self.service.url)] = "pjh_revoked"
++        code, out, err = self.invoke("hosted", "credentials")
++
++        self.assertNotEqual(0, code)
++        self.assertEqual("", out)
++        self.assertIn("run `project hosted login`", err)
++
++        self.signed_in()
++        self.service.subscribed = False
++        code, out, err = self.invoke("hosted", "credentials")
++
++        self.assertNotEqual(0, code)
++        self.assertEqual("", out)
++        self.assertIn("the subscription lapsed", err)
++        self.assertIn("run `project hosted subscribe`", err)
++        self.assertIn(SUBSCRIBE, err)
++        self.assertNotIn(TOKEN, err)
++
++    def test_the_s3_client_signs_with_the_keys_the_written_profile_gets_from_project_hosted_credentials(self) -> None:
++        server = FakeS3()
++        self.addCleanup(server.close)
++        server.grant("ASIAHOSTED", SECRET, "hosted-session")
++        self.enterContext(mock.patch.object(s3, "connect", plain))
++        self.toml.write_text(f'[hosted]\nurl = "{self.service.url}"\nrelay = "{server.endpoint}"\n')
++        self.invoke("hosted", "login")
++        agent = self.user_layer()["agent"]
++        found = config.relay_location(agent["relay"])
++        assert isinstance(found, config.S3Relay)
++        # The daemon's environment, which need not have the PATH that finds project, and can hold AWS keys of
++        # yours that the hosted relay would refuse.
++        client = s3.Client(found.bucket, endpoint=agent["s3_endpoint"], profile=agent["s3_profile"],
++                           environ={"HOME": str(self.home), "AWS_ACCESS_KEY_ID": "AKIAYOURS",
++                                    "AWS_SECRET_ACCESS_KEY": "yours"})
++
++        client.put_object("k/agents/a", b"{}", if_none_match=True)
++
++        self.assertEqual(["ASIAHOSTED"], [seen.signed_by for seen in server.seen("PUT", "projector")])
++        self.assertEqual("hosted-session", server.seen("PUT")[0].headers["x-amz-security-token"])
++        runs = (self.bin / "runs.jsonl").read_text().splitlines()
++        self.assertEqual([["hosted", "credentials"]], [json.loads(line) for line in runs])
++        self.assertEqual("project hosted login", client.credentials.sign_in_fix(),
++                         "a lapsed sign-in is fixed by logging in to the service, not by aws sso login")
++
++    def test_hosted_relay_takes_an_https_url_and_login_writes_it_as_an_endpoint(self) -> None:
++        code, _, err = self.invoke("config", "set", "hosted.relay", "http://relay.example/path")
++        self.assertNotEqual(0, code)
++        self.assertIn("hosted.relay is 'http://relay.example/path'", err)
++
++        self.toml.write_text(f'[hosted]\nurl = "{self.service.url}"\nrelay = "https://Relay.Example:443/"\n')
++        self.invoke("hosted", "login")
++
++        self.assertEqual("https://relay.example", self.user_layer()["agent"]["s3_endpoint"])
++
++    def test_a_402_from_the_relay_turns_it_off_with_the_subscribe_fix(self) -> None:
++        lapsed = relay.store_error(s3.S3Error("PUT relay.example/projector/k answered 402", 402),
++                                   f"profile {hosted.PROFILE}")
++
++        self.assertIsInstance(lapsed, relay.Lapsed)
++        assert isinstance(lapsed, relay.Lapsed)
++        self.assertEqual("project hosted subscribe", lapsed.fix)
++        self.assertIn("subscription lapsed", str(lapsed))
++
+ 
+ class KeychainServiceTests(unittest.TestCase):
+     def test_the_macos_script_refuses_a_secret_that_could_run_a_command_and_still_stores_the_relay_key(self) -> None:
+diff --git a/tests/test_s3.py b/tests/test_s3.py
+index 91c9c8f2..4d16f748 100644
+--- a/tests/test_s3.py
++++ b/tests/test_s3.py
+@@ -302,20 +302,22 @@ def test_requests_sign_for_the_region_the_setting_the_environment_or_the_profile
+ 
+ class CredentialTests(ServerCase):
+     def test_keys_come_from_the_environment_then_the_profile_then_its_credential_process(self) -> None:
++        # No agent.s3_profile names the profile here, only AWS_PROFILE, so the environment's keys come first.
+         self.server.grant("AKIAFILE", SECRET)
+         self.server.grant("AKIAPROCESS", SECRET, TOKEN, self.now + 3600)
+         folder = self.process({"Version": 1, "AccessKeyId": "AKIAPROCESS", "SecretAccessKey": SECRET,
+                                "SessionToken": TOKEN, "Expiration": s3.stamp_of(self.now + 3600)})
++        self.environ["AWS_PROFILE"] = "acme-relay"
+ 
+         self.env_keys("AKIAENV", TOKEN)
+-        self.client(profile="acme-relay").list_objects("relay/")
++        self.client().list_objects("relay/")
+         for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+             del self.environ[name]
+         self.aws_file("credentials", f"[acme-relay]\naws_access_key_id = AKIAFILE\naws_secret_access_key = {SECRET}\n")
+-        files = self.client(profile="acme-relay")
++        files = self.client()
+         files.list_objects("relay/")
+         (self.home / ".aws" / "credentials").write_text("")
+-        process = self.client(profile="acme-relay")
++        process = self.client()
+         process.list_objects("relay/")
+ 
+         self.assertEqual(["AKIAENV", "AKIAFILE", "AKIAPROCESS"], [found.signed_by for found in self.server.requests])
+@@ -323,6 +325,21 @@ def test_keys_come_from_the_environment_then_the_profile_then_its_credential_pro
+                          (files.source(), process.source()))
+         self.assertEqual(1, len(self.runs(folder)))
+ 
++    def test_a_profile_agent_s3_profile_names_signs_ahead_of_keys_in_the_environment(self) -> None:
++        # Keys a developer keeps in their shell would otherwise sign for a relay that refuses them.
++        self.server.grant("AKIAENV", SECRET)
++        self.server.grant("AKIAPROCESS", SECRET, TOKEN, self.now + 3600)
++        folder = self.process({"Version": 1, "AccessKeyId": "AKIAPROCESS", "SecretAccessKey": SECRET,
++                               "SessionToken": TOKEN, "Expiration": s3.stamp_of(self.now + 3600)})
++        self.env_keys("AKIAENV")
++
++        client = self.client(profile="acme-relay")
++        client.list_objects("relay/")
++
++        self.assertEqual(["AKIAPROCESS"], [found.signed_by for found in self.server.requests])
++        self.assertEqual("profile acme-relay (credential_process)", client.source())
++        self.assertEqual(1, len(self.runs(folder)))
++
+     def test_a_credential_process_runs_again_five_minutes_before_its_keys_expire_and_none_sign_after(self) -> None:
+         expires = self.now + 600
+         self.server.grant("AKIAONE", SECRET, TOKEN, expires)
+@@ -408,6 +425,8 @@ def test_no_error_repr_or_process_argument_holds_the_secret_key_or_the_token(sel
+         self.server.keys.clear()
+         self.environ.update({"AWS_ACCESS_KEY_ID": "AKIAONE", "AWS_SECRET_ACCESS_KEY": SECRET,
+                              "AWS_SESSION_TOKEN": TOKEN})
++        # A client that names no profile, so the environment's keys sign.
++        client = self.client()
+         try:
+             client.list_objects("relay/")
+         except s3.S3Error as error:
