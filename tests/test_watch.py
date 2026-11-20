@@ -671,6 +671,24 @@ class FixRoleTests(WatchCase):
         self.assertEqual([unreviewed(1, repo="acme/other")], events["fixer"],
                          "acme/app's review.automatic = false holds back its UNREVIEWED, and acme/other commits none")
 
+    def test_a_head_announced_unreviewed_is_not_announced_again_after_review_automatic_turns_off_and_on(self) -> None:
+        # Catches review.automatic = false dropping the head's key, so turning the setting back on announces a head
+        # the fixer already heard about.
+        self.github.pull_request(1, draft=False)
+        self.fixer("acme/app#1 fix")
+
+        first = self.cycle()
+        self.github.committed("[review]\nautomatic = false\n")
+        self.advance(600)
+        off = self.cycle()
+        self.github.committed("[review]\nautomatic = true\n")
+        self.advance(600)
+        on = self.cycle()
+
+        self.assertEqual([unreviewed(1)], first["fixer"])
+        self.assertEqual([], off["fixer"], "review.automatic = false holds the head back")
+        self.assertEqual([], on["fixer"], "the head was announced once, before the setting turned off")
+
     def test_a_repository_that_commits_no_projector_toml_still_hears_unreviewed(self) -> None:
         self.github.pull_request(1, draft=False)
         self.fixer("acme/app#1 fix")
