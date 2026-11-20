@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -324,6 +325,33 @@ class CredentialTests(ServerCase):
         self.assertEqual(("profile acme-relay", "profile acme-relay (credential_process)"),
                          (files.source(), process.source()))
         self.assertEqual(1, len(self.runs(folder)))
+
+    def test_the_hosted_credential_process_starts_from_a_path_with_a_space_on_each_platform(self) -> None:
+        # On Windows, shlex keeps a quoted word's quotes, and a program name that holds them never starts.
+        from projector import hosted
+
+        keys = json.dumps({"Version": 1, "AccessKeyId": "AKIAHOSTED", "SecretAccessKey": SECRET}).encode()
+        for windows, python in ((False, "/opt/Python Tools/bin/python3"),
+                                (True, r"C:\Program Files\Python312\python.exe")):
+            with self.subTest(windows=windows):
+                started: list[list[str]] = []
+
+                def run(args: list[str], **_: object) -> subprocess.CompletedProcess:
+                    started.append(args)
+                    return subprocess.CompletedProcess(args, 0, keys, b"")
+
+                with mock.patch.object(sys, "executable", python), mock.patch.object(sys, "argv", ["-c"]), \
+                        mock.patch.object(s3, "run_bounded", run), \
+                        mock.patch.object(s3, "on_windows", return_value=windows):
+                    self.aws_file("config", f"[profile projector-hosted]\ncredential_process = "
+                                            f"{hosted.credentials_command()}\n")
+                    provider = s3.Provider("projector-hosted", self.environ)
+                    found = provider.get()
+                    fix = provider.sign_in_fix()
+
+                self.assertEqual([[python, "-m", "projector", "hosted", "credentials"]], started)
+                self.assertEqual("AKIAHOSTED", found.access_key)
+                self.assertEqual("project hosted login", fix)
 
     def test_a_profile_agent_s3_profile_names_signs_ahead_of_keys_in_the_environment(self) -> None:
         # Keys a developer keeps in their shell would otherwise sign for a relay that refuses them.

@@ -28,8 +28,6 @@ import json
 import os
 import re
 import secrets
-import shlex
-import subprocess
 import sys
 import time
 import urllib.error
@@ -337,13 +335,13 @@ def credentials_command() -> str:
     running = Path(sys.argv[0])
     words = ([os.path.abspath(running), *CREDENTIALS] if running.stem == "project" and running.is_file()
              else [sys.executable, "-m", "projector", *CREDENTIALS])
-    return subprocess.list2cmdline(words) if os.name == "nt" else shlex.join(words)
+    return s3.join_command(words)
 
 
 def runs_credentials(command: Any) -> bool:
     """Whether a `credential_process` runs `project hosted credentials`."""
     try:
-        return isinstance(command, str) and shlex.split(command, posix=os.name != "nt")[-2:] == CREDENTIALS
+        return isinstance(command, str) and s3.split_command(command)[-2:] == CREDENTIALS
     except ValueError:
         return False
 

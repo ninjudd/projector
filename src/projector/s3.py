@@ -183,6 +183,25 @@ def read_ini(path: Path) -> configparser.ConfigParser:
     return parser
 
 
+def on_windows() -> bool:
+    return os.name == "nt"
+
+
+def split_command(command: str) -> list[str]:
+    """The words of a `credential_process`, split by POSIX shell rules, or on Windows on whitespace outside double
+    quotes, with the quotes around a word taken off as botocore's splitter takes them, so a quoted path with a
+    space starts. `shlex` keeps those quotes in the word, and Windows would then read them as part of its name."""
+    if not on_windows():
+        return shlex.split(command)
+    return [word[1:-1] if len(word) > 1 and word[0] == word[-1] == '"' else word
+            for word in shlex.split(command, posix=False)]
+
+
+def join_command(words: list[str]) -> str:
+    """A `credential_process` that `split_command` splits back into `words`."""
+    return subprocess.list2cmdline(words) if on_windows() else shlex.join(words)
+
+
 def file_signature(path: Path) -> object:
     try:
         found = path.stat()
@@ -294,7 +313,7 @@ class Provider:
             return ""
         command = keys.get("credential_process") or configured.get("credential_process") or ""
         try:
-            words = shlex.split(command, posix=os.name != "nt")
+            words = split_command(command)
         except ValueError:
             words = []
         if words[-2:] == ["hosted", "credentials"]:
@@ -305,7 +324,7 @@ class Provider:
     def run_process(self, command: str) -> Credentials:
         source = f"profile {self.profile} (credential_process)"
         try:
-            words = shlex.split(command, posix=os.name != "nt")
+            words = split_command(command)
         except ValueError:
             raise CredentialsError(f"the credential_process of profile {self.profile} does not parse as a command",
                                    "failed", source) from None
