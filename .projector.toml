@@ -5,9 +5,10 @@ gate_checks = "check"
 # The steps of the gate in AGENTS.md that CI cannot run, run on the review's worktree against the merge base.
 gate = 'claude plugin validate . && claude plugin validate skills && claude plugin test . && hooks/typecheck.sh && git diff --check "$2" HEAD'
 # Each pull request whose head is in this repository is reviewed in GitHub Actions by
-# .github/workflows/projector-review.yml, which posts as the Projector Review app.
+# .github/workflows/projector-review.yml, which posts as the Projector Review app
+# with a token the hosted service mints for each job.
 ci = true
 ci_agents = "claude"
-ci_app = "projector-review"
+ci_app = "projector"
 ci_app_id = 5827721
 reviewers = "projector-review[bot]"
