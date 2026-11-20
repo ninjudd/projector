@@ -1,6 +1,6 @@
 ---
 name: write
-description: Write prose for people to read so that it follows Projector's writing guide. That includes documentation, a README section, a code comment or docstring, a pull request body, a commit message, an issue, and a reply. Use when the user asks to write or draft prose, or to check text against the writing guide. To rewrite text that already exists, use rewrite.
+description: Write prose for people to read so that it follows Projector's writing guide. That includes documentation, a README section, a code comment or docstring, a pull request body, a commit message, an issue, and a reply. Use when the user asks to write or draft prose, or to check text against the writing guide, and whenever you write such prose yourself outside a Projector skill that already applies the guide, such as a reply to a review comment or an issue you open. To rewrite text that already exists, use rewrite.
 ---
 
 # Write

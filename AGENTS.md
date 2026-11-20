@@ -151,7 +151,7 @@ because squash merges preserve that body as the commit message.
 For review findings, verify first, commit locally, reply with the commit, push,
 resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 32 -->
+<!-- projector:begin 33 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -211,6 +211,13 @@ session to fix it, so review findings are fixed as they arrive rather than
 waiting for someone to notice that nothing is fixing them. Write each plan
 with the `spec` skill, whose hand-over opens the plan's pull request the
 same way.
+
+Projector's skills write their prose by its writing guide. Write the rest
+with the `write` skill, which reads the guide first: each comment, reply,
+and issue you post on GitHub, each commit message and pull request body you
+write outside `implement`, `spec`, or `fix-pr`, and each comment and
+docstring in code you change outside them. Use it whether or not the person
+asked for prose.
 
 Open every pull request as a draft, each layer of a stack included, and mark
 it ready with `project review ready` once your work on it is done. A draft
