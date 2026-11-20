@@ -119,6 +119,8 @@ LABEL_CHANGES = {
 # it too, to take it out of the counts. Each check run's suite says whether its workflow run was cancelled, and
 # the check run's start, beside when the run's cancelled jobs ended, says whether the cancel caused its failure.
 # The run's workflow and start say whether a newer run of that workflow on the head tests the code again.
+# The head's deployments give the panel the Vercel preview it links: the newest the `vercel` bot made whose
+# latest status succeeded, at that status's `environmentUrl`.
 CONTEXT_NODES = ("nodes{ __typename ... on CheckRun{ name conclusion startedAt completedAt checkSuite{ conclusion"
                  " workflowRun{ databaseId createdAt workflow{ databaseId } } } } ... on StatusContext{ context state } }")
 QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
@@ -130,7 +132,8 @@ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
       labels(first:20){ nodes{ name color } }
       commits(last:1){ nodes{ commit{ status{ context(name:%s){ state } }
         statusCheckRollup{ state contexts(first:20){ checkRunCountsByState{ state count }
-          statusContextCountsByState{ state count } pageInfo{ hasNextPage endCursor } %s } } } } }
+          statusContextCountsByState{ state count } pageInfo{ hasNextPage endCursor } %s } }
+        deployments(last:10){ nodes{ creator{ login } latestStatus{ state environmentUrl } } } } } }
       comments(last:100){ nodes{ databaseId author{ login } authorAssociation body createdAt updatedAt } }
       reviews(last:100){ nodes{ author{ login } authorAssociation submittedAt body } }
       changesRequested: reviews(states:[CHANGES_REQUESTED], last:1){ nodes{ author{ login } body commit{ oid } } }

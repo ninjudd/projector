@@ -239,6 +239,23 @@ function cancelledOf(commit: Record<string, unknown>): boolean {
   return newestRuns(contexts).some(run => run.conclusion === 'CANCELLED')
 }
 
+const PREVIEW_URL = /^https?:\/\/\S+$/
+
+/**
+ * The head's newest Vercel preview: the URL of the last deployment the
+ * `vercel` bot made whose latest status succeeded. GitHub lists a commit's
+ * deployments oldest first.
+ */
+function previewOf(commit: Record<string, unknown>): string | null {
+  const urls = nodesOf(commit.deployments).flatMap(node => {
+    if (!isRecord(node) || !isRecord(node.creator) || node.creator.login !== 'vercel') return []
+    const status = isRecord(node.latestStatus) ? node.latestStatus : {}
+    const url = stringOf(status.environmentUrl)
+    return status.state === 'SUCCESS' && url !== null && PREVIEW_URL.test(url) ? [url] : []
+  })
+  return urls.at(-1) ?? null
+}
+
 const LABEL_COLOR = /^[0-9a-f]{6}$/i
 
 function labelOf(node: unknown): Label[] {
@@ -277,6 +294,7 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
     labels: nodesOf(node.labels).flatMap(labelOf),
     updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
     summaryUrl: summary?.[1] ?? null,
+    previewUrl: previewOf(headOf(node)),
   }
 }
 

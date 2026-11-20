@@ -43,6 +43,7 @@ const NOW = Date.UTC(2026, 9, 12, 12, 0)
 const VIEWER = 'ada'
 const SEVEN = 'https://github.com/x/y/pull/7'
 const SUMMARY = 'https://example.com/site/reviews/7'
+const PREVIEW = 'https://y-git-fix-branch.vercel.app'
 
 const pr = (number: number, title: string, fields: Record<string, unknown> = {}) => ({
   number,
@@ -236,7 +237,16 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       deletions: 3,
       changedFiles: 2,
       updatedAt: new Date(NOW - 5 * 60_000).toISOString(),
-      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: { state: 'SUCCESS' },
+              deployments: { nodes: [{ creator: { login: 'vercel' }, latestStatus: { state: 'SUCCESS', environmentUrl: PREVIEW } }] },
+            },
+          },
+        ],
+      },
       body: `Why.\n\n<!-- projector-summary v=1 sha=${'b'.repeat(40)} -->\n📽️ **Projector summary** of bbbbbbb: ${SUMMARY}\n`,
     }),
   },
@@ -1008,8 +1018,9 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
     expect([row?.props.flexDirection, row?.props.columnGap]).toEqual(['row', 2])
     return ((row?.children ?? []) as unknown[]).flat().map(part => (part as Line).props?.key)
   }
-  expect(await linksOf('x/y#7')).toEqual(['github:x/y#7', 'projector:x/y#7'])
+  expect(await linksOf('x/y#7')).toEqual(['github:x/y#7', 'vercel:x/y#7', 'projector:x/y#7'])
   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
+  expect((await ui.find({ key: 'vercel:x/y#7' }))?.props.text).toBe(`[open in vercel](${PREVIEW})`)
   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
   expect(await threadsOf(ui)).toEqual([
     {

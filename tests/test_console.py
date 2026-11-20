@@ -35,10 +35,10 @@ class Clock:
         return self.now
 
 
-def pull_node(number: int, *, author: str = "operator", threads: int = 0) -> dict:
+def pull_node(number: int, *, author: str = "operator", threads: int = 0, **fields) -> dict:
     return {"repository": {"pullRequest": {
         "title": f"Pull request {number}", "state": "OPEN", "author": {"login": author}, "headRefName": "feature",
-        "reviewThreads": {"nodes": [{"isResolved": False} for _ in range(threads)]}}}}
+        "reviewThreads": {"nodes": [{"isResolved": False} for _ in range(threads)]}, **fields}}}
 
 
 class ConsoleCase(unittest.TestCase):
@@ -399,6 +399,26 @@ class PullRequests(ConsoleCase):
 
         self.assertEqual((["https://github.com/acme/app/pull/12"], False),
                          (self.opened, "https://github.com" in self.screen()))
+
+    def test_d_opens_the_vercel_preview_whose_action_comes_between_github_and_projector(self) -> None:
+        # Catches a drawer that offers no preview, puts it out of the links' order, or opens the wrong URL.
+        preview = "https://app-git-console.vercel.app"
+        deployment = {"creator": {"login": "vercel"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": preview}}
+        self.claude("s1")
+        self.subscribe("s1", "acme/app#12 fix")
+        self.cache("acme/app", 12, commits={"nodes": [{"commit": {"deployments": {"nodes": [deployment]}}}]},
+                   body="<!-- projector-summary v=1 sha=" + "a" * 40 + " -->\n"
+                        "**Projector summary** of aaaaaaa: https://projector.bot/acme/app/reviews/12\n")
+        self.open_entry("s1", "pr:acme/app#12")
+        seen = []
+        for _ in range(5):
+            self.press("down")
+            seen.append(self.focused())
+
+        self.press("d")
+
+        self.assertEqual(([["7: Discuss"], ["8: Dismiss"], ["o: Open in GitHub"], ["d: Open in Vercel"],
+                           ["p: Open in Projector"]], [preview]), (seen, self.opened))
 
     def test_a_remote_console_shows_the_whole_url_under_the_actions_until_the_next_key(self) -> None:
         # Catches a remote console opening a browser on the far machine, a URL cut at the window's edge, or one

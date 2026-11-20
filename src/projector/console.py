@@ -802,6 +802,9 @@ class Console:
         controls = [Control("7", "Discuss", lambda: self.open_field("pr", reference, f"Discuss {reference}: ")),
                     Control("8", "Dismiss", lambda: self.ask("dismiss")),
                     Control("o", "Open in GitHub", lambda: self.visit("o", pull.url))]
+        if pull.preview_url is not None:
+            preview = pull.preview_url
+            controls.append(Control("d", "Open in Vercel", lambda: self.visit("d", preview)))
         if pull.summary_url is not None:
             summary = pull.summary_url
             controls.append(Control("p", "Open in Projector", lambda: self.visit("p", summary)))
