@@ -1116,7 +1116,7 @@ reads, which are these:
 | `agent.relay` | string | `origin` | `project agent register`, from the checkout the session works in, as where its relay records travel through: `origin`, the checkout's own repository, `github:<owner>/<repo>`, or `s3://<bucket>/<prefix>`. A destination, so a committed file's value applies only once you allow it; see [Relay through a repository you choose](#relay-through-a-repository-you-choose) and [Relay through an S3 bucket](#relay-through-an-s3-bucket) |
 | `agent.s3_region` | string | `AWS_REGION`, `AWS_DEFAULT_REGION`, the profile's `region`, then `us-east-1` | `project agent register`, from the checkout the session works in, as the region of the bucket an S3 `agent.relay` names |
 | `agent.s3_endpoint` | string | AWS | `project agent register`, from the checkout the session works in, as the `https://` URL, with no path, query, or user info, of a store that speaks S3, such as Cloudflare R2 or MinIO, which requests reach path-style. A destination, so a committed file's value applies only once you allow it |
-| `agent.s3_profile` | string | `AWS_PROFILE`, then `default` | `project agent register`, from the checkout the session works in, as the AWS profile whose credentials sign an S3 location's requests. A destination, so a committed file's value applies only once you allow it |
+| `agent.s3_profile` | string | `AWS_PROFILE`, then `default` | `project agent register`, from the checkout the session works in, as the AWS profile whose credentials sign an S3 location's requests, ahead of AWS keys in the environment, which sign only when no file sets it. A destination, so a committed file's value applies only once you allow it |
 | `agent.s3_poll` | whole number | `10` | the watch daemon, from each registration's checkout, as the seconds between polls of its S3 location; at least `2` |
 | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
 | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
@@ -4671,7 +4671,10 @@ of these that holds credentials. It never prints, logs, or passes a secret
 as a process argument:
 
 1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`
-   in the daemon's environment.
+   in the daemon's environment, unless `agent.s3_profile` names a profile.
+   A named profile passes over the environment, as AWS's SDKs do for a
+   profile that code names, so keys you keep in your shell never sign for
+   the profile the relay chose.
 2. The profile `agent.s3_profile` names, else `AWS_PROFILE`, else
    `default`, in `~/.aws/credentials` and `~/.aws/config`, or the files
    `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE` name.

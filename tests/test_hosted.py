@@ -511,9 +511,11 @@ class HostedCommandTests(RepositoryTestCase):
         agent = self.user_layer()["agent"]
         found = config.relay_location(agent["relay"])
         assert isinstance(found, config.S3Relay)
-        # The daemon's environment, which need not have the PATH that finds project.
+        # The daemon's environment, which need not have the PATH that finds project, and can hold AWS keys of
+        # yours that the hosted relay would refuse.
         client = s3.Client(found.bucket, endpoint=agent["s3_endpoint"], profile=agent["s3_profile"],
-                           environ={"HOME": str(self.home)})
+                           environ={"HOME": str(self.home), "AWS_ACCESS_KEY_ID": "AKIAYOURS",
+                                    "AWS_SECRET_ACCESS_KEY": "yours"})
 
         client.put_object("k/agents/a", b"{}", if_none_match=True)
 

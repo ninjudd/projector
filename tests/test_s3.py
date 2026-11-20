@@ -302,25 +302,42 @@ class OperationTests(ServerCase):
 
 class CredentialTests(ServerCase):
     def test_keys_come_from_the_environment_then_the_profile_then_its_credential_process(self) -> None:
+        # No agent.s3_profile names the profile here, only AWS_PROFILE, so the environment's keys come first.
         self.server.grant("AKIAFILE", SECRET)
         self.server.grant("AKIAPROCESS", SECRET, TOKEN, self.now + 3600)
         folder = self.process({"Version": 1, "AccessKeyId": "AKIAPROCESS", "SecretAccessKey": SECRET,
                                "SessionToken": TOKEN, "Expiration": s3.stamp_of(self.now + 3600)})
+        self.environ["AWS_PROFILE"] = "acme-relay"
 
         self.env_keys("AKIAENV", TOKEN)
-        self.client(profile="acme-relay").list_objects("relay/")
+        self.client().list_objects("relay/")
         for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
             del self.environ[name]
         self.aws_file("credentials", f"[acme-relay]\naws_access_key_id = AKIAFILE\naws_secret_access_key = {SECRET}\n")
-        files = self.client(profile="acme-relay")
+        files = self.client()
         files.list_objects("relay/")
         (self.home / ".aws" / "credentials").write_text("")
-        process = self.client(profile="acme-relay")
+        process = self.client()
         process.list_objects("relay/")
 
         self.assertEqual(["AKIAENV", "AKIAFILE", "AKIAPROCESS"], [found.signed_by for found in self.server.requests])
         self.assertEqual(("profile acme-relay", "profile acme-relay (credential_process)"),
                          (files.source(), process.source()))
+        self.assertEqual(1, len(self.runs(folder)))
+
+    def test_a_profile_agent_s3_profile_names_signs_ahead_of_keys_in_the_environment(self) -> None:
+        # Keys a developer keeps in their shell would otherwise sign for a relay that refuses them.
+        self.server.grant("AKIAENV", SECRET)
+        self.server.grant("AKIAPROCESS", SECRET, TOKEN, self.now + 3600)
+        folder = self.process({"Version": 1, "AccessKeyId": "AKIAPROCESS", "SecretAccessKey": SECRET,
+                               "SessionToken": TOKEN, "Expiration": s3.stamp_of(self.now + 3600)})
+        self.env_keys("AKIAENV")
+
+        client = self.client(profile="acme-relay")
+        client.list_objects("relay/")
+
+        self.assertEqual(["AKIAPROCESS"], [found.signed_by for found in self.server.requests])
+        self.assertEqual("profile acme-relay (credential_process)", client.source())
         self.assertEqual(1, len(self.runs(folder)))
 
     def test_a_credential_process_runs_again_five_minutes_before_its_keys_expire_and_none_sign_after(self) -> None:
@@ -408,6 +425,8 @@ class CredentialTests(ServerCase):
         self.server.keys.clear()
         self.environ.update({"AWS_ACCESS_KEY_ID": "AKIAONE", "AWS_SECRET_ACCESS_KEY": SECRET,
                              "AWS_SESSION_TOKEN": TOKEN})
+        # A client that names no profile, so the environment's keys sign.
+        client = self.client()
         try:
             client.list_objects("relay/")
         except s3.S3Error as error:
