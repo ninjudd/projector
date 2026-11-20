@@ -10,5 +10,4 @@ gate = 'claude plugin validate . && claude plugin validate skills && claude plug
 ci = true
 ci_agents = "claude"
 ci_app = "projector"
-ci_app_id = 5827721
 reviewers = "projector-review[bot]"

@@ -187,6 +187,17 @@ class InitCiReviewTests(RepositoryTestCase):
         self.assertEqual((ci.HOSTED_APP, ci.HOSTED_LOGIN), (self.recorded()["ci_app"], self.recorded()["reviewers"]))
         self.assertNotIn("ci_app_id", self.recorded())
 
+    def test_switching_to_the_hosted_app_drops_the_old_apps_id(self) -> None:
+        # The hosted app needs no ID, so an ID left from a self-managed app would read as the one reviews post with.
+        self.assertEqual(0, self.init("--ci-review", "--ci-app", "projector-review")[0])
+
+        code, _, err = self.init("--ci-app", ci.HOSTED_APP)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(ci.HOSTED_APP, self.recorded()["ci_app"])
+        self.assertNotIn("ci_app_id", self.recorded())
+        self.assertIn("unset review.ci_app_id", err)
+
     def test_an_app_recorded_without_its_id_is_left_as_it_is_when_github_cannot_answer(self) -> None:
         (self.root / ".projector.toml").write_text('[review]\nci = true\nci_app = "projector-review"\n')
         self.offline = True

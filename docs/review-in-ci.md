@@ -225,7 +225,9 @@ project init --ci-review --ci-app projector
 `init` writes the action's `app: projector` input instead of `app-id` and
 `app-private-key`, gives both jobs `id-token: write`, records
 `review.ci_app = "projector"`, and adds `projector-review[bot]` to
-`review.reviewers`. It sets no key secret.
+`review.reviewers`. It sets no key secret. When the repository posted as
+an app of your own before, `init` also removes `review.ci_app_id`, and once
+the change merges you can delete the `PROJECTOR_APP_PRIVATE_KEY` secret.
 [Use a hosted Projector service](cli.md#use-a-hosted-projector-service)
 describes the `project hosted` commands.
 
