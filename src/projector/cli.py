@@ -1528,15 +1528,16 @@ def positive(text: str) -> int:
 
 
 def run_hosted(arguments: argparse.Namespace) -> int:
-    config = here_config()
+    start = config_start(argparse.Namespace(root=None))
+    config = load_config(start)
     url = hosted.address(config)
     command = arguments.hosted_command
     if command == "login":
         settings = hosted.relay_settings(config)
         key, why = relay.command_key()
-        hosted.login(url, key, why, print, settings)
+        hosted.login(url, key, why, print, settings, start)
     elif command == "relay":
-        print(hosted.use_relay(hosted.relay_settings(config), switch=True))
+        print(hosted.use_relay(hosted.relay_settings(config), start, switch=True))
     elif command == "credentials":
         sys.stdout.write(hosted.credentials(url))
     elif command == "status":

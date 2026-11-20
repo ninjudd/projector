@@ -24,7 +24,7 @@ from typing import Any, Optional
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
-from projector import config, crypto, hosted, keychain, relay, s3
+from projector import agents, config, crypto, hosted, keychain, relay, s3
 from tests.fake_s3 import FakeS3, plain
 from tests.test_ci import step_script
 from tests.test_projector import RepositoryTestCase
@@ -430,6 +430,28 @@ class HostedCommandTests(RepositoryTestCase):
         self.assertEqual(0, code, err)
         self.assertEqual(hosted.RELAY, self.user_layer()["agent"]["relay"])
         self.assertEqual(self.command(), self.profiles()[f"profile {hosted.PROFILE}"]["credential_process"])
+
+    def test_login_leaves_alone_an_s3_relay_a_nearer_file_names_and_its_aws_endpoint(self) -> None:
+        # The relay reads agent.s3_endpoint and agent.s3_profile from whichever file sets each, so hosted values in
+        # ~/.projector.toml would move this bucket onto the hosted store, signed with the hosted keys.
+        work = self.home / "work"
+        work.mkdir()
+        (work / ".projector.toml").write_text('[agent]\nrelay = "s3://acme-agents/relay"\n')
+        before = self.toml.read_text()
+
+        code, out, err = self.invoke("hosted", "login", cwd=work)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(before, self.toml.read_text())
+        self.assertFalse(self.aws.exists())
+        self.assertIn(f"{work / '.projector.toml'} sets agent.relay = 's3://acme-agents/relay'", out)
+        self.assertEqual("https://s3.amazonaws.com/acme-agents/relay", agents.relay_place(work, None).location)
+
+        code, _, err = self.invoke("hosted", "relay", cwd=work)
+
+        self.assertNotEqual(0, code, "the switch refuses rather than move the nearer file's relay")
+        self.assertIn("remove it from that file, then run `project hosted relay`", err)
+        self.assertEqual(before, self.toml.read_text())
 
     def test_login_without_agent_key_leaves_the_relay_alone(self) -> None:
         with mock.patch.object(relay, "command_key", return_value=(None, relay.NO_KEY)):

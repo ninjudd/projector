@@ -5162,6 +5162,18 @@ left the relay as /Users/you/.projector.toml sets it, agent.relay = 'github:acme
 `project hosted relay` writes the settings and the profile whatever the file
 set before, and signs nothing in.
 
+The relay reads each of the three settings from whichever file sets it, so
+a file nearer than `~/.projector.toml`, such as `~/work/.projector.toml` or a
+repository's own, can name an S3 relay that takes its endpoint or profile
+from `~/.projector.toml`. When a file that the directory you run the command
+in loads sets any of the three to another value, login and
+`project hosted relay` change nothing, because the hosted values would only
+move that file's relay. They name the file; remove the setting from it, then
+run `project hosted relay`. Login checks only the files that directory
+loads. An S3 relay that a file in another directory names, and that takes
+its endpoint or profile from `~/.projector.toml`, would still move, so run
+login from a directory under that file to have it checked.
+
 The profile's `credential_process` runs `project hosted credentials`. That
 command posts the account token and this machine's ID to the service, and
 prints the service's answer unchanged: the JSON a `credential_process`

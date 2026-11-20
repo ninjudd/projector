@@ -40,8 +40,8 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import crypto, keychain, relay, s3
-from .config import (HOSTED_RELAY, HOSTED_URL, Config, ConfigError, hosted_url, load as load_config, s3_endpoint,
-                     user_config_path, user_value, write_value)
+from .config import (HOSTED_RELAY, HOSTED_URL, Config, ConfigError, NotAllowed, hosted_url, load as load_config,
+                     s3_endpoint, user_config_path, user_value, write_value)
 from .core import ProjectorError, state_home, write_through
 from .keychain import KeychainError
 
@@ -200,10 +200,11 @@ def register_key(url: str, token: str, key: Any) -> str:
     return str(answer.get("key_id") or key.id)
 
 
-def login(url: str, key: Any, no_key: str, say: Callable[[str], None], settings: dict[str, str]) -> dict:
+def login(url: str, key: Any, no_key: str, say: Callable[[str], None], settings: dict[str, str],
+          start: Path) -> dict:
     """Sign in, keep the account token in the keychain, and register `key`, or say `no_key` when there is none.
-    Once the key is registered, point the relay at the hosted relay's `settings`, unless `~/.projector.toml`
-    already names another relay. Answers what was done."""
+    Once the key is registered, point the relay at the hosted relay's `settings`, unless the configuration
+    `start` loads already names another relay. Answers what was done."""
     missing = keychain.usable()
     if missing:
         raise HostedError(f"the account token goes in the OS keychain, which cannot be used here: {missing}")
@@ -226,7 +227,7 @@ def login(url: str, key: Any, no_key: str, say: Callable[[str], None], settings:
     say(f"signed in to {url} as {signed.get('login')}, the {store} holds the account token, and key "
         f"{done['key_id']} is registered to the account")
     try:
-        say(use_relay(settings, switch=False))
+        say(use_relay(settings, start, switch=False))
     except (ProjectorError, OSError) as error:
         raise HostedError(f"signed in and registered key {done['key_id']}, but could not point the relay at the "
                           f"hosted relay: {error}") from None
@@ -270,12 +271,37 @@ def holds(key: str, value: Any, wanted: str) -> bool:
     return value == wanted
 
 
-def use_relay(settings: dict[str, str], *, switch: bool) -> str:
-    """Write the hosted relay's AWS profile, then its `settings` to `~/.projector.toml`. Without `switch`, a file
-    that already sets any of them to another value is left alone, so a relay never moves unless you ask, and the
-    answer names the command that switches."""
+def nearer(start: Path, settings: dict[str, str]) -> dict[str, tuple[Any, str]]:
+    """Each of `settings` that a file nearer than `~/.projector.toml` sets to another value in the configuration
+    `start` loads, as the relay reads it there, with the file. The relay reads the three from whichever file sets
+    each one, so hosted values in `~/.projector.toml` would move the relay such a file names."""
+    loaded = load_config(start)
+    found = {}
+    for key, wanted in settings.items():
+        try:
+            value, source = loaded.setting(key), loaded.source(key)
+        except NotAllowed as refused:
+            value, source = refused.value, refused.source
+        if value is not None and not loaded.from_user(key) and not holds(key, value, wanted):
+            found[key] = (value, str(source))
+    return found
+
+
+def use_relay(settings: dict[str, str], start: Path, *, switch: bool) -> str:
+    """Write the hosted relay's AWS profile, then its `settings` to `~/.projector.toml`. A relay that a nearer
+    file names for `start` is left alone, since the settings would only move it. Without `switch`, a relay that
+    `~/.projector.toml` names is left alone too, so a relay never moves unless you ask, and the answer names the
+    command that switches."""
     path = user_config_path()
     with relay.config_lock():
+        closer = nearer(start, settings)
+        if closer:
+            named = ", ".join(f"{source} sets {key} = {value!r}" for key, (value, source) in closer.items())
+            said = (f"left the relay alone: {named}, which applies here ahead of {path}; to relay through the "
+                    "hosted service here, remove it from that file, then run `project hosted relay`")
+            if switch:
+                raise HostedError(said)
+            return said
         taken = {key: value for key in settings
                  if (value := user_value(key)) is not None and not holds(key, value, settings[key])}
         if taken and not switch:
