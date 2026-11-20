@@ -1130,11 +1130,12 @@ const watchSoon = ($: Engine) => $.clock.after(1, () => void $.clock.now().then(
 /**
  * Subscribes the session to fix each pull request a command's output shows
  * it opened or pushed to. The CLI finds them, and adds nothing when
- * `watch.auto_start` is off.
+ * `watch.auto_start` is off. Output that a pipe or `--quiet` emptied still
+ * goes, because the CLI then looks up the checked-out branch's pull request.
  */
 async function subscribeFrom($: Engine, output: string): Promise<void> {
   const session = await sessionOf($)
-  if (session === undefined || output.trim() === '') return
+  if (session === undefined) return
   const ran = await project($, ['watch', 'add', '--from-output', '-', '--session', session], output)
   if (ran.exitCode === 0) watchSoon($)
   else $.ui.log(`projector: project watch add --from-output failed: ${errorOf(ran)}`, { to: 'debug' })

@@ -546,6 +546,18 @@ def unique(pairs: list[tuple[str, object]]) -> list[tuple[str, object]]:
     return kept
 
 
+def checked_out(checkout: Path) -> Optional[tuple[str, str, str]]:
+    """The checkout's origin repository, its checked-out branch, and its `HEAD`, or None outside a checkout of a
+    GitHub repository and on a detached `HEAD`."""
+    try:
+        repo = review.origin_repo(checkout)
+        branch = review.git("-C", str(checkout), "symbolic-ref", "--short", "-q", "HEAD")
+        head = review.git("-C", str(checkout), "rev-parse", "HEAD")
+    except review.ReviewError:
+        return None
+    return (repo, branch, head) if branch and head else None
+
+
 def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tuple[list[str], list[str], bool]:
     """Subscribe the session to `fix auto` on each pull request the output opened or pushed to, ask the
     daemon to refresh each one, and answer the lines added, a problem for each pull request that could not be
@@ -554,7 +566,13 @@ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tupl
 
     A linked pull request counts only in a repository the output pushed to or opened a pull request in, or
     the checkout's origin, so a link to another repository, or an example in help text, adds nothing. Each
-    one the session does not already hold must be open on GitHub, which one REST request confirms."""
+    one the session does not already hold must be open on GitHub, which one REST request confirms.
+
+    Output that names no pull request and no pushed branch, as a push's does when a pipe such as `| tail -2`
+    cut its lines or `--quiet` printed none, falls back to the checkout: the open pull request from its
+    checked-out branch counts when its head is the checkout's `HEAD`, as it is right after the push. The
+    output cannot say which branch a quiet push named, so a quiet push of another branch counts that pull
+    request too while the checked-out branch is in sync with it."""
     pulls, branches, targets = pushed(text)
     if any(repo.lower() not in targets for repo, _ in pulls):
         with contextlib.suppress(review.ReviewError):
@@ -588,6 +606,18 @@ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tupl
             continue
         found += [(repo, pull["number"]) for pull in listed if isinstance(pull, dict)
                   and isinstance(pull.get("number"), int)]
+    current = None if pulls or branches else checked_out(checkout)
+    if current is not None:
+        repo, branch, head = current
+        owner = repo.split("/")[0]
+        result = run_gh(["api", f"repos/{repo}/pulls?head={quote(f'{owner}:{branch}', safe=':')}&state=open"])
+        listed = json_of(result)
+        if isinstance(listed, list):
+            found += [(repo, pull["number"]) for pull in listed if isinstance(pull, dict)
+                      and isinstance(pull.get("number"), int) and (pull.get("head") or {}).get("sha") == head]
+        else:
+            problems.append(f"could not look up the pull request for {repo} {branch}: "
+                            f"{(result.stderr or result.stdout).strip() or 'gh failed'}")
     added = []
     refreshed = []
     for repo, number in unique(found):
