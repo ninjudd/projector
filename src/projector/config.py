@@ -100,6 +100,7 @@ SETTINGS: dict[str, type] = {
     "review.require_check": bool,
     "review.reviewers": str,
     "review.runner": str,
+    "review.automatic": bool,
     "review.ci": bool,
     "review.ci_agents": str,
     "review.ci_app": str,

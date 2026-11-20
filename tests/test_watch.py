@@ -657,6 +657,19 @@ class FixRoleTests(WatchCase):
                          "review.ci covers #1, and review.reviewers counts the app's clean verdict on #3")
         self.assertEqual(["repos/acme/app/contents/.projector.toml"], self.github.config_reads())
 
+    def test_a_repository_whose_reviews_are_not_automatic_hears_no_unreviewed(self) -> None:
+        # Catches the daemon telling the fixer that no session reviews a pull request in a repository that
+        # expects no review unless someone asks for one, or that setting reaching another repository.
+        self.github.committed("[review]\nautomatic = false\n")
+        self.github.pull_request(1, draft=False)
+        self.github.pull_request(1, repo="acme/other", draft=False)
+        self.fixer("acme/app#1 fix", "acme/other#1 fix")
+
+        events = self.cycle()
+
+        self.assertEqual([unreviewed(1, repo="acme/other")], events["fixer"],
+                         "acme/app's review.automatic = false holds back its UNREVIEWED, and acme/other commits none")
+
     def test_a_repository_that_commits_no_projector_toml_still_hears_unreviewed(self) -> None:
         self.github.pull_request(1, draft=False)
         self.fixer("acme/app#1 fix")

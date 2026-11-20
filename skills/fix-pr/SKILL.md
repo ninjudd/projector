@@ -587,11 +587,16 @@ role are these:
   machine outside that scope may still review the pull request before it
   posts its start comment. Tell the user once what the line says, in its
   scope, and that `review-pr` or `review-repo` would review it, unless they
-  review it elsewhere. Never say that no session reviews it at all. It is
+  review it elsewhere. Add that, where the repository's pull requests get a
+  review only when someone asks, `project config set review.automatic false`
+  in its checkout stops these lines. Never say that no session reviews it at
+  all. It is
   not work: any work behind it arrives as its own `FINDING`, `VERDICT`,
   `CONFLICT`, `CHECKS`, or `REVIEW` line. A draft reports nothing, because
-  it waits on its author, and so does a pull request that a session here
-  reviews, that a session of the operator's on another machine reviews
+  it waits on its author, and so does a pull request in a repository whose
+  `review.automatic` is `false`, which expects no review unless the user
+  asks for one, and a pull request that a session here reviews, that a
+  session of the operator's on another machine reviews
   through the relay, or that a live start comment from the operator or
   another account whose review would count shows under review elsewhere; it
   waits for that review.

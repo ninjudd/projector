@@ -871,9 +871,20 @@ def fetch_default(top: Path) -> dict:
     return {"state": "ok", "error": ""}
 
 
-def review_settings(found: config.Config) -> tuple[tuple[str, ...], bool]:
-    """The logins `review.reviewers` names, and whether `review.ci` is `true`."""
-    return review.extra_reviewers(found.setting("review.reviewers")), found.setting("review.ci") is True
+@dataclass(frozen=True)
+class ReviewSettings:
+    """What a repository's configuration says about who reviews it: the logins `review.reviewers` names,
+    whether `review.ci` says GitHub Actions reviews its pull requests, and whether `review.automatic` leaves
+    them to be reviewed, as they are unless it is `false`."""
+
+    reviewers: tuple[str, ...] = ()
+    ci: bool = False
+    automatic: bool = True
+
+
+def review_settings(found: config.Config) -> ReviewSettings:
+    return ReviewSettings(review.extra_reviewers(found.setting("review.reviewers")), found.setting("review.ci") is True,
+                          found.setting("review.automatic") is not False)
 
 
 # The daemon
@@ -954,7 +965,7 @@ class Daemon:
         self.stacks: dict[tuple[str, int], tuple[float, Optional[int]]] = {}
         # By repository, lowercased, when its committed `.projector.toml` was last read from GitHub, and the
         # review settings read then.
-        self.committed: dict[str, tuple[float, tuple[tuple[str, ...], bool]]] = {}
+        self.committed: dict[str, tuple[float, ReviewSettings]] = {}
 
     def log(self, message: str) -> None:
         print(f"{stamp(self.wall())} {message}", flush=True)
@@ -1272,7 +1283,7 @@ class Daemon:
         found = decode_pages(result.stdout) if result.returncode == 0 else None
         return None if found is None else [trim_review(item) for item in found if isinstance(item, dict)]
 
-    def committed_settings(self, repo: str, now: float) -> tuple[tuple[str, ...], bool]:
+    def committed_settings(self, repo: str, now: float) -> ReviewSettings:
         """`repo`'s review settings from the `.projector.toml` its default branch commits on GitHub, never a pull
         request's head, read at most once every `COMMITTED_EVERY` seconds of the daemon's clock. A repository
         without the file has none. A read that fails logs and keeps the settings read before, or none."""
@@ -1280,7 +1291,7 @@ class Daemon:
         held = self.committed.get(key)
         if held is not None and now - held[0] < COMMITTED_EVERY:
             return held[1]
-        settings = held[1] if held is not None else ((), False)
+        settings = held[1] if held is not None else ReviewSettings()
         response = self.conditional(f"repos/{repo}/contents/{config.CONFIG_NAME}", None)
         found = response.json() if response.status == 200 else None
         try:
@@ -1366,9 +1377,8 @@ class Pass:
         # head it is, each read at most once a pass.
         self.github_stacks: dict[tuple[str, int], Optional[dict]] = {}
         self.headed: dict[tuple[str, str], Optional[dict]] = {}
-        # By repository, lowercased, the logins `review.reviewers` names, and whether its `review.ci` says GitHub
-        # Actions reviews its pull requests, as `settings_of` reads them.
-        self.repo_settings: Optional[dict[str, tuple[tuple[str, ...], bool]]] = None
+        # By repository, lowercased, its review settings, as `settings_of` reads them.
+        self.repo_settings: Optional[dict[str, ReviewSettings]] = None
 
     def tell(self, session: str, *lines: str) -> None:
         self.outbox.setdefault(session, []).extend(lines)
@@ -1815,8 +1825,8 @@ class Pass:
         else:
             state["review"].pop(role_label(pull, name), None)
 
-    def settings_of(self, repo: str) -> tuple[tuple[str, ...], bool]:
-        """`repo`'s `review.reviewers` and `review.ci`, read once a pass from a checkout of it that a live session
+    def settings_of(self, repo: str) -> ReviewSettings:
+        """`repo`'s `review.reviewers`, `review.ci`, and `review.automatic`, read once a pass from a checkout of it that a live session
         works in, or, when no live session works in one, from the `.projector.toml` its default branch commits on
         GitHub, which the daemon reads again every `COMMITTED_EVERY` seconds."""
         if self.repo_settings is None:
@@ -1833,12 +1843,12 @@ class Pass:
     def counted_logins(self, repo: str) -> tuple[str, ...]:
         """The logins whose verdicts count on `repo` beside the operator's, as `project review status` counts
         them there: those `review.reviewers` names."""
-        return self.settings_of(repo)[0]
+        return self.settings_of(repo).reviewers
 
     def reviewed_in_ci(self, repo: str, pr: dict) -> bool:
         """Whether GitHub Actions reviews the pull request: `review.ci` is on in its repository, and its head is in
         that repository, since the workflow skips a fork's. A failed review there arrives as a failed check."""
-        return self.settings_of(repo)[1] and not pr.get("isCrossRepository")
+        return self.settings_of(repo).ci and not pr.get("isCrossRepository")
 
     def locks_for(self, repo: str, number: int) -> list:
         pull = (repo.lower(), number)
@@ -1915,10 +1925,11 @@ class Pass:
         # says nothing about a machine it cannot see. Anyone can comment on a public repository, so only an account
         # whose review would count can hold the event back. A repository whose `review.ci` is on reviews each of
         # its own heads in GitHub Actions, and a failed review there arrives as a failed check, so a head from a
-        # branch of that repository waits on no session. Held back, the head keeps its key, so it is still
-        # announced only once. A draft waits on its author, not on a review.
+        # branch of that repository waits on no session. A repository whose `review.automatic` is `false` expects
+        # no review unless someone asks for one, so it waits on no session either. Held back, the head keeps its
+        # key, so it is still announced only once. A draft waits on its author, not on a review.
         unreviewed = f"unreviewed:{number}:{head}"
-        if not pr.get("isDraft") and not reviewers \
+        if not pr.get("isDraft") and not reviewers and self.settings_of(repo).automatic \
                 and not head_sign_off(pr, head, self.daemon.operator or "", visibility,
                                       self.counted_logins(repo))["signed_off"]:
             starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
