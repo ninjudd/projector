@@ -1014,12 +1014,15 @@ class S3Store:
 
 
 def store_error(error: s3.S3Error, source: str) -> RelayError:
-    """An S3 error as the relay reports it: a lapse when credentials failed or S3 refused them with a `403`,
-    otherwise an error for the job."""
+    """An S3 error as the relay reports it: a lapse when credentials failed, S3 refused them with a `403`, or the
+    hosted relay refused them with a `402` for a subscription that lapsed, otherwise an error for the job."""
     if isinstance(error, s3.CredentialsError):
         return Lapsed(str(error), error.cause, error.source, error.fix)
     if error.status == 403:
         return Lapsed(f"S3 refused the credentials from {source}: {error}", "forbidden", source)
+    if error.status == 402:
+        return Lapsed(f"the relay refused the credentials from {source} because the subscription lapsed: {error}",
+                      "unpaid", source, "project hosted subscribe")
     return RelayError(str(error))
 
 

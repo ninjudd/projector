@@ -6,7 +6,8 @@ conditional headers its leases use, and reads at most 1 MiB of any response.
 
 Credentials come from the first of these that holds them:
 
-1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` in the environment.
+1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` in the environment, unless
+   `agent.s3_profile` names a profile, which then passes over them, as AWS's SDKs do for a profile code names.
 2. The profile `agent.s3_profile` names, else `AWS_PROFILE`, else `default`, in `~/.aws/credentials` and
    `~/.aws/config`, or the files `AWS_SHARED_CREDENTIALS_FILE` and `AWS_CONFIG_FILE` name.
 3. That profile's `credential_process`, run with a 30-second timeout, whose JSON gives the keys and when they
@@ -182,6 +183,25 @@ def read_ini(path: Path) -> configparser.ConfigParser:
     return parser
 
 
+def on_windows() -> bool:
+    return os.name == "nt"
+
+
+def split_command(command: str) -> list[str]:
+    """The words of a `credential_process`, split by POSIX shell rules, or on Windows on whitespace outside double
+    quotes, with the quotes around a word taken off as botocore's splitter takes them, so a quoted path with a
+    space starts. `shlex` keeps those quotes in the word, and Windows would then read them as part of its name."""
+    if not on_windows():
+        return shlex.split(command)
+    return [word[1:-1] if len(word) > 1 and word[0] == word[-1] == '"' else word
+            for word in shlex.split(command, posix=False)]
+
+
+def join_command(words: list[str]) -> str:
+    """A `credential_process` that `split_command` splits back into `words`."""
+    return subprocess.list2cmdline(words) if on_windows() else shlex.join(words)
+
+
 def file_signature(path: Path) -> object:
     try:
         found = path.stat()
@@ -262,8 +282,11 @@ class Provider:
             return cached
 
     def find(self) -> Credentials:
+        """Keys from the environment, unless `agent.s3_profile` named a profile, then from the profile's files,
+        then from its `credential_process`. A named profile passes over the environment, as AWS's SDKs do for a
+        profile the code names, so keys left in a shell cannot sign for the profile the relay chose."""
         environ = self.environ
-        if environ.get("AWS_ACCESS_KEY_ID") and environ.get("AWS_SECRET_ACCESS_KEY"):
+        if not self.explicit and environ.get("AWS_ACCESS_KEY_ID") and environ.get("AWS_SECRET_ACCESS_KEY"):
             token = environ.get("AWS_SESSION_TOKEN") or ""
             return Credentials(environ["AWS_ACCESS_KEY_ID"], environ["AWS_SECRET_ACCESS_KEY"], token,
                                source="environment", refreshable=not token)
@@ -276,28 +299,32 @@ class Provider:
         command = keys.get("credential_process") or configured.get("credential_process")
         if command:
             return self.run_process(command)
-        raise CredentialsError(f"no AWS credentials: the environment has no AWS_ACCESS_KEY_ID, and profile "
-                               f"{self.profile} has no keys and no credential_process", "missing", source)
+        said = "" if self.explicit else "the environment has no AWS_ACCESS_KEY_ID, and "
+        raise CredentialsError(f"no AWS credentials: {said}profile {self.profile} has no keys and no "
+                               "credential_process", "missing", source)
 
     def sign_in_fix(self) -> str:
-        """The command that signs in again for the profile's `credential_process`: `aws sso login` for the profile
-        its command names, else for this profile."""
+        """The command that signs in again for the profile's `credential_process`: `project hosted login` for the
+        hosted relay's `project hosted credentials`, else `aws sso login` for the profile its command names, else
+        for this profile."""
         try:
             keys, configured = self.sections()
         except CredentialsError:
             return ""
         command = keys.get("credential_process") or configured.get("credential_process") or ""
         try:
-            words = shlex.split(command, posix=os.name != "nt")
+            words = split_command(command)
         except ValueError:
             words = []
+        if words[-2:] == ["hosted", "credentials"]:
+            return "project hosted login"
         named = next((words[index + 1] for index, word in enumerate(words[:-1]) if word == "--profile"), None)
         return f"aws sso login --profile {named or self.profile}" if command else ""
 
     def run_process(self, command: str) -> Credentials:
         source = f"profile {self.profile} (credential_process)"
         try:
-            words = shlex.split(command, posix=os.name != "nt")
+            words = split_command(command)
         except ValueError:
             raise CredentialsError(f"the credential_process of profile {self.profile} does not parse as a command",
                                    "failed", source) from None
