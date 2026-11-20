@@ -5181,7 +5181,8 @@ prints, with `Version`, `AccessKeyId`, `SecretAccessKey`, `SessionToken`, and
 `Expiration`. The S3 client runs it again 5 minutes before the keys expire.
 The machine ID is 16 random bytes in base64url, made the first time the
 command runs and kept in `$XDG_STATE_HOME/projector/hosted/machine`, or
-`~/.local/state/projector/hosted/machine`, with mode 0600. Paired machines
+`~/.local/state/projector/hosted/machine`, with mode 0600. Runs that start
+at once make it under a lock, so they all use the same ID. Paired machines
 share `agent.key`, so the ID, not the key, tells the service which machine
 asks.
 

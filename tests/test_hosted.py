@@ -503,6 +503,32 @@ class HostedCommandTests(RepositoryTestCase):
         if os.name == "posix":
             self.assertEqual(0o600, stat.S_IMODE(kept.stat().st_mode))
 
+    def test_two_first_runs_at_once_answer_the_one_machine_id_the_file_keeps(self) -> None:
+        # The service would see one machine under two IDs. Run A whole between run B's first read and its write.
+        kept = self.home / ".local" / "state" / "projector" / "hosted" / "machine"
+        real = Path.read_text
+        first: list[str] = []
+        started: list[bool] = []
+
+        def read_text(path: Path, *args: Any, **kwargs: Any) -> str:
+            try:
+                return real(path, *args, **kwargs)
+            finally:
+                if path == kept and not started:
+                    started.append(True)
+                    first.append(hosted.machine_id())
+
+        with mock.patch.object(Path, "read_text", autospec=True, side_effect=read_text):
+            second = hosted.machine_id()
+
+        self.assertEqual(first, [second], "both runs answer one ID")
+        self.assertEqual(second, kept.read_text().strip())
+
+        kept.write_text("cut sh\x00rt\n")
+        replaced = hosted.machine_id()
+        self.assertRegex(replaced, r"\A[A-Za-z0-9_-]{22}\Z", "a file that holds no ID is replaced")
+        self.assertEqual(replaced, hosted.machine_id())
+
     def test_credentials_refused_say_what_fixes_them_and_fail(self) -> None:
         # The S3 client turns the failure into the relay's notice, so its last line must name the fix.
         self.items[(hosted.SERVICE, self.service.url)] = "pjh_revoked"

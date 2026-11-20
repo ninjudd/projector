@@ -41,6 +41,7 @@ from . import crypto, keychain, relay, s3
 from .config import (HOSTED_RELAY, HOSTED_URL, Config, ConfigError, NotAllowed, hosted_url, load as load_config,
                      s3_endpoint, user_config_path, user_value, write_value)
 from .core import ProjectorError, state_home, write_through
+from .inbox import locked
 from .keychain import KeychainError
 
 SERVICE = "projector-hosted"
@@ -348,36 +349,43 @@ def runs_credentials(command: Any) -> bool:
 
 def machine_id() -> str:
     """This machine's ID for the service, made once from random bytes and kept in Projector's state directory
-    with mode 0600. When two runs make one at once, both keep the first, because a link never replaces a file."""
+    with mode 0600.
+
+    An ID is made only under the folder's lock, after reading the file again there, and moved into place whole,
+    so runs that start at once all answer the one ID the first of them made, and a valid ID is never replaced. A
+    file that holds no ID, such as one cut short outside Projector, is replaced."""
     path = state_home() / "hosted" / "machine"
-    for _ in range(2):
-        try:
-            found = path.read_text(encoding="ascii").strip()
-        except FileNotFoundError:
-            found = ""
-        except (OSError, UnicodeError) as error:
-            raise HostedError(f"{path} could not be read: {type(error).__name__}") from None
-        if MACHINE_ID.fullmatch(found):
+    found = read_machine(path)
+    if found:
+        return found
+    with locked(path.parent):
+        found = read_machine(path)
+        if found:
             return found
-        path.parent.mkdir(parents=True, exist_ok=True)
         made = path.with_name(f".machine.{secrets.token_hex(8)}")
         descriptor = os.open(made, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="ascii") as stream:
-            stream.write(base64.urlsafe_b64encode(secrets.token_bytes(MACHINE_BYTES)).rstrip(b"=").decode() + "\n")
         try:
-            if path.exists():
-                # A file that holds no ID, such as one cut short, is replaced.
-                os.replace(made, path)
-            else:
-                os.link(made, path)
-        except FileExistsError:
-            pass
-        except OSError:
-            # A file system without hard links, where a replace is the closest step.
+            with os.fdopen(descriptor, "w", encoding="ascii") as stream:
+                stream.write(base64.urlsafe_b64encode(secrets.token_bytes(MACHINE_BYTES)).rstrip(b"=").decode()
+                             + "\n")
             os.replace(made, path)
         finally:
             made.unlink(missing_ok=True)
-    raise HostedError(f"{path} holds no machine ID after one was written")
+        found = read_machine(path)
+    if not found:
+        raise HostedError(f"{path} holds no machine ID after one was written")
+    return found
+
+
+def read_machine(path: Path) -> str:
+    """The machine ID the file holds, or "" when it is missing or holds none."""
+    try:
+        found = path.read_text(encoding="ascii").strip()
+    except FileNotFoundError:
+        return ""
+    except (OSError, UnicodeError) as error:
+        raise HostedError(f"{path} could not be read: {type(error).__name__}") from None
+    return found if MACHINE_ID.fullmatch(found) else ""
 
 
 def credentials(url: str) -> str:
