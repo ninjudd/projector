@@ -1,0 +1,86 @@
+{
+ "version": 1,
+ "name": "Review automatic hold-back key",
+ "project": "watch-daemon",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 613,
+  "title": "Keep a head's UNREVIEWED key while review.automatic is false",
+  "head": "06f75667094cb00d4ce63133eb40ce3b7266fe21",
+  "headRef": "review-automatic-key",
+  "base": "230b44fe4138cf482a8547443d7f67900c3d218f",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The watch daemon is the one process per machine that polls the pull requests agent sessions work on and sends each session events. One of those events, <code>UNREVIEWED</code>, tells the session fixing a pull request that its head is ready for review and that nothing will review it. The daemon sends it once per head. It remembers each head it announced by a key, <code>unreviewed:&lt;number&gt;:&lt;head&gt;</code>, in the fixer's state, and a head whose key is still there is not announced again.",
+   "Each pass, the daemon either keeps or drops that key. It drops the key when the head no longer needs a review at all: the pull request became a draft or the head was signed off. It keeps the key when the head still needs a review but something else will give it one, such as a live start comment or <code>review.ci</code>. The repository setting <code>review.automatic = false</code>, which means its pull requests get a review only when someone asks, belongs with the second kind, and the code comment already said so. But the check sat with the first kind, so turning the setting off and back on announced a head the fixer had already heard about.",
+   "This pull request moves the check to the kept-key branch, adds a test that turns the setting off and on, and rewords the <code>UNREVIEWED</code> row in <code>docs/cli.md</code>."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, of <code>2508dd8</code>, requested changes with one P2 thread on <code>docs/cli.md</code>: the new sentence said <code>review.automatic</code> stays <code>true</code> for a repository with no <code>.projector.toml</code>, which is wrong when your <code>~/.projector.toml</code> sets it to <code>false</code>.</li><li>The author fixed the sentence and dropped a local copy of <code>counted_logins(repo)</code>, so both conditions call it directly. The thread is resolved.</li><li>The review of <code>9469c41</code> was clean. After #611 merged, the branch moved onto <code>main</code> as <code>06f7566</code> with the same change.</li><li>The review of <code>06f7566</code> is clean: no open finding threads, the new test fails against the merge base's <code>watch.py</code>, and the gate and the <code>check</code> CI job passed.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "Holding a head back keeps its key",
+   "kicker": "Where route_fix checks review.automatic, and the test that pins it",
+   "intro": [
+    "<code>Pass.route_fix</code> works out what the fixer of one pull request should hear on this pass. For <code>UNREVIEWED</code> it has two nested conditions:",
+    "<ol><li><b>The outer condition</b> asks whether the head needs a review at all: not a draft, no review requested of named reviewers, and not signed off. When it fails, the key is not carried into <code>kept</code>, so it is dropped.</li><li><b>The inner condition</b> asks whether something else will review the head: a live start comment from an account whose review counts, a session on another machine, or GitHub Actions under <code>review.ci</code>. When it holds, the key is carried over if the head was already announced. Otherwise the daemon announces the head.</li></ol>",
+    "The change moves <code>not self.settings_of(repo).automatic</code> from the outer condition to the front of the inner one. A head never announced is still not announced while the setting is <code>false</code>, because the kept-key branch copies only keys already in <code>announced</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "<code>route_fix</code>: the <code>review.automatic</code> check moves into the hold-back condition.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1967,
+       "text": "<code>not automatic</code> short-circuits before <code>counted_reviews</code>, <code>reviewed_remotely</code>, and <code>reviewed_in_ci</code>, which skips no side effect: <code>settings_of</code> caches per pass, and the other two only read state. <code>live_starts</code> still runs before it, but it only reads the pull request's comments. Checked by reading each function."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "A test that announces a head, commits <code>automatic = false</code>, then <code>automatic = true</code>, and expects one announcement.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The test fails with <code>watch.py</code> from the merge base and passes at the head, and all 57 <code>FixRoleTests</code> pass. Checked by running both."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The UNREVIEWED row in the CLI reference",
+   "kicker": "Rewording what a repository with no .projector.toml gets",
+   "intro": [
+    "The <code>UNREVIEWED</code> row of the watch events table in <code>docs/cli.md</code> lists three settings the daemon reads: <code>review.ci</code>, <code>review.automatic</code>, and <code>review.reviewers</code>. It said a repository committing no <code>.projector.toml</code> \"has neither setting\". The new wording says such a repository sets none of these settings itself, so only your <code>~/.projector.toml</code> applies, and <code>review.automatic</code> stays <code>true</code> unless that file sets it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "One sentence of the <code>UNREVIEWED</code> row changes.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 3906,
+       "text": "The sentence agrees with <code>committed_settings</code>, which calls <code>config.load_committed(None, \"\")</code> for a repository with no <code>.projector.toml</code> and so still layers <code>~/.projector.toml</code>. Checked by reading the code; the author reproduced it with <code>HOME</code> pointing at a file that sets <code>automatic = false</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
