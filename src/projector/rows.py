@@ -47,6 +47,8 @@ CONTEXT_CHECKS = {
 SUMMARY = re.compile(r"^<!-- " + summary.SUMMARY_MARKER + r" v=1 sha=[0-9a-f]{40} -->\r?\n"
                      r"\S* ?\*\*Projector summary\*\* [^\r\n]*?(https?://\S+)\s*$", re.M)
 
+PREVIEW_URL = re.compile(r"https?://\S+")
+
 # GitHub counts `comments` under `reviewThreads(first: 100)` as 100 requests, so only an open drawer asks
 # for these, and only for its own pull request.
 THREAD_FIELDS = ("reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine\n"
@@ -80,6 +82,7 @@ class Pull:
     is_cancelled: bool
     labels: list[str]
     summary_url: Optional[str]
+    preview_url: Optional[str]
     is_loading: bool = False
 
 
@@ -241,6 +244,20 @@ def cancelled_of(commit: dict) -> bool:
     return "CANCELLED" in newest_runs(context_nodes(commit))
 
 
+def preview_of(commit: dict) -> Optional[str]:
+    """The head's newest Vercel preview: the URL of the last deployment the `vercel` bot made whose latest
+    status succeeded. GitHub lists a commit's deployments oldest first."""
+    urls = []
+    for node in nodes_of(commit.get("deployments")):
+        if not isinstance(node, dict) or record_of(node.get("creator")).get("login") != "vercel":
+            continue
+        status = record_of(node.get("latestStatus"))
+        url = string_of(status.get("environmentUrl"))
+        if status.get("state") == "SUCCESS" and url is not None and PREVIEW_URL.fullmatch(url):
+            urls.append(url)
+    return urls[-1] if urls else None
+
+
 def to_pull(repo: str, number: int, node: dict) -> Pull:
     """A pull request from the node the daemon's query returned for it, as the panel's `toPullRequest` reads
     it: a field of the wrong type reads as missing."""
@@ -272,6 +289,7 @@ def to_pull(repo: str, number: int, node: dict) -> Pull:
         labels=[label["name"] for label in nodes_of(node.get("labels"))
                 if isinstance(label, dict) and isinstance(label.get("name"), str)],
         summary_url=found.group(1) if found else None,
+        preview_url=preview_of(head),
     )
 
 

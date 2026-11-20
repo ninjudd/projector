@@ -289,7 +289,7 @@ not subscribed to before.
    #258 findings grace Name the reviewed head in a rev… reviewing · passing 5m
         reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
         7: Discuss  8: Dismiss
-        open in github  open in projector
+        open in github  open in vercel  open in projector
         - src/review.py 1 finding
           :412 · ada · P2 · The signature names the base, not the head
         + docs/cli.md 1 finding
@@ -468,6 +468,9 @@ review threads, gathered under their files:
   such as `stopped fixing and reviewing acme/app#258`. `9`, closing the
   drawer, or opening another keeps it.
 - **open in github** opens the pull request on GitHub.
+- **open in vercel** opens the head's Vercel preview, when Vercel deployed
+  one: the newest deployment that the `vercel` bot made on the head commit
+  whose latest status succeeded.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
 - **Each file with an unresolved review thread** is a line that names the
@@ -512,8 +515,9 @@ terminal, or merged, so the line comes back with its drawer closed.
 On the main screen, which Claude Code uses under tmux and when
 `CLAUDE_CODE_NO_FLICKER=0` is set, use the panel from the keyboard, as
 [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
-describes. The **open in github**, **open in projector**, and thread links take
-no press there; the terminal opens them the way it opens any other link.
+describes. The **open in github**, **open in vercel**, **open in projector**,
+and thread links take no press there; the terminal opens them the way it
+opens any other link.
 
 The panel lists only this session's subscriptions. The CLI keeps them in
 `sessions/<session>/subscriptions` under the daemon's folder,

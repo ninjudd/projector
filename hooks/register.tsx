@@ -2453,6 +2453,9 @@ export const register: Register = on => {
           )}
           <Box key={`links:${key}`} flexDirection="row" columnGap={2}>
             <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
+            {pr.previewUrl !== null && (
+              <Markdown key={`vercel:${key}`} text={`[open in vercel](${pr.previewUrl})`} />
+            )}
             {pr.summaryUrl !== null && (
               <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
             )}
