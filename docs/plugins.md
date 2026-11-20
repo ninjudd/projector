@@ -52,7 +52,9 @@ docstring in the code it changes, follows the writing guide in
 `skills/writing.md`. The code guidelines make that guide a rule for
 comments, so a review flags a comment that breaks it, such as one that
 recounts the change's history. `write` applies the same guide to any other
-prose you ask for, such as `/projector:write a README section on the site`.
+prose. That includes what you ask for, such as
+`/projector:write a README section on the site`, and what an agent writes on
+its own, such as a reply to a review comment or an issue it opens.
 `rewrite` revises text that already exists, such as a file, a pull request
 description, a comment, or a Slack message, and writes the result back where
 the text lives when it can, such as

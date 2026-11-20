@@ -1,6 +1,6 @@
 ---
 name: write
-description: Write prose for people to read so that it follows Projector's writing guide. That includes documentation, a README section, a code comment or docstring, a pull request body, a commit message, an issue, and a reply. Use when the user asks to write or draft prose, or to check text against the writing guide. To rewrite text that already exists, use rewrite.
+description: Write prose for people to read so that it follows Projector's writing guide. That includes documentation, a README section, a code comment or docstring, a pull request body, a commit message, an issue, and a reply. Use when the user asks to write or draft prose, or to check text against the writing guide, and whenever you write such prose yourself outside a Projector skill that already applies the guide, such as a reply to a review comment or an issue you open. To rewrite text that already exists, use rewrite.
 ---
 
 # Write
@@ -47,7 +47,13 @@ subject.
 
 Edit a file in place, and match the line wrapping around the edit. Do not
 hard-wrap text bound for GitHub, such as a pull request body or a comment,
-because GitHub renders line breaks. For text the user pasted, give the
-revised text. Then say in a few lines what changed and why, and cite the
-guide's sections. Name each fact that you cut, so that the user can put back
-one they need. Do not commit, push, or post the text unless the user asks.
+because GitHub renders line breaks. Then finish by who the text is for:
+
+- **Prose the user asked for.** For text the user pasted, give the revised
+  text. Then say in a few lines what changed and why, and cite the guide's
+  sections. Name each fact that you cut, so that the user can put back one
+  they need. Do not commit, push, or post the text unless the user asks.
+- **Prose a step of your own task needs**, such as a reply to a review
+  comment, an issue you open, or a commit message. Commit, push, or post it
+  as that task requires, and give no report of what changed, because nobody
+  asked for one.
