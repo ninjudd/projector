@@ -5209,8 +5209,14 @@ the profile when it holds a line of yours, without the `credential_process`.
 Each command prints the service's own words and exits non-zero. A `401`,
 for a token that is missing, expired, or revoked, adds that you run
 `project hosted login`. A `402`, for an account with no paid subscription,
-adds the address the service gives to subscribe at, and
-`project hosted credentials` adds that you run `project hosted subscribe`.
+adds the address the service gives to subscribe at.
+
+`project hosted credentials` is the exception for a `402`: it leaves out the
+service's own words and says instead that the subscription lapsed and that
+you run `project hosted subscribe`, with the address to subscribe at. The S3
+client reports the last line of the command's error, and reads a line that
+says "expired" as an AWS sign-in to renew, so words the service chose could
+name the wrong fix.
 
 ## Put an iOS app on a device
 
