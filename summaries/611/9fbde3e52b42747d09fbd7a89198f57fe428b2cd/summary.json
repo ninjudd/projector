@@ -1,0 +1,130 @@
+{
+ "version": 1,
+ "name": "Quiet push subscription fallback",
+ "project": "watch-daemon",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 611,
+  "title": "Subscribe to the checked-out branch's pull request after a push whose output names none",
+  "head": "9fbde3e52b42747d09fbd7a89198f57fe428b2cd",
+  "headRef": "push-without-output",
+  "base": "03816a0d79c3b5a77ae8341fbbb869061b827336",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "When an agent session pushes a branch or opens a pull request, Projector subscribes the session to fix that pull request, so the pull request shows in the session's panel and its review findings reach the session. Both hosts do this the same way. After a Bash command that runs <code>git push</code>, <code>gh pr create</code>, or a <code>gh stack</code> command that pushes, the Claude Code mod and the Codex hook pass the command's output to <code>project watch add --from-output -</code>. The CLI reads the pull request URLs and the <code>To &lt;remote&gt;</code> blocks in that output to find what was pushed.",
+   "That breaks when the output is cut short. An agent often runs <code>git push -q</code>, or pipes the push through <code>| tail -2</code>, and then the output holds no URL and no <code>To</code> block. The session subscribed to nothing, and the pull request it just pushed to never showed in the panel.",
+   "This pull request adds a fallback. When the output names no pull request and no pushed branch, the CLI looks at the checkout it runs in. It asks GitHub for the open pull request from the checked-out branch, and subscribes to it when that pull request's head is the checkout's <code>HEAD</code>, as it is right after a successful push. The Claude Code mod used to skip the CLI when the output was empty, so it now passes empty output too.",
+   "The fallback cannot tell which branch a quiet push named. A quiet push of some other branch also subscribes to the checked-out branch's pull request when that branch is in sync with it. The author documented this rather than parsing refspecs out of the shell command in each host's hook."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Subscription</b>: a line in the session's <code>subscriptions</code> file that tells the watch daemon to send the session a pull request's events.</li><li><b><code>fix auto</code></b>: a subscription to fix a pull request that a push added on its own, rather than one a skill added.</li><li><b>In sync</b>: the pull request's head SHA on GitHub equals the checkout's <code>HEAD</code>.</li></ul>"
+   },
+   {
+    "id": "history",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li>The first review, at <code>dffa012</code>, found that the docs promised a quiet push of another branch adds nothing. The author fixed the docs, docstring, and body in <code>9fbde3e</code>, and the review verified the fix.</li><li>The review at <code>9fbde3e</code> found that the fallback drops a failed GitHub lookup silently, though <code>docs/cli.md</code> says every failed lookup is named on stderr. That finding is open.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "The checkout fallback in the CLI",
+   "kicker": "How add --from-output finds a pull request when the output names none",
+   "intro": [
+    "<code>watch.add_from_output</code> is the one function both hosts call with a push's output. It already found pull requests by their URLs and by the branches in each <code>To</code> block. This group adds a third source, used only when the first two found nothing.",
+    "The new <code>checked_out</code> helper reads the checkout's <code>origin</code> repository, its branch, and its <code>HEAD</code>, and gives nothing outside a GitHub checkout or on a detached <code>HEAD</code>. <code>add_from_output</code> then makes one REST request for open pull requests from that branch and keeps only one whose head SHA matches <code>HEAD</code>. A checkout with commits its pull request lacks, as after a failed push, adds nothing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Adds <code>checked_out</code> and the fallback at the end of <code>add_from_output</code>; the docstring describes both.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The fallback runs only when <code>pulls</code> and <code>branches</code> are both empty, so output that names anything never pays for the extra GitHub request.",
+       "line": 609
+      },
+      {
+       "kind": "flag",
+       "text": "A failed lookup here is dropped silently. The pushed-branch loop above appends <code>could not look up the pull request for …</code> to <code>problems</code>, and <code>docs/cli.md</code> says every failed lookup is named on stderr. A run with a failing <code>gh</code> returned no problem for empty output. Keep the <code>GhResult</code> and append the same problem.",
+       "line": 613
+      },
+      {
+       "kind": "verify",
+       "text": "The head comparison uses the full SHA on both sides: <code>git rev-parse HEAD</code> and GitHub's <code>head.sha</code>. Checked by reading <code>checked_out</code> and the REST response shape the fake GitHub now returns.",
+       "line": 615
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Three tests against a real Git checkout and a fake GitHub: empty output subscribes, a checkout ahead of its pull request does not, and output that names a push skips the fallback.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The fake GitHub's branch lookup now returns <code>head.ref</code> and <code>head.sha</code>, which the head comparison needs.",
+       "line": 308
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "hosts",
+   "title": "The Claude Code mod passes empty output",
+   "kicker": "The mod no longer skips the CLI when a push printed nothing",
+   "intro": [
+    "The mod's <code>subscribeFrom</code> used to return early when the command's output was empty, which is exactly what a quiet, piped push gives. It now always calls <code>project watch add --from-output -</code>, and the CLI decides. The Codex hook already passed every push command's output, so it needed no change and gets the fallback through the shared function."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Removes the empty-output early return in <code>subscribeFrom</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The mod still calls <code>subscribeFrom</code> only for commands <code>isPushCommand</code> accepts, so the change adds no GitHub request for other Bash calls. Checked by reading the <code>tool.call</code> handler for <code>Bash</code>.",
+       "line": 1138
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Adds a quiet, piped push to the commands the panel test runs, and expects it to reach the CLI with empty output."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI reference and the plugin guide describe the fallback",
+   "intro": [
+    "<code>docs/cli.md</code> gains a paragraph and an example under \"Subscribe from a command's output\", and <code>docs/plugins.md</code> adds a sentence to the mod's description. Both say that a quiet push of another branch also subscribes to the checked-out branch's in-sync pull request."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A few lines below, the section says \"A lookup that fails is named on stderr\". The fallback's lookup does not do that yet; see the flag in <code>src/projector/watch.py</code>.",
+       "line": 3707
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
