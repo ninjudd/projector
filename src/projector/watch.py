@@ -610,10 +610,14 @@ def add_from_output(root: Path, session: str, text: str, checkout: Path) -> tupl
     if current is not None:
         repo, branch, head = current
         owner = repo.split("/")[0]
-        listed = json_of(run_gh(["api", f"repos/{repo}/pulls?head={quote(f'{owner}:{branch}', safe=':')}&state=open"]))
-        found += [(repo, pull["number"]) for pull in listed if isinstance(pull, dict)
-                  and isinstance(pull.get("number"), int) and (pull.get("head") or {}).get("sha") == head] \
-            if isinstance(listed, list) else []
+        result = run_gh(["api", f"repos/{repo}/pulls?head={quote(f'{owner}:{branch}', safe=':')}&state=open"])
+        listed = json_of(result)
+        if isinstance(listed, list):
+            found += [(repo, pull["number"]) for pull in listed if isinstance(pull, dict)
+                      and isinstance(pull.get("number"), int) and (pull.get("head") or {}).get("sha") == head]
+        else:
+            problems.append(f"could not look up the pull request for {repo} {branch}: "
+                            f"{(result.stderr or result.stdout).strip() or 'gh failed'}")
     added = []
     refreshed = []
     for repo, number in unique(found):

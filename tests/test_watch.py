@@ -3196,6 +3196,19 @@ for line in sys.stdin:
         self.assertEqual(0, code, err)
         self.assertEqual([], self.lines())
 
+    def test_add_from_output_that_names_nothing_reports_a_failed_lookup_of_the_checked_out_branch(self) -> None:
+        # Catches a quiet push under failing credentials printing only that the output shows nothing to fix, when
+        # the lookup of the checked-out branch's pull request never reached GitHub's answer.
+        self.github.pull_request(12, ref="feature", head=self.checked_out_commit())
+        self.github.failing["repos/acme/app/pulls"] = 500
+
+        code, out, err = self.project("add", "--from-output", "-", stdin="\n")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([], self.lines())
+        self.assertIn("project: could not look up the pull request for acme/app feature: ", err)
+        self.assertIn("(HTTP 500)", err)
+
     def test_add_from_output_that_names_a_push_does_not_look_up_the_checked_out_branch(self) -> None:
         # Catches the fallback asking GitHub about the checkout when the output already named what was pushed.
         self.github.pull_request(12, ref="feature", head=self.checked_out_commit())
