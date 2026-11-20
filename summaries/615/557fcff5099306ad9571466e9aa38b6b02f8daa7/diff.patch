@@ -1,0 +1,342 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 997c7a79..f2e1ca4d 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -624,6 +624,11 @@ refuses `runner` while the labels name a GitHub-hosted runner, either no
+ labels or only labels of GitHub's images such as `ubuntu-latest` without
+ `self-hosted`, because a hosted runner holds no credential of yours, as
+ [Run reviews on your own runners](self-hosted-runners.md) describes.
++`--ci-effort <level>` sets the reasoning effort every review job's agent
++runs at, and `init` records it as `review.ci_effort`; without it the action
++runs at `high`. `init` refuses a level an agent's CLI does not accept:
++`claude` takes `low`, `medium`, `high`, `xhigh`, and `max`, and `codex`
++takes `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`.
+ `--ci-app <slug>` posts the reviews as that public GitHub App:
+ `init` looks the app's ID up on GitHub, records the slug as `review.ci_app`
+ and the ID as `review.ci_app_id`, adds `<slug>[bot]` to `review.reviewers`
+@@ -639,8 +644,9 @@ describes.
+ Once `review.ci` is `true`, every later `init`
+ refreshes the workflow, replacing one nobody edited and keeping an edited
+ one. A refresh takes the app's ID from `review.ci_app_id`, the runner
+-labels from `review.ci_runs_on`, and the credential kind from
+-`review.ci_credential`, so it needs no network; only `--ci-app` looks an
++labels from `review.ci_runs_on`, the credential kind from
++`review.ci_credential`, and the effort from `review.ci_effort`, so it needs
++no network; only `--ci-app` looks an
+ app up. [Review pull requests in GitHub Actions](review-in-ci.md) describes the
+ setup, the credentials, and what each job does.
+ 
+@@ -1100,6 +1106,7 @@ reads, which are these:
+ | `review.ci_app_id` | whole number | none | `init` and `project review ci-workflow`, as the ID of the app `review.ci_app` names, which `init --ci-app` looks up and records so a later refresh needs no lookup; set both with `init --ci-app` |
+ | `review.ci_runs_on` | string | none | `init` and `project review ci-workflow`, as the labels of your own runners the CI review jobs run on, separated by commas, such as `self-hosted, linux, projector`; none runs them on `ubuntu-latest`; set it with `init --ci-runs-on` |
+ | `review.ci_credential` | string | none | `init` and `project review ci-workflow`, as the kind of credential the CI reviews read: `subscription` or `api-key` picks the secret `init` asks for, and `runner` sets no secret and has the workflow pass none, for a runner that holds the credential itself; none asks for a subscription for `claude` and an API key for `codex`; set it with `init --ci-credential` |
++| `review.ci_effort` | string | none | `init` and `project review ci-workflow`, as the reasoning effort every CI review agent runs at, such as `medium`, which each agent in `review.ci_agents` must accept; none runs them at the action's default, `high`; set it with `init --ci-effort` |
+ | `review.context_repos` | string | none | `project review run` and the review action, as the repositories, each `owner/name` and separated by commas, that a review reads as context; the action reads it from the default branch, and a review keeps only those of the reviewed repository's owner whose visibility allows it, as [Give a review other repositories to read](review-in-ci.md#give-a-review-other-repositories-to-read) describes |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
+@@ -2648,9 +2655,10 @@ directory. `ci-workflow` prints the `.github/workflows/projector-review.yml`
+ that `init --ci-review` writes, for `--agents`, then `review.ci_agents`, then
+ `claude`, at `--action-ref`, `v0` by default, and posting as the app
+ `--app`, then `review.ci_app`, names, on the runners `--runs-on`, then
+-`review.ci_runs_on`, labels, and passing no credential secret when
+-`--credential`, then `review.ci_credential`, is `runner`, so you can compare
+-it with a copy you edited.
++`review.ci_runs_on`, labels, passing no credential secret when
++`--credential`, then `review.ci_credential`, is `runner`, and running the
++agents at `--effort`, then `review.ci_effort`, so you can compare it with a
++copy you edited.
+ 
+ No command takes a SHA: each comes from GitHub or the state file. `setup` works
+ from the checkout containing the working directory, or `--checkout`, and
+diff --git a/docs/projects/review-in-ci/readme.md b/docs/projects/review-in-ci/readme.md
+index 8d536f35..17d7c07c 100644
+--- a/docs/projects/review-in-ci/readme.md
++++ b/docs/projects/review-in-ci/readme.md
+@@ -1175,3 +1175,23 @@ it leaves no label and no failure comment behind.
+ The job still fails when something went wrong: the agent published no
+ verdict, ran out of time, or could not start, or an argument is missing or
+ invalid.
++
++## 12. The effort is a setting
++
++The action took an `effort` input from the start, but the workflow `init`
++writes never passed one, so every CI review ran at `high`. Changing it meant
++editing the workflow, and an edited workflow is one `init` no longer
++refreshes. Effort weighs on a review's cost as much as its model does, so it
++is a setting, as the model is.
++
++`init --ci-effort <level>` records `review.ci_effort`, and `init` and
++`project review ci-workflow` write it as the review step's `effort` input.
++With no level set, the workflow leaves the input out and the action's
++default applies, so an existing workflow keeps its digest and stays one
++`init` replaces.
++
++One level applies to every agent, like `review.ci_runs_on` and unlike the
++per-agent model in `review.ci_agents`. Claude Code and Codex accept
++different levels, so `init` refuses a level that any listed agent's CLI
++does not accept rather than write a job that would fail before every
++review.
+diff --git a/docs/review-in-ci.md b/docs/review-in-ci.md
+index 286175cd..98dd5f0f 100644
+--- a/docs/review-in-ci.md
++++ b/docs/review-in-ci.md
+@@ -98,6 +98,23 @@ with `--ci-runs-on`, such as `--ci-runs-on self-hosted,linux,projector`.
+ runner needs, how it holds the agent's credential, how a review reaches your
+ internal tools from it, and how to keep it safe.
+ 
++## Set the reasoning effort
++
++Each agent runs at `high` effort unless you name another level with
++`--ci-effort`:
++
++```sh
++project init --ci-review --ci-effort medium
++```
++
++`init` writes the level into the workflow as the action's `effort` input and
++records it as `review.ci_effort`, so a later `init` keeps it. One level
++applies to every agent's job, so `init` refuses a level one of them does not
++accept: `claude` takes `low`, `medium`, `high`, `xhigh`, and `max`, and
++`codex` takes `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`. A
++lower level costs less and reads the change less closely. To change it, run
++`init` again with another `--ci-effort`.
++
+ ## What a review job does
+ 
+ The workflow runs on `opened`, `reopened`, `synchronize`, and
+@@ -355,7 +372,7 @@ replaces.
+ | `pr` | The event's pull request | The pull request to review |
+ | `agent` | `claude` | `claude`, `codex`, or `command`, which runs the command `review.runner` names |
+ | `model` | `claude-opus-5-5` for `claude` | The model the agent runs and the review records. `codex` and `command` need one. The workflow `init` writes passes the model `review.ci_agents` names for the job's agent. |
+-| `effort` | `high` | The agent's reasoning effort |
++| `effort` | `high` | The agent's reasoning effort. The workflow `init` writes passes the level `review.ci_effort` names, and leaves it out when none is set. |
+ | `permission-mode` | `auto` | `auto`, or `allowlist`, which refuses whatever no rule allows |
+ | `rereview` | `false` | Review a head this model already reviewed |
+ | `config` | Empty | TOML for the runner's `~/.projector.toml` |
+diff --git a/src/projector/ci.py b/src/projector/ci.py
+index 044f3e1f..e49fa788 100644
+--- a/src/projector/ci.py
++++ b/src/projector/ci.py
+@@ -67,6 +67,21 @@ def hosted(labels: Optional[list[str]]) -> bool:
+ MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*\Z")
+ 
+ 
++# The reasoning efforts each agent's CLI accepts: Claude Code's `--effort` and Codex's `model_reasoning_effort`.
++EFFORTS = {"claude": ("low", "medium", "high", "xhigh", "max"),
++           "codex": ("none", "minimal", "low", "medium", "high", "xhigh")}
++
++
++def parse_effort(text: str, agents: dict[str, str]) -> str:
++    """The reasoning effort `text` names, which every agent in `agents` must accept, since one effort applies to
++    every agent's job."""
++    effort = text.strip()
++    for name in agents:
++        if effort not in EFFORTS[name]:
++            raise UsageError(f"the {name} review's effort must be {', '.join(EFFORTS[name])}; got {text!r}")
++    return effort
++
++
+ def parse_agents(text: str) -> dict[str, str]:
+     """The agents a comma-separated list names, in order and once each, each with the model an `agent=model`
+     entry gives it, or "" for the action's default. Refuses a name that is not an agent, a model that is not a
+@@ -115,7 +130,7 @@ def format_runs_on(labels: list[str]) -> str:
+ 
+ 
+ def body(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] = None,
+-         runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
++         runs_on: Optional[list[str]] = None, credential: Optional[str] = None, effort: Optional[str] = None) -> str:
+     if credential == RUNNER and hosted(runs_on):
+         raise UsageError("a GitHub-hosted runner holds no credential of yours, so the runner credential needs "
+                          "your own runner's labels, such as self-hosted, from --ci-runs-on or review.ci_runs_on; "
+@@ -135,18 +150,22 @@ def body(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] =
+                                          for agent in agents for name in CREDENTIALS[agent].values())
+     labels = runs_on or [HOSTED]
+     runner = labels[0] if len(labels) == 1 else f"[{', '.join(labels)}]"
+-    return (template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@APP@", app)
++    level = f"          effort: {effort}\n" if effort else ""
++    return (template.replace("@REF@", action_ref).replace("@MATRIX@", matrix).replace("@EFFORT@", level)
++            .replace("@APP@", app)
+             .replace("@ENV@", env).replace("@RUNS_ON@", runner).replace("@ID_TOKEN@", id_token))
+ 
+ 
+ def workflow_text(action_ref: str, agents: dict[str, str], app_id: Optional[int | str] = None,
+-                  runs_on: Optional[list[str]] = None, credential: Optional[str] = None) -> str:
++                  runs_on: Optional[list[str]] = None, credential: Optional[str] = None,
++                  effort: Optional[str] = None) -> str:
+     """The review workflow for `agents`, calling the action at `action_ref`, posting as the GitHub App `app_id`
+     names when it is given, or as the hosted service's app when it is `HOSTED_APP`, on the runners `runs_on`
+-    labels or a GitHub-hosted one, and passing no credential secret when `credential` is `runner`. Its second
++    labels or a GitHub-hosted one, passing no credential secret when `credential` is `runner`, and running each
++    agent at `effort`, or at the action's default when it is None. Its second
+     line records a digest of the rest, so a later `init` can tell a file nobody edited, which it replaces, from
+     one somebody did."""
+-    text = body(action_ref, agents, app_id, runs_on, credential)
++    text = body(action_ref, agents, app_id, runs_on, credential, effort)
+     return f"{HEADER}# projector-workflow sha256={hashlib.sha256(text.encode()).hexdigest()}\n{text}"
+ 
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index ba0b3db4..bea23166 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -631,6 +631,9 @@ def parser() -> argparse.ArgumentParser:
+     init.add_argument("--ci-runs-on", metavar="LABELS",
+                       help="run the CI reviews on your own runners with these labels, separated by commas, such as "
+                            f"self-hosted,linux (default: review.ci_runs_on, then {ci.HOSTED})")
++    init.add_argument("--ci-effort", metavar="LEVEL",
++                      help="the reasoning effort every CI review agent runs at, such as medium, which each agent "
++                           "must accept (default: review.ci_effort, then the action's default, high)")
+     rule_choice = init.add_mutually_exclusive_group()
+     rule_choice.add_argument(
+         "--publish-rule",
+@@ -863,6 +866,9 @@ def parser() -> argparse.ArgumentParser:
+     review_ci_workflow.add_argument("--credential", choices=ci.KINDS,
+                                     help="runner passes no credential secret, for a runner that holds its own "
+                                          "(default: review.ci_credential)")
++    review_ci_workflow.add_argument("--effort", metavar="LEVEL",
++                                    help="the reasoning effort every agent runs at (default: review.ci_effort, "
++                                         "then the action's default, high)")
+     review_status = review_commands.add_parser(
+         "status", help="report the newest Projector verdict on a pull request's current head"
+     )
+@@ -2571,9 +2577,10 @@ def run_review(arguments: argparse.Namespace) -> int:
+         return 0
+     if arguments.review_command == "ci-workflow":
+         config = load_config(discover_git_root(Path.cwd()))
+-        agents = arguments.agents or config.get("review.ci_agents") or "claude"
+-        print(ci.workflow_text(arguments.action_ref, ci.parse_agents(agents), ci_app(config, arguments.app)[1],
+-                               ci_runs_on(config, arguments.runs_on), ci_credential(config, arguments.credential)),
++        agents = ci.parse_agents(arguments.agents or config.get("review.ci_agents") or "claude")
++        print(ci.workflow_text(arguments.action_ref, agents, ci_app(config, arguments.app)[1],
++                               ci_runs_on(config, arguments.runs_on), ci_credential(config, arguments.credential),
++                               ci_effort(config, arguments.effort, agents)),
+               end="")
+         return 0
+     if arguments.review_command in ("hold", "ready"):
+@@ -3691,6 +3698,7 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
+     agents = ci.parse_agents(arguments.ci_agents or config.get("review.ci_agents") or "claude")
+     runs_on = ci_runs_on(config, arguments.ci_runs_on)
+     credential = ci_credential(config, arguments.ci_credential)
++    effort = ci_effort(config, arguments.ci_effort, agents)
+     try:
+         slug, app = ci_app(config, arguments.ci_app)
+     except UsageError as error:
+@@ -3701,7 +3709,8 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
+         print(f"project: {error}; left the CI review as it is, and `project init --ci-app "
+               f"{config.get('review.ci_app')}` records the app's ID so a refresh needs no lookup", file=sys.stderr)
+         return
+-    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents, app, runs_on, credential)))
++    files.append(write_ci_workflow(root, ci.workflow_text(arguments.action_ref, agents, app, runs_on, credential,
++                                                         effort)))
+     if recorded is not True:
+         record_setting(root, "review.ci", True)
+     if config.get("review.ci_agents") != ci.format_agents(agents):
+@@ -3710,6 +3719,8 @@ def init_ci_review(arguments: argparse.Namespace, root: Path, files: list[FileAc
+         record_setting(root, "review.ci_runs_on", ci.format_runs_on(runs_on))
+     if credential and config.get("review.ci_credential") != credential:
+         record_setting(root, "review.ci_credential", credential)
++    if effort and config.get("review.ci_effort") != effort:
++        record_setting(root, "review.ci_effort", effort)
+     if slug and config.get("review.ci_app") != slug:
+         record_setting(root, "review.ci_app", slug)
+     if isinstance(app, int) and config.get("review.ci_app_id") != app:
+@@ -3806,6 +3817,13 @@ def ci_credential(config: Config, flag: Optional[str]) -> Optional[str]:
+     return kind
+ 
+ 
++def ci_effort(config: Config, flag: Optional[str], agents: dict[str, str]) -> Optional[str]:
++    """The reasoning effort every CI review agent runs at, from `flag`, then `review.ci_effort`, or None for the
++    action's default."""
++    text = flag if flag is not None else config.get("review.ci_effort")
++    return None if text is None else ci.parse_effort(text, agents)
++
++
+ def app_id(slug: str) -> int:
+     """The ID of the public GitHub App `slug` names. GitHub answers this only for a public app, and only a public
+     app installs on an account other than its owner's."""
+diff --git a/src/projector/config.py b/src/projector/config.py
+index c976ee86..f9a3b843 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -107,6 +107,7 @@
+     "review.ci_app_id": int,
+     "review.ci_runs_on": str,
+     "review.ci_credential": str,
++    "review.ci_effort": str,
+     "review.context_repos": str,
+     "fix.resolve_human_threads": bool,
+     "watch.auto_start": bool,
+diff --git a/src/projector/templates/review-workflow.yml b/src/projector/templates/review-workflow.yml
+index 7b0957ac..fc620491 100644
+--- a/src/projector/templates/review-workflow.yml
++++ b/src/projector/templates/review-workflow.yml
+@@ -55,7 +55,7 @@ jobs:
+           model: ${{ matrix.model }}
+           pr: ${{ github.event.pull_request.number || inputs.pr }}
+           rereview: ${{ inputs.rereview || false }}
+-@APP@@ENV@
++@EFFORT@@APP@@ENV@
+   summary:
+     needs: review
+     if: ${{ !cancelled() && needs.review.result != 'skipped' }}
+diff --git a/tests/test_ci.py b/tests/test_ci.py
+index 2fb6d413..4c55de33 100644
+--- a/tests/test_ci.py
++++ b/tests/test_ci.py
+@@ -318,6 +318,40 @@ def test_moving_a_runner_credential_back_to_a_hosted_runner_asks_for_a_secret_ki
+         self.assertNotEqual(written, self.workflow().read_text())
+         self.assertIn("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}", self.workflow().read_text())
+ 
++    def test_every_review_job_runs_at_the_effort_you_name_and_a_later_init_keeps_it(self) -> None:
++        # A refresh that forgot the effort would put the reviews back at the action's default, and its cost.
++        code, _, err = self.init("--ci-review", "--ci-agents", "claude,codex=gpt-5.5", "--ci-effort", "medium")
++        again, out_again, _ = self.init()
++        printed, shown, _ = self.invoke("review", "ci-workflow")
++
++        self.assertEqual((0, 0, 0), (code, again, printed), err)
++        text = self.workflow().read_text()
++        review_job, summary_job = text.split("\n  summary:\n")
++        self.assertEqual(1, review_job.count("\n          effort: medium\n"), "one step runs every agent's job")
++        self.assertNotIn("effort:", summary_job, "the summary job runs no agent")
++        self.assertIn(f"unchanged {ci.WORKFLOW_PATH}", out_again)
++        self.assertEqual(text, shown, "project review ci-workflow prints the workflow init wrote")
++        self.assertEqual("medium", self.recorded()["ci_effort"])
++
++        self.assertEqual(0, self.init("--ci-effort", "high")[0])
++        self.assertIn("\n          effort: high\n", self.workflow().read_text())
++        self.assertEqual("high", self.recorded()["ci_effort"])
++
++    def test_without_an_effort_the_workflow_leaves_it_to_the_action(self) -> None:
++        self.assertEqual(0, self.init("--ci-review")[0])
++
++        self.assertNotIn("effort:", self.workflow().read_text())
++        self.assertNotIn("ci_effort", self.recorded())
++
++    def test_an_effort_an_agent_does_not_accept_is_refused_before_anything_is_written(self) -> None:
++        # Codex has no `max`, so its job would stop before every review.
++        code, _, err = self.init("--ci-review", "--ci-agents", "claude,codex=gpt-5.5", "--ci-effort", "max")
++
++        self.assertNotEqual(0, code)
++        self.assertIn("the codex review's effort must be", err)
++        self.assertFalse(self.workflow().exists())
++        self.assertEqual((None, None), (self.recorded().get("ci"), self.recorded().get("ci_effort")))
++
+ 
+ def runs_on(workflow: str) -> list[str]:
+     """The `runs-on` value of each job in `workflow`, in order."""
+@@ -360,6 +394,15 @@ def test_parse_runs_on_reads_what_format_runs_on_records_and_refuses_the_rest(se
+             with self.subTest(text=text), self.assertRaises(UsageError):
+                 ci.parse_runs_on(text)
+ 
++    def test_parse_effort_takes_a_level_every_agent_accepts(self) -> None:
++        self.assertEqual("medium", ci.parse_effort(" medium ", {"claude": "", "codex": "gpt-5.5"}))
++        self.assertEqual("max", ci.parse_effort("max", {"claude": ""}))
++        self.assertEqual("minimal", ci.parse_effort("minimal", {"codex": "gpt-5.5"}))
++        for text, agents in (("max", {"codex": "gpt-5.5"}), ("minimal", {"claude": ""}), ("", {"claude": ""}),
++                             ("High", {"claude": ""}), ("medium: x", {"claude": ""})):
++            with self.subTest(text=text, agents=agents), self.assertRaises(UsageError):
++                ci.parse_effort(text, agents)
++
+     def test_parse_agents_reads_what_format_agents_records_and_refuses_the_rest(self) -> None:
+         agents = ci.parse_agents("codex = gpt-5.5, claude, codex=other")
+         self.assertEqual({"codex": "gpt-5.5", "claude": ""}, agents, "the first entry for an agent wins")

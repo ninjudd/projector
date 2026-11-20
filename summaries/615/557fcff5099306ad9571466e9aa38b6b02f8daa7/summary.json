@@ -1,0 +1,129 @@
+{
+ "version": 1,
+ "name": "CI review effort setting",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 615,
+  "title": "Set the CI reviews' reasoning effort with project init --ci-effort",
+  "head": "557fcff5099306ad9571466e9aa38b6b02f8daa7",
+  "headRef": "ci-effort",
+  "base": "e03a16047d0153276b78a8f7d3d908eb3efccafc",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector can review pull requests in GitHub Actions. <code>project init --ci-review</code> writes the workflow <code>.github/workflows/projector-review.yml</code>, which runs Projector's review action once for each configured agent (Claude Code, Codex, or both). The action has always taken an <code>effort</code> input, the agent's reasoning effort, which defaults to <code>high</code>. The workflow <code>init</code> writes never passed that input, though, so every CI review ran at <code>high</code>.",
+   "Changing the effort meant editing the workflow by hand. <code>init</code> refreshes the workflow only while nobody has edited it, so a team that lowered the effort to save cost also stopped getting workflow updates. This pull request makes the effort a setting, the way the model already is:",
+   "<ul class=\"tight\"><li><code>project init --ci-effort &lt;level&gt;</code> records the level as <code>review.ci_effort</code> in <code>.projector.toml</code>.</li><li><code>init</code>, and <code>project review ci-workflow --effort</code>, write it into the review step as <code>effort: &lt;level&gt;</code>.</li><li>With no level set, the workflow leaves the input out, so an existing workflow renders exactly as before and keeps the digest that marks it unedited.</li><li>One level applies to every agent's job. Claude Code and Codex accept different levels, so <code>init</code> refuses a level that any listed agent does not accept.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "levels",
+    "title": "Levels each agent accepts",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Agent</th><th>Passed as</th><th>Levels</th></tr></thead><tbody><tr><td><code>claude</code></td><td><code>--effort</code></td><td><code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code></td></tr><tr><td><code>codex</code></td><td><code>model_reasoning_effort</code></td><td><code>none</code>, <code>minimal</code>, <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code></td></tr></tbody></table></div>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Effort</b>: the agent's reasoning effort, which trades cost against how closely it reads the change.</li><li><b>Digest</b>: the SHA-256 line at the top of the generated workflow. <code>init</code> replaces a workflow whose digest still matches and keeps one somebody edited.</li><li><b>Refresh</b>: a later <code>project init</code> that rewrites the workflow from the recorded settings.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "render",
+   "title": "Rendering the effort into the workflow",
+   "kicker": "Validate a level against the agents and write it as the action's input",
+   "intro": [
+    "<code>ci.py</code> builds the workflow text from a template. This group adds a table of the levels each agent's CLI accepts, a parser that checks one level against every listed agent, and an <code>@EFFORT@</code> placeholder in the review step's <code>with:</code> block.",
+    "When no effort is given, the placeholder becomes an empty string, so the rendered workflow and its digest are byte for byte what they were before this change."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/ci.py",
+     "note": "Adds <code>EFFORTS</code> and <code>parse_effort</code>, and threads an optional <code>effort</code> through <code>body</code> and <code>workflow_text</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>EFFORTS</code> has an entry for both names in <code>AGENTS</code>, the only agents <code>parse_agents</code> accepts, so <code>EFFORTS[name]</code> cannot raise <code>KeyError</code>. Checked by reading <code>AGENTS</code>.",
+       "line": 75
+      },
+      {
+       "kind": "verify",
+       "text": "Rendered a workflow for <code>claude,codex=gpt-5.5</code> at <code>medium</code>: the line lands at the <code>with:</code> block's indentation, before <code>app:</code>, and only in the review job.",
+       "line": 153
+      }
+     ]
+    },
+    {
+     "path": "src/projector/templates/review-workflow.yml",
+     "note": "The review step gains the <code>@EFFORT@</code> placeholder ahead of <code>@APP@</code>. The summary job runs no agent, so it gets none."
+    }
+   ]
+  },
+  {
+   "id": "settings",
+   "title": "The setting and the commands",
+   "kicker": "Where the level comes from: the flag, then review.ci_effort",
+   "intro": [
+    "<code>ci_effort</code> resolves the level the same way <code>ci_runs_on</code> resolves runner labels: the command-line flag first, then the recorded <code>review.ci_effort</code>, then nothing, which leaves the action's default.",
+    "<code>init_ci_review</code> resolves the level before it writes the workflow or records any setting, so a refused level leaves the repository as it was. It records the level only when one was given and it differs from what is recorded."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds <code>--ci-effort</code> to <code>init</code> and <code>--effort</code> to <code>project review ci-workflow</code>, and the <code>ci_effort</code> helper.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "When the level comes from <code>review.ci_effort</code>, the refusal still says only <code>got 'max'</code>, so someone who adds <code>codex</code> later sees a level they did not type. The review listed naming the setting in that message as a suggestion.",
+       "line": 3823
+      }
+     ]
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers <code>review.ci_effort</code> as a string setting."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and plan",
+   "kicker": "The flag, the setting, and the plan's decision",
+   "intro": [
+    "<code>docs/review-in-ci.md</code> gains a \"Set the reasoning effort\" section, and <code>docs/cli.md</code> documents the flag, the setting's row, and the <code>ci-workflow</code> option. The <code>review-in-ci</code> plan, still <code>in-progress</code>, records the decision as § 12."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/review-in-ci.md"
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/projects/review-in-ci/readme.md",
+     "note": "§ 12, \"The effort is a setting\", records why one level applies to every agent."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Init writes, keeps, moves, and refuses the effort",
+   "intro": [
+    "The new tests run <code>init</code> in temporary repositories. They check that the effort appears once and only in the review job, that a later <code>init</code> leaves the workflow unchanged, that <code>ci-workflow</code> prints the same text, that no effort means no line, and that <code>max</code> with <code>codex</code> is refused before anything is written."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_ci.py"
+    }
+   ]
+  }
+ ]
+}
