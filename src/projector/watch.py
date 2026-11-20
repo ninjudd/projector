@@ -1964,9 +1964,9 @@ class Pass:
                                       self.counted_logins(repo))["signed_off"]:
             starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
                       for comment, _ in self.live_starts(pr, head)]
-            counted = self.counted_logins(repo)
             if not self.settings_of(repo).automatic \
-                    or review.counted_reviews(starts, self.daemon.operator or "", visibility, counted) \
+                    or review.counted_reviews(starts, self.daemon.operator or "", visibility,
+                                              self.counted_logins(repo)) \
                     or self.reviewed_remotely(repo, number) or self.reviewed_in_ci(repo, pr):
                 if unreviewed in announced:
                     kept[unreviewed] = announced[unreviewed]
