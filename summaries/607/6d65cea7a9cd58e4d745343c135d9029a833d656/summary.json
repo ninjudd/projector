@@ -1,0 +1,84 @@
+{
+ "version": 1,
+ "name": "Hosted CI review tokens",
+ "project": "review-in-ci",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 607,
+  "title": "Mint this repository's CI review tokens through the hosted service instead of a stored app key",
+  "head": "6d65cea7a9cd58e4d745343c135d9029a833d656",
+  "headRef": "ci-hosted-app",
+  "base": "41a52408f8b252f59ba17ae3bbed373c4ae816b3",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector reviews this repository's pull requests in GitHub Actions. Each review posts as the Projector Review GitHub App, <code>projector-review[bot]</code>, so the job needs a token for that app. Until now the workflow minted it from the app's private key, which was stored as the <code>PROJECTOR_APP_PRIVATE_KEY</code> repository secret.",
+   "This change has the job ask Projector's hosted service for the token instead. The job proves which repository and pull request it runs for with a GitHub OIDC token, a short-lived identity token GitHub Actions issues to a job that has the <code>id-token: write</code> permission. The service checks the installation's plan and returns a token scoped to the repository. No repository then holds a copy of the app's key.",
+   "Reviews still post as <code>projector-review[bot]</code>, so <code>review.reviewers</code> and the <code>projector/review</code> status are unchanged. The action keeps its self-managed path, <code>app-id</code> with <code>app-private-key</code>, for repositories that register their own app."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The workflow edits match what <code>project init --ci-review --ci-app projector</code> generates for the hosted app.</li><li>The first review found that <code>tests/test_ci.py</code> still expected this workflow to pass the key secret. The second commit fixes the test, and the <code>check</code> job passes on this head.</li><li>The review at this head ran under the new workflow and posted as <code>projector-review[bot]</code>, so the hosted token path works.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "ci",
+   "title": "Request the review token from the hosted service",
+   "kicker": "The review workflow and the setting that records which app it posts as",
+   "intro": [
+    "Both jobs in the review workflow, the one that reviews and the one that publishes the summary, call the repository's own <code>actions/review</code> action. Each now passes <code>app: projector</code> where it passed <code>app-id</code> and <code>app-private-key</code>. Each job also gains <code>id-token: write</code>, which lets the action's &quot;Request the hosted service's token&quot; step ask GitHub for the OIDC token.",
+    "<code>.projector.toml</code> records <code>review.ci_app = \"projector\"</code>, the value <code>project init</code> reads to regenerate the workflow. This workflow runs the action from the checkout rather than from a release, so <code>init</code> treats it as edited by hand and leaves it alone. That is why the pull request edits it directly."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Generated <code>ci.body(..., \"projector\")</code> and compared it with this workflow: the <code>app</code> input and <code>id-token: write</code> lines match in both jobs."
+    }
+   ],
+   "files": [
+    {
+     "path": ".github/workflows/projector-review.yml",
+     "note": "Both jobs pass <code>app: projector</code> in place of the app ID and key, and gain <code>id-token: write</code>.",
+     "checks": []
+    },
+    {
+     "path": ".projector.toml",
+     "note": "Records <code>ci_app = \"projector\"</code>, the hosted service's app. The <code>ci_app_id</code> beside it is no longer read for the hosted app.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Settings are read from the default branch, so <code>project config get review.ci_app</code> keeps printing <code>projector-review</code> until this merges."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Let the workflow test accept a workflow with no key",
+   "kicker": "The test that keeps the app's key out of every step's environment",
+   "intro": [
+    "<code>test_the_app_key_reaches_only_the_step_that_mints_its_token</code> guards against the app's private key leaking into a job's or a step's <code>env</code>, where every step of the composite action, install scripts included, could read it. It checks two workflows: one <code>project init</code> generates with an app ID, and this repository's own.",
+    "The test asserted that the only line naming <code>PROJECTOR_APP_PRIVATE_KEY</code> was the action's <code>app-private-key</code> input. This repository's workflow now names the secret nowhere, so the test asserts a subset instead: every such line must be that input, and a workflow with none passes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_ci.py",
+     "note": "Changes the key check from equality to a subset, so a workflow that passes no key passes.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The subset check alone would also pass a generated workflow that dropped its key. The test just above it still asserts that a generated workflow with an app ID passes both <code>app-id</code> and <code>app-private-key</code> as inputs, so that case stays covered."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

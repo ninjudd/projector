@@ -1,0 +1,77 @@
+diff --git a/.github/workflows/projector-review.yml b/.github/workflows/projector-review.yml
+index 08d09c3a..e0d36446 100644
+--- a/.github/workflows/projector-review.yml
++++ b/.github/workflows/projector-review.yml
+@@ -38,6 +38,7 @@ jobs:
+       checks: read
+       actions: read
+       pages: read
++      id-token: write
+     strategy:
+       fail-fast: false
+       # An agent with no model runs the action's default for it.
+@@ -60,8 +61,7 @@ jobs:
+           model: ${{ matrix.model }}
+           pr: ${{ github.event.pull_request.number || inputs.pr }}
+           rereview: ${{ inputs.rereview || false }}
+-          app-id: '5827721'
+-          app-private-key: ${{ secrets.PROJECTOR_APP_PRIVATE_KEY }}
++          app: projector
+           # The gate's hooks/typecheck.sh compiles against declarations only an interactive Claude Code session
+           # writes, so a review on a runner runs the rest of the gate without it.
+           config: |
+@@ -79,6 +79,7 @@ jobs:
+       pull-requests: write
+       issues: write
+       pages: read
++      id-token: write
+     concurrency:
+       group: projector-summary-${{ github.event.pull_request.number || inputs.pr }}
+     runs-on: ubuntu-latest
+@@ -89,5 +90,4 @@ jobs:
+         with:
+           step: summary
+           pr: ${{ github.event.pull_request.number || inputs.pr }}
+-          app-id: '5827721'
+-          app-private-key: ${{ secrets.PROJECTOR_APP_PRIVATE_KEY }}
++          app: projector
+diff --git a/.projector.toml b/.projector.toml
+index f83d1681..8e5eed74 100644
+--- a/.projector.toml
++++ b/.projector.toml
+@@ -5,9 +5,10 @@ gate_checks = "check"
+ # The steps of the gate in AGENTS.md that CI cannot run, run on the review's worktree against the merge base.
+ gate = 'claude plugin validate . && claude plugin validate skills && claude plugin test . && hooks/typecheck.sh && git diff --check "$2" HEAD'
+ # Each pull request whose head is in this repository is reviewed in GitHub Actions by
+-# .github/workflows/projector-review.yml, which posts as the Projector Review app.
++# .github/workflows/projector-review.yml, which posts as the Projector Review app
++# with a token the hosted service mints for each job.
+ ci = true
+ ci_agents = "claude"
+-ci_app = "projector-review"
++ci_app = "projector"
+ ci_app_id = 5827721
+ reviewers = "projector-review[bot]"
+diff --git a/tests/test_ci.py b/tests/test_ci.py
+index 20e5cdc5..3adaf077 100644
+--- a/tests/test_ci.py
++++ b/tests/test_ci.py
+@@ -561,13 +561,14 @@ def test_an_app_workflow_gives_the_action_the_app_and_its_key(self) -> None:
+     def test_the_app_key_reaches_only_the_step_that_mints_its_token(self) -> None:
+         # A caller's env reaches every step of a composite action, the agent's and npm's install scripts included,
+         # and a composite action's inputs set no environment variable. So the workflow passes the key only as an
+-        # input, and only the step that mints the token reads that input.
++        # input, and only the step that mints the token reads that input. This repository's own workflow gets its
++        # token from the hosted service and passes no key, but must never pass one any other way.
+         own = Path(__file__).parents[1] / ".github" / "workflows" / "projector-review.yml"
+         for name, workflow in (("generated", ci.workflow_text("v0", {"claude": ""}, 5827721)), ("own", own.read_text())):
+             with self.subTest(workflow=name):
+-                self.assertEqual({f"app-private-key: ${{{{ secrets.{ci.APP_KEY} }}}}"},
+-                                 {line.strip() for line in workflow.splitlines() if ci.APP_KEY in line},
+-                                 "the key is in no job's or step's env, only each job's input")
++                self.assertLessEqual({line.strip() for line in workflow.splitlines() if ci.APP_KEY in line},
++                                     {f"app-private-key: ${{{{ secrets.{ci.APP_KEY} }}}}"},
++                                     "the key is in no job's or step's env, only each job's input")
+         steps = {step.splitlines()[0].removeprefix("name: "): step for step in ACTION.read_text().split("\n    - ")[1:]}
+         minting = ["Mint the app's token", "Mint the context token"]
+         self.assertEqual(minting,
