@@ -473,9 +473,11 @@ review threads, gathered under their files:
   `app-git-my-branch-acme.vercel.app`. That address serves the branch's
   newest ready build, so the link stays while a new push builds. When the
   comment lists several projects, the link goes to the first whose newest
-  commit deployed. When no comment from Vercel names a preview, the link
-  goes to the newest successful deployment that the `vercel` bot made on
-  the head commit, and the drawer shows none until there is one.
+  commit deployed, or else to the first that Vercel did not skip, and never
+  to a project the comment marks as ignored or skipped. When no comment from
+  Vercel names a preview it can link, the link goes to the newest
+  successful deployment that the `vercel` bot made on the head commit, and
+  the drawer shows none until there is one.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
 - **Each file with an unresolved review thread** is a line that names the
