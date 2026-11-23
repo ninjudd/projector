@@ -50,7 +50,11 @@ export type PullRequest = {
   updatedAt: number | null
   /** The Projector summary the description links, when one was published. */
   summaryUrl: string | null
-  /** The head's newest successful Vercel preview, when Vercel deployed one. */
+  /**
+   * The Vercel preview the drawer links: the branch preview that Vercel's
+   * newest comment names, never a project Vercel skipped, whatever state the
+   * head's build is in, or else the head's newest successful build.
+   */
   previewUrl: string | null
   /** Whether the daemon has yet to give a result for the pull request, which then holds only its reference. */
   isLoading?: boolean

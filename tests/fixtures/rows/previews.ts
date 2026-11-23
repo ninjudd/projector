@@ -1,12 +1,12 @@
 export default [
   {
-    "name": "a successful Vercel build links the branch preview that Vercel's newest comment names for a deployed project, and the build itself when no comment names one",
+    "name": "the drawer links the branch preview that Vercel's newest comment names, a deployed project's first, while a push builds too, never one Vercel skipped, and the head's newest successful build when no comment names one",
     "session": "s1",
     "files": {
       "daemon.json": {
         "operator": "ada"
       },
-      "sessions/s1/subscriptions": "acme/app#1 fix\nacme/app#2 fix\nacme/app#3 fix\nacme/app#4 fix\n",
+      "sessions/s1/subscriptions": "acme/app#1 fix\nacme/app#2 fix\nacme/app#3 fix\nacme/app#4 fix\nacme/app#5 fix\nacme/app#6 fix\nacme/app#7 fix\n",
       "cache/acme/app/pulls/1.json": {
         "repository": {
           "pullRequest": {
@@ -70,7 +70,7 @@ export default [
       "cache/acme/app/pulls/2.json": {
         "repository": {
           "pullRequest": {
-            "title": "Wait for a build",
+            "title": "Keep the link while a push builds",
             "author": {
               "login": "ada"
             },
@@ -86,7 +86,7 @@ export default [
                             "login": "vercel"
                           },
                           "latestStatus": {
-                            "state": "FAILURE",
+                            "state": "PENDING",
                             "environmentUrl": "https://app-b2d0001-acme.vercel.app"
                           }
                         }
@@ -102,7 +102,7 @@ export default [
                   "author": {
                     "login": "vercel"
                   },
-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtd2FpdC1hY21lLnZlcmNlbC5hcHAiLCJuZXh0Q29tbWl0U3RhdHVzIjoiREVQTE9ZRUQifV19\nThe latest updates on your projects."
+                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtYnVpbGRpbmctYWNtZS52ZXJjZWwuYXBwIiwibmV4dENvbW1pdFN0YXR1cyI6IkJVSUxESU5HIn1dfQ\nThe latest updates on your projects."
                 }
               ]
             }
@@ -144,13 +144,13 @@ export default [
                   "author": {
                     "login": "vercel"
                   },
-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC52ZXJjZWwuYXBwL3gpIFtjbGlja10oaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
+                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtb2xkZXItYWNtZS52ZXJjZWwuYXBwIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
                 },
                 {
                   "author": {
                     "login": "vercel"
                   },
-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtcGF1c2VkLWFjbWUudmVyY2VsLmFwcCIsIm5leHRDb21taXRTdGF0dXMiOiJQRU5ESU5HIn1dfQ\nThe latest updates on your projects."
+                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC52ZXJjZWwuYXBwL3gpIFtjbGlja10oaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
                 }
               ]
             }
@@ -204,9 +204,221 @@ export default [
             }
           }
         }
+      },
+      "cache/acme/app/pulls/5.json": {
+        "repository": {
+          "pullRequest": {
+            "title": "Wait for Vercel's first build",
+            "author": {
+              "login": "ada"
+            },
+            "headRefName": "branch-5",
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "deployments": {
+                      "nodes": [
+                        {
+                          "creator": {
+                            "login": "vercel"
+                          },
+                          "latestStatus": {
+                            "state": "PENDING",
+                            "environmentUrl": "https://app-b5d0001-acme.vercel.app"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "comments": {
+              "nodes": []
+            }
+          }
+        }
+      },
+      "cache/acme/app/pulls/6.json": {
+        "repository": {
+          "pullRequest": {
+            "title": "Pass over a skipped project while a push builds",
+            "author": {
+              "login": "ada"
+            },
+            "headRefName": "branch-6",
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "deployments": {
+                      "nodes": [
+                        {
+                          "creator": {
+                            "login": "vercel"
+                          },
+                          "latestStatus": {
+                            "state": "PENDING",
+                            "environmentUrl": "https://app-b6d0001-acme.vercel.app"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "comments": {
+              "nodes": [
+                {
+                  "author": {
+                    "login": "vercel"
+                  },
+                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiZG9jcyIsInByZXZpZXdVcmwiOiJkb2NzLWdpdC1tb25vcmVwby1hY21lLnZlcmNlbC5hcHAiLCJuZXh0Q29tbWl0U3RhdHVzIjoiSUdOT1JFRCJ9LHsibmFtZSI6ImFwcCIsInByZXZpZXdVcmwiOiJhcHAtZ2l0LW1vbm9yZXBvLWFjbWUudmVyY2VsLmFwcCIsIm5leHRDb21taXRTdGF0dXMiOiJCVUlMRElORyJ9XX0\nThe latest updates on your projects."
+                }
+              ]
+            }
+          }
+        }
+      },
+      "cache/acme/app/pulls/7.json": {
+        "repository": {
+          "pullRequest": {
+            "title": "Never link a project Vercel skipped",
+            "author": {
+              "login": "ada"
+            },
+            "headRefName": "branch-7",
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "deployments": {
+                      "nodes": [
+                        {
+                          "creator": {
+                            "login": "vercel"
+                          },
+                          "latestStatus": {
+                            "state": "SUCCESS",
+                            "environmentUrl": "https://app-b7d0001-acme.vercel.app"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "comments": {
+              "nodes": [
+                {
+                  "author": {
+                    "login": "vercel"
+                  },
+                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtc2tpcHBlZC1hY21lLnZlcmNlbC5hcHAiLCJuZXh0Q29tbWl0U3RhdHVzIjoiU2tpcHBlZCJ9XX0\nThe latest updates on your projects."
+                }
+              ]
+            }
+          }
+        }
       }
     },
     "rows": [
+      {
+        "section": "pr",
+        "label": "#7",
+        "state": "ready",
+        "notes": [],
+        "roles": [
+          "fixing"
+        ],
+        "pull": {
+          "repo": "acme/app",
+          "number": 7,
+          "title": "Never link a project Vercel skipped",
+          "url": "https://github.com/acme/app/pull/7",
+          "state": "OPEN",
+          "is_draft": false,
+          "review_decision": null,
+          "is_conflicting": false,
+          "open_threads": 0,
+          "author": "ada",
+          "branch": "branch-7",
+          "additions": 0,
+          "deletions": 0,
+          "changed_files": 0,
+          "checks": null,
+          "is_cancelled": false,
+          "labels": [],
+          "summary_url": null,
+          "preview_url": "https://app-b7d0001-acme.vercel.app",
+          "is_loading": false
+        }
+      },
+      {
+        "section": "pr",
+        "label": "#6",
+        "state": "ready",
+        "notes": [],
+        "roles": [
+          "fixing"
+        ],
+        "pull": {
+          "repo": "acme/app",
+          "number": 6,
+          "title": "Pass over a skipped project while a push builds",
+          "url": "https://github.com/acme/app/pull/6",
+          "state": "OPEN",
+          "is_draft": false,
+          "review_decision": null,
+          "is_conflicting": false,
+          "open_threads": 0,
+          "author": "ada",
+          "branch": "branch-6",
+          "additions": 0,
+          "deletions": 0,
+          "changed_files": 0,
+          "checks": null,
+          "is_cancelled": false,
+          "labels": [],
+          "summary_url": null,
+          "preview_url": "https://app-git-monorepo-acme.vercel.app",
+          "is_loading": false
+        }
+      },
+      {
+        "section": "pr",
+        "label": "#5",
+        "state": "ready",
+        "notes": [],
+        "roles": [
+          "fixing"
+        ],
+        "pull": {
+          "repo": "acme/app",
+          "number": 5,
+          "title": "Wait for Vercel's first build",
+          "url": "https://github.com/acme/app/pull/5",
+          "state": "OPEN",
+          "is_draft": false,
+          "review_decision": null,
+          "is_conflicting": false,
+          "open_threads": 0,
+          "author": "ada",
+          "branch": "branch-5",
+          "additions": 0,
+          "deletions": 0,
+          "changed_files": 0,
+          "checks": null,
+          "is_cancelled": false,
+          "labels": [],
+          "summary_url": null,
+          "preview_url": null,
+          "is_loading": false
+        }
+      },
       {
         "section": "pr",
         "label": "#4",
@@ -280,7 +492,7 @@ export default [
         "pull": {
           "repo": "acme/app",
           "number": 2,
-          "title": "Wait for a build",
+          "title": "Keep the link while a push builds",
           "url": "https://github.com/acme/app/pull/2",
           "state": "OPEN",
           "is_draft": false,
@@ -296,7 +508,7 @@ export default [
           "is_cancelled": false,
           "labels": [],
           "summary_url": null,
-          "preview_url": null,
+          "preview_url": "https://app-git-building-acme.vercel.app",
           "is_loading": false
         }
       },
