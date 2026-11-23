@@ -468,9 +468,13 @@ review threads, gathered under their files:
   such as `stopped fixing and reviewing acme/app#258`. `9`, closing the
   drawer, or opening another keeps it.
 - **open in github** opens the pull request on GitHub.
-- **open in vercel** opens the head's Vercel preview, when Vercel deployed
-  one: the newest deployment that the `vercel` bot made on the head commit
-  whose latest status succeeded.
+- **open in vercel** opens the branch's Vercel preview, once a deployment
+  that the `vercel` bot made on the head commit has succeeded. The link
+  goes to the branch's preview address, such as
+  `app-git-my-branch-acme.vercel.app`, which Vercel's comment on the pull
+  request names and which serves the branch's newest ready build. When no
+  comment from Vercel names one, the link goes to the newest successful
+  deployment on the head commit instead.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
 - **Each file with an unresolved review thread** is a line that names the

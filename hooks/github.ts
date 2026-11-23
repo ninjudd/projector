@@ -242,11 +242,11 @@ function cancelledOf(commit: Record<string, unknown>): boolean {
 const PREVIEW_URL = /^https?:\/\/\S+$/
 
 /**
- * The head's newest Vercel preview: the URL of the last deployment the
+ * The head's newest Vercel build: the URL of the last deployment the
  * `vercel` bot made whose latest status succeeded. GitHub lists a commit's
  * deployments oldest first.
  */
-function previewOf(commit: Record<string, unknown>): string | null {
+function buildPreviewOf(commit: Record<string, unknown>): string | null {
   const urls = nodesOf(commit.deployments).flatMap(node => {
     if (!isRecord(node) || !isRecord(node.creator) || node.creator.login !== 'vercel') return []
     const status = isRecord(node.latestStatus) ? node.latestStatus : {}
@@ -254,6 +254,55 @@ function previewOf(commit: Record<string, unknown>): string | null {
     return status.state === 'SUCCESS' && url !== null && PREVIEW_URL.test(url) ? [url] : []
   })
   return urls.at(-1) ?? null
+}
+
+// Vercel's comment on a pull request opens with a Markdown link reference
+// whose base64 JSON names each project's branch preview, the host that
+// serves the branch's newest ready build.
+const VERCEL_COMMENT = /^\[vc\]: #[^:\s]*:([A-Za-z0-9+/]+=*)/
+const PREVIEW_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/
+
+/** The projects Vercel's comment lists, or none when its body holds no readable list. */
+function vercelProjectsOf(body: string): unknown[] | null {
+  const found = VERCEL_COMMENT.exec(body)
+  if (found?.[1] === undefined) return null
+  try {
+    const meta: unknown = JSON.parse(atob(found[1]))
+    return isRecord(meta) && Array.isArray(meta.projects) ? meta.projects : []
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The branch's preview that Vercel's newest comment names: the first
+ * project whose newest commit deployed. Vercel shortens a long branch name
+ * with a hash, so only the comment says what the host is.
+ */
+function branchPreviewOf(node: Record<string, unknown>): string | null {
+  for (const comment of nodesOf(node.comments).toReversed()) {
+    if (!isRecord(comment) || !isRecord(comment.author) || comment.author.login !== 'vercel') continue
+    const projects = vercelProjectsOf(stringOf(comment.body) ?? '')
+    if (projects === null) continue
+    for (const project of projects) {
+      const host = isRecord(project) ? stringOf(project.previewUrl) : null
+      if (isRecord(project) && project.nextCommitStatus === 'DEPLOYED' && host !== null && PREVIEW_HOST.test(host)) {
+        return `https://${host}`
+      }
+    }
+    return null
+  }
+  return null
+}
+
+/**
+ * The preview the drawer links once the head has a successful Vercel
+ * build: the branch's, which keeps its address from push to push, or that
+ * build's own when Vercel's comment names no branch preview.
+ */
+function previewOf(node: Record<string, unknown>): string | null {
+  const build = buildPreviewOf(headOf(node))
+  return build === null ? null : (branchPreviewOf(node) ?? build)
 }
 
 const LABEL_COLOR = /^[0-9a-f]{6}$/i
@@ -294,7 +343,7 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
     labels: nodesOf(node.labels).flatMap(labelOf),
     updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
     summaryUrl: summary?.[1] ?? null,
-    previewUrl: previewOf(headOf(node)),
+    previewUrl: previewOf(node),
   }
 }
 
