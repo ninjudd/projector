@@ -1,0 +1,310 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 51fce954..07ea4de0 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3401,8 +3401,7 @@ to open its drawer:
+   the checks, and the labels, then the unresolved review threads by file.
+   `7` sends the session a message about the pull request, `8` asks before it
+   stops this session watching the pull request, `o` opens the pull request
+-  on GitHub, `d` opens the branch's Vercel preview once Vercel deployed the
+-  head, and `p` opens its Projector summary when its description links one.
++  on GitHub, `d` opens the branch's Vercel preview when Vercel has one, and `p` opens its Projector summary when its description links one.
+   Over SSH or mosh, `o`, `d`, and `p` show the URL under the actions instead,
+   whole, so you can click it in your terminal; it stays until your next key.
+   They also send it to your clipboard with an OSC 52 escape sequence, passed
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 8652e885..6ced8997 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -468,13 +468,14 @@ review threads, gathered under their files:
+   such as `stopped fixing and reviewing acme/app#258`. `9`, closing the
+   drawer, or opening another keeps it.
+ - **open in github** opens the pull request on GitHub.
+-- **open in vercel** opens the branch's Vercel preview, once a deployment
+-  that the `vercel` bot made on the head commit has succeeded. The link
+-  goes to the branch's preview address, such as
+-  `app-git-my-branch-acme.vercel.app`, which Vercel's comment on the pull
+-  request names and which serves the branch's newest ready build. When no
+-  comment from Vercel names one, the link goes to the newest successful
+-  deployment on the head commit instead.
++- **open in vercel** opens the branch's Vercel preview, whenever Vercel's
++  comment on the pull request names one, such as
++  `app-git-my-branch-acme.vercel.app`. That address serves the branch's
++  newest ready build, so the link stays while a new push builds. When the
++  comment lists several projects, the link goes to the first whose newest
++  commit deployed. When no comment from Vercel names a preview, the link
++  goes to the newest successful deployment that the `vercel` bot made on
++  the head commit, and the drawer shows none until there is one.
+ - **open in projector** opens its Projector summary, when the pull
+   request's description links one.
+ - **Each file with an unresolved review thread** is a line that names the
+diff --git a/hooks/github.ts b/hooks/github.ts
+index 85c75539..eb7954a3 100644
+--- a/hooks/github.ts
++++ b/hooks/github.ts
+@@ -275,8 +275,9 @@ function vercelProjectsOf(body: string): unknown[] | null {
+ }
+ 
+ /**
+- * The branch's preview that Vercel's newest comment names: the first
+- * project whose newest commit deployed. Vercel shortens a long branch name
++ * The branch's preview that Vercel's newest comment names, whatever state
++ * its newest build is in: the first project whose newest commit deployed,
++ * or the first project when none has. Vercel shortens a long branch name
+  * with a hash, so only the comment says what the host is.
+  */
+ function branchPreviewOf(node: Record<string, unknown>): string | null {
+@@ -284,25 +285,24 @@ function branchPreviewOf(node: Record<string, unknown>): string | null {
+     if (!isRecord(comment) || !isRecord(comment.author) || comment.author.login !== 'vercel') continue
+     const projects = vercelProjectsOf(stringOf(comment.body) ?? '')
+     if (projects === null) continue
+-    for (const project of projects) {
+-      const host = isRecord(project) ? stringOf(project.previewUrl) : null
+-      if (isRecord(project) && project.nextCommitStatus === 'DEPLOYED' && host !== null && PREVIEW_HOST.test(host)) {
+-        return `https://${host}`
+-      }
+-    }
+-    return null
++    const previews = projects.filter(isRecord).flatMap(project => {
++      const host = stringOf(project.previewUrl)
++      return host !== null && PREVIEW_HOST.test(host) ? [{ host, deployed: project.nextCommitStatus === 'DEPLOYED' }] : []
++    })
++    const preview = previews.find(one => one.deployed) ?? previews[0]
++    return preview === undefined ? null : `https://${preview.host}`
+   }
+   return null
+ }
+ 
+ /**
+- * The preview the drawer links once the head has a successful Vercel
+- * build: the branch's, which keeps its address from push to push, or that
+- * build's own when Vercel's comment names no branch preview.
++ * The preview the drawer links: the branch's, which keeps its address from
++ * push to push and serves the newest ready build while a new one builds, or
++ * the head's newest successful build when Vercel's comment names no branch
++ * preview.
+  */
+ function previewOf(node: Record<string, unknown>): string | null {
+-  const build = buildPreviewOf(headOf(node))
+-  return build === null ? null : (branchPreviewOf(node) ?? build)
++  return branchPreviewOf(node) ?? buildPreviewOf(headOf(node))
+ }
+ 
+ const LABEL_COLOR = /^[0-9a-f]{6}$/i
+diff --git a/src/projector/rows.py b/src/projector/rows.py
+index 03bdc5e8..dc750f4e 100644
+--- a/src/projector/rows.py
++++ b/src/projector/rows.py
+@@ -265,8 +265,9 @@ def build_preview_of(commit: dict) -> Optional[str]:
+ 
+ 
+ def branch_preview_of(node: dict) -> Optional[str]:
+-    """The branch's preview that Vercel's newest comment names: the first project whose newest commit
+-    deployed. Vercel shortens a long branch name with a hash, so only the comment says what the host is."""
++    """The branch's preview that Vercel's newest comment names, whatever state its newest build is in: the
++    first project whose newest commit deployed, or the first project when none has. Vercel shortens a long
++    branch name with a hash, so only the comment says what the host is."""
+     for comment in reversed(nodes_of(node.get("comments"))):
+         if not isinstance(comment, dict) or record_of(comment.get("author")).get("login") != "vercel":
+             continue
+@@ -278,19 +279,20 @@ def branch_preview_of(node: dict) -> Optional[str]:
+             projects = record_of(json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4)))).get("projects")
+         except ValueError:
+             continue
++        previews = []
+         for project in projects if isinstance(projects, list) else []:
+             host = string_of(record_of(project).get("previewUrl"))
+-            if record_of(project).get("nextCommitStatus") == "DEPLOYED" and host and PREVIEW_HOST.fullmatch(host):
+-                return f"https://{host}"
+-        return None
++            if host and PREVIEW_HOST.fullmatch(host):
++                previews.append((record_of(project).get("nextCommitStatus") != "DEPLOYED", host))
++        return f"https://{min(previews, key=lambda preview: preview[0])[1]}" if previews else None
+     return None
+ 
+ 
+ def preview_of(node: dict, commit: dict) -> Optional[str]:
+-    """The preview the drawer links once the head has a successful Vercel build: the branch's, which keeps
+-    its address from push to push, or that build's own when Vercel's comment names no branch preview."""
+-    build = build_preview_of(commit)
+-    return (branch_preview_of(node) or build) if build else None
++    """The preview the drawer links: the branch's, which keeps its address from push to push and serves the
++    newest ready build while a new one builds, or the head's newest successful build when Vercel's comment
++    names no branch preview."""
++    return branch_preview_of(node) or build_preview_of(commit)
+ 
+ 
+ def to_pull(repo: str, number: int, node: dict) -> Pull:
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 93588bbb..c98b48e5 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -119,9 +119,9 @@
+ # it too, to take it out of the counts. Each check run's suite says whether its workflow run was cancelled, and
+ # the check run's start, beside when the run's cancelled jobs ended, says whether the cancel caused its failure.
+ # The run's workflow and start say whether a newer run of that workflow on the head tests the code again.
+-# The head's deployments say whether Vercel built the head: the newest the `vercel` bot made whose latest
+-# status succeeded. The panel links the branch's preview that the `vercel` bot's comment names, or that
+-# deployment's `environmentUrl` when no comment names one.
++# The panel links the branch's preview that the `vercel` bot's comment names. When no comment names one, it
++# links the `environmentUrl` of the head's newest deployment that the `vercel` bot made whose latest status
++# succeeded.
+ CONTEXT_NODES = ("nodes{ __typename ... on CheckRun{ name conclusion startedAt completedAt checkSuite{ conclusion"
+                  " workflowRun{ databaseId createdAt workflow{ databaseId } } } } ... on StatusContext{ context state } }")
+ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
+diff --git a/tests/fixtures/rows/previews.ts b/tests/fixtures/rows/previews.ts
+index ff26a888..2fffa5d8 100644
+--- a/tests/fixtures/rows/previews.ts
++++ b/tests/fixtures/rows/previews.ts
+@@ -1,12 +1,12 @@
+ export default [
+   {
+-    "name": "a successful Vercel build links the branch preview that Vercel's newest comment names for a deployed project, and the build itself when no comment names one",
++    "name": "the drawer links the branch preview that Vercel's newest comment names, a deployed project's first, while a push builds too, and the head's newest successful build when no comment names one",
+     "session": "s1",
+     "files": {
+       "daemon.json": {
+         "operator": "ada"
+       },
+-      "sessions/s1/subscriptions": "acme/app#1 fix\nacme/app#2 fix\nacme/app#3 fix\nacme/app#4 fix\n",
++      "sessions/s1/subscriptions": "acme/app#1 fix\nacme/app#2 fix\nacme/app#3 fix\nacme/app#4 fix\nacme/app#5 fix\n",
+       "cache/acme/app/pulls/1.json": {
+         "repository": {
+           "pullRequest": {
+@@ -70,7 +70,7 @@ export default [
+       "cache/acme/app/pulls/2.json": {
+         "repository": {
+           "pullRequest": {
+-            "title": "Wait for a build",
++            "title": "Keep the link while a push builds",
+             "author": {
+               "login": "ada"
+             },
+@@ -86,7 +86,7 @@ export default [
+                             "login": "vercel"
+                           },
+                           "latestStatus": {
+-                            "state": "FAILURE",
++                            "state": "PENDING",
+                             "environmentUrl": "https://app-b2d0001-acme.vercel.app"
+                           }
+                         }
+@@ -102,7 +102,7 @@ export default [
+                   "author": {
+                     "login": "vercel"
+                   },
+-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtd2FpdC1hY21lLnZlcmNlbC5hcHAiLCJuZXh0Q29tbWl0U3RhdHVzIjoiREVQTE9ZRUQifV19\nThe latest updates on your projects."
++                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtYnVpbGRpbmctYWNtZS52ZXJjZWwuYXBwIiwibmV4dENvbW1pdFN0YXR1cyI6IkJVSUxESU5HIn1dfQ\nThe latest updates on your projects."
+                 }
+               ]
+             }
+@@ -144,13 +144,13 @@ export default [
+                   "author": {
+                     "login": "vercel"
+                   },
+-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC52ZXJjZWwuYXBwL3gpIFtjbGlja10oaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
++                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtb2xkZXItYWNtZS52ZXJjZWwuYXBwIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
+                 },
+                 {
+                   "author": {
+                     "login": "vercel"
+                   },
+-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtcGF1c2VkLWFjbWUudmVyY2VsLmFwcCIsIm5leHRDb21taXRTdGF0dXMiOiJQRU5ESU5HIn1dfQ\nThe latest updates on your projects."
++                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC52ZXJjZWwuYXBwL3gpIFtjbGlja10oaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
+                 }
+               ]
+             }
+@@ -204,9 +204,75 @@ export default [
+             }
+           }
+         }
++      },
++      "cache/acme/app/pulls/5.json": {
++        "repository": {
++          "pullRequest": {
++            "title": "Wait for Vercel's first build",
++            "author": {
++              "login": "ada"
++            },
++            "headRefName": "branch-5",
++            "commits": {
++              "nodes": [
++                {
++                  "commit": {
++                    "deployments": {
++                      "nodes": [
++                        {
++                          "creator": {
++                            "login": "vercel"
++                          },
++                          "latestStatus": {
++                            "state": "PENDING",
++                            "environmentUrl": "https://app-b5d0001-acme.vercel.app"
++                          }
++                        }
++                      ]
++                    }
++                  }
++                }
++              ]
++            },
++            "comments": {
++              "nodes": []
++            }
++          }
++        }
+       }
+     },
+     "rows": [
++      {
++        "section": "pr",
++        "label": "#5",
++        "state": "ready",
++        "notes": [],
++        "roles": [
++          "fixing"
++        ],
++        "pull": {
++          "repo": "acme/app",
++          "number": 5,
++          "title": "Wait for Vercel's first build",
++          "url": "https://github.com/acme/app/pull/5",
++          "state": "OPEN",
++          "is_draft": false,
++          "review_decision": null,
++          "is_conflicting": false,
++          "open_threads": 0,
++          "author": "ada",
++          "branch": "branch-5",
++          "additions": 0,
++          "deletions": 0,
++          "changed_files": 0,
++          "checks": null,
++          "is_cancelled": false,
++          "labels": [],
++          "summary_url": null,
++          "preview_url": null,
++          "is_loading": false
++        }
++      },
+       {
+         "section": "pr",
+         "label": "#4",
+@@ -280,7 +346,7 @@ export default [
+         "pull": {
+           "repo": "acme/app",
+           "number": 2,
+-          "title": "Wait for a build",
++          "title": "Keep the link while a push builds",
+           "url": "https://github.com/acme/app/pull/2",
+           "state": "OPEN",
+           "is_draft": false,
+@@ -296,7 +362,7 @@ export default [
+           "is_cancelled": false,
+           "labels": [],
+           "summary_url": null,
+-          "preview_url": null,
++          "preview_url": "https://app-git-building-acme.vercel.app",
+           "is_loading": false
+         }
+       },
