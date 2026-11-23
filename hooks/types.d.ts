@@ -50,12 +50,6 @@ export type PullRequest = {
   updatedAt: number | null
   /** The Projector summary the description links, when one was published. */
   summaryUrl: string | null
-  /**
-   * The Vercel preview the drawer links: the branch preview that Vercel's
-   * newest comment names, never a project Vercel skipped, whatever state the
-   * head's build is in, or else the head's newest successful build.
-   */
-  previewUrl: string | null
   /** Whether the daemon has yet to give a result for the pull request, which then holds only its reference. */
   isLoading?: boolean
 }
@@ -263,6 +257,12 @@ declare module 'claude-code' {
        * GitHub last gave them. `drawer` is the key `panelDrawer` holds.
        */
       panelThreads: { drawer: string; threads: Thread[] } | null
+      /**
+       * The Vercel preview of the pull request whose drawer is open, as
+       * `project preview` last printed it, or null when it printed none.
+       * `drawer` is the key `panelDrawer` holds.
+       */
+      panelPreview: { drawer: string; url: string | null } | null
       /**
        * The files whose threads a drawer shows, by path. Every other file is
        * collapsed. `drawer` is the key `panelDrawer` holds.

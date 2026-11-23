@@ -32,6 +32,7 @@ DECISIONS = (
     ("project review gate 12", "allow", "none"),
     ("project worktree 12", "allow", "allow"),
     ("project worktree fix/login", "allow", "allow"),
+    ("project preview acme/app#12", "allow", "allow"),
     ("project summary publish --summary summary.json", "allow", "allow"),
     ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
     ("project inbox tell notice --session s1", "allow", "allow"),

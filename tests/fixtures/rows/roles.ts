@@ -17,7 +17,7 @@ export default [
           "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "labels": [], "summary_url": null, "is_loading": true
         }
       },
       {
@@ -30,7 +30,7 @@ export default [
           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "labels": [], "summary_url": null, "is_loading": true
         }
       },
       {
@@ -43,7 +43,7 @@ export default [
           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "labels": [], "summary_url": null, "is_loading": true
         }
       },
       {
@@ -56,7 +56,7 @@ export default [
           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "labels": [], "summary_url": null, "is_loading": true
         }
       }
     ]
@@ -79,7 +79,7 @@ export default [
           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "labels": [], "summary_url": null, "is_loading": true
         }
       }
     ]

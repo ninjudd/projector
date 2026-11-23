@@ -14,7 +14,7 @@ export default [
           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "labels": [], "summary_url": null, "is_loading": true
         }
       },
       {
@@ -27,7 +27,7 @@ export default [
           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "labels": [], "summary_url": null, "is_loading": true
         }
       }
     ]
@@ -47,7 +47,7 @@ export default [
           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "labels": [], "summary_url": null, "is_loading": true
         }
       },
       {
@@ -60,7 +60,7 @@ export default [
           "repo": "acme/web", "number": 5, "title": "", "url": "https://github.com/acme/web/pull/5", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "labels": [], "summary_url": null, "is_loading": true
         }
       }
     ]
@@ -80,7 +80,7 @@ export default [
           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "labels": [], "summary_url": null, "is_loading": true
         }
       },
       {
@@ -93,7 +93,7 @@ export default [
           "repo": "acme/web", "number": 1, "title": "", "url": "https://github.com/acme/web/pull/1", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "labels": [], "summary_url": null, "is_loading": true
         }
       },
       {
@@ -106,7 +106,7 @@ export default [
           "repo": "other/app", "number": 4, "title": "", "url": "https://github.com/other/app/pull/4",
           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
+          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": true
         }
       }
     ]

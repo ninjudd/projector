@@ -1,6 +1,6 @@
 export default [
   {
-    "name": "a row carries the drawer's facts, the link to its summary, and the head's newest successful Vercel preview",
+    "name": "a row carries the drawer's facts and the link to its summary",
     "session": "s1",
     "files": {
       "daemon.json": {"operator": "ada"},
@@ -17,14 +17,6 @@ export default [
             "deletions": 8,
             "changedFiles": 4,
             "labels": {"nodes": [{"name": "enhancement", "color": "a2eeef"}]},
-            "commits": {"nodes": [{"commit": {"deployments": {"nodes": [
-              {"creator": {"login": "vercel"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "https://app-old.vercel.app"}},
-              {"creator": {"login": "vercel"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "https://app-new.vercel.app"}},
-              {"creator": {"login": "vercel"}, "latestStatus": {"state": "FAILURE", "environmentUrl": "https://app-failed.vercel.app"}},
-              {"creator": {"login": "vercel"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "javascript:alert(1)"}},
-              {"creator": {"login": "vercel"}, "latestStatus": null},
-              {"creator": {"login": "ada"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "https://acme.github.io/app/"}}
-            ]}}}]},
             "body": "Adds rows.\r\n\r\n<!-- projector-summary v=1 sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\r\n📽️ **Projector summary** of aaaaaaa: https://projector.bot/acme/app/reviews/12 \r\n"
           }
         }
@@ -53,7 +45,7 @@ export default [
           "author": "ada", "branch": "console/rows", "additions": 120, "deletions": 8, "changed_files": 4,
           "checks": null, "is_cancelled": false, "labels": ["enhancement"],
           "summary_url": "https://projector.bot/acme/app/reviews/12",
-          "preview_url": "https://app-new.vercel.app", "is_loading": false
+          "is_loading": false
         }
       },
       {
@@ -66,7 +58,7 @@ export default [
           "repo": "acme/app", "number": 11, "title": "Fix the cache", "url": "https://github.com/acme/app/pull/11",
           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
           "author": "bob", "branch": "fix-cache", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
+          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
         }
       }
     ]

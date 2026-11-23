@@ -27,7 +27,7 @@ from urllib.request import Request, url2pathname, urlopen
 
 from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
                summary, watch)
-from . import ci, hosted
+from . import ci, hosted, rows
 from . import run as headless
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
@@ -978,6 +978,10 @@ def parser() -> argparse.ArgumentParser:
                                                        "pull request's branch, checked out")
     worktree.add_argument("target", metavar="branch-or-number",
                           help="a branch, or the number of a pull request of origin's repository")
+    preview = subcommands.add_parser("preview", help="print the URL of a pull request's Vercel preview: the branch's "
+                                                     "preview that Vercel's comment names, or else the head's "
+                                                     "newest successful Vercel build")
+    preview.add_argument("target", metavar="owner/repo#number", help="the pull request, or its URL")
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
@@ -1373,6 +1377,22 @@ def run_worktree(arguments: argparse.Namespace) -> int:
     if found is None:
         raise NoWorktree(f"no worktree has {named} checked out")
     print(found)
+    return 0
+
+
+class NoPreview(ProjectorError):
+    exit_code = 66
+
+
+def run_preview(arguments: argparse.Namespace) -> int:
+    """Print the pull request's Vercel preview, from the watch daemon's last result for it when it has one."""
+    repo, number = watch.parse_target(arguments.target)
+    if number is None:
+        raise UsageError(f"{arguments.target!r} names a repository; name one of its pull requests")
+    url = rows.pull_preview(watch.state_root(), repo, number)
+    if url is None:
+        raise NoPreview(f"{repo}#{number} has no Vercel preview")
+    print(url)
     return 0
 
 
@@ -4027,6 +4047,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_agent(arguments)
     if arguments.command == "worktree":
         return run_worktree(arguments)
+    if arguments.command == "preview":
+        return run_preview(arguments)
     if arguments.command == "hosted":
         return run_hosted(arguments)
 

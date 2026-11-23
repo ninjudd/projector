@@ -239,77 +239,6 @@ function cancelledOf(commit: Record<string, unknown>): boolean {
   return newestRuns(contexts).some(run => run.conclusion === 'CANCELLED')
 }
 
-const PREVIEW_URL = /^https?:\/\/\S+$/
-
-/**
- * The head's newest Vercel build: the URL of the last deployment the
- * `vercel` bot made whose latest status succeeded. GitHub lists a commit's
- * deployments oldest first.
- */
-function buildPreviewOf(commit: Record<string, unknown>): string | null {
-  const urls = nodesOf(commit.deployments).flatMap(node => {
-    if (!isRecord(node) || !isRecord(node.creator) || node.creator.login !== 'vercel') return []
-    const status = isRecord(node.latestStatus) ? node.latestStatus : {}
-    const url = stringOf(status.environmentUrl)
-    return status.state === 'SUCCESS' && url !== null && PREVIEW_URL.test(url) ? [url] : []
-  })
-  return urls.at(-1) ?? null
-}
-
-// Vercel's comment on a pull request opens with a Markdown link reference
-// whose base64 JSON names each project's branch preview, the host that
-// serves the branch's newest ready build.
-const VERCEL_COMMENT = /^\[vc\]: #[^:\s]*:([A-Za-z0-9+/]+=*)/
-const PREVIEW_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/
-// A status that says Vercel skipped the project on this branch, whose branch
-// alias may never have been deployed.
-const SKIPPED_STATUS = /ignor|skip/i
-
-/** The projects Vercel's comment lists, or none when its body holds no readable list. */
-function vercelProjectsOf(body: string): unknown[] | null {
-  const found = VERCEL_COMMENT.exec(body)
-  if (found?.[1] === undefined) return null
-  try {
-    const meta: unknown = JSON.parse(atob(found[1]))
-    return isRecord(meta) && Array.isArray(meta.projects) ? meta.projects : []
-  } catch {
-    return null
-  }
-}
-
-/**
- * The branch's preview that Vercel's newest comment names, whatever state
- * its newest build is in: the first project whose newest commit deployed,
- * or the first project Vercel did not skip when none has. Vercel shortens a
- * long branch name with a hash, so only the comment says what the host is.
- */
-function branchPreviewOf(node: Record<string, unknown>): string | null {
-  for (const comment of nodesOf(node.comments).toReversed()) {
-    if (!isRecord(comment) || !isRecord(comment.author) || comment.author.login !== 'vercel') continue
-    const projects = vercelProjectsOf(stringOf(comment.body) ?? '')
-    if (projects === null) continue
-    const previews = projects.filter(isRecord).flatMap(project => {
-      const host = stringOf(project.previewUrl)
-      const status = stringOf(project.nextCommitStatus) ?? ''
-      if (host === null || !PREVIEW_HOST.test(host) || SKIPPED_STATUS.test(status)) return []
-      return [{ host, deployed: status === 'DEPLOYED' }]
-    })
-    const preview = previews.find(one => one.deployed) ?? previews[0]
-    return preview === undefined ? null : `https://${preview.host}`
-  }
-  return null
-}
-
-/**
- * The preview the drawer links: the branch's, which keeps its address from
- * push to push and serves the newest ready build while a new one builds, or
- * the head's newest successful build when Vercel's comment names no branch
- * preview.
- */
-function previewOf(node: Record<string, unknown>): string | null {
-  return branchPreviewOf(node) ?? buildPreviewOf(headOf(node))
-}
-
 const LABEL_COLOR = /^[0-9a-f]{6}$/i
 
 function labelOf(node: unknown): Label[] {
@@ -348,7 +277,6 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
     labels: nodesOf(node.labels).flatMap(labelOf),
     updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
     summaryUrl: summary?.[1] ?? null,
-    previewUrl: previewOf(node),
   }
 }
 
