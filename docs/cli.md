@@ -3401,8 +3401,7 @@ to open its drawer:
   the checks, and the labels, then the unresolved review threads by file.
   `7` sends the session a message about the pull request, `8` asks before it
   stops this session watching the pull request, `o` opens the pull request
-  on GitHub, `d` opens the branch's Vercel preview once Vercel deployed the
-  head, and `p` opens its Projector summary when its description links one.
+  on GitHub, `d` opens the branch's Vercel preview when Vercel has one, and `p` opens its Projector summary when its description links one.
   Over SSH or mosh, `o`, `d`, and `p` show the URL under the actions instead,
   whole, so you can click it in your terminal; it stays until your next key.
   They also send it to your clipboard with an OSC 52 escape sequence, passed

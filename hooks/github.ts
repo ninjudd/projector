@@ -275,8 +275,9 @@ function vercelProjectsOf(body: string): unknown[] | null {
 }
 
 /**
- * The branch's preview that Vercel's newest comment names: the first
- * project whose newest commit deployed. Vercel shortens a long branch name
+ * The branch's preview that Vercel's newest comment names, whatever state
+ * its newest build is in: the first project whose newest commit deployed,
+ * or the first project when none has. Vercel shortens a long branch name
  * with a hash, so only the comment says what the host is.
  */
 function branchPreviewOf(node: Record<string, unknown>): string | null {
@@ -284,25 +285,24 @@ function branchPreviewOf(node: Record<string, unknown>): string | null {
     if (!isRecord(comment) || !isRecord(comment.author) || comment.author.login !== 'vercel') continue
     const projects = vercelProjectsOf(stringOf(comment.body) ?? '')
     if (projects === null) continue
-    for (const project of projects) {
-      const host = isRecord(project) ? stringOf(project.previewUrl) : null
-      if (isRecord(project) && project.nextCommitStatus === 'DEPLOYED' && host !== null && PREVIEW_HOST.test(host)) {
-        return `https://${host}`
-      }
-    }
-    return null
+    const previews = projects.filter(isRecord).flatMap(project => {
+      const host = stringOf(project.previewUrl)
+      return host !== null && PREVIEW_HOST.test(host) ? [{ host, deployed: project.nextCommitStatus === 'DEPLOYED' }] : []
+    })
+    const preview = previews.find(one => one.deployed) ?? previews[0]
+    return preview === undefined ? null : `https://${preview.host}`
   }
   return null
 }
 
 /**
- * The preview the drawer links once the head has a successful Vercel
- * build: the branch's, which keeps its address from push to push, or that
- * build's own when Vercel's comment names no branch preview.
+ * The preview the drawer links: the branch's, which keeps its address from
+ * push to push and serves the newest ready build while a new one builds, or
+ * the head's newest successful build when Vercel's comment names no branch
+ * preview.
  */
 function previewOf(node: Record<string, unknown>): string | null {
-  const build = buildPreviewOf(headOf(node))
-  return build === null ? null : (branchPreviewOf(node) ?? build)
+  return branchPreviewOf(node) ?? buildPreviewOf(headOf(node))
 }
 
 const LABEL_COLOR = /^[0-9a-f]{6}$/i

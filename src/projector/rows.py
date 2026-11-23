@@ -265,8 +265,9 @@ def build_preview_of(commit: dict) -> Optional[str]:
 
 
 def branch_preview_of(node: dict) -> Optional[str]:
-    """The branch's preview that Vercel's newest comment names: the first project whose newest commit
-    deployed. Vercel shortens a long branch name with a hash, so only the comment says what the host is."""
+    """The branch's preview that Vercel's newest comment names, whatever state its newest build is in: the
+    first project whose newest commit deployed, or the first project when none has. Vercel shortens a long
+    branch name with a hash, so only the comment says what the host is."""
     for comment in reversed(nodes_of(node.get("comments"))):
         if not isinstance(comment, dict) or record_of(comment.get("author")).get("login") != "vercel":
             continue
@@ -278,19 +279,20 @@ def branch_preview_of(node: dict) -> Optional[str]:
             projects = record_of(json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4)))).get("projects")
         except ValueError:
             continue
+        previews = []
         for project in projects if isinstance(projects, list) else []:
             host = string_of(record_of(project).get("previewUrl"))
-            if record_of(project).get("nextCommitStatus") == "DEPLOYED" and host and PREVIEW_HOST.fullmatch(host):
-                return f"https://{host}"
-        return None
+            if host and PREVIEW_HOST.fullmatch(host):
+                previews.append((record_of(project).get("nextCommitStatus") != "DEPLOYED", host))
+        return f"https://{min(previews, key=lambda preview: preview[0])[1]}" if previews else None
     return None
 
 
 def preview_of(node: dict, commit: dict) -> Optional[str]:
-    """The preview the drawer links once the head has a successful Vercel build: the branch's, which keeps
-    its address from push to push, or that build's own when Vercel's comment names no branch preview."""
-    build = build_preview_of(commit)
-    return (branch_preview_of(node) or build) if build else None
+    """The preview the drawer links: the branch's, which keeps its address from push to push and serves the
+    newest ready build while a new one builds, or the head's newest successful build when Vercel's comment
+    names no branch preview."""
+    return branch_preview_of(node) or build_preview_of(commit)
 
 
 def to_pull(repo: str, number: int, node: dict) -> Pull:
