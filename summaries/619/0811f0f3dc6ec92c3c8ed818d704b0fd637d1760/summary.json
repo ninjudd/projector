@@ -1,0 +1,107 @@
+{
+ "version": 1,
+ "name": "Vercel link while building",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 619,
+  "title": "Keep the Vercel link while a new push builds",
+  "head": "0811f0f3dc6ec92c3c8ed818d704b0fd637d1760",
+  "headRef": "vercel-link-while-building",
+  "base": "b1b071f0ea87ad23b82bf7d0113e71c54cac6863",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's pull-request panel in Claude Code and its terminal console both show a row for each pull request a session watches. A row's drawer has an <code>open in vercel</code> link, and the console has a <code>d</code> key, that open the pull request's Vercel preview: the website Vercel builds from the branch so a reviewer can try the change.",
+   "Until now the link appeared only once Vercel had finished building the head commit. So after each push the link disappeared until the new build was done. The branch's preview address, such as <code>app-git-my-branch-acme.vercel.app</code>, keeps serving the branch's newest finished build while a new one runs, so there was no reason to hide it.",
+   "This change links that branch address whenever Vercel's comment on the pull request names one, whatever state the newest build is in, but never the address of a project Vercel skipped on the branch. Only when no comment names one it can link does the link fall back to the head commit's own successful deployment."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Vercel's comment</b>: the comment the <code>vercel</code> bot posts and updates on a pull request. Its first line carries base64 JSON listing each Vercel project with its <code>previewUrl</code> and <code>nextCommitStatus</code>.</li><li><b><code>nextCommitStatus</code></b>: the state of a project's build of the newest commit, such as <code>DEPLOYED</code>, <code>BUILDING</code>, or <code>IGNORED</code> when Vercel skipped the project for this branch.</li><li><b>Row model</b>: the code that turns the watch daemon's cached GitHub data into a row. The panel's is in TypeScript and the console's in Python, and one shared fixture tests both.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review, of <code>f4b94ae</code>, requested changes with two findings, and both are fixed:</p><ul class=\"tight\"><li>When no project had deployed, both models took the first project listed, which in a monorepo could be an <code>IGNORED</code> one whose branch address never deployed. Both now pass over a project whose status matches <code>ignor</code> or <code>skip</code>.</li><li>An edited line in <code>docs/cli.md</code> broke the paragraph's wrapping; it now wraps under 80 columns.</li></ul><p>The review of <code>0811f0f</code> requested changes again for one finding: the <code>previewUrl</code> field's docstring in <code>hooks/types.d.ts</code> still describes the old rule.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "models",
+   "title": "Pick the preview in both row models",
+   "kicker": "The panel and the console choose the same link by the same rule",
+   "intro": [
+    "Each model has two helpers. <code>branchPreviewOf</code> (<code>branch_preview_of</code> in Python) reads the newest comment by the <code>vercel</code> bot and returns its branch address. <code>buildPreviewOf</code> returns the head commit's newest successful Vercel deployment.",
+    "Before, <code>previewOf</code> returned nothing unless the head had a successful build, and the branch helper accepted only a <code>DEPLOYED</code> project. Now <code>previewOf</code> tries the branch address first and falls back to the build. The branch helper drops every project without a valid host or whose <code>nextCommitStatus</code> matches <code>SKIPPED_STATUS</code>, <code>ignor</code> or <code>skip</code> in any case, because Vercel does not document its status strings. Of the projects left it prefers the first <code>DEPLOYED</code> one, and otherwise takes the first."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Only the newest Vercel comment counts. If its host fails <code>PREVIEW_HOST</code>, the helper returns nothing rather than reading an older comment, and fixture #3 still checks that."
+    },
+    {
+     "kind": "verify",
+     "text": "Both models keep the same order: Python's <code>min</code> on a boolean key returns the first minimal item, which matches TypeScript's <code>find</code> then <code>[0]</code>. The shared fixture passes in both, through <code>claude plugin test .</code> and CI's <code>check</code> job."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/github.ts",
+     "note": "The panel's row model: the branch helper keeps every project with a valid host that Vercel did not skip, then picks a deployed one or the first.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 309,
+       "text": "Open finding: the docstring on the <code>previewUrl</code> field in <code>hooks/types.d.ts</code> still says it is the head's newest successful preview, set when Vercel deployed one. <code>previewOf</code> now sets it to the branch address while the head's only build is pending."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/rows.py",
+     "note": "The console's row model, the same rule in Python.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Cover a push that is still building",
+   "kicker": "The shared fixture gains the building, first-build, and skipped cases",
+   "intro": [
+    "<code>tests/fixtures/rows/previews.ts</code> runs through both row models. Pull request #2 now has a pending head build and a comment whose project is <code>BUILDING</code>, and expects the branch link. New #5 has a pending build and no comment, and expects no link. New #6 lists an <code>IGNORED</code> project before a <code>BUILDING</code> one and expects the building project's link. New #7's only project is <code>Skipped</code>, and it expects the head's successful build. #3 now puts a valid comment before a newest comment with a bad host, so it still shows that only the newest comment counts."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/fixtures/rows/previews.ts"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Describe the new rule",
+   "kicker": "The panel and console docs, and the query's comment",
+   "intro": [
+    "The docs now say the link stays while a push builds, that it never goes to a project Vercel ignored or skipped, and that the head's own build is only the fallback."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Only the comment above the GraphQL query changes; the query is the same."
+    }
+   ]
+  }
+ ]
+}
