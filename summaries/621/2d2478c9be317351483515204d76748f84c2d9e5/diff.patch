@@ -1,0 +1,2195 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 79da1362..f6136b4a 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -231,7 +231,7 @@ what it did to each:
+ 
+   ```text
+   prefix_rule(
+-      pattern = ["project", ["check", "done", "help", "list", "owner", "priority", "search", "show", "status", "summary", "version", "watch", "worktree"]],
++      pattern = ["project", ["check", "done", "help", "list", "owner", "preview", "priority", "search", "show", "status", "summary", "version", "watch", "worktree"]],
+       decision = "allow",
+   )
+   prefix_rule(
+@@ -5271,6 +5271,31 @@ name, so for a fork's `main` it finds the worktree that has your own `main`
+ checked out. The command needs Git 2.36 or later, which added
+ `git worktree list -z`.
+ 
++## Find a pull request's Vercel preview
++
++`project preview` prints the URL of a pull request's Vercel preview. The
++panel's drawer runs it for its `open in vercel` link, and the console's `d`
++follows the same rule. Give it the pull request as `owner/repo#number` or
++as its URL:
++
++```sh
++project preview acme/app#12          # https://app-git-my-branch-acme.vercel.app
++open "$(project preview acme/app#12)"
++```
++
++The URL is the branch's preview address that the `vercel` bot's newest
++comment on the pull request names. That address serves the branch's
++newest ready build, so the command prints it while a new push builds too.
++When the comment lists several projects, the command prints the first one
++whose newest commit deployed, and never one that Vercel ignored or skipped.
++When no comment names a preview, it prints the URL of the newest deployment
++that the `vercel` bot made on the head commit whose latest status
++succeeded. When there is neither, it says so and exits 66.
++
++The command reads the pull request from the watch daemon's last result for
++it, which costs GitHub nothing, and asks GitHub only when the daemon has
++none, as for a pull request no session watches.
++
+ ## Consume JSON
+ 
+ Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 72b9e729..37a99209 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -468,16 +468,16 @@ review threads, gathered under their files:
+   such as `stopped fixing and reviewing acme/app#258`. `9`, closing the
+   drawer, or opening another keeps it.
+ - **open in github** opens the pull request on GitHub.
+-- **open in vercel** opens the branch's Vercel preview, whenever Vercel's
+-  comment on the pull request names one, such as
+-  `app-git-my-branch-acme.vercel.app`. That address serves the branch's
+-  newest ready build, so the link stays while a new push builds. When the
+-  comment lists several projects, the link goes to the first whose newest
+-  commit deployed, or else to the first that Vercel did not skip, and never
+-  to a project the comment marks as ignored or skipped. When no comment from
+-  Vercel names a preview it can link, the link goes to the newest
+-  successful deployment that the `vercel` bot made on the head commit, and
+-  the drawer shows none until there is one.
++- **open in vercel** opens the URL that `project preview` prints for the
++  pull request: the branch's Vercel preview that Vercel's comment names,
++  such as `app-git-my-branch-acme.vercel.app`, or else the head's newest
++  successful Vercel build. The drawer runs the command when it opens, and
++  again on each poll while it stays open, so the link appears once Vercel
++  comments, follows the head's build after a push, and stays while a new
++  push builds. The command reads the watch daemon's cache, so polling it
++  costs GitHub nothing. [Find a pull
++  request's Vercel preview](cli.md#find-a-pull-requests-vercel-preview)
++  gives the whole rule.
+ - **open in projector** opens its Projector summary, when the pull
+   request's description links one.
+ - **Each file with an unresolved review thread** is a line that names the
+diff --git a/hooks/github.ts b/hooks/github.ts
+index 8ab45750..ef1155e3 100644
+--- a/hooks/github.ts
++++ b/hooks/github.ts
+@@ -239,77 +239,6 @@ function cancelledOf(commit: Record<string, unknown>): boolean {
+   return newestRuns(contexts).some(run => run.conclusion === 'CANCELLED')
+ }
+ 
+-const PREVIEW_URL = /^https?:\/\/\S+$/
+-
+-/**
+- * The head's newest Vercel build: the URL of the last deployment the
+- * `vercel` bot made whose latest status succeeded. GitHub lists a commit's
+- * deployments oldest first.
+- */
+-function buildPreviewOf(commit: Record<string, unknown>): string | null {
+-  const urls = nodesOf(commit.deployments).flatMap(node => {
+-    if (!isRecord(node) || !isRecord(node.creator) || node.creator.login !== 'vercel') return []
+-    const status = isRecord(node.latestStatus) ? node.latestStatus : {}
+-    const url = stringOf(status.environmentUrl)
+-    return status.state === 'SUCCESS' && url !== null && PREVIEW_URL.test(url) ? [url] : []
+-  })
+-  return urls.at(-1) ?? null
+-}
+-
+-// Vercel's comment on a pull request opens with a Markdown link reference
+-// whose base64 JSON names each project's branch preview, the host that
+-// serves the branch's newest ready build.
+-const VERCEL_COMMENT = /^\[vc\]: #[^:\s]*:([A-Za-z0-9+/]+=*)/
+-const PREVIEW_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/
+-// A status that says Vercel skipped the project on this branch, whose branch
+-// alias may never have been deployed.
+-const SKIPPED_STATUS = /ignor|skip/i
+-
+-/** The projects Vercel's comment lists, or none when its body holds no readable list. */
+-function vercelProjectsOf(body: string): unknown[] | null {
+-  const found = VERCEL_COMMENT.exec(body)
+-  if (found?.[1] === undefined) return null
+-  try {
+-    const meta: unknown = JSON.parse(atob(found[1]))
+-    return isRecord(meta) && Array.isArray(meta.projects) ? meta.projects : []
+-  } catch {
+-    return null
+-  }
+-}
+-
+-/**
+- * The branch's preview that Vercel's newest comment names, whatever state
+- * its newest build is in: the first project whose newest commit deployed,
+- * or the first project Vercel did not skip when none has. Vercel shortens a
+- * long branch name with a hash, so only the comment says what the host is.
+- */
+-function branchPreviewOf(node: Record<string, unknown>): string | null {
+-  for (const comment of nodesOf(node.comments).toReversed()) {
+-    if (!isRecord(comment) || !isRecord(comment.author) || comment.author.login !== 'vercel') continue
+-    const projects = vercelProjectsOf(stringOf(comment.body) ?? '')
+-    if (projects === null) continue
+-    const previews = projects.filter(isRecord).flatMap(project => {
+-      const host = stringOf(project.previewUrl)
+-      const status = stringOf(project.nextCommitStatus) ?? ''
+-      if (host === null || !PREVIEW_HOST.test(host) || SKIPPED_STATUS.test(status)) return []
+-      return [{ host, deployed: status === 'DEPLOYED' }]
+-    })
+-    const preview = previews.find(one => one.deployed) ?? previews[0]
+-    return preview === undefined ? null : `https://${preview.host}`
+-  }
+-  return null
+-}
+-
+-/**
+- * The preview the drawer links: the branch's, which keeps its address from
+- * push to push and serves the newest ready build while a new one builds, or
+- * the head's newest successful build when Vercel's comment names no branch
+- * preview.
+- */
+-function previewOf(node: Record<string, unknown>): string | null {
+-  return branchPreviewOf(node) ?? buildPreviewOf(headOf(node))
+-}
+-
+ const LABEL_COLOR = /^[0-9a-f]{6}$/i
+ 
+ function labelOf(node: unknown): Label[] {
+@@ -348,7 +277,6 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
+     labels: nodesOf(node.labels).flatMap(labelOf),
+     updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
+     summaryUrl: summary?.[1] ?? null,
+-    previewUrl: previewOf(node),
+   }
+ }
+ 
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 1f00d713..32155186 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -242,7 +242,6 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+           {
+             commit: {
+               statusCheckRollup: { state: 'SUCCESS' },
+-              deployments: { nodes: [{ creator: { login: 'vercel' }, latestStatus: { state: 'SUCCESS', environmentUrl: PREVIEW } }] },
+             },
+           },
+         ],
+@@ -344,6 +343,15 @@ type Beneath = {
+   settings?: Record<string, unknown>
+   bash?: (command: string) => { stdout: string; stderr: string }
+   sessionId?: () => string
++  previews?: Record<string, string>
++}
++
++/** `project preview <owner>/<repo>#<number>`, answered from `previews` as the CLI answers it. */
++function previewOf(argv: readonly string[], previews: Record<string, string>): Ran {
++  const url = previews[argv[2] ?? '']
++  return url === undefined
++    ? { ...ran(''), exitCode: 66, stderr: `project: ${argv[2] ?? ''} has no Vercel preview\n` }
++    : ran(`${url}\n`)
+ }
+ 
+ /** `project config get <key> [--default <value>] --json`, answered from `settings` as the CLI answers it. */
+@@ -370,6 +378,7 @@ function world(
+     settings = {},
+     bash = () => ({ stdout: '', stderr: '' }),
+     sessionId = () => SESSION,
++    previews = { 'x/y#7': PREVIEW },
+   }: Beneath = {},
+ ) {
+   const commands: string[][] = []
+@@ -393,7 +402,9 @@ function world(
+         ? github(e.argv.join(' '))
+         : group === 'config' && verb === 'get'
+           ? configGet(e.argv, settings)
+-          : project !== undefined
++          : group === 'preview'
++            ? previewOf(e.argv, previews)
++            : project !== undefined
+             ? project([...e.argv], e.init?.stdin)
+             : github(e.argv.join(' '))
+     return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
+@@ -702,6 +713,7 @@ type PanelOptions = {
+   settings?: Record<string, unknown>
+   github?: Beneath['github']
+   subscriptions?: Subscriptions
++  previews?: Beneath['previews']
+ }
+ 
+ /**
+@@ -719,11 +731,16 @@ function panelWorld(
+     settings = {},
+     github,
+     subscriptions = { review: ['o/r#1'] },
++    previews,
+   }: PanelOptions = {},
+ ) {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME, ...env })
+-  const { commands } = world(on, { ...daemonFiles(subscriptions), ...files }, undefined, { settings, github })
++  const { commands } = world(on, { ...daemonFiles(subscriptions), ...files }, undefined, {
++    settings,
++    github,
++    ...(previews === undefined ? {} : { previews }),
++  })
+   const toasts = toastsOf(on)
+   on('config.list', () => ({ value: [themeRow(theme)] }))
+   on('config.set', ($, e) => (e.value === 'dark-ansi' ? { deny: 'the theme stays' } : { value: e.value }))
+@@ -1188,6 +1205,44 @@ test('reads a pull request’s threads only while its drawer is open, and only w
+   await ui.unmount()
+ })
+ 
++test('a drawer links the preview `project preview` prints, and asks again on each poll while it stays open', async ($, on) => {
++  // Catches a drawer that links without asking the command, shows a link when it exits 66, never asks again once
++  // Vercel starts building, keeps an old head's build after a push, or keeps a link the command no longer prints.
++  const previews: Record<string, string> = {}
++  const { clock, commands } = panelWorld(on, { subscriptions: { fix: ['x/y#7'] }, previews })
++  const asked = () => commands.filter(argv => argv[0] === 'project' && argv[1] === 'preview')
++  const vercel = async () => (await ui.find({ key: 'vercel:x/y#7' }))?.props.text
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  expect(asked()).toEqual([])
++
++  await ui.press({ key: 'pr:x/y#7' })
++  await clock.settle()
++  expect(asked()).toEqual([['project', 'preview', 'x/y#7']])
++  expect(await vercel()).toBeUndefined()
++
++  previews['x/y#7'] = PREVIEW
++  await clock.advance(30_000 + TICK)
++  await clock.settle()
++  expect(asked().length).toBe(2)
++  expect(await vercel()).toBe(`[open in vercel](${PREVIEW})`)
++
++  // Without a branch preview the link is the head's own build, so a push changes it.
++  const pushed = 'https://y-abc123-team.vercel.app'
++  previews['x/y#7'] = pushed
++  await clock.advance(30_000 + TICK)
++  await clock.settle()
++  expect(asked().length).toBe(3)
++  expect(await vercel()).toBe(`[open in vercel](${pushed})`)
++
++  delete previews['x/y#7']
++  await clock.advance(30_000 + TICK)
++  await clock.settle()
++  expect(asked().length).toBe(4)
++  expect(await vercel()).toBeUndefined()
++  await ui.unmount()
++})
++
+ /** An unresolved thread as GitHub answers it, whose first comment is `discussion_r<at>` on x/y#7. */
+ const threadNode = (path: string, line: number | null, body: string, login: string | null, at: number) => ({
+   isResolved: false,
+diff --git a/hooks/parse.test.ts b/hooks/parse.test.ts
+index a1ddc255..b81ad40e 100644
+--- a/hooks/parse.test.ts
++++ b/hooks/parse.test.ts
+@@ -65,7 +65,6 @@ describe('GitHub', () => {
+       ],
+       updatedAt: Date.UTC(2026, 9, 12, 12, 0),
+       summaryUrl: 'https://example.com/site/reviews/1',
+-      previewUrl: null,
+     })
+     expect(parseCache({ repo: 'x/y', number: 3 }, third)).toMatchObject({
+       state: 'MERGED',
+@@ -519,7 +518,6 @@ describe('the daemon’s files', () => {
+       labels: [{ name: 'clean', color: null }],
+       updatedAt: Date.UTC(2026, 9, 30, 11),
+       summaryUrl: null,
+-      previewUrl: null,
+     })
+     expect(parseCache({ repo: 'acme/app', number: 12 }, '')).toBeNull()
+     expect(parseCache({ repo: 'acme/app', number: 12 }, '{"repository": {"pullRequest": null}}')).toBeNull()
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 4ffe1477..8ea0be01 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -366,6 +366,7 @@ const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, fals
+ const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
+ const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
+ const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const, null)
++const drawerPreview = atom({ plugin: 'projector', key: 'panelPreview' } as const, null)
+ const openFiles = atom({ plugin: 'projector', key: 'panelOpenFiles' } as const, null)
+ const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
+ const entries = atom({ plugin: 'projector', key: 'panelEntries' } as const, [])
+@@ -518,6 +519,34 @@ async function loadThreads($: Engine): Promise<void> {
+   await update($, drawerThreads, () => ({ drawer: opened, threads: found }))
+ }
+ 
++const PREVIEW_URL = /^https?:\/\/\S+$/
++
++/**
++ * Reads the Vercel preview of the pull request whose drawer is open, from
++ * `project preview`, which reads the daemon's last result for it: when the
++ * drawer opens, and on each poll while it stays open. Vercel comments only
++ * once it starts a pull request's first build, and without a branch preview
++ * the link is the head's own build, so it changes with each push. Reading
++ * the daemon's cache costs GitHub nothing. When the command cannot run, the
++ * drawer keeps what it linked.
++ */
++async function loadPreview($: Engine): Promise<void> {
++  const opened = await read($, drawer)
++  const row = current(await read($, snapshot)).rows.find(one => keyOf(one.pr) === opened)
++  if (opened === null || row === undefined) return
++  let url: string | null
++  try {
++    const ran = await project($, ['preview', `${row.pr.repo}#${String(row.pr.number)}`])
++    const printed = ran.stdout.trim()
++    url = ran.exitCode === 0 && PREVIEW_URL.test(printed) ? printed : null
++  } catch {
++    return
++  }
++  // Another drawer may have opened while the command ran.
++  if ((await read($, drawer)) !== opened) return
++  await update($, drawerPreview, () => ({ drawer: opened, url }))
++}
++
+ /**
+  * The built-in theme a Claude Code theme draws as: the theme's own name, or
+  * for a custom theme, `custom:<slug>`, the theme its file builds on, `dark`
+@@ -630,7 +659,7 @@ async function load($: Engine, isPolled: boolean): Promise<void> {
+   }))
+   await update($, now, () => time)
+   await closeLeftDrawer($, time)
+-  if (isPolled) await loadThreads($)
++  if (isPolled) await Promise.all([loadThreads($), loadPreview($)])
+ }
+ 
+ /**
+@@ -1766,6 +1795,7 @@ export const register: Register = on => {
+     const time = await read($, now)
+     const opened = await read($, drawer)
+     const shownThreads = await read($, drawerThreads)
++    const shownPreview = await read($, drawerPreview)
+     const asking = await read($, asked)
+     const opening = await read($, openFiles)
+     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
+@@ -1841,7 +1871,7 @@ export const register: Register = on => {
+     const toggle = (key: string, line: string, onto?: string) => {
+       collapseFilesFor(key)
+       update($, drawer, was => (was === key ? null : key))
+-        .then(() => loadThreads($))
++        .then(() => Promise.all([loadThreads($), loadPreview($)]))
+         .catch(() => undefined)
+       ask(key, null)
+       carry(line, onto)
+@@ -2454,8 +2484,8 @@ export const register: Register = on => {
+           )}
+           <Box key={`links:${key}`} flexDirection="row" columnGap={2}>
+             <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
+-            {pr.previewUrl !== null && (
+-              <Markdown key={`vercel:${key}`} text={`[open in vercel](${pr.previewUrl})`} />
++            {shownPreview?.drawer === key && shownPreview.url !== null && (
++              <Markdown key={`vercel:${key}`} text={`[open in vercel](${shownPreview.url})`} />
+             )}
+             {pr.summaryUrl !== null && (
+               <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
+diff --git a/hooks/rows.test.ts b/hooks/rows.test.ts
+index ec17d811..3ca98e88 100644
+--- a/hooks/rows.test.ts
++++ b/hooks/rows.test.ts
+@@ -48,7 +48,6 @@ const pullOf = (pr: PullRequest) => ({
+   is_cancelled: pr.isCancelled,
+   labels: pr.labels.map(label => label.name),
+   summary_url: pr.summaryUrl,
+-  preview_url: pr.previewUrl,
+   is_loading: pr.isLoading === true,
+ })
+ 
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index b298c0b0..856b5e83 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -50,12 +50,6 @@ export type PullRequest = {
+   updatedAt: number | null
+   /** The Projector summary the description links, when one was published. */
+   summaryUrl: string | null
+-  /**
+-   * The Vercel preview the drawer links: the branch preview that Vercel's
+-   * newest comment names, never a project Vercel skipped, whatever state the
+-   * head's build is in, or else the head's newest successful build.
+-   */
+-  previewUrl: string | null
+   /** Whether the daemon has yet to give a result for the pull request, which then holds only its reference. */
+   isLoading?: boolean
+ }
+@@ -263,6 +257,12 @@ declare module 'claude-code' {
+        * GitHub last gave them. `drawer` is the key `panelDrawer` holds.
+        */
+       panelThreads: { drawer: string; threads: Thread[] } | null
++      /**
++       * The Vercel preview of the pull request whose drawer is open, as
++       * `project preview` last printed it, or null when it printed none.
++       * `drawer` is the key `panelDrawer` holds.
++       */
++      panelPreview: { drawer: string; url: string | null } | null
+       /**
+        * The files whose threads a drawer shows, by path. Every other file is
+        * collapsed. `drawer` is the key `panelDrawer` holds.
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index bea23166..cf204f16 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -27,7 +27,7 @@
+ 
+ from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
+                summary, watch)
+-from . import ci, hosted
++from . import ci, hosted, rows
+ from . import run as headless
+ from .permissions import allow_commands
+ from .summary import WORKFLOW_PATH
+@@ -978,6 +978,10 @@ def parser() -> argparse.ArgumentParser:
+                                                        "pull request's branch, checked out")
+     worktree.add_argument("target", metavar="branch-or-number",
+                           help="a branch, or the number of a pull request of origin's repository")
++    preview = subcommands.add_parser("preview", help="print the URL of a pull request's Vercel preview: the branch's "
++                                                     "preview that Vercel's comment names, or else the head's "
++                                                     "newest successful Vercel build")
++    preview.add_argument("target", metavar="owner/repo#number", help="the pull request, or its URL")
+ 
+     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
+     site_commands = site.add_subparsers(dest="site_command", required=True)
+@@ -1376,6 +1380,22 @@ def run_worktree(arguments: argparse.Namespace) -> int:
+     return 0
+ 
+ 
++class NoPreview(ProjectorError):
++    exit_code = 66
++
++
++def run_preview(arguments: argparse.Namespace) -> int:
++    """Print the pull request's Vercel preview, from the watch daemon's last result for it when it has one."""
++    repo, number = watch.parse_target(arguments.target)
++    if number is None:
++        raise UsageError(f"{arguments.target!r} names a repository; name one of its pull requests")
++    url = rows.pull_preview(watch.state_root(), repo, number)
++    if url is None:
++        raise NoPreview(f"{repo}#{number} has no Vercel preview")
++    print(url)
++    return 0
++
++
+ def add_watch_parser(subcommands) -> None:
+     parser = subcommands.add_parser("watch", help="subscribe the session to the pull requests it fixes and reviews, "
+                                                    "and deliver what the watch daemon finds on them")
+@@ -4027,6 +4047,8 @@ def run(arguments: argparse.Namespace) -> int:
+         return run_agent(arguments)
+     if arguments.command == "worktree":
+         return run_worktree(arguments)
++    if arguments.command == "preview":
++        return run_preview(arguments)
+     if arguments.command == "hosted":
+         return run_hosted(arguments)
+ 
+diff --git a/src/projector/console.py b/src/projector/console.py
+index 630b4ef4..bdc92ffc 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -802,8 +802,8 @@ def pull_controls(self, row: rows.Row) -> list[Control]:
+         controls = [Control("7", "Discuss", lambda: self.open_field("pr", reference, f"Discuss {reference}: ")),
+                     Control("8", "Dismiss", lambda: self.ask("dismiss")),
+                     Control("o", "Open in GitHub", lambda: self.visit("o", pull.url))]
+-        if pull.preview_url is not None:
+-            preview = pull.preview_url
++        preview = rows.cached_preview(self.root, pull.repo, pull.number)
++        if preview is not None:
+             controls.append(Control("d", "Open in Vercel", lambda: self.visit("d", preview)))
+         if pull.summary_url is not None:
+             summary = pull.summary_url
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 88bb38fc..6ce2a814 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -140,10 +140,10 @@
+ # Each pattern Codex may run without asking, and outside its sandbox, with the
+ # justification Codex shows for it.
+ CODEX_ALLOW = (
+-    (["project", ["check", "done", "help", "list", "owner", "priority", "search", "show", "status", "summary",
+-                  "version", "watch", "worktree"]],
++    (["project", ["check", "done", "help", "list", "owner", "preview", "priority", "search", "show", "status",
++                  "summary", "version", "watch", "worktree"]],
+      "Runs a Projector command that works on plans, watches, or pull request summaries, finds a branch's "
+-     "worktree, or prints its version or help."),
++     "worktree or a pull request's Vercel preview, or prints its version or help."),
+     (["project", "agent", ["list", "read", "register", "reply", "send", "unregister"]],
+      "Registers or unregisters the session, lists your registered sessions, or sends, reads, or answers a message "
+      "between them."),
+diff --git a/src/projector/rows.py b/src/projector/rows.py
+index 63ff88f8..f1f7d773 100644
+--- a/src/projector/rows.py
++++ b/src/projector/rows.py
+@@ -91,7 +91,6 @@ class Pull:
+     is_cancelled: bool
+     labels: list[str]
+     summary_url: Optional[str]
+-    preview_url: Optional[str]
+     is_loading: bool = False
+ 
+ 
+@@ -292,6 +291,12 @@ def branch_preview_of(node: dict) -> Optional[str]:
+     return None
+ 
+ 
++def head_of(node: dict) -> dict:
++    """The pull request's head commit, as the query reads it."""
++    commits = nodes_of(node.get("commits"))
++    return record_of(record_of(commits[0]).get("commit")) if commits else {}
++
++
+ def preview_of(node: dict, commit: dict) -> Optional[str]:
+     """The preview the drawer links: the branch's, which keeps its address from push to push and serves the
+     newest ready build while a new one builds, or the head's newest successful build when Vercel's comment
+@@ -302,8 +307,7 @@ def preview_of(node: dict, commit: dict) -> Optional[str]:
+ def to_pull(repo: str, number: int, node: dict) -> Pull:
+     """A pull request from the node the daemon's query returned for it, as the panel's `toPullRequest` reads
+     it: a field of the wrong type reads as missing."""
+-    commits = nodes_of(node.get("commits"))
+-    head = record_of(record_of(commits[0]).get("commit")) if commits else {}
++    head = head_of(node)
+     author = record_of(node.get("author")).get("login")
+     url = node.get("url")
+     body = node.get("body")
+@@ -330,15 +334,52 @@ def to_pull(repo: str, number: int, node: dict) -> Pull:
+         labels=[label["name"] for label in nodes_of(node.get("labels"))
+                 if isinstance(label, dict) and isinstance(label.get("name"), str)],
+         summary_url=found.group(1) if found else None,
+-        preview_url=preview_of(node, head),
+     )
+ 
+ 
++def pull_node(response: object) -> Optional[dict]:
++    """The pull request in a response to the daemon's query, `{"repository": {"pullRequest": {...}}, ...}`."""
++    node = record_of(record_of(response).get("repository")).get("pullRequest")
++    return node if isinstance(node, dict) else None
++
++
++def cached_node(root: Path, repo: str, number: int) -> Optional[dict]:
++    """The pull request in the daemon's last result for it, or None when it has none yet."""
++    return pull_node(read_json(watch.pull_cache(root, repo, number)))
++
++
+ def cached_pull(root: Path, repo: str, number: int) -> Optional[Pull]:
+-    """The daemon's last result for a pull request, `{"repository": {"pullRequest": {...}}, ...}`, or None
+-    when it has none yet or the file holds no pull request."""
+-    node = record_of(record_of(read_json(watch.pull_cache(root, repo, number))).get("repository")).get("pullRequest")
+-    return to_pull(repo, number, node) if isinstance(node, dict) else None
++    """The daemon's last result for a pull request, or None when it has none yet or the file holds no pull
++    request."""
++    node = cached_node(root, repo, number)
++    return to_pull(repo, number, node) if node is not None else None
++
++
++def cached_preview(root: Path, repo: str, number: int) -> Optional[str]:
++    """The preview the daemon's last result for a pull request gives, or None when it gives none."""
++    node = cached_node(root, repo, number)
++    return preview_of(node, head_of(node)) if node is not None else None
++
++
++# What `pull_preview` asks GitHub for a pull request the daemon has not fetched: the fields `preview_of` reads.
++PREVIEW_QUERY = """query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ pullRequest(number:$n){
++  commits(last:1){ nodes{ commit{
++    deployments(last:10){ nodes{ creator{ login } latestStatus{ state environmentUrl } } } } } }
++  comments(last:100){ nodes{ author{ login } body } } } } }"""
++
++
++def pull_preview(root: Path, repo: str, number: int) -> Optional[str]:
++    """The pull request's Vercel preview, as `project preview` prints it: from the daemon's last result for it,
++    which costs GitHub nothing, or from GitHub when the daemon has none."""
++    node = cached_node(root, repo, number)
++    if node is None:
++        owner, name = repo.split("/")
++        response = review.gh_json(["api", "graphql", "-f", f"query={PREVIEW_QUERY}", "-F", f"o={owner}",
++                                   "-F", f"r={name}", "-F", f"n={number}"])
++        node = pull_node(record_of(response).get("data"))
++        if node is None:
++            raise review.NotFound(f"{repo}#{number} does not exist or is not visible to this account")
++    return preview_of(node, head_of(node))
+ 
+ 
+ def loading_pull(repo: str, number: int) -> Pull:
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index c98b48e5..1ae0d6b5 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -119,9 +119,9 @@
+ # it too, to take it out of the counts. Each check run's suite says whether its workflow run was cancelled, and
+ # the check run's start, beside when the run's cancelled jobs ended, says whether the cancel caused its failure.
+ # The run's workflow and start say whether a newer run of that workflow on the head tests the code again.
+-# The panel links the branch's preview that the `vercel` bot's comment names. When no comment names one, it
+-# links the `environmentUrl` of the head's newest deployment that the `vercel` bot made whose latest status
+-# succeeded.
++# The comments and the head's deployments give `project preview` the Vercel preview it prints, which the
++# panel's drawer links: the branch's preview that the `vercel` bot's comment names, or else the
++# `environmentUrl` of the head's newest deployment that the `vercel` bot made whose latest status succeeded.
+ CONTEXT_NODES = ("nodes{ __typename ... on CheckRun{ name conclusion startedAt completedAt checkSuite{ conclusion"
+                  " workflowRun{ databaseId createdAt workflow{ databaseId } } } } ... on StatusContext{ context state } }")
+ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
+diff --git a/tests/fixtures/previews.json b/tests/fixtures/previews.json
+new file mode 100644
+index 00000000..1932417e
+--- /dev/null
++++ b/tests/fixtures/previews.json
+@@ -0,0 +1,356 @@
++[
++  {
++    "name": "the newest vercel comment's deployed project wins over an ignored one listed first, an older comment, and a look-alike from a person",
++    "node": {
++      "commits": {
++        "nodes": [
++          {
++            "commit": {
++              "deployments": {
++                "nodes": [
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": {
++                      "state": "SUCCESS",
++                      "environmentUrl": "https://app-b1d0001-acme.vercel.app"
++                    }
++                  }
++                ]
++              }
++            }
++          }
++        ]
++      },
++      "comments": {
++        "nodes": [
++          {
++            "author": {
++              "login": "vercel"
++            },
++            "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtc3RhbGUtYWNtZS52ZXJjZWwuYXBwIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
++          },
++          {
++            "author": {
++              "login": "ada"
++            },
++            "body": "Looks right to me."
++          },
++          {
++            "author": {
++              "login": "vercel"
++            },
++            "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiZG9jcyIsInByZXZpZXdVcmwiOiJkb2NzLWdpdC1sb25nLWJyYW5jaC1uYW1lLXRoLTFhMmIzYy1hY21lLnZlcmNlbC5hcHAiLCJuZXh0Q29tbWl0U3RhdHVzIjoiSUdOT1JFRCJ9LHsibmFtZSI6ImFwcCIsInByZXZpZXdVcmwiOiJhcHAtZ2l0LWxvbmctYnJhbmNoLW5hbWUtdGgtMWEyYjNjLWFjbWUudmVyY2VsLmFwcCIsIm5leHRDb21taXRTdGF0dXMiOiJERVBMT1lFRCJ9XX0\nThe latest updates on your projects."
++          },
++          {
++            "author": {
++              "login": "ada"
++            },
++            "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImV2aWwuZXhhbXBsZS5jb20iLCJuZXh0Q29tbWl0U3RhdHVzIjoiREVQTE9ZRUQifV19\nThe latest updates on your projects."
++          }
++        ]
++      }
++    },
++    "preview": "https://app-git-long-branch-name-th-1a2b3c-acme.vercel.app"
++  },
++  {
++    "name": "the branch preview stays linked while a push builds",
++    "node": {
++      "commits": {
++        "nodes": [
++          {
++            "commit": {
++              "deployments": {
++                "nodes": [
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": {
++                      "state": "PENDING",
++                      "environmentUrl": "https://app-b2d0001-acme.vercel.app"
++                    }
++                  }
++                ]
++              }
++            }
++          }
++        ]
++      },
++      "comments": {
++        "nodes": [
++          {
++            "author": {
++              "login": "vercel"
++            },
++            "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtYnVpbGRpbmctYWNtZS52ZXJjZWwuYXBwIiwibmV4dENvbW1pdFN0YXR1cyI6IkJVSUxESU5HIn1dfQ\nThe latest updates on your projects."
++          }
++        ]
++      }
++    },
++    "preview": "https://app-git-building-acme.vercel.app"
++  },
++  {
++    "name": "a preview host that is not a bare host falls back to the head's build",
++    "node": {
++      "commits": {
++        "nodes": [
++          {
++            "commit": {
++              "deployments": {
++                "nodes": [
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": {
++                      "state": "SUCCESS",
++                      "environmentUrl": "https://app-b3d0001-acme.vercel.app"
++                    }
++                  }
++                ]
++              }
++            }
++          }
++        ]
++      },
++      "comments": {
++        "nodes": [
++          {
++            "author": {
++              "login": "vercel"
++            },
++            "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtb2xkZXItYWNtZS52ZXJjZWwuYXBwIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
++          },
++          {
++            "author": {
++              "login": "vercel"
++            },
++            "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC52ZXJjZWwuYXBwL3gpIFtjbGlja10oaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
++          }
++        ]
++      }
++    },
++    "preview": "https://app-b3d0001-acme.vercel.app"
++  },
++  {
++    "name": "vercel comments without readable metadata fall back to the head's build",
++    "node": {
++      "commits": {
++        "nodes": [
++          {
++            "commit": {
++              "deployments": {
++                "nodes": [
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": {
++                      "state": "SUCCESS",
++                      "environmentUrl": "https://app-b4d0001-acme.vercel.app"
++                    }
++                  }
++                ]
++              }
++            }
++          }
++        ]
++      },
++      "comments": {
++        "nodes": [
++          {
++            "author": {
++              "login": "vercel"
++            },
++            "body": "[vc]: #c2lnbmF0dXJl:bm90IGpzb24="
++          },
++          {
++            "author": {
++              "login": "vercel"
++            },
++            "body": "Deployment failed with the following error."
++          }
++        ]
++      }
++    },
++    "preview": "https://app-b4d0001-acme.vercel.app"
++  },
++  {
++    "name": "no comment and no finished build gives no preview",
++    "node": {
++      "commits": {
++        "nodes": [
++          {
++            "commit": {
++              "deployments": {
++                "nodes": [
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": {
++                      "state": "PENDING",
++                      "environmentUrl": "https://app-b5d0001-acme.vercel.app"
++                    }
++                  }
++                ]
++              }
++            }
++          }
++        ]
++      },
++      "comments": {
++        "nodes": []
++      }
++    },
++    "preview": null
++  },
++  {
++    "name": "a skipped project is passed over for the building one after it",
++    "node": {
++      "commits": {
++        "nodes": [
++          {
++            "commit": {
++              "deployments": {
++                "nodes": [
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": {
++                      "state": "PENDING",
++                      "environmentUrl": "https://app-b6d0001-acme.vercel.app"
++                    }
++                  }
++                ]
++              }
++            }
++          }
++        ]
++      },
++      "comments": {
++        "nodes": [
++          {
++            "author": {
++              "login": "vercel"
++            },
++            "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiZG9jcyIsInByZXZpZXdVcmwiOiJkb2NzLWdpdC1tb25vcmVwby1hY21lLnZlcmNlbC5hcHAiLCJuZXh0Q29tbWl0U3RhdHVzIjoiSUdOT1JFRCJ9LHsibmFtZSI6ImFwcCIsInByZXZpZXdVcmwiOiJhcHAtZ2l0LW1vbm9yZXBvLWFjbWUudmVyY2VsLmFwcCIsIm5leHRDb21taXRTdGF0dXMiOiJCVUlMRElORyJ9XX0\nThe latest updates on your projects."
++          }
++        ]
++      }
++    },
++    "preview": "https://app-git-monorepo-acme.vercel.app"
++  },
++  {
++    "name": "a project Vercel skipped, in any case, is never linked",
++    "node": {
++      "commits": {
++        "nodes": [
++          {
++            "commit": {
++              "deployments": {
++                "nodes": [
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": {
++                      "state": "SUCCESS",
++                      "environmentUrl": "https://app-b7d0001-acme.vercel.app"
++                    }
++                  }
++                ]
++              }
++            }
++          }
++        ]
++      },
++      "comments": {
++        "nodes": [
++          {
++            "author": {
++              "login": "vercel"
++            },
++            "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtc2tpcHBlZC1hY21lLnZlcmNlbC5hcHAiLCJuZXh0Q29tbWl0U3RhdHVzIjoiU2tpcHBlZCJ9XX0\nThe latest updates on your projects."
++          }
++        ]
++      }
++    },
++    "preview": "https://app-b7d0001-acme.vercel.app"
++  },
++  {
++    "name": "without a comment, the head's newest successful build that the vercel bot made is linked",
++    "node": {
++      "commits": {
++        "nodes": [
++          {
++            "commit": {
++              "deployments": {
++                "nodes": [
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": {
++                      "state": "SUCCESS",
++                      "environmentUrl": "https://app-old.vercel.app"
++                    }
++                  },
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": {
++                      "state": "SUCCESS",
++                      "environmentUrl": "https://app-new.vercel.app"
++                    }
++                  },
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": {
++                      "state": "FAILURE",
++                      "environmentUrl": "https://app-failed.vercel.app"
++                    }
++                  },
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": {
++                      "state": "SUCCESS",
++                      "environmentUrl": "javascript:alert(1)"
++                    }
++                  },
++                  {
++                    "creator": {
++                      "login": "vercel"
++                    },
++                    "latestStatus": null
++                  },
++                  {
++                    "creator": {
++                      "login": "ada"
++                    },
++                    "latestStatus": {
++                      "state": "SUCCESS",
++                      "environmentUrl": "https://acme.github.io/app/"
++                    }
++                  }
++                ]
++              }
++            }
++          }
++        ]
++      },
++      "comments": {
++        "nodes": []
++      }
++    },
++    "preview": "https://app-new.vercel.app"
++  }
++]
+diff --git a/tests/fixtures/rows/checks.ts b/tests/fixtures/rows/checks.ts
+index 66cdea83..d1a5b619 100644
+--- a/tests/fixtures/rows/checks.ts
++++ b/tests/fixtures/rows/checks.ts
+@@ -299,7 +299,7 @@ export default [
+           "repo": "acme/app", "number": 10, "title": "", "url": "https://github.com/acme/app/pull/10",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -312,7 +312,7 @@ export default [
+           "repo": "acme/app", "number": 9, "title": "", "url": "https://github.com/acme/app/pull/9", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -325,7 +325,7 @@ export default [
+           "repo": "acme/app", "number": 8, "title": "", "url": "https://github.com/acme/app/pull/8", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "cancelled",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -338,7 +338,7 @@ export default [
+           "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "cancelled",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -351,7 +351,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -364,7 +364,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -377,7 +377,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "pending",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -390,7 +390,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "pending",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -403,7 +403,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -416,7 +416,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/facts.ts b/tests/fixtures/rows/facts.ts
+index f980c692..226a10fe 100644
+--- a/tests/fixtures/rows/facts.ts
++++ b/tests/fixtures/rows/facts.ts
+@@ -1,6 +1,6 @@
+ export default [
+   {
+-    "name": "a row carries the drawer's facts, the link to its summary, and the head's newest successful Vercel preview",
++    "name": "a row carries the drawer's facts and the link to its summary",
+     "session": "s1",
+     "files": {
+       "daemon.json": {"operator": "ada"},
+@@ -17,14 +17,6 @@ export default [
+             "deletions": 8,
+             "changedFiles": 4,
+             "labels": {"nodes": [{"name": "enhancement", "color": "a2eeef"}]},
+-            "commits": {"nodes": [{"commit": {"deployments": {"nodes": [
+-              {"creator": {"login": "vercel"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "https://app-old.vercel.app"}},
+-              {"creator": {"login": "vercel"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "https://app-new.vercel.app"}},
+-              {"creator": {"login": "vercel"}, "latestStatus": {"state": "FAILURE", "environmentUrl": "https://app-failed.vercel.app"}},
+-              {"creator": {"login": "vercel"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "javascript:alert(1)"}},
+-              {"creator": {"login": "vercel"}, "latestStatus": null},
+-              {"creator": {"login": "ada"}, "latestStatus": {"state": "SUCCESS", "environmentUrl": "https://acme.github.io/app/"}}
+-            ]}}}]},
+             "body": "Adds rows.\r\n\r\n<!-- projector-summary v=1 sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\r\n📽️ **Projector summary** of aaaaaaa: https://projector.bot/acme/app/reviews/12 \r\n"
+           }
+         }
+@@ -53,7 +45,7 @@ export default [
+           "author": "ada", "branch": "console/rows", "additions": 120, "deletions": 8, "changed_files": 4,
+           "checks": null, "is_cancelled": false, "labels": ["enhancement"],
+           "summary_url": "https://projector.bot/acme/app/reviews/12",
+-          "preview_url": "https://app-new.vercel.app", "is_loading": false
++          "is_loading": false
+         }
+       },
+       {
+@@ -66,7 +58,7 @@ export default [
+           "repo": "acme/app", "number": 11, "title": "Fix the cache", "url": "https://github.com/acme/app/pull/11",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "bob", "branch": "fix-cache", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/index.ts b/tests/fixtures/rows/index.ts
+index fe22266f..0a369cee 100644
+--- a/tests/fixtures/rows/index.ts
++++ b/tests/fixtures/rows/index.ts
+@@ -6,10 +6,9 @@ import labels from './labels'
+ import loading from './loading'
+ import malformed from './malformed'
+ import notes from './notes'
+-import previews from './previews'
+ import roles from './roles'
+ import sections from './sections'
+ import states from './states'
+ import threads from './threads'
+ 
+-export default [checks, facts, labels, loading, malformed, notes, previews, roles, sections, states, threads]
++export default [checks, facts, labels, loading, malformed, notes, roles, sections, states, threads]
+diff --git a/tests/fixtures/rows/labels.ts b/tests/fixtures/rows/labels.ts
+index d401f2cf..04cf58b0 100644
+--- a/tests/fixtures/rows/labels.ts
++++ b/tests/fixtures/rows/labels.ts
+@@ -14,7 +14,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -27,7 +27,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       }
+     ]
+@@ -47,7 +47,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -60,7 +60,7 @@ export default [
+           "repo": "acme/web", "number": 5, "title": "", "url": "https://github.com/acme/web/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       }
+     ]
+@@ -80,7 +80,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -93,7 +93,7 @@ export default [
+           "repo": "acme/web", "number": 1, "title": "", "url": "https://github.com/acme/web/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -106,7 +106,7 @@ export default [
+           "repo": "other/app", "number": 4, "title": "", "url": "https://github.com/other/app/pull/4",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": true
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/loading.ts b/tests/fixtures/rows/loading.ts
+index 90046b6a..7c119ea9 100644
+--- a/tests/fixtures/rows/loading.ts
++++ b/tests/fixtures/rows/loading.ts
+@@ -22,7 +22,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -35,7 +35,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -48,7 +48,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -61,7 +61,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/malformed.ts b/tests/fixtures/rows/malformed.ts
+index 02a9ba9b..7007a4e1 100644
+--- a/tests/fixtures/rows/malformed.ts
++++ b/tests/fixtures/rows/malformed.ts
+@@ -55,7 +55,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 1, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 2.5, "checks": "passing",
+-          "is_cancelled": false, "labels": ["CLEAN"], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["CLEAN"], "summary_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/notes.ts b/tests/fixtures/rows/notes.ts
+index 309a46ad..6577f293 100644
+--- a/tests/fixtures/rows/notes.ts
++++ b/tests/fixtures/rows/notes.ts
+@@ -62,7 +62,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": true, "review_decision": "APPROVED", "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": ["clean"], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["clean"], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -75,7 +75,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": "APPROVED", "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/previews.ts b/tests/fixtures/rows/previews.ts
+deleted file mode 100644
+index 70442a71..00000000
+--- a/tests/fixtures/rows/previews.ts
++++ /dev/null
+@@ -1,548 +0,0 @@
+-export default [
+-  {
+-    "name": "the drawer links the branch preview that Vercel's newest comment names, a deployed project's first, while a push builds too, never one Vercel skipped, and the head's newest successful build when no comment names one",
+-    "session": "s1",
+-    "files": {
+-      "daemon.json": {
+-        "operator": "ada"
+-      },
+-      "sessions/s1/subscriptions": "acme/app#1 fix\nacme/app#2 fix\nacme/app#3 fix\nacme/app#4 fix\nacme/app#5 fix\nacme/app#6 fix\nacme/app#7 fix\n",
+-      "cache/acme/app/pulls/1.json": {
+-        "repository": {
+-          "pullRequest": {
+-            "title": "Prefer the branch",
+-            "author": {
+-              "login": "ada"
+-            },
+-            "headRefName": "branch-1",
+-            "commits": {
+-              "nodes": [
+-                {
+-                  "commit": {
+-                    "deployments": {
+-                      "nodes": [
+-                        {
+-                          "creator": {
+-                            "login": "vercel"
+-                          },
+-                          "latestStatus": {
+-                            "state": "SUCCESS",
+-                            "environmentUrl": "https://app-b1d0001-acme.vercel.app"
+-                          }
+-                        }
+-                      ]
+-                    }
+-                  }
+-                }
+-              ]
+-            },
+-            "comments": {
+-              "nodes": [
+-                {
+-                  "author": {
+-                    "login": "vercel"
+-                  },
+-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtc3RhbGUtYWNtZS52ZXJjZWwuYXBwIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
+-                },
+-                {
+-                  "author": {
+-                    "login": "ada"
+-                  },
+-                  "body": "Looks right to me."
+-                },
+-                {
+-                  "author": {
+-                    "login": "vercel"
+-                  },
+-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiZG9jcyIsInByZXZpZXdVcmwiOiJkb2NzLWdpdC1sb25nLWJyYW5jaC1uYW1lLXRoLTFhMmIzYy1hY21lLnZlcmNlbC5hcHAiLCJuZXh0Q29tbWl0U3RhdHVzIjoiSUdOT1JFRCJ9LHsibmFtZSI6ImFwcCIsInByZXZpZXdVcmwiOiJhcHAtZ2l0LWxvbmctYnJhbmNoLW5hbWUtdGgtMWEyYjNjLWFjbWUudmVyY2VsLmFwcCIsIm5leHRDb21taXRTdGF0dXMiOiJERVBMT1lFRCJ9XX0\nThe latest updates on your projects."
+-                },
+-                {
+-                  "author": {
+-                    "login": "ada"
+-                  },
+-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImV2aWwuZXhhbXBsZS5jb20iLCJuZXh0Q29tbWl0U3RhdHVzIjoiREVQTE9ZRUQifV19\nThe latest updates on your projects."
+-                }
+-              ]
+-            }
+-          }
+-        }
+-      },
+-      "cache/acme/app/pulls/2.json": {
+-        "repository": {
+-          "pullRequest": {
+-            "title": "Keep the link while a push builds",
+-            "author": {
+-              "login": "ada"
+-            },
+-            "headRefName": "branch-2",
+-            "commits": {
+-              "nodes": [
+-                {
+-                  "commit": {
+-                    "deployments": {
+-                      "nodes": [
+-                        {
+-                          "creator": {
+-                            "login": "vercel"
+-                          },
+-                          "latestStatus": {
+-                            "state": "PENDING",
+-                            "environmentUrl": "https://app-b2d0001-acme.vercel.app"
+-                          }
+-                        }
+-                      ]
+-                    }
+-                  }
+-                }
+-              ]
+-            },
+-            "comments": {
+-              "nodes": [
+-                {
+-                  "author": {
+-                    "login": "vercel"
+-                  },
+-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtYnVpbGRpbmctYWNtZS52ZXJjZWwuYXBwIiwibmV4dENvbW1pdFN0YXR1cyI6IkJVSUxESU5HIn1dfQ\nThe latest updates on your projects."
+-                }
+-              ]
+-            }
+-          }
+-        }
+-      },
+-      "cache/acme/app/pulls/3.json": {
+-        "repository": {
+-          "pullRequest": {
+-            "title": "Refuse a host that is not one",
+-            "author": {
+-              "login": "ada"
+-            },
+-            "headRefName": "branch-3",
+-            "commits": {
+-              "nodes": [
+-                {
+-                  "commit": {
+-                    "deployments": {
+-                      "nodes": [
+-                        {
+-                          "creator": {
+-                            "login": "vercel"
+-                          },
+-                          "latestStatus": {
+-                            "state": "SUCCESS",
+-                            "environmentUrl": "https://app-b3d0001-acme.vercel.app"
+-                          }
+-                        }
+-                      ]
+-                    }
+-                  }
+-                }
+-              ]
+-            },
+-            "comments": {
+-              "nodes": [
+-                {
+-                  "author": {
+-                    "login": "vercel"
+-                  },
+-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtb2xkZXItYWNtZS52ZXJjZWwuYXBwIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
+-                },
+-                {
+-                  "author": {
+-                    "login": "vercel"
+-                  },
+-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC52ZXJjZWwuYXBwL3gpIFtjbGlja10oaHR0cHM6Ly9ldmlsLmV4YW1wbGUuY29tIiwibmV4dENvbW1pdFN0YXR1cyI6IkRFUExPWUVEIn1dfQ\nThe latest updates on your projects."
+-                }
+-              ]
+-            }
+-          }
+-        }
+-      },
+-      "cache/acme/app/pulls/4.json": {
+-        "repository": {
+-          "pullRequest": {
+-            "title": "Skip what is not Vercel's metadata",
+-            "author": {
+-              "login": "ada"
+-            },
+-            "headRefName": "branch-4",
+-            "commits": {
+-              "nodes": [
+-                {
+-                  "commit": {
+-                    "deployments": {
+-                      "nodes": [
+-                        {
+-                          "creator": {
+-                            "login": "vercel"
+-                          },
+-                          "latestStatus": {
+-                            "state": "SUCCESS",
+-                            "environmentUrl": "https://app-b4d0001-acme.vercel.app"
+-                          }
+-                        }
+-                      ]
+-                    }
+-                  }
+-                }
+-              ]
+-            },
+-            "comments": {
+-              "nodes": [
+-                {
+-                  "author": {
+-                    "login": "vercel"
+-                  },
+-                  "body": "[vc]: #c2lnbmF0dXJl:bm90IGpzb24="
+-                },
+-                {
+-                  "author": {
+-                    "login": "vercel"
+-                  },
+-                  "body": "Deployment failed with the following error."
+-                }
+-              ]
+-            }
+-          }
+-        }
+-      },
+-      "cache/acme/app/pulls/5.json": {
+-        "repository": {
+-          "pullRequest": {
+-            "title": "Wait for Vercel's first build",
+-            "author": {
+-              "login": "ada"
+-            },
+-            "headRefName": "branch-5",
+-            "commits": {
+-              "nodes": [
+-                {
+-                  "commit": {
+-                    "deployments": {
+-                      "nodes": [
+-                        {
+-                          "creator": {
+-                            "login": "vercel"
+-                          },
+-                          "latestStatus": {
+-                            "state": "PENDING",
+-                            "environmentUrl": "https://app-b5d0001-acme.vercel.app"
+-                          }
+-                        }
+-                      ]
+-                    }
+-                  }
+-                }
+-              ]
+-            },
+-            "comments": {
+-              "nodes": []
+-            }
+-          }
+-        }
+-      },
+-      "cache/acme/app/pulls/6.json": {
+-        "repository": {
+-          "pullRequest": {
+-            "title": "Pass over a skipped project while a push builds",
+-            "author": {
+-              "login": "ada"
+-            },
+-            "headRefName": "branch-6",
+-            "commits": {
+-              "nodes": [
+-                {
+-                  "commit": {
+-                    "deployments": {
+-                      "nodes": [
+-                        {
+-                          "creator": {
+-                            "login": "vercel"
+-                          },
+-                          "latestStatus": {
+-                            "state": "PENDING",
+-                            "environmentUrl": "https://app-b6d0001-acme.vercel.app"
+-                          }
+-                        }
+-                      ]
+-                    }
+-                  }
+-                }
+-              ]
+-            },
+-            "comments": {
+-              "nodes": [
+-                {
+-                  "author": {
+-                    "login": "vercel"
+-                  },
+-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiZG9jcyIsInByZXZpZXdVcmwiOiJkb2NzLWdpdC1tb25vcmVwby1hY21lLnZlcmNlbC5hcHAiLCJuZXh0Q29tbWl0U3RhdHVzIjoiSUdOT1JFRCJ9LHsibmFtZSI6ImFwcCIsInByZXZpZXdVcmwiOiJhcHAtZ2l0LW1vbm9yZXBvLWFjbWUudmVyY2VsLmFwcCIsIm5leHRDb21taXRTdGF0dXMiOiJCVUlMRElORyJ9XX0\nThe latest updates on your projects."
+-                }
+-              ]
+-            }
+-          }
+-        }
+-      },
+-      "cache/acme/app/pulls/7.json": {
+-        "repository": {
+-          "pullRequest": {
+-            "title": "Never link a project Vercel skipped",
+-            "author": {
+-              "login": "ada"
+-            },
+-            "headRefName": "branch-7",
+-            "commits": {
+-              "nodes": [
+-                {
+-                  "commit": {
+-                    "deployments": {
+-                      "nodes": [
+-                        {
+-                          "creator": {
+-                            "login": "vercel"
+-                          },
+-                          "latestStatus": {
+-                            "state": "SUCCESS",
+-                            "environmentUrl": "https://app-b7d0001-acme.vercel.app"
+-                          }
+-                        }
+-                      ]
+-                    }
+-                  }
+-                }
+-              ]
+-            },
+-            "comments": {
+-              "nodes": [
+-                {
+-                  "author": {
+-                    "login": "vercel"
+-                  },
+-                  "body": "[vc]: #c2lnbmF0dXJl:eyJpc01vbm9yZXBvIjpmYWxzZSwidHlwZSI6ImdpdGh1YiIsInByb2plY3RzIjpbeyJuYW1lIjoiYXBwIiwicHJldmlld1VybCI6ImFwcC1naXQtc2tpcHBlZC1hY21lLnZlcmNlbC5hcHAiLCJuZXh0Q29tbWl0U3RhdHVzIjoiU2tpcHBlZCJ9XX0\nThe latest updates on your projects."
+-                }
+-              ]
+-            }
+-          }
+-        }
+-      }
+-    },
+-    "rows": [
+-      {
+-        "section": "pr",
+-        "label": "#7",
+-        "state": "ready",
+-        "notes": [],
+-        "roles": [
+-          "fixing"
+-        ],
+-        "pull": {
+-          "repo": "acme/app",
+-          "number": 7,
+-          "title": "Never link a project Vercel skipped",
+-          "url": "https://github.com/acme/app/pull/7",
+-          "state": "OPEN",
+-          "is_draft": false,
+-          "review_decision": null,
+-          "is_conflicting": false,
+-          "open_threads": 0,
+-          "author": "ada",
+-          "branch": "branch-7",
+-          "additions": 0,
+-          "deletions": 0,
+-          "changed_files": 0,
+-          "checks": null,
+-          "is_cancelled": false,
+-          "labels": [],
+-          "summary_url": null,
+-          "preview_url": "https://app-b7d0001-acme.vercel.app",
+-          "is_loading": false
+-        }
+-      },
+-      {
+-        "section": "pr",
+-        "label": "#6",
+-        "state": "ready",
+-        "notes": [],
+-        "roles": [
+-          "fixing"
+-        ],
+-        "pull": {
+-          "repo": "acme/app",
+-          "number": 6,
+-          "title": "Pass over a skipped project while a push builds",
+-          "url": "https://github.com/acme/app/pull/6",
+-          "state": "OPEN",
+-          "is_draft": false,
+-          "review_decision": null,
+-          "is_conflicting": false,
+-          "open_threads": 0,
+-          "author": "ada",
+-          "branch": "branch-6",
+-          "additions": 0,
+-          "deletions": 0,
+-          "changed_files": 0,
+-          "checks": null,
+-          "is_cancelled": false,
+-          "labels": [],
+-          "summary_url": null,
+-          "preview_url": "https://app-git-monorepo-acme.vercel.app",
+-          "is_loading": false
+-        }
+-      },
+-      {
+-        "section": "pr",
+-        "label": "#5",
+-        "state": "ready",
+-        "notes": [],
+-        "roles": [
+-          "fixing"
+-        ],
+-        "pull": {
+-          "repo": "acme/app",
+-          "number": 5,
+-          "title": "Wait for Vercel's first build",
+-          "url": "https://github.com/acme/app/pull/5",
+-          "state": "OPEN",
+-          "is_draft": false,
+-          "review_decision": null,
+-          "is_conflicting": false,
+-          "open_threads": 0,
+-          "author": "ada",
+-          "branch": "branch-5",
+-          "additions": 0,
+-          "deletions": 0,
+-          "changed_files": 0,
+-          "checks": null,
+-          "is_cancelled": false,
+-          "labels": [],
+-          "summary_url": null,
+-          "preview_url": null,
+-          "is_loading": false
+-        }
+-      },
+-      {
+-        "section": "pr",
+-        "label": "#4",
+-        "state": "ready",
+-        "notes": [],
+-        "roles": [
+-          "fixing"
+-        ],
+-        "pull": {
+-          "repo": "acme/app",
+-          "number": 4,
+-          "title": "Skip what is not Vercel's metadata",
+-          "url": "https://github.com/acme/app/pull/4",
+-          "state": "OPEN",
+-          "is_draft": false,
+-          "review_decision": null,
+-          "is_conflicting": false,
+-          "open_threads": 0,
+-          "author": "ada",
+-          "branch": "branch-4",
+-          "additions": 0,
+-          "deletions": 0,
+-          "changed_files": 0,
+-          "checks": null,
+-          "is_cancelled": false,
+-          "labels": [],
+-          "summary_url": null,
+-          "preview_url": "https://app-b4d0001-acme.vercel.app",
+-          "is_loading": false
+-        }
+-      },
+-      {
+-        "section": "pr",
+-        "label": "#3",
+-        "state": "ready",
+-        "notes": [],
+-        "roles": [
+-          "fixing"
+-        ],
+-        "pull": {
+-          "repo": "acme/app",
+-          "number": 3,
+-          "title": "Refuse a host that is not one",
+-          "url": "https://github.com/acme/app/pull/3",
+-          "state": "OPEN",
+-          "is_draft": false,
+-          "review_decision": null,
+-          "is_conflicting": false,
+-          "open_threads": 0,
+-          "author": "ada",
+-          "branch": "branch-3",
+-          "additions": 0,
+-          "deletions": 0,
+-          "changed_files": 0,
+-          "checks": null,
+-          "is_cancelled": false,
+-          "labels": [],
+-          "summary_url": null,
+-          "preview_url": "https://app-b3d0001-acme.vercel.app",
+-          "is_loading": false
+-        }
+-      },
+-      {
+-        "section": "pr",
+-        "label": "#2",
+-        "state": "ready",
+-        "notes": [],
+-        "roles": [
+-          "fixing"
+-        ],
+-        "pull": {
+-          "repo": "acme/app",
+-          "number": 2,
+-          "title": "Keep the link while a push builds",
+-          "url": "https://github.com/acme/app/pull/2",
+-          "state": "OPEN",
+-          "is_draft": false,
+-          "review_decision": null,
+-          "is_conflicting": false,
+-          "open_threads": 0,
+-          "author": "ada",
+-          "branch": "branch-2",
+-          "additions": 0,
+-          "deletions": 0,
+-          "changed_files": 0,
+-          "checks": null,
+-          "is_cancelled": false,
+-          "labels": [],
+-          "summary_url": null,
+-          "preview_url": "https://app-git-building-acme.vercel.app",
+-          "is_loading": false
+-        }
+-      },
+-      {
+-        "section": "pr",
+-        "label": "#1",
+-        "state": "ready",
+-        "notes": [],
+-        "roles": [
+-          "fixing"
+-        ],
+-        "pull": {
+-          "repo": "acme/app",
+-          "number": 1,
+-          "title": "Prefer the branch",
+-          "url": "https://github.com/acme/app/pull/1",
+-          "state": "OPEN",
+-          "is_draft": false,
+-          "review_decision": null,
+-          "is_conflicting": false,
+-          "open_threads": 0,
+-          "author": "ada",
+-          "branch": "branch-1",
+-          "additions": 0,
+-          "deletions": 0,
+-          "changed_files": 0,
+-          "checks": null,
+-          "is_cancelled": false,
+-          "labels": [],
+-          "summary_url": null,
+-          "preview_url": "https://app-git-long-branch-name-th-1a2b3c-acme.vercel.app",
+-          "is_loading": false
+-        }
+-      }
+-    ]
+-  }
+-]
+diff --git a/tests/fixtures/rows/roles.ts b/tests/fixtures/rows/roles.ts
+index ae5c9e97..9684fe9d 100644
+--- a/tests/fixtures/rows/roles.ts
++++ b/tests/fixtures/rows/roles.ts
+@@ -17,7 +17,7 @@ export default [
+           "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -30,7 +30,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -43,7 +43,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -56,7 +56,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       }
+     ]
+@@ -79,7 +79,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/sections.ts b/tests/fixtures/rows/sections.ts
+index 15628f6b..d87ae9d4 100644
+--- a/tests/fixtures/rows/sections.ts
++++ b/tests/fixtures/rows/sections.ts
+@@ -26,7 +26,7 @@ export default [
+           "repo": "acme/app_b", "number": 9, "title": "", "url": "https://github.com/acme/app_b/pull/9",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -39,7 +39,7 @@ export default [
+           "repo": "acme/app_b", "number": 3, "title": "", "url": "https://github.com/acme/app_b/pull/3",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": true
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": true
+         }
+       },
+       {
+@@ -52,7 +52,7 @@ export default [
+           "repo": "acme/app_b", "number": 2, "title": "", "url": "https://github.com/acme/app_b/pull/2",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -65,7 +65,7 @@ export default [
+           "repo": "acme/app-b", "number": 1, "title": "", "url": "https://github.com/acme/app-b/pull/1",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -78,7 +78,7 @@ export default [
+           "repo": "acme/app1", "number": 4, "title": "", "url": "https://github.com/acme/app1/pull/4",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -91,7 +91,7 @@ export default [
+           "repo": "acme/app_b", "number": 7, "title": "", "url": "https://github.com/acme/app_b/pull/7",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -104,7 +104,7 @@ export default [
+           "repo": "acme/app_b", "number": 10, "title": "", "url": "https://github.com/acme/app_b/pull/10",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "Ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -117,7 +117,7 @@ export default [
+           "repo": "acme/app_b", "number": 8, "title": "", "url": "https://github.com/acme/app_b/pull/8",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "bob", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -130,7 +130,7 @@ export default [
+           "repo": "acme/app-b", "number": 6, "title": "", "url": "https://github.com/acme/app-b/pull/6",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "Bob", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -143,7 +143,7 @@ export default [
+           "repo": "acme/app_b", "number": 5, "title": "", "url": "https://github.com/acme/app_b/pull/5",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "carol", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+         }
+       }
+     ]
+@@ -168,7 +168,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": "ada",
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -181,7 +181,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": "bob",
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/states.ts b/tests/fixtures/rows/states.ts
+index f2aee14c..c42cd1b3 100644
+--- a/tests/fixtures/rows/states.ts
++++ b/tests/fixtures/rows/states.ts
+@@ -64,7 +64,7 @@ export default [
+           "repo": "acme/app", "number": 8, "title": "", "url": "https://github.com/acme/app/pull/8", "state": "OPEN",
+           "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": true, "open_threads": 1,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -77,7 +77,7 @@ export default [
+           "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
+           "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": false, "open_threads": 1,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -90,7 +90,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": false, "open_threads": 1,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "preview_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -103,7 +103,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 1, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": ["reviewing", "clean"], "summary_url": null, "preview_url": null, "is_loading": false
++          "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -116,7 +116,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": ["Reviewing", "clean"], "summary_url": null, "preview_url": null, "is_loading": false
++          "labels": ["Reviewing", "clean"], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -129,7 +129,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": ["clean"], "summary_url": null, "preview_url": null, "is_loading": false
++          "labels": ["clean"], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -142,7 +142,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false
+         }
+       },
+       {
+@@ -155,7 +155,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "preview_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false
+         }
+       }
+     ]
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 234998d4..1f115e91 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -32,6 +32,7 @@
+     ("project review gate 12", "allow", "none"),
+     ("project worktree 12", "allow", "allow"),
+     ("project worktree fix/login", "allow", "allow"),
++    ("project preview acme/app#12", "allow", "allow"),
+     ("project summary publish --summary summary.json", "allow", "allow"),
+     ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
+     ("project inbox tell notice --session s1", "allow", "allow"),
+diff --git a/tests/test_preview.py b/tests/test_preview.py
+new file mode 100644
+index 00000000..4913d91a
+--- /dev/null
++++ b/tests/test_preview.py
+@@ -0,0 +1,98 @@
++"""`project preview`: print a pull request's Vercel preview, which the panel's drawer and the console link.
++
++The cases in `tests/fixtures/previews.json` each give a pull request's node, as the watch daemon's query returns
++it, and the preview it gives.
++"""
++
++from __future__ import annotations
++
++import io
++import json
++import os
++import tempfile
++import unittest
++from contextlib import redirect_stderr, redirect_stdout
++from pathlib import Path
++from unittest import mock
++
++from projector import cli, review, rows, watch
++
++CASES = json.loads((Path(__file__).resolve().parent / "fixtures" / "previews.json").read_text(encoding="utf-8"))
++
++
++class PreviewTests(unittest.TestCase):
++    def setUp(self) -> None:
++        folder = tempfile.TemporaryDirectory()
++        self.addCleanup(folder.cleanup)
++        self.state = Path(folder.name)
++        self.root = self.state / "projector" / "watch"
++        environment = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.state)})
++        environment.start()
++        self.addCleanup(environment.stop)
++        self.queries: list[list[str]] = []
++        self.live: object = None
++        github = mock.patch.object(review, "run_gh", self.github)
++        github.start()
++        self.addCleanup(github.stop)
++
++    def github(self, args: list[str], token: str | None = None) -> str:
++        self.queries.append(args)
++        return json.dumps(self.live)
++
++    def cache(self, number: int, node: dict) -> None:
++        path = watch.pull_cache(self.root, "acme/app", number)
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(json.dumps({"repository": {"pullRequest": node}}), encoding="utf-8")
++
++    def project(self, *args: str) -> tuple[int, str, str]:
++        out, err = io.StringIO(), io.StringIO()
++        with redirect_stdout(out), redirect_stderr(err):
++            code = cli.main(["preview", *args])
++        return code, out.getvalue(), err.getvalue()
++
++    def test_each_case_gives_its_preview_from_the_daemons_result(self) -> None:
++        # Catches a rule that links a skipped project, an older comment, a person's look-alike, a host that is not
++        # one, or a failed build, or that hides the branch preview while a push builds.
++        for number, case in enumerate(CASES, start=1):
++            with self.subTest(case["name"]):
++                self.cache(number, case["node"])
++                self.assertEqual(case["preview"], rows.pull_preview(self.root, "acme/app", number))
++                self.assertEqual(case["preview"], rows.cached_preview(self.root, "acme/app", number))
++        # The daemon's result costs GitHub nothing.
++        self.assertEqual([], self.queries)
++
++    def test_prints_the_preview_and_exits_66_when_there_is_none(self) -> None:
++        # Catches a command that prints nothing for a preview, or succeeds without one, which the panel would
++        # take for a link.
++        found = next(case for case in CASES if case["preview"] is not None)
++        missing = next(case for case in CASES if case["preview"] is None)
++        self.cache(1, found["node"])
++        self.cache(2, missing["node"])
++
++        self.assertEqual((0, f"{found['preview']}\n", ""), self.project("acme/app#1"))
++        self.assertEqual((0, f"{found['preview']}\n", ""), self.project("https://github.com/acme/app/pull/1"))
++        self.assertEqual((66, "", "project: acme/app#2 has no Vercel preview\n"), self.project("acme/app#2"))
++
++    def test_refuses_a_repository_without_a_pull_request(self) -> None:
++        code, out, err = self.project("acme/app")
++        self.assertEqual((2, ""), (code, out))
++        self.assertIn("names a repository", err)
++
++    def test_asks_github_for_a_pull_request_the_daemon_has_not_fetched(self) -> None:
++        # Catches a command that answers only for watched pull requests, or that asks for the wrong one.
++        case = CASES[0]
++        self.live = {"data": {"repository": {"pullRequest": case["node"]}}}
++
++        self.assertEqual((0, f"{case['preview']}\n", ""), self.project("acme/app#9"))
++        self.assertEqual([["api", "graphql", "-f", f"query={rows.PREVIEW_QUERY}", "-F", "o=acme", "-F", "r=app",
++                           "-F", "n=9"]], self.queries)
++
++    def test_says_when_github_has_no_such_pull_request(self) -> None:
++        self.live = {"data": {"repository": {"pullRequest": None}}}
++        code, out, err = self.project("acme/app#9")
++        self.assertEqual((1, ""), (code, out))
++        self.assertIn("acme/app#9 does not exist or is not visible to this account", err)
++
++
++if __name__ == "__main__":
++    unittest.main()
