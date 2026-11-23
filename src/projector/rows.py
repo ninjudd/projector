@@ -15,6 +15,7 @@ The files, under the watch daemon's state root:
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from dataclasses import dataclass, replace
@@ -48,6 +49,11 @@ SUMMARY = re.compile(r"^<!-- " + summary.SUMMARY_MARKER + r" v=1 sha=[0-9a-f]{40
                      r"\S* ?\*\*Projector summary\*\* [^\r\n]*?(https?://\S+)\s*$", re.M)
 
 PREVIEW_URL = re.compile(r"https?://\S+")
+
+# Vercel's comment on a pull request opens with a Markdown link reference whose base64 JSON names each
+# project's branch preview, the host that serves the branch's newest ready build.
+VERCEL_COMMENT = re.compile(r"\[vc\]: #[^:\s]*:([A-Za-z0-9+/]+=*)")
+PREVIEW_HOST = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
 # GitHub counts `comments` under `reviewThreads(first: 100)` as 100 requests, so only an open drawer asks
 # for these, and only for its own pull request.
@@ -244,8 +250,8 @@ def cancelled_of(commit: dict) -> bool:
     return "CANCELLED" in newest_runs(context_nodes(commit))
 
 
-def preview_of(commit: dict) -> Optional[str]:
-    """The head's newest Vercel preview: the URL of the last deployment the `vercel` bot made whose latest
+def build_preview_of(commit: dict) -> Optional[str]:
+    """The head's newest Vercel build: the URL of the last deployment the `vercel` bot made whose latest
     status succeeded. GitHub lists a commit's deployments oldest first."""
     urls = []
     for node in nodes_of(commit.get("deployments")):
@@ -256,6 +262,35 @@ def preview_of(commit: dict) -> Optional[str]:
         if status.get("state") == "SUCCESS" and url is not None and PREVIEW_URL.fullmatch(url):
             urls.append(url)
     return urls[-1] if urls else None
+
+
+def branch_preview_of(node: dict) -> Optional[str]:
+    """The branch's preview that Vercel's newest comment names: the first project whose newest commit
+    deployed. Vercel shortens a long branch name with a hash, so only the comment says what the host is."""
+    for comment in reversed(nodes_of(node.get("comments"))):
+        if not isinstance(comment, dict) or record_of(comment.get("author")).get("login") != "vercel":
+            continue
+        found = VERCEL_COMMENT.match(string_of(comment.get("body")) or "")
+        if found is None:
+            continue
+        encoded = found.group(1)
+        try:
+            projects = record_of(json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4)))).get("projects")
+        except ValueError:
+            continue
+        for project in projects if isinstance(projects, list) else []:
+            host = string_of(record_of(project).get("previewUrl"))
+            if record_of(project).get("nextCommitStatus") == "DEPLOYED" and host and PREVIEW_HOST.fullmatch(host):
+                return f"https://{host}"
+        return None
+    return None
+
+
+def preview_of(node: dict, commit: dict) -> Optional[str]:
+    """The preview the drawer links once the head has a successful Vercel build: the branch's, which keeps
+    its address from push to push, or that build's own when Vercel's comment names no branch preview."""
+    build = build_preview_of(commit)
+    return (branch_preview_of(node) or build) if build else None
 
 
 def to_pull(repo: str, number: int, node: dict) -> Pull:
@@ -289,7 +324,7 @@ def to_pull(repo: str, number: int, node: dict) -> Pull:
         labels=[label["name"] for label in nodes_of(node.get("labels"))
                 if isinstance(label, dict) and isinstance(label.get("name"), str)],
         summary_url=found.group(1) if found else None,
-        preview_url=preview_of(head),
+        preview_url=preview_of(node, head),
     )
 
 

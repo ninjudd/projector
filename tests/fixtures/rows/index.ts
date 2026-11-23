@@ -6,9 +6,10 @@ import labels from './labels'
 import loading from './loading'
 import malformed from './malformed'
 import notes from './notes'
+import previews from './previews'
 import roles from './roles'
 import sections from './sections'
 import states from './states'
 import threads from './threads'
 
-export default [checks, facts, labels, loading, malformed, notes, roles, sections, states, threads]
+export default [checks, facts, labels, loading, malformed, notes, previews, roles, sections, states, threads]

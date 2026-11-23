@@ -119,8 +119,9 @@ LABEL_CHANGES = {
 # it too, to take it out of the counts. Each check run's suite says whether its workflow run was cancelled, and
 # the check run's start, beside when the run's cancelled jobs ended, says whether the cancel caused its failure.
 # The run's workflow and start say whether a newer run of that workflow on the head tests the code again.
-# The head's deployments give the panel the Vercel preview it links: the newest the `vercel` bot made whose
-# latest status succeeded, at that status's `environmentUrl`.
+# The head's deployments say whether Vercel built the head: the newest the `vercel` bot made whose latest
+# status succeeded. The panel links the branch's preview that the `vercel` bot's comment names, or that
+# deployment's `environmentUrl` when no comment names one.
 CONTEXT_NODES = ("nodes{ __typename ... on CheckRun{ name conclusion startedAt completedAt checkSuite{ conclusion"
                  " workflowRun{ databaseId createdAt workflow{ databaseId } } } } ... on StatusContext{ context state } }")
 QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
