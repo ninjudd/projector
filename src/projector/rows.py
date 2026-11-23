@@ -54,6 +54,9 @@ PREVIEW_URL = re.compile(r"https?://\S+")
 # project's branch preview, the host that serves the branch's newest ready build.
 VERCEL_COMMENT = re.compile(r"\[vc\]: #[^:\s]*:([A-Za-z0-9+/]+=*)")
 PREVIEW_HOST = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+# A status that says Vercel skipped the project on this branch, whose branch alias may never have been
+# deployed.
+SKIPPED_STATUS = re.compile(r"ignor|skip", re.IGNORECASE)
 
 # GitHub counts `comments` under `reviewThreads(first: 100)` as 100 requests, so only an open drawer asks
 # for these, and only for its own pull request.
@@ -266,8 +269,8 @@ def build_preview_of(commit: dict) -> Optional[str]:
 
 def branch_preview_of(node: dict) -> Optional[str]:
     """The branch's preview that Vercel's newest comment names, whatever state its newest build is in: the
-    first project whose newest commit deployed, or the first project when none has. Vercel shortens a long
-    branch name with a hash, so only the comment says what the host is."""
+    first project whose newest commit deployed, or the first project Vercel did not skip when none has.
+    Vercel shortens a long branch name with a hash, so only the comment says what the host is."""
     for comment in reversed(nodes_of(node.get("comments"))):
         if not isinstance(comment, dict) or record_of(comment.get("author")).get("login") != "vercel":
             continue
@@ -282,8 +285,9 @@ def branch_preview_of(node: dict) -> Optional[str]:
         previews = []
         for project in projects if isinstance(projects, list) else []:
             host = string_of(record_of(project).get("previewUrl"))
-            if host and PREVIEW_HOST.fullmatch(host):
-                previews.append((record_of(project).get("nextCommitStatus") != "DEPLOYED", host))
+            status = string_of(record_of(project).get("nextCommitStatus")) or ""
+            if host and PREVIEW_HOST.fullmatch(host) and not SKIPPED_STATUS.search(status):
+                previews.append((status != "DEPLOYED", host))
         return f"https://{min(previews, key=lambda preview: preview[0])[1]}" if previews else None
     return None
 

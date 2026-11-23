@@ -261,6 +261,9 @@ function buildPreviewOf(commit: Record<string, unknown>): string | null {
 // serves the branch's newest ready build.
 const VERCEL_COMMENT = /^\[vc\]: #[^:\s]*:([A-Za-z0-9+/]+=*)/
 const PREVIEW_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/
+// A status that says Vercel skipped the project on this branch, whose branch
+// alias may never have been deployed.
+const SKIPPED_STATUS = /ignor|skip/i
 
 /** The projects Vercel's comment lists, or none when its body holds no readable list. */
 function vercelProjectsOf(body: string): unknown[] | null {
@@ -277,8 +280,8 @@ function vercelProjectsOf(body: string): unknown[] | null {
 /**
  * The branch's preview that Vercel's newest comment names, whatever state
  * its newest build is in: the first project whose newest commit deployed,
- * or the first project when none has. Vercel shortens a long branch name
- * with a hash, so only the comment says what the host is.
+ * or the first project Vercel did not skip when none has. Vercel shortens a
+ * long branch name with a hash, so only the comment says what the host is.
  */
 function branchPreviewOf(node: Record<string, unknown>): string | null {
   for (const comment of nodesOf(node.comments).toReversed()) {
@@ -287,7 +290,9 @@ function branchPreviewOf(node: Record<string, unknown>): string | null {
     if (projects === null) continue
     const previews = projects.filter(isRecord).flatMap(project => {
       const host = stringOf(project.previewUrl)
-      return host !== null && PREVIEW_HOST.test(host) ? [{ host, deployed: project.nextCommitStatus === 'DEPLOYED' }] : []
+      const status = stringOf(project.nextCommitStatus) ?? ''
+      if (host === null || !PREVIEW_HOST.test(host) || SKIPPED_STATUS.test(status)) return []
+      return [{ host, deployed: status === 'DEPLOYED' }]
     })
     const preview = previews.find(one => one.deployed) ?? previews[0]
     return preview === undefined ? null : `https://${preview.host}`
