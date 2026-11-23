@@ -5287,7 +5287,9 @@ The URL is the branch's preview address that the `vercel` bot's newest
 comment on the pull request names. That address serves the branch's
 newest ready build, so the command prints it while a new push builds too.
 When the comment lists several projects, the command prints the first one
-whose newest commit deployed, and never one that Vercel ignored or skipped.
+whose newest commit deployed, or, when none has, the first one Vercel did
+not skip, such as one still building. It never prints one that Vercel
+ignored or skipped.
 When no comment names a preview, it prints the URL of the newest deployment
 that the `vercel` bot made on the head commit whose latest status
 succeeded. When there is neither, it says so and exits 66.
