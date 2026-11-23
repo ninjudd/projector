@@ -242,7 +242,6 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
           {
             commit: {
               statusCheckRollup: { state: 'SUCCESS' },
-              deployments: { nodes: [{ creator: { login: 'vercel' }, latestStatus: { state: 'SUCCESS', environmentUrl: PREVIEW } }] },
             },
           },
         ],
@@ -344,6 +343,15 @@ type Beneath = {
   settings?: Record<string, unknown>
   bash?: (command: string) => { stdout: string; stderr: string }
   sessionId?: () => string
+  previews?: Record<string, string>
+}
+
+/** `project preview <owner>/<repo>#<number>`, answered from `previews` as the CLI answers it. */
+function previewOf(argv: readonly string[], previews: Record<string, string>): Ran {
+  const url = previews[argv[2] ?? '']
+  return url === undefined
+    ? { ...ran(''), exitCode: 66, stderr: `project: ${argv[2] ?? ''} has no Vercel preview\n` }
+    : ran(`${url}\n`)
 }
 
 /** `project config get <key> [--default <value>] --json`, answered from `settings` as the CLI answers it. */
@@ -370,6 +378,7 @@ function world(
     settings = {},
     bash = () => ({ stdout: '', stderr: '' }),
     sessionId = () => SESSION,
+    previews = { 'x/y#7': PREVIEW },
   }: Beneath = {},
 ) {
   const commands: string[][] = []
@@ -393,7 +402,9 @@ function world(
         ? github(e.argv.join(' '))
         : group === 'config' && verb === 'get'
           ? configGet(e.argv, settings)
-          : project !== undefined
+          : group === 'preview'
+            ? previewOf(e.argv, previews)
+            : project !== undefined
             ? project([...e.argv], e.init?.stdin)
             : github(e.argv.join(' '))
     return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
@@ -702,6 +713,7 @@ type PanelOptions = {
   settings?: Record<string, unknown>
   github?: Beneath['github']
   subscriptions?: Subscriptions
+  previews?: Beneath['previews']
 }
 
 /**
@@ -719,11 +731,16 @@ function panelWorld(
     settings = {},
     github,
     subscriptions = { review: ['o/r#1'] },
+    previews,
   }: PanelOptions = {},
 ) {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME, ...env })
-  const { commands } = world(on, { ...daemonFiles(subscriptions), ...files }, undefined, { settings, github })
+  const { commands } = world(on, { ...daemonFiles(subscriptions), ...files }, undefined, {
+    settings,
+    github,
+    ...(previews === undefined ? {} : { previews }),
+  })
   const toasts = toastsOf(on)
   on('config.list', () => ({ value: [themeRow(theme)] }))
   on('config.set', ($, e) => (e.value === 'dark-ansi' ? { deny: 'the theme stays' } : { value: e.value }))
@@ -1185,6 +1202,34 @@ test('reads a pull request’s threads only while its drawer is open, and only w
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(fresh()).toEqual([])
+  await ui.unmount()
+})
+
+test('a drawer links the preview `project preview` prints, and asks again on each poll until it has one', async ($, on) => {
+  // Catches a drawer that links without asking the command, shows a link when it exits 66, never asks again once
+  // Vercel starts building, or keeps asking once it has the link.
+  const previews: Record<string, string> = {}
+  const { clock, commands } = panelWorld(on, { subscriptions: { fix: ['x/y#7'] }, previews })
+  const asked = () => commands.filter(argv => argv[0] === 'project' && argv[1] === 'preview')
+  const vercel = async () => (await ui.find({ key: 'vercel:x/y#7' }))?.props.text
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  expect(asked()).toEqual([])
+
+  await ui.press({ key: 'pr:x/y#7' })
+  await clock.settle()
+  expect(asked()).toEqual([['project', 'preview', 'x/y#7']])
+  expect(await vercel()).toBeUndefined()
+
+  previews['x/y#7'] = PREVIEW
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(asked().length).toBe(2)
+  expect(await vercel()).toBe(`[open in vercel](${PREVIEW})`)
+
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(asked().length).toBe(2)
   await ui.unmount()
 })
 

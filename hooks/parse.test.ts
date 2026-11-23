@@ -65,7 +65,6 @@ describe('GitHub', () => {
       ],
       updatedAt: Date.UTC(2026, 9, 12, 12, 0),
       summaryUrl: 'https://example.com/site/reviews/1',
-      previewUrl: null,
     })
     expect(parseCache({ repo: 'x/y', number: 3 }, third)).toMatchObject({
       state: 'MERGED',
@@ -519,7 +518,6 @@ describe('the daemon’s files', () => {
       labels: [{ name: 'clean', color: null }],
       updatedAt: Date.UTC(2026, 9, 30, 11),
       summaryUrl: null,
-      previewUrl: null,
     })
     expect(parseCache({ repo: 'acme/app', number: 12 }, '')).toBeNull()
     expect(parseCache({ repo: 'acme/app', number: 12 }, '{"repository": {"pullRequest": null}}')).toBeNull()

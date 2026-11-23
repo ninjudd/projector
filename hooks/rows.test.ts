@@ -48,7 +48,6 @@ const pullOf = (pr: PullRequest) => ({
   is_cancelled: pr.isCancelled,
   labels: pr.labels.map(label => label.name),
   summary_url: pr.summaryUrl,
-  preview_url: pr.previewUrl,
   is_loading: pr.isLoading === true,
 })
 

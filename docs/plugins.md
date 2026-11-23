@@ -468,16 +468,14 @@ review threads, gathered under their files:
   such as `stopped fixing and reviewing acme/app#258`. `9`, closing the
   drawer, or opening another keeps it.
 - **open in github** opens the pull request on GitHub.
-- **open in vercel** opens the branch's Vercel preview, whenever Vercel's
-  comment on the pull request names one, such as
-  `app-git-my-branch-acme.vercel.app`. That address serves the branch's
-  newest ready build, so the link stays while a new push builds. When the
-  comment lists several projects, the link goes to the first whose newest
-  commit deployed, or else to the first that Vercel did not skip, and never
-  to a project the comment marks as ignored or skipped. When no comment from
-  Vercel names a preview it can link, the link goes to the newest
-  successful deployment that the `vercel` bot made on the head commit, and
-  the drawer shows none until there is one.
+- **open in vercel** opens the URL that `project preview` prints for the
+  pull request: the branch's Vercel preview that Vercel's comment names,
+  such as `app-git-my-branch-acme.vercel.app`, or else the head's newest
+  successful Vercel build. The drawer runs the command when it opens, and
+  again on each poll until the command prints a URL, so the link appears
+  once Vercel comments and stays while a new push builds. [Find a pull
+  request's Vercel preview](cli.md#find-a-pull-requests-vercel-preview)
+  gives the whole rule.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
 - **Each file with an unresolved review thread** is a line that names the

@@ -231,7 +231,7 @@ what it did to each:
 
   ```text
   prefix_rule(
-      pattern = ["project", ["check", "done", "help", "list", "owner", "priority", "search", "show", "status", "summary", "version", "watch", "worktree"]],
+      pattern = ["project", ["check", "done", "help", "list", "owner", "preview", "priority", "search", "show", "status", "summary", "version", "watch", "worktree"]],
       decision = "allow",
   )
   prefix_rule(
@@ -5270,6 +5270,31 @@ branch in the fork, and the command looks for a local branch of the same
 name, so for a fork's `main` it finds the worktree that has your own `main`
 checked out. The command needs Git 2.36 or later, which added
 `git worktree list -z`.
+
+## Find a pull request's Vercel preview
+
+`project preview` prints the URL of a pull request's Vercel preview. The
+panel's drawer runs it for its `open in vercel` link, and the console's `d`
+follows the same rule. Give it the pull request as `owner/repo#number` or
+as its URL:
+
+```sh
+project preview acme/app#12          # https://app-git-my-branch-acme.vercel.app
+open "$(project preview acme/app#12)"
+```
+
+The URL is the branch's preview address that the `vercel` bot's newest
+comment on the pull request names. That address serves the branch's
+newest ready build, so the command prints it while a new push builds too.
+When the comment lists several projects, the command prints the first one
+whose newest commit deployed, and never one that Vercel ignored or skipped.
+When no comment names a preview, it prints the URL of the newest deployment
+that the `vercel` bot made on the head commit whose latest status
+succeeded. When there is neither, it says so and exits 66.
+
+The command reads the pull request from the watch daemon's last result for
+it, which costs GitHub nothing, and asks GitHub only when the daemon has
+none, as for a pull request no session watches.
 
 ## Consume JSON
 

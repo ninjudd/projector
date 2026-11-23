@@ -366,6 +366,7 @@ const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, fals
 const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
 const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
 const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const, null)
+const drawerPreview = atom({ plugin: 'projector', key: 'panelPreview' } as const, null)
 const openFiles = atom({ plugin: 'projector', key: 'panelOpenFiles' } as const, null)
 const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
 const entries = atom({ plugin: 'projector', key: 'panelEntries' } as const, [])
@@ -518,6 +519,34 @@ async function loadThreads($: Engine): Promise<void> {
   await update($, drawerThreads, () => ({ drawer: opened, threads: found }))
 }
 
+const PREVIEW_URL = /^https?:\/\/\S+$/
+
+/**
+ * Reads the Vercel preview of the pull request whose drawer is open, from
+ * `project preview`, which reads the daemon's last result for it: when the
+ * drawer opens, and on each poll while it has none, since Vercel comments
+ * on a pull request only once it starts its first build. When the command
+ * cannot run, the drawer keeps what it linked.
+ */
+async function loadPreview($: Engine): Promise<void> {
+  const opened = await read($, drawer)
+  const row = current(await read($, snapshot)).rows.find(one => keyOf(one.pr) === opened)
+  if (opened === null || row === undefined) return
+  const known = await read($, drawerPreview)
+  if (known?.drawer === opened && known.url !== null) return
+  let url: string | null
+  try {
+    const ran = await project($, ['preview', `${row.pr.repo}#${String(row.pr.number)}`])
+    const printed = ran.stdout.trim()
+    url = ran.exitCode === 0 && PREVIEW_URL.test(printed) ? printed : null
+  } catch {
+    return
+  }
+  // Another drawer may have opened while the command ran.
+  if ((await read($, drawer)) !== opened) return
+  await update($, drawerPreview, () => ({ drawer: opened, url }))
+}
+
 /**
  * The built-in theme a Claude Code theme draws as: the theme's own name, or
  * for a custom theme, `custom:<slug>`, the theme its file builds on, `dark`
@@ -630,7 +659,7 @@ async function load($: Engine, isPolled: boolean): Promise<void> {
   }))
   await update($, now, () => time)
   await closeLeftDrawer($, time)
-  if (isPolled) await loadThreads($)
+  if (isPolled) await Promise.all([loadThreads($), loadPreview($)])
 }
 
 /**
@@ -1766,6 +1795,7 @@ export const register: Register = on => {
     const time = await read($, now)
     const opened = await read($, drawer)
     const shownThreads = await read($, drawerThreads)
+    const shownPreview = await read($, drawerPreview)
     const asking = await read($, asked)
     const opening = await read($, openFiles)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
@@ -1841,7 +1871,7 @@ export const register: Register = on => {
     const toggle = (key: string, line: string, onto?: string) => {
       collapseFilesFor(key)
       update($, drawer, was => (was === key ? null : key))
-        .then(() => loadThreads($))
+        .then(() => Promise.all([loadThreads($), loadPreview($)]))
         .catch(() => undefined)
       ask(key, null)
       carry(line, onto)
@@ -2454,8 +2484,8 @@ export const register: Register = on => {
           )}
           <Box key={`links:${key}`} flexDirection="row" columnGap={2}>
             <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
-            {pr.previewUrl !== null && (
-              <Markdown key={`vercel:${key}`} text={`[open in vercel](${pr.previewUrl})`} />
+            {shownPreview?.drawer === key && shownPreview.url !== null && (
+              <Markdown key={`vercel:${key}`} text={`[open in vercel](${shownPreview.url})`} />
             )}
             {pr.summaryUrl !== null && (
               <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />

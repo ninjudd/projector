@@ -91,7 +91,6 @@ class Pull:
     is_cancelled: bool
     labels: list[str]
     summary_url: Optional[str]
-    preview_url: Optional[str]
     is_loading: bool = False
 
 
@@ -292,6 +291,12 @@ def branch_preview_of(node: dict) -> Optional[str]:
     return None
 
 
+def head_of(node: dict) -> dict:
+    """The pull request's head commit, as the query reads it."""
+    commits = nodes_of(node.get("commits"))
+    return record_of(record_of(commits[0]).get("commit")) if commits else {}
+
+
 def preview_of(node: dict, commit: dict) -> Optional[str]:
     """The preview the drawer links: the branch's, which keeps its address from push to push and serves the
     newest ready build while a new one builds, or the head's newest successful build when Vercel's comment
@@ -302,8 +307,7 @@ def preview_of(node: dict, commit: dict) -> Optional[str]:
 def to_pull(repo: str, number: int, node: dict) -> Pull:
     """A pull request from the node the daemon's query returned for it, as the panel's `toPullRequest` reads
     it: a field of the wrong type reads as missing."""
-    commits = nodes_of(node.get("commits"))
-    head = record_of(record_of(commits[0]).get("commit")) if commits else {}
+    head = head_of(node)
     author = record_of(node.get("author")).get("login")
     url = node.get("url")
     body = node.get("body")
@@ -330,15 +334,52 @@ def to_pull(repo: str, number: int, node: dict) -> Pull:
         labels=[label["name"] for label in nodes_of(node.get("labels"))
                 if isinstance(label, dict) and isinstance(label.get("name"), str)],
         summary_url=found.group(1) if found else None,
-        preview_url=preview_of(node, head),
     )
 
 
+def pull_node(response: object) -> Optional[dict]:
+    """The pull request in a response to the daemon's query, `{"repository": {"pullRequest": {...}}, ...}`."""
+    node = record_of(record_of(response).get("repository")).get("pullRequest")
+    return node if isinstance(node, dict) else None
+
+
+def cached_node(root: Path, repo: str, number: int) -> Optional[dict]:
+    """The pull request in the daemon's last result for it, or None when it has none yet."""
+    return pull_node(read_json(watch.pull_cache(root, repo, number)))
+
+
 def cached_pull(root: Path, repo: str, number: int) -> Optional[Pull]:
-    """The daemon's last result for a pull request, `{"repository": {"pullRequest": {...}}, ...}`, or None
-    when it has none yet or the file holds no pull request."""
-    node = record_of(record_of(read_json(watch.pull_cache(root, repo, number))).get("repository")).get("pullRequest")
-    return to_pull(repo, number, node) if isinstance(node, dict) else None
+    """The daemon's last result for a pull request, or None when it has none yet or the file holds no pull
+    request."""
+    node = cached_node(root, repo, number)
+    return to_pull(repo, number, node) if node is not None else None
+
+
+def cached_preview(root: Path, repo: str, number: int) -> Optional[str]:
+    """The preview the daemon's last result for a pull request gives, or None when it gives none."""
+    node = cached_node(root, repo, number)
+    return preview_of(node, head_of(node)) if node is not None else None
+
+
+# What `pull_preview` asks GitHub for a pull request the daemon has not fetched: the fields `preview_of` reads.
+PREVIEW_QUERY = """query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ pullRequest(number:$n){
+  commits(last:1){ nodes{ commit{
+    deployments(last:10){ nodes{ creator{ login } latestStatus{ state environmentUrl } } } } } }
+  comments(last:100){ nodes{ author{ login } body } } } } }"""
+
+
+def pull_preview(root: Path, repo: str, number: int) -> Optional[str]:
+    """The pull request's Vercel preview, as `project preview` prints it: from the daemon's last result for it,
+    which costs GitHub nothing, or from GitHub when the daemon has none."""
+    node = cached_node(root, repo, number)
+    if node is None:
+        owner, name = repo.split("/")
+        response = review.gh_json(["api", "graphql", "-f", f"query={PREVIEW_QUERY}", "-F", f"o={owner}",
+                                   "-F", f"r={name}", "-F", f"n={number}"])
+        node = pull_node(record_of(response).get("data"))
+        if node is None:
+            raise review.NotFound(f"{repo}#{number} does not exist or is not visible to this account")
+    return preview_of(node, head_of(node))
 
 
 def loading_pull(repo: str, number: int) -> Pull:
