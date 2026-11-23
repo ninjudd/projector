@@ -1,0 +1,219 @@
+{
+ "version": 1,
+ "name": "Vercel preview command",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 621,
+  "title": "Add project preview, and link the drawer's Vercel preview through it",
+  "head": "eda44e3925125148ac2de12db7a41281ca63e8cf",
+  "headRef": "project-preview-command",
+  "base": "f77a0d535f1895ea3bb4d77cebcef98aaf1e015c",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel, a pane inside Claude Code, opens a <b>drawer</b> for each pull request a session watches, with links to the pull request on GitHub, its Projector summary, and its <b>Vercel preview</b>, the web address where Vercel serves a build of the branch. The console, Projector's terminal view, offers the same preview link on its <code>d</code> key.",
+   "The rule that picks that preview URL lived twice, once in the panel's TypeScript and once in the console's Python, so every change to it had to land in both. This pull request gives the rule one home, in Python, behind a new command, <code>project preview &lt;owner&gt;/&lt;repo&gt;#&lt;number&gt;</code>. The command prints the URL, or exits 66 when there is none. It reads the pull request from the watch daemon's cached result, and asks GitHub only when the daemon has none.",
+   "The panel's drawer now runs that command when it opens, and again on each poll while it stays open, so the link appears once Vercel first comments and follows the head's build after a push. The panel's copy of the rule and the <code>previewUrl</code> field on its row model are gone, and the preview cases move from the shared row fixtures to their own fixture file, which the Python tests run through the command."
+  ],
+  "cards": [
+   {
+    "id": "rule",
+    "title": "The preview rule, unchanged",
+    "html": "<ol><li>The branch preview that the <code>vercel</code> bot's newest comment names: the first project whose newest commit deployed, else the first that Vercel did not skip. That address follows the branch, so it stays valid while a new push builds.</li><li>Otherwise, the head commit's newest Vercel deployment whose latest status succeeded. That address belongs to one commit.</li><li>Otherwise, no preview, and the command exits 66.</li></ol>"
+   },
+   {
+    "id": "review",
+    "title": "Earlier review round",
+    "html": "<p>The first head's drawer stopped asking once it had a URL, so a per-commit build from rule 2 kept linking the old commit after a push. The second commit fixes that by asking on every poll, which reads only the daemon's cache. No finding is open at this head.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "command",
+   "title": "The rule behind one command",
+   "kicker": "rows.py and cli.py: the preview rule's single home and the command that prints it",
+   "intro": [
+    "<code>src/projector/rows.py</code> already held the Python copy of the rule, as <code>preview_of</code>. This group drops the preview from the console's row model, <code>Pull</code>, and adds functions that read the rule's inputs from the watch daemon's cache file, or from GitHub when that file is missing.",
+    "<code>project preview</code> in <code>cli.py</code> parses the target, calls <code>rows.pull_preview</code>, and raises <code>NoPreview</code>, exit code 66, when there is no URL."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/rows.py",
+     "note": "Removes <code>preview_url</code> from <code>Pull</code> and adds <code>cached_preview</code>, for callers that read the cache only, and <code>pull_preview</code>, which can also ask GitHub.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>PREVIEW_QUERY</code> asks for the same <code>comments(last:100)</code> and <code>deployments(last:10)</code> fields as the daemon's <code>QUERY</code> in <code>watch.py</code>, so both sources give <code>preview_of</code> the same input. Checked by comparing the two queries.",
+       "line": 365
+      },
+      {
+       "kind": "context",
+       "text": "A pull request GitHub cannot find raises <code>review.NotFound</code>: <code>run_gh</code> raises it on a \"Could not resolve\" error, and this function raises it when the response holds no pull request.",
+       "line": 371
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>preview</code> subcommand and <code>run_preview</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>watch.parse_target</code> accepts <code>owner/repo#number</code>, a pull request URL, or <code>owner/repo</code>, and this function refuses the last as a usage error. Checked in <code>parse_target</code> and by <code>tests/test_preview.py</code>, which passed.",
+       "line": 1387
+      }
+     ]
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Rewrites the comment on the daemon's query to say that <code>project preview</code> now reads the comments and deployments."
+    }
+   ]
+  },
+  {
+   "id": "callers",
+   "title": "The panel and the console ask the command",
+   "kicker": "register.tsx, github.ts, types.d.ts, console.py: the callers that link the preview",
+   "intro": [
+    "The panel used to compute <code>previewUrl</code> for every row in <code>hooks/github.ts</code> on every poll. Now only the open drawer has a preview. <code>loadPreview</code> in <code>hooks/register.tsx</code> runs <code>project preview</code> and stores the answer in a new atom, <code>panelPreview</code>, a piece of panel state keyed by the drawer that is open.",
+    "The console's <code>d</code> calls <code>rows.cached_preview</code> each time it builds a pull request's controls, so it always reads the daemon's latest cache."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The drawer runs whichever <code>project</code> is installed, so a panel paired with an older CLI that lacks the command shows no Vercel link until both are upgraded."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds <code>loadPreview</code> and the <code>panelPreview</code> atom, runs it beside <code>loadThreads</code> when a drawer opens and on each poll while it stays open, and renders the link from the atom.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 533,
+       "text": "<code>loadPreview</code> keeps the shown link when the command cannot run, drops it on any non-zero exit, and stores nothing when another drawer opened while the command ran. Checked by reading it and by the panel test, which follows a changed URL and a later exit 66."
+      },
+      {
+       "kind": "context",
+       "line": 662,
+       "text": "Polls run every 30 seconds while the panel is shown, so an open drawer runs one <code>project preview</code> per poll. It reads the daemon's cache file, and asks GitHub only for a pull request the daemon has not fetched yet."
+      }
+     ]
+    },
+    {
+     "path": "hooks/github.ts",
+     "note": "Deletes the panel's copy of the preview rule and the <code>previewUrl</code> it set on each row."
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Drops <code>PullRequest.previewUrl</code> and declares the <code>panelPreview</code> atom."
+    },
+    {
+     "path": "src/projector/console.py",
+     "note": "<code>d</code> reads <code>rows.cached_preview</code> rather than the removed <code>pull.preview_url</code>."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Lets Codex run <code>project preview</code> without asking, because the command only reads."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests and fixtures",
+   "kicker": "The preview cases move to their own fixture, and the row fixtures lose preview_url",
+   "intro": [
+    "The shared row fixtures, which both the TypeScript and Python row models run, no longer carry <code>preview_url</code>. The preview cases from <code>tests/fixtures/rows/previews.ts</code>, plus the newest-successful-build case from <code>facts.ts</code>, move to <code>tests/fixtures/previews.json</code>. <code>tests/test_preview.py</code> runs each through <code>pull_preview</code> and <code>cached_preview</code>, and tests the command's output, exit codes, and GitHub fallback.",
+    "A new panel test checks that the drawer runs the command, shows no link while it exits 66, shows the link after a later poll, follows a changed URL after another poll, and drops the link when the command exits 66 again."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>tests.test_preview</code> and <code>tests.test_permissions</code> passed, and the review's gate ran <code>claude plugin validate</code> on both trees, <code>claude plugin test .</code> (257 pass, 0 fail), <code>git diff --check</code>, and the <code>check</code> CI job, all passing."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_preview.py"
+    },
+    {
+     "path": "tests/fixtures/previews.json"
+    },
+    {
+     "path": "hooks/panel.test.tsx"
+    },
+    {
+     "path": "hooks/parse.test.ts"
+    },
+    {
+     "path": "hooks/rows.test.ts"
+    },
+    {
+     "path": "tests/test_permissions.py"
+    },
+    {
+     "path": "tests/fixtures/rows/previews.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/facts.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/index.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/checks.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/labels.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/loading.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/malformed.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/notes.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/roles.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/sections.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/states.ts"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "docs/cli.md documents the command, and docs/plugins.md points the drawer's link at it",
+   "intro": [
+    "<code>docs/cli.md</code> gains a \"Find a pull request's Vercel preview\" section with the whole rule, and its copy of the Codex allow rule names <code>preview</code>. <code>docs/plugins.md</code> now describes the drawer's link as whatever the command prints."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 5290,
+       "text": "This sentence matches <code>branch_preview_of</code> in <code>src/projector/rows.py</code>. That function drops every project whose status names it ignored or skipped. It then prints the first project whose newest commit deployed, or, when none has, the first one left, such as one still building. The reviewer checked this by reading the function."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
