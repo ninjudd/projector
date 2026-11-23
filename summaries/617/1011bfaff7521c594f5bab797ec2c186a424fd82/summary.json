@@ -1,0 +1,121 @@
+{
+ "version": 1,
+ "name": "Vercel branch preview link",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 617,
+  "title": "Link the branch's Vercel preview rather than the head's own build",
+  "head": "1011bfaff7521c594f5bab797ec2c186a424fd82",
+  "headRef": "vercel-branch-preview",
+  "base": "78a800c4337f68aeca15d749ec9d026aedb49324",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector shows each pull request it watches in two places: the <b>panel</b>, a pane in Claude Code drawn by the hooks module in <code>hooks/</code>, and the <b>console</b>, a terminal view drawn by <code>project console</code> in Python. Each has a row model that turns the watch daemon's cached GitHub answer into a row and a drawer. Both models link the pull request's Vercel preview: <code>open in vercel</code> in the panel's drawer, and the <code>d</code> key in the console.",
+   "Until now that link went to the URL of one Vercel build, such as <code>projector-l5ul8g3q0-okamnesiac.vercel.app</code>. Every push makes a new one, so a tab opened from the link kept showing old code. Vercel also gives each branch a stable preview address that always serves the branch's newest ready build. This pull request links that address instead.",
+   "GitHub's deployment data carries only the per-build URL. The branch address appears only in the comment the <code>vercel</code> bot keeps on the pull request, whose first line is a Markdown link reference, <code>[vc]: #&lt;signature&gt;:&lt;base64 JSON&gt;</code>. The JSON lists each Vercel project with its <code>previewUrl</code> and <code>nextCommitStatus</code>. The address can't be built from the branch name, because Vercel shortens a long name with a hash.",
+   "Both row models now read the newest <code>vercel</code> comment from the <code>comments(last:100)</code> the daemon already fetches, so the GitHub query doesn't change. A successful Vercel build on the head still decides whether there is a link at all. When no comment names a usable branch address, the link falls back to the build's own URL."
+  ],
+  "cards": [
+   {
+    "id": "rules",
+    "title": "Which link a row gets",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Situation</th><th>Link</th></tr></thead><tbody><tr><td>No successful <code>vercel</code> deployment on the head</td><td class=\"r\">none</td></tr><tr><td>Newest <code>vercel</code> comment lists a <code>DEPLOYED</code> project with a plain host</td><td class=\"r\"><code>https://&lt;host&gt;</code></td></tr><tr><td>No such comment, unreadable metadata, or no usable project</td><td class=\"r\">the build's URL</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Build preview</b>: the URL of one Vercel deployment, fixed to one commit.</li><li><b>Branch preview</b>: the address Vercel keeps per branch, which serves its newest ready build.</li><li><b>Row model</b>: the code that turns the daemon's cached GitHub answer into a row, once in TypeScript for the panel and once in Python for the console.</li><li><b>Shared row fixtures</b>: the cases under <code>tests/fixtures/rows/</code> that both models must pass, so the two stay in step.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "models",
+   "title": "Reading the branch preview in both row models",
+   "kicker": "The TypeScript and Python row models gain the same comment parser.",
+   "intro": [
+    "Each model renames its old <code>previewOf</code> / <code>preview_of</code>, which read the head commit's deployments, to <code>buildPreviewOf</code> / <code>build_preview_of</code>. It adds a parser for Vercel's comment and a new <code>previewOf</code> / <code>preview_of</code> that combines the two.",
+    "The parser walks the pull request's comments newest first and skips any comment not written by the <code>vercel</code> bot. It also skips a comment whose metadata won't decode, and stops at the first one that does. In that comment it returns the first project whose <code>nextCommitStatus</code> is <code>DEPLOYED</code> and whose <code>previewUrl</code> is a bare host name. The host check keeps a crafted value from putting a different link into the drawer's Markdown."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The two parsers agree: both anchor the <code>[vc]:</code> reference at the start of the body, use the same host pattern, go on to an older comment when decoding fails, and stop at the newest readable one. The shared fixture runs through both models, and <code>claude plugin test .</code> and the CI <code>check</code> job passed."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/github.ts",
+     "note": "The panel's row model: the comment parser and the new <code>previewOf</code>, which <code>toPullRequest</code> now calls with the whole pull request node.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 263,
+       "text": "The host must be letters, digits, and hyphens in two or more dot-separated labels, with no scheme, path, or spaces. Anything else is ignored and the build URL is used instead."
+      },
+      {
+       "kind": "verify",
+       "line": 283,
+       "text": "<code>toReversed</code> is an ES2023 array method, from the same library as the <code>findLast</code> that <code>hooks/inbox.ts</code> already compiles with. <code>hooks/typecheck.sh</code> could not run on the review runner."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/rows.py",
+     "note": "The console's row model: the same parser in Python, with <code>to_pull</code> passing the node and the head commit.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 278,
+       "text": "Vercel's base64 omits padding, so the code restores it before decoding. A decode or JSON failure raises a <code>ValueError</code> subclass, which sends the loop on to the next older comment."
+      },
+      {
+       "kind": "verify",
+       "line": 289,
+       "text": "Run against GitHub, <code>rows.to_pull</code> returned the branch hosts for #607, #606, and this pull request, while <code>build_preview_of</code> returned each one's per-build URL."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "The shared fixture case",
+   "kicker": "One new case covers four pull requests through both models.",
+   "intro": [
+    "<code>previews.ts</code> holds four pull requests: several comments where only the newest <code>vercel</code> one counts and a person's look-alike is ignored; a failed head build, which gets no link; unusable projects (an injected link and a <code>PENDING</code> project), which fall back to the build; and unreadable metadata, which falls back too. <code>index.ts</code> registers the case for the panel's tests. The Python tests find it by globbing the fixture directory."
+   ],
+   "files": [
+    {
+     "path": "tests/fixtures/rows/previews.ts"
+    },
+    {
+     "path": "tests/fixtures/rows/index.ts"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The docs and the query's comment describe the new link.",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the drawer's <code>open in vercel</code> link and its fallback, and <code>docs/cli.md</code> describes the console's <code>d</code> key. The comment above the daemon's query in <code>watch.py</code> now says that the deployments decide whether Vercel built the head, and that the link comes from the bot's comment. The query itself is unchanged."
+   ],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Comment only; the query is unchanged."
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/cli.md"
+    }
+   ]
+  }
+ ]
+}
