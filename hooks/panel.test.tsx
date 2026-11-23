@@ -1205,9 +1205,9 @@ test('reads a pull request’s threads only while its drawer is open, and only w
   await ui.unmount()
 })
 
-test('a drawer links the preview `project preview` prints, and asks again on each poll until it has one', async ($, on) => {
+test('a drawer links the preview `project preview` prints, and asks again on each poll while it stays open', async ($, on) => {
   // Catches a drawer that links without asking the command, shows a link when it exits 66, never asks again once
-  // Vercel starts building, or keeps asking once it has the link.
+  // Vercel starts building, keeps an old head's build after a push, or keeps a link the command no longer prints.
   const previews: Record<string, string> = {}
   const { clock, commands } = panelWorld(on, { subscriptions: { fix: ['x/y#7'] }, previews })
   const asked = () => commands.filter(argv => argv[0] === 'project' && argv[1] === 'preview')
@@ -1227,9 +1227,19 @@ test('a drawer links the preview `project preview` prints, and asks again on eac
   expect(asked().length).toBe(2)
   expect(await vercel()).toBe(`[open in vercel](${PREVIEW})`)
 
+  // Without a branch preview the link is the head's own build, so a push changes it.
+  const pushed = 'https://y-abc123-team.vercel.app'
+  previews['x/y#7'] = pushed
   await clock.advance(30_000 + TICK)
   await clock.settle()
-  expect(asked().length).toBe(2)
+  expect(asked().length).toBe(3)
+  expect(await vercel()).toBe(`[open in vercel](${pushed})`)
+
+  delete previews['x/y#7']
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(asked().length).toBe(4)
+  expect(await vercel()).toBeUndefined()
   await ui.unmount()
 })
 

@@ -472,8 +472,10 @@ review threads, gathered under their files:
   pull request: the branch's Vercel preview that Vercel's comment names,
   such as `app-git-my-branch-acme.vercel.app`, or else the head's newest
   successful Vercel build. The drawer runs the command when it opens, and
-  again on each poll until the command prints a URL, so the link appears
-  once Vercel comments and stays while a new push builds. [Find a pull
+  again on each poll while it stays open, so the link appears once Vercel
+  comments, follows the head's build after a push, and stays while a new
+  push builds. The command reads the watch daemon's cache, so polling it
+  costs GitHub nothing. [Find a pull
   request's Vercel preview](cli.md#find-a-pull-requests-vercel-preview)
   gives the whole rule.
 - **open in projector** opens its Projector summary, when the pull

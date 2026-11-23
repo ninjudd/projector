@@ -524,16 +524,16 @@ const PREVIEW_URL = /^https?:\/\/\S+$/
 /**
  * Reads the Vercel preview of the pull request whose drawer is open, from
  * `project preview`, which reads the daemon's last result for it: when the
- * drawer opens, and on each poll while it has none, since Vercel comments
- * on a pull request only once it starts its first build. When the command
- * cannot run, the drawer keeps what it linked.
+ * drawer opens, and on each poll while it stays open. Vercel comments only
+ * once it starts a pull request's first build, and without a branch preview
+ * the link is the head's own build, so it changes with each push. Reading
+ * the daemon's cache costs GitHub nothing. When the command cannot run, the
+ * drawer keeps what it linked.
  */
 async function loadPreview($: Engine): Promise<void> {
   const opened = await read($, drawer)
   const row = current(await read($, snapshot)).rows.find(one => keyOf(one.pr) === opened)
   if (opened === null || row === undefined) return
-  const known = await read($, drawerPreview)
-  if (known?.drawer === opened && known.url !== null) return
   let url: string | null
   try {
     const ran = await project($, ['preview', `${row.pr.repo}#${String(row.pr.number)}`])
