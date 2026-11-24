@@ -1786,9 +1786,9 @@ def prune_lines(result: dict) -> list[str]:
 
 
 THREADS_QUERY = """query($o:String!,$r:String!,$n:Int!,$after:String){ repository(owner:$o,name:$r){
-  pullRequest(number:$n){ reviewThreads(first:100, after:$after){
+  pullRequest(number:$n){ author{ login } reviewThreads(first:100, after:$after){
     pageInfo{ hasNextPage endCursor }
-    nodes{ id isResolved isOutdated path line originalLine
+    nodes{ id isResolved resolvedBy{ login } isOutdated path line originalLine
       comments(first:50){ nodes{ databaseId body } } } } } } }"""
 
 
@@ -1814,7 +1814,7 @@ def census(repo: str, number: int, root: Optional[Path] = None, model: Optional[
     if root is not None:
         touch_review(root, repo, number, model, loop)
     owner, name = repo.split("/", 1)
-    threads, after = [], None
+    threads, after, author = [], None, None
     while True:
         args = ["api", "graphql", "-f", f"query={THREADS_QUERY}", "-f", f"o={owner}", "-f", f"r={name}",
                 "-F", f"n={number}"]
@@ -1824,6 +1824,7 @@ def census(repo: str, number: int, root: Optional[Path] = None, model: Optional[
         pr = ((page or {}).get("data") or {}).get("repository", {}).get("pullRequest")
         if pr is None:
             raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account")
+        author = (pr.get("author") or {}).get("login")
         connection = pr["reviewThreads"]
         for node in connection["nodes"]:
             comments = (node.get("comments") or {}).get("nodes") or []
@@ -1834,13 +1835,15 @@ def census(repo: str, number: int, root: Optional[Path] = None, model: Optional[
                     "line": node.get("line") if node.get("line") is not None else node.get("originalLine"),
                     "outdated": bool(node.get("isOutdated")),
                     "resolved": bool(node.get("isResolved")),
+                    "resolved_by": (node.get("resolvedBy") or {}).get("login"),
                     "comments": [{"id": c.get("databaseId"), "body": c.get("body") or ""} for c in comments],
                 })
         if not connection["pageInfo"]["hasNextPage"]:
             break
         after = connection["pageInfo"]["endCursor"]
     resolved = sum(1 for t in threads if t["resolved"])
-    return {"total": len(threads), "resolved": resolved, "open": len(threads) - resolved, "threads": threads}
+    return {"author": author, "total": len(threads), "resolved": resolved, "open": len(threads) - resolved,
+            "threads": threads}
 
 
 def census_lines(result: dict) -> list[str]:

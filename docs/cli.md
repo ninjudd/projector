@@ -2100,7 +2100,9 @@ comment to confirm the edit, and updates the state file. It then removes the
 worktree of the head it moved from, as `setup` does. `census` lists every
 thread whose first comment carries the `projector-finding` marker, reading
 every page, and prints how many are resolved and open and each open thread's
-`path:line`; with `--json` each thread also carries its comments. It counts
+`path:line`; with `--json` it also names the pull request's `author`, and each
+thread carries its comments and the `resolved_by` login of whoever resolved
+it, so a reviewer can tell which resolved threads the author decided. It counts
 every model's threads alike and takes `--model` like the commands around it,
 so a reviewing session passes the same flags to each. `--model` and `--loop`
 also pick the review whose lock `census` touches, as the lock paragraph below

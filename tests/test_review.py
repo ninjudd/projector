@@ -1069,13 +1069,15 @@ class CiGateTests(ReviewCase):
 
 
 def thread(thread_id: str, body: str, *, resolved: bool = False, outdated: bool = False,
-           path: str = "src/x.py", line: int | None = 3, original: int | None = None) -> dict:
+           path: str = "src/x.py", line: int | None = 3, original: int | None = None,
+           resolved_by: str | None = None) -> dict:
     return {"id": thread_id, "isResolved": resolved, "isOutdated": outdated, "path": path,
+            "resolvedBy": {"login": resolved_by} if resolved_by else None,
             "line": line, "originalLine": original, "comments": {"nodes": [{"databaseId": 9, "body": body}]}}
 
 
-def page(nodes: list[dict], next_cursor: str | None) -> dict:
-    return {"data": {"repository": {"pullRequest": {"reviewThreads": {
+def page(nodes: list[dict], next_cursor: str | None, author: str = "operator") -> dict:
+    return {"data": {"repository": {"pullRequest": {"author": {"login": author}, "reviewThreads": {
         "pageInfo": {"hasNextPage": next_cursor is not None, "endCursor": next_cursor}, "nodes": nodes}}}}}
 
 
@@ -1085,7 +1087,7 @@ class CensusTests(ReviewCase):
     def setUp(self) -> None:
         super().setUp()
         self.github.pages = [
-            page([thread("T1", self.FINDING), thread("T2", self.FINDING, resolved=True),
+            page([thread("T1", self.FINDING), thread("T2", self.FINDING, resolved=True, resolved_by="maintainer"),
                   thread("T3", "Could this be a constant?")], "1"),
             page([thread("T4", self.FINDING, outdated=True, line=None, original=7, path="src/y.py")], None),
         ]
@@ -1108,6 +1110,18 @@ class CensusTests(ReviewCase):
         self.assertEqual((3, 1, 2), (result["total"], result["resolved"], result["open"]))
         self.assertEqual(["T1", "T2", "T4"], [t["id"] for t in result["threads"]])
         self.assertEqual(self.FINDING, result["threads"][0]["comments"][0]["body"])
+
+    def test_json_names_the_author_and_who_resolved_each_thread(self) -> None:
+        for pages in (self.github.pages[0], self.github.pages[1]):
+            pages["data"]["repository"]["pullRequest"]["author"] = {"login": "Maintainer"}
+
+        code, out, err = self.later("census", "--repo", REPO, "--json")
+
+        self.assertEqual(0, code, err)
+        result = json.loads(out)
+        self.assertEqual("Maintainer", result["author"])
+        self.assertEqual({"T1": None, "T2": "maintainer", "T4": None},
+                         {t["id"]: t["resolved_by"] for t in result["threads"]})
 
     def test_finds_the_repository_from_the_review_set_up_for_the_pull_request(self) -> None:
         self.assertEqual(0, self.setup_review()[0])

@@ -816,9 +816,11 @@ read to the end; it keys on the finding marker, never on a login:
 project review census <number> --json
 ```
 
-Each thread carries its id, whether it is resolved, its `path` and `line`,
-whether it is outdated, and its comments, the finding first and then the
-replies. Without `--json` it prints the count the review body states, such as
+Each thread carries its id, whether it is resolved and the `resolved_by`
+login of whoever resolved it, its `path` and `line`, whether it is outdated,
+and its comments, the finding first and then the replies. The result also
+names the pull request's `author`, so a resolved thread whose `resolved_by` is
+that author, on a pull request you did not write, is **Overruled**. Without `--json` it prints the count the review body states, such as
 `6 finding threads: 4 resolved, 2 open`, and each open thread's `path:line`.
 
 An `outdated` thread is one whose line the fix moved: GitHub nulls `line` and
