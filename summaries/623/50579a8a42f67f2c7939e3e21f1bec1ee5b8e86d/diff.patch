@@ -1,0 +1,322 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index e22342f8..8997b89d 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2100,7 +2100,9 @@ comment to confirm the edit, and updates the state file. It then removes the
+ worktree of the head it moved from, as `setup` does. `census` lists every
+ thread whose first comment carries the `projector-finding` marker, reading
+ every page, and prints how many are resolved and open and each open thread's
+-`path:line`; with `--json` each thread also carries its comments. It counts
++`path:line`; with `--json` it also names the pull request's `author`, and each
++thread carries its comments and the `resolved_by` login of whoever resolved
++it, so a reviewer can tell which resolved threads the author decided. It counts
+ every model's threads alike and takes `--model` like the commands around it,
+ so a reviewing session passes the same flags to each. `--model` and `--loop`
+ also pick the review whose lock `census` touches, as the lock paragraph below
+@@ -2134,7 +2136,10 @@ marker, as after a run that stopped once it replied, `settle` posts no
+ second reply and only sets the thread. It refuses, exiting 1 and posting
+ nothing, a thread that is not a review thread on the pull request, one whose
+ first comment carries no finding marker, an empty body, and a body that
+-carries a Projector marker of its own. A `--result` outside the five exits 2.
++carries a Projector marker of its own. It also refuses `--result reopened`
++on a thread that the pull request's author resolved when the author is not
++the reviewer, because on another author's pull request that resolution is the
++owner's decision. A `--result` outside the five exits 2.
+ With `--json` it prints the `thread`, the `result`, the `sha` and `model` the
+ marker names, the reply's `comment` id and `url`, and whether the thread is
+ `resolved`.
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 37a99209..18901c21 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -40,7 +40,9 @@ carries them lands, it marks the pull request ready for review again with
+ `project review ready`. The reviewer settles its own
+ findings on every head: it resolves one it verifies fixed, reopens one resolved
+ too early, and keeps one whose decline does not hold, so its verdict rests on
+-what it checked rather than on who clicked resolve. In a repository with a
++what it checked rather than on who clicked resolve. On another author's pull
++request, a thread its author resolves stays resolved: that is the owner's
++decision, and the reviewer does not reopen it. In a repository with a
+ Projector site, `review-pr` then runs `summarize-pr` on every pull request it
+ reviews and links the summary from its review;
+ `project config set review.summarize false` turns that off. All three of
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 3890ea13..3723ae93 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -359,7 +359,12 @@ Resolving says the fix is pushed; it is not the final word on a Projector
+ finding. The reviewer verifies every one of its findings on the next head,
+ resolves any you left open, and reopens one whose fix does not hold, replying
+ with `<!-- projector-verify v=1 result=reopened -->`. A reopened thread is the
+-recurrence above, not new work.
++recurrence above, not new work. On a pull request you wrote that another
++login reviews, the reviewer leaves a thread you resolved resolved. It posts a
++new finding when your fix does not hold, and it treats a finding you declined
++as your decision. No reopened thread signals a failed fix there, so a new
++finding on code you already fixed is the recurrence above too: stop and
++report it rather than treating it as new work.
+ 
+ Resolve a person's thread the same way once its fix is pushed, so a reviewer
+ who never resolves threads does not leave the pull request looking
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 06211a26..98aa4637 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -806,7 +806,9 @@ is marked resolved is a hint, not the answer: an author may resolve a thread
+ before the fix works, and another may fix the code and never resolve it. So
+ before choosing a verdict, verify every Projector finding thread on the pull
+ request, resolved or not, against this head, and settle each one yourself.
+-You are the only party whose resolution is final. This command lists them,
++Your resolution is final, with one exception: on a cross-author pull request,
++a thread its author resolved is the owner's decision, as **Overruled** below
++describes. This command lists them,
+ reading every page so that a pull request with more than a hundred threads is
+ read to the end; it keys on the finding marker, never on a login:
+ 
+@@ -814,9 +816,12 @@ read to the end; it keys on the finding marker, never on a login:
+ project review census <number> --json
+ ```
+ 
+-Each thread carries its id, whether it is resolved, its `path` and `line`,
+-whether it is outdated, and its comments, the finding first and then the
+-replies. Without `--json` it prints the count the review body states, such as
++Each thread carries its id, whether it is resolved and the `resolved_by` login
++of whoever resolved it, its `path` and `line`, whether it is outdated, and its
++comments, the finding first and then the replies. The result also names the
++pull request's `author`, so a resolved thread whose `resolved_by` is that
++author, on a pull request you did not write, is **Overruled**. Without
++`--json` it prints the count the review body states, such as
+ `6 finding threads: 4 resolved, 2 open`, and each open thread's `path:line`.
+ 
+ An `outdated` thread is one whose line the fix moved: GitHub nulls `line` and
+@@ -856,6 +861,14 @@ as the author answering.
+ - **Reopened:** the thread is resolved but the finding is not addressed at
+   this head. Run `--result reopened` with what still fails; the command
+   unresolves the thread.
++- **Overruled:** on a cross-author pull request, the author resolved the
++  thread. That is the owner's decision, and `settle` refuses to reopen it.
++  When the author declined the finding, leave the thread resolved and post
++  nothing on it, however the reasoning reads; name the finding in the
++  review body as declined by the owner, and never raise it again as a new
++  thread. When the author resolved it as fixed and the fix does not hold,
++  post a new finding on the code at this head that still fails. None of
++  this applies to a self-review, where the author is you.
+ - **Still open:** open, not fixed, and not answered. Leave it; the finding
+   already says what to do.
+ 
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 6eb09bbc..c4aa6248 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -1786,9 +1786,9 @@ def prune_lines(result: dict) -> list[str]:
+ 
+ 
+ THREADS_QUERY = """query($o:String!,$r:String!,$n:Int!,$after:String){ repository(owner:$o,name:$r){
+-  pullRequest(number:$n){ reviewThreads(first:100, after:$after){
++  pullRequest(number:$n){ author{ login } reviewThreads(first:100, after:$after){
+     pageInfo{ hasNextPage endCursor }
+-    nodes{ id isResolved isOutdated path line originalLine
++    nodes{ id isResolved resolvedBy{ login } isOutdated path line originalLine
+       comments(first:50){ nodes{ databaseId body } } } } } } }"""
+ 
+ 
+@@ -1814,7 +1814,7 @@ def census(repo: str, number: int, root: Optional[Path] = None, model: Optional[
+     if root is not None:
+         touch_review(root, repo, number, model, loop)
+     owner, name = repo.split("/", 1)
+-    threads, after = [], None
++    threads, after, author = [], None, None
+     while True:
+         args = ["api", "graphql", "-f", f"query={THREADS_QUERY}", "-f", f"o={owner}", "-f", f"r={name}",
+                 "-F", f"n={number}"]
+@@ -1824,6 +1824,7 @@ def census(repo: str, number: int, root: Optional[Path] = None, model: Optional[
+         pr = ((page or {}).get("data") or {}).get("repository", {}).get("pullRequest")
+         if pr is None:
+             raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account")
++        author = (pr.get("author") or {}).get("login")
+         connection = pr["reviewThreads"]
+         for node in connection["nodes"]:
+             comments = (node.get("comments") or {}).get("nodes") or []
+@@ -1834,13 +1835,15 @@ def census(repo: str, number: int, root: Optional[Path] = None, model: Optional[
+                     "line": node.get("line") if node.get("line") is not None else node.get("originalLine"),
+                     "outdated": bool(node.get("isOutdated")),
+                     "resolved": bool(node.get("isResolved")),
++                    "resolved_by": (node.get("resolvedBy") or {}).get("login"),
+                     "comments": [{"id": c.get("databaseId"), "body": c.get("body") or ""} for c in comments],
+                 })
+         if not connection["pageInfo"]["hasNextPage"]:
+             break
+         after = connection["pageInfo"]["endCursor"]
+     resolved = sum(1 for t in threads if t["resolved"])
+-    return {"total": len(threads), "resolved": resolved, "open": len(threads) - resolved, "threads": threads}
++    return {"author": author, "total": len(threads), "resolved": resolved, "open": len(threads) - resolved,
++            "threads": threads}
+ 
+ 
+ def census_lines(result: dict) -> list[str]:
+@@ -1859,8 +1862,8 @@ def census_lines(result: dict) -> list[str]:
+ SETTLED = {"fixed": True, "accepted": True, "withdrawn": True, "kept": None, "reopened": False}
+ # A Projector marker at the start of a line, which a reply's body leaves to `settle`.
+ ANY_MARKER = re.compile(r"^\s*<!--\s*projector-", re.M)
+-THREAD_QUERY = """query($t:ID!){ node(id:$t){ ... on PullRequestReviewThread { isResolved
+-  pullRequest{ number repository{ nameWithOwner } }
++THREAD_QUERY = """query($t:ID!){ node(id:$t){ ... on PullRequestReviewThread { isResolved resolvedBy{ login }
++  pullRequest{ number author{ login } repository{ nameWithOwner } }
+   first: comments(first:1){ nodes{ body } }
+   last: comments(last:1){ nodes{ databaseId body } } } } }"""
+ REPLY_MUTATION = """mutation($t:ID!,$b:String!){
+@@ -1877,7 +1880,8 @@ def verify_marker(result: str, sha: str, model: str) -> str:
+ 
+ def finding_thread(repo: str, number: int, thread: str) -> dict:
+     """The Projector finding thread `thread` on the pull request as GitHub has it now: whether it is
+-    `resolved`, and its `last` comment. Refuses any other thread, comment, or id."""
++    `resolved` and by whom, the pull request's `author`, and its `last` comment. Refuses any other thread,
++    comment, or id."""
+     wrong = (f"{thread} is not a review thread on {repo}#{number}; pass a thread's id from "
+              f"`project review census {number} --json`")
+     try:
+@@ -1892,7 +1896,15 @@ def finding_thread(repo: str, number: int, thread: str) -> dict:
+     if FINDING_MARKER not in (first.get("body") or ""):
+         raise ReviewError(f"thread {thread} on {repo}#{number} carries no Projector finding; another reviewer's "
+                           "thread is theirs to settle")
+-    return {"resolved": bool(node.get("isResolved")), "last": (node["last"]["nodes"] or [{}])[-1]}
++    return {"resolved": bool(node.get("isResolved")), "resolved_by": (node.get("resolvedBy") or {}).get("login"),
++            "author": (pr.get("author") or {}).get("login"), "last": (node["last"]["nodes"] or [{}])[-1]}
++
++
++def overruled(found: dict, reviewer: str) -> bool:
++    """Whether the pull request's author resolved the finding thread on a pull request the reviewer did not
++    write. That resolution is the owner's decision, and the reviewer does not reverse it."""
++    author, by = (found.get("author") or "").lower(), (found.get("resolved_by") or "").lower()
++    return found["resolved"] and bool(author) and by == author and author != reviewer.lower()
+ 
+ 
+ def reply_text(body_path: Path) -> str:
+@@ -1910,7 +1922,8 @@ def settle(paths: Paths, thread: str, result: str, body_path: Path, loop: Option
+     """`review settle`: as the reviewer, reply on a finding thread with the verify marker filled from the
+     review's state, resolve or unresolve the thread as `result` asks, and read both back. A reply already
+     carrying the same marker as the thread's last comment is not posted again, so a run that stopped after
+-    replying finishes when it runs again. `loop`, or else the review's own, must be the one its lock names."""
++    replying finishes when it runs again. `loop`, or else the review's own, must be the one its lock names.
++    It refuses to reopen a thread that the pull request's author resolved, unless that author is the reviewer."""
+     if result not in SETTLED:
+         raise ReviewError(f"--result must be one of {', '.join(SETTLED)}, not {result}")
+     state = read_state(paths)
+@@ -1919,6 +1932,11 @@ def settle(paths: Paths, thread: str, result: str, body_path: Path, loop: Option
+     text = reply_text(body_path)
+     marker = verify_marker(result, state["sha"], state["model"])
+     found = finding_thread(repo, number, thread)
++    if result == "reopened" and overruled(found, state["reviewer"]):
++        raise ReviewError(f"{found['resolved_by']} wrote {repo}#{number} and resolved thread {thread}, so it is the "
++                          "owner's decision and stays resolved; if the owner declined the finding, name it in the "
++                          "review body as declined, and if the owner resolved it as fixed and it still fails, post "
++                          "a new finding on the code at this head")
+     token = reviewer_token(state["reviewer"])
+     if (found["last"].get("body") or "").startswith(marker):
+         comment = found["last"]["databaseId"]
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 2b0f653d..8cfc08b9 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -1069,13 +1069,15 @@ def test_without_gate_checks_an_untrusted_head_is_refused_as_before(self) -> Non
+ 
+ 
+ def thread(thread_id: str, body: str, *, resolved: bool = False, outdated: bool = False,
+-           path: str = "src/x.py", line: int | None = 3, original: int | None = None) -> dict:
++           path: str = "src/x.py", line: int | None = 3, original: int | None = None,
++           resolved_by: str | None = None) -> dict:
+     return {"id": thread_id, "isResolved": resolved, "isOutdated": outdated, "path": path,
++            "resolvedBy": {"login": resolved_by} if resolved_by else None,
+             "line": line, "originalLine": original, "comments": {"nodes": [{"databaseId": 9, "body": body}]}}
+ 
+ 
+-def page(nodes: list[dict], next_cursor: str | None) -> dict:
+-    return {"data": {"repository": {"pullRequest": {"reviewThreads": {
++def page(nodes: list[dict], next_cursor: str | None, author: str = "operator") -> dict:
++    return {"data": {"repository": {"pullRequest": {"author": {"login": author}, "reviewThreads": {
+         "pageInfo": {"hasNextPage": next_cursor is not None, "endCursor": next_cursor}, "nodes": nodes}}}}}
+ 
+ 
+@@ -1085,7 +1087,7 @@ class CensusTests(ReviewCase):
+     def setUp(self) -> None:
+         super().setUp()
+         self.github.pages = [
+-            page([thread("T1", self.FINDING), thread("T2", self.FINDING, resolved=True),
++            page([thread("T1", self.FINDING), thread("T2", self.FINDING, resolved=True, resolved_by="maintainer"),
+                   thread("T3", "Could this be a constant?")], "1"),
+             page([thread("T4", self.FINDING, outdated=True, line=None, original=7, path="src/y.py")], None),
+         ]
+@@ -1109,6 +1111,18 @@ def test_prints_json_with_each_threads_comments(self) -> None:
+         self.assertEqual(["T1", "T2", "T4"], [t["id"] for t in result["threads"]])
+         self.assertEqual(self.FINDING, result["threads"][0]["comments"][0]["body"])
+ 
++    def test_json_names_the_author_and_who_resolved_each_thread(self) -> None:
++        for pages in (self.github.pages[0], self.github.pages[1]):
++            pages["data"]["repository"]["pullRequest"]["author"] = {"login": "Maintainer"}
++
++        code, out, err = self.later("census", "--repo", REPO, "--json")
++
++        self.assertEqual(0, code, err)
++        result = json.loads(out)
++        self.assertEqual("Maintainer", result["author"])
++        self.assertEqual({"T1": None, "T2": "maintainer", "T4": None},
++                         {t["id"]: t["resolved_by"] for t in result["threads"]})
++
+     def test_finds_the_repository_from_the_review_set_up_for_the_pull_request(self) -> None:
+         self.assertEqual(0, self.setup_review()[0])
+ 
+@@ -2789,8 +2803,8 @@ def answer(args: list[str], token: str | None = None) -> str:
+         self.addCleanup(patcher.stop)
+ 
+     def add_thread(self, thread_id: str, first: str, *, number: int = 1, repo: str = REPO,
+-                   resolved: bool = False) -> None:
+-        self.threads[thread_id] = {"resolved": resolved, "number": number, "repo": repo,
++                   resolved: bool = False, resolved_by: str = "operator") -> None:
++        self.threads[thread_id] = {"resolved": resolved, "resolved_by": resolved_by, "number": number, "repo": repo,
+                                    "comments": [{"databaseId": 500 + len(self.threads), "body": first,
+                                                  "login": "operator"}]}
+ 
+@@ -2801,7 +2815,9 @@ def node(self, thread_id: str) -> str:
+         last = found["comments"][-1]
+         return json.dumps({"data": {"node": {
+             "isResolved": found["resolved"],
+-            "pullRequest": {"number": found["number"], "repository": {"nameWithOwner": found["repo"]}},
++            "resolvedBy": {"login": found["resolved_by"]} if found["resolved"] else None,
++            "pullRequest": {"number": found["number"], "author": {"login": self.github.pr["user"]["login"]},
++                            "repository": {"nameWithOwner": found["repo"]}},
+             "first": {"nodes": [{"body": found["comments"][0]["body"]}]},
+             "last": {"nodes": [{"databaseId": last["databaseId"], "body": last["body"]}]}}}})
+ 
+@@ -2860,6 +2876,32 @@ def test_each_result_replies_with_the_marker_and_resolves_reopens_or_leaves_the_
+                 self.assertIn(f"replied {result} on thread {self.THREAD} of {REPO}#1 at {self.head[:7]}", out)
+                 self.assertIn(f"the thread is {'resolved' if after else 'open'}", out)
+ 
++    def test_refuses_to_reopen_a_thread_another_author_resolved_on_their_pull_request(self) -> None:
++        self.github.pr["user"]["login"] = "Maintainer"
++        self.add_thread(self.THREAD, FINDING % self.head, resolved=True, resolved_by="maintainer")
++
++        code, _, err = self.settle("reopened")
++
++        self.assertEqual(1, code)
++        self.assertIn(f"maintainer wrote {REPO}#1 and resolved thread {self.THREAD}", err)
++        self.assertIn("owner's decision and stays resolved", err)
++        self.assertIn("declined the finding, name it in the review body", err)
++        self.assertIn("resolved it as fixed and it still fails, post a new finding", err)
++        self.assertEqual([], self.mutations(), "nothing was posted or unresolved")
++        self.assertTrue(self.threads[self.THREAD]["resolved"])
++
++    def test_reopens_a_thread_the_reviewer_or_another_person_resolved(self) -> None:
++        for author, resolver in (("operator", "operator"), ("maintainer", "operator"),
++                                 ("maintainer", "bystander")):
++            with self.subTest(author=author, resolver=resolver):
++                self.github.pr["user"]["login"] = author
++                self.add_thread(self.THREAD, FINDING % self.head, resolved=True, resolved_by=resolver)
++
++                code, _, err = self.settle("reopened")
++
++                self.assertEqual(0, code, err)
++                self.assertFalse(self.threads[self.THREAD]["resolved"])
++
+     def test_the_marker_names_the_head_and_model_the_review_state_records(self) -> None:
+         self.github.pr["head"]["sha"] = self.push_head("second head")
+         self.assertEqual(0, self.later("move")[0])
