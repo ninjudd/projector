@@ -1859,8 +1859,8 @@ def census_lines(result: dict) -> list[str]:
 SETTLED = {"fixed": True, "accepted": True, "withdrawn": True, "kept": None, "reopened": False}
 # A Projector marker at the start of a line, which a reply's body leaves to `settle`.
 ANY_MARKER = re.compile(r"^\s*<!--\s*projector-", re.M)
-THREAD_QUERY = """query($t:ID!){ node(id:$t){ ... on PullRequestReviewThread { isResolved
-  pullRequest{ number repository{ nameWithOwner } }
+THREAD_QUERY = """query($t:ID!){ node(id:$t){ ... on PullRequestReviewThread { isResolved resolvedBy{ login }
+  pullRequest{ number author{ login } repository{ nameWithOwner } }
   first: comments(first:1){ nodes{ body } }
   last: comments(last:1){ nodes{ databaseId body } } } } }"""
 REPLY_MUTATION = """mutation($t:ID!,$b:String!){
@@ -1877,7 +1877,8 @@ def verify_marker(result: str, sha: str, model: str) -> str:
 
 def finding_thread(repo: str, number: int, thread: str) -> dict:
     """The Projector finding thread `thread` on the pull request as GitHub has it now: whether it is
-    `resolved`, and its `last` comment. Refuses any other thread, comment, or id."""
+    `resolved` and by whom, the pull request's `author`, and its `last` comment. Refuses any other thread,
+    comment, or id."""
     wrong = (f"{thread} is not a review thread on {repo}#{number}; pass a thread's id from "
              f"`project review census {number} --json`")
     try:
@@ -1892,7 +1893,15 @@ def finding_thread(repo: str, number: int, thread: str) -> dict:
     if FINDING_MARKER not in (first.get("body") or ""):
         raise ReviewError(f"thread {thread} on {repo}#{number} carries no Projector finding; another reviewer's "
                           "thread is theirs to settle")
-    return {"resolved": bool(node.get("isResolved")), "last": (node["last"]["nodes"] or [{}])[-1]}
+    return {"resolved": bool(node.get("isResolved")), "resolved_by": (node.get("resolvedBy") or {}).get("login"),
+            "author": (pr.get("author") or {}).get("login"), "last": (node["last"]["nodes"] or [{}])[-1]}
+
+
+def overruled(found: dict, reviewer: str) -> bool:
+    """Whether the pull request's author resolved the finding thread on a pull request the reviewer did not
+    write. That resolution is the owner's decision, and the reviewer does not reverse it."""
+    author, by = (found.get("author") or "").lower(), (found.get("resolved_by") or "").lower()
+    return found["resolved"] and bool(author) and by == author and author != reviewer.lower()
 
 
 def reply_text(body_path: Path) -> str:
@@ -1910,7 +1919,8 @@ def settle(paths: Paths, thread: str, result: str, body_path: Path, loop: Option
     """`review settle`: as the reviewer, reply on a finding thread with the verify marker filled from the
     review's state, resolve or unresolve the thread as `result` asks, and read both back. A reply already
     carrying the same marker as the thread's last comment is not posted again, so a run that stopped after
-    replying finishes when it runs again. `loop`, or else the review's own, must be the one its lock names."""
+    replying finishes when it runs again. `loop`, or else the review's own, must be the one its lock names.
+    It refuses to reopen a thread that the pull request's author resolved, unless that author is the reviewer."""
     if result not in SETTLED:
         raise ReviewError(f"--result must be one of {', '.join(SETTLED)}, not {result}")
     state = read_state(paths)
@@ -1919,6 +1929,9 @@ def settle(paths: Paths, thread: str, result: str, body_path: Path, loop: Option
     text = reply_text(body_path)
     marker = verify_marker(result, state["sha"], state["model"])
     found = finding_thread(repo, number, thread)
+    if result == "reopened" and overruled(found, state["reviewer"]):
+        raise ReviewError(f"{found['resolved_by']} wrote {repo}#{number} and resolved thread {thread}, so its owner "
+                          "has declined the finding; leave the thread resolved and name it in the review body")
     token = reviewer_token(state["reviewer"])
     if (found["last"].get("body") or "").startswith(marker):
         comment = found["last"]["databaseId"]

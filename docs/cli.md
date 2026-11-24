@@ -2134,7 +2134,10 @@ marker, as after a run that stopped once it replied, `settle` posts no
 second reply and only sets the thread. It refuses, exiting 1 and posting
 nothing, a thread that is not a review thread on the pull request, one whose
 first comment carries no finding marker, an empty body, and a body that
-carries a Projector marker of its own. A `--result` outside the five exits 2.
+carries a Projector marker of its own. It also refuses `--result reopened`
+on a thread that the pull request's author resolved when the author is not
+the reviewer, because on another author's pull request that resolution is the
+owner's decision. A `--result` outside the five exits 2.
 With `--json` it prints the `thread`, the `result`, the `sha` and `model` the
 marker names, the reply's `comment` id and `url`, and whether the thread is
 `resolved`.

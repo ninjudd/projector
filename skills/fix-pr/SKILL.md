@@ -359,7 +359,10 @@ Resolving says the fix is pushed; it is not the final word on a Projector
 finding. The reviewer verifies every one of its findings on the next head,
 resolves any you left open, and reopens one whose fix does not hold, replying
 with `<!-- projector-verify v=1 result=reopened -->`. A reopened thread is the
-recurrence above, not new work.
+recurrence above, not new work. On a pull request you wrote that another
+login reviews, the reviewer leaves a thread you resolved resolved. It posts a
+new finding when your fix does not hold, and it treats a finding you declined
+as your decision.
 
 Resolve a person's thread the same way once its fix is pushed, so a reviewer
 who never resolves threads does not leave the pull request looking

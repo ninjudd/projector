@@ -40,7 +40,9 @@ carries them lands, it marks the pull request ready for review again with
 `project review ready`. The reviewer settles its own
 findings on every head: it resolves one it verifies fixed, reopens one resolved
 too early, and keeps one whose decline does not hold, so its verdict rests on
-what it checked rather than on who clicked resolve. In a repository with a
+what it checked rather than on who clicked resolve. On another author's pull
+request, a thread its author resolves stays resolved: that is the owner's
+decision, and the reviewer does not reopen it. In a repository with a
 Projector site, `review-pr` then runs `summarize-pr` on every pull request it
 reviews and links the summary from its review;
 `project config set review.summarize false` turns that off. All three of

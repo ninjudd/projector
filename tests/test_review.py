@@ -2789,8 +2789,8 @@ class SettleTests(PublishCase):
         self.addCleanup(patcher.stop)
 
     def add_thread(self, thread_id: str, first: str, *, number: int = 1, repo: str = REPO,
-                   resolved: bool = False) -> None:
-        self.threads[thread_id] = {"resolved": resolved, "number": number, "repo": repo,
+                   resolved: bool = False, resolved_by: str = "operator") -> None:
+        self.threads[thread_id] = {"resolved": resolved, "resolved_by": resolved_by, "number": number, "repo": repo,
                                    "comments": [{"databaseId": 500 + len(self.threads), "body": first,
                                                  "login": "operator"}]}
 
@@ -2801,7 +2801,9 @@ class SettleTests(PublishCase):
         last = found["comments"][-1]
         return json.dumps({"data": {"node": {
             "isResolved": found["resolved"],
-            "pullRequest": {"number": found["number"], "repository": {"nameWithOwner": found["repo"]}},
+            "resolvedBy": {"login": found["resolved_by"]} if found["resolved"] else None,
+            "pullRequest": {"number": found["number"], "author": {"login": self.github.pr["user"]["login"]},
+                            "repository": {"nameWithOwner": found["repo"]}},
             "first": {"nodes": [{"body": found["comments"][0]["body"]}]},
             "last": {"nodes": [{"databaseId": last["databaseId"], "body": last["body"]}]}}}})
 
@@ -2859,6 +2861,30 @@ class SettleTests(PublishCase):
                                                               "as answered without it")
                 self.assertIn(f"replied {result} on thread {self.THREAD} of {REPO}#1 at {self.head[:7]}", out)
                 self.assertIn(f"the thread is {'resolved' if after else 'open'}", out)
+
+    def test_refuses_to_reopen_a_thread_another_author_resolved_on_their_pull_request(self) -> None:
+        self.github.pr["user"]["login"] = "Maintainer"
+        self.add_thread(self.THREAD, FINDING % self.head, resolved=True, resolved_by="maintainer")
+
+        code, _, err = self.settle("reopened")
+
+        self.assertEqual(1, code)
+        self.assertIn(f"maintainer wrote {REPO}#1 and resolved thread {self.THREAD}", err)
+        self.assertIn("leave the thread resolved", err)
+        self.assertEqual([], self.mutations(), "nothing was posted or unresolved")
+        self.assertTrue(self.threads[self.THREAD]["resolved"])
+
+    def test_reopens_a_thread_the_reviewer_or_another_person_resolved(self) -> None:
+        for author, resolver in (("operator", "operator"), ("maintainer", "operator"),
+                                 ("maintainer", "bystander")):
+            with self.subTest(author=author, resolver=resolver):
+                self.github.pr["user"]["login"] = author
+                self.add_thread(self.THREAD, FINDING % self.head, resolved=True, resolved_by=resolver)
+
+                code, _, err = self.settle("reopened")
+
+                self.assertEqual(0, code, err)
+                self.assertFalse(self.threads[self.THREAD]["resolved"])
 
     def test_the_marker_names_the_head_and_model_the_review_state_records(self) -> None:
         self.github.pr["head"]["sha"] = self.push_head("second head")
