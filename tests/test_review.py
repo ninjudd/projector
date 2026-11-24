@@ -2870,7 +2870,9 @@ class SettleTests(PublishCase):
 
         self.assertEqual(1, code)
         self.assertIn(f"maintainer wrote {REPO}#1 and resolved thread {self.THREAD}", err)
-        self.assertIn("leave the thread resolved", err)
+        self.assertIn("owner's decision and stays resolved", err)
+        self.assertIn("declined the finding, name it in the review body", err)
+        self.assertIn("resolved it as fixed and it still fails, post a new finding", err)
         self.assertEqual([], self.mutations(), "nothing was posted or unresolved")
         self.assertTrue(self.threads[self.THREAD]["resolved"])
 

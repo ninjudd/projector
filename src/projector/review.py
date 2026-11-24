@@ -1930,8 +1930,10 @@ def settle(paths: Paths, thread: str, result: str, body_path: Path, loop: Option
     marker = verify_marker(result, state["sha"], state["model"])
     found = finding_thread(repo, number, thread)
     if result == "reopened" and overruled(found, state["reviewer"]):
-        raise ReviewError(f"{found['resolved_by']} wrote {repo}#{number} and resolved thread {thread}, so its owner "
-                          "has declined the finding; leave the thread resolved and name it in the review body")
+        raise ReviewError(f"{found['resolved_by']} wrote {repo}#{number} and resolved thread {thread}, so it is the "
+                          "owner's decision and stays resolved; if the owner declined the finding, name it in the "
+                          "review body as declined, and if the owner resolved it as fixed and it still fails, post "
+                          "a new finding on the code at this head")
     token = reviewer_token(state["reviewer"])
     if (found["last"].get("body") or "").startswith(marker):
         comment = found["last"]["databaseId"]
