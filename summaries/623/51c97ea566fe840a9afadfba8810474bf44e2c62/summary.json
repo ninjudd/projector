@@ -1,0 +1,96 @@
+{
+ "version": 1,
+ "name": "Owner-resolved threads stay resolved",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 623,
+  "title": "Leave a thread the pull request's author resolved for its owner to decide",
+  "head": "51c97ea566fe840a9afadfba8810474bf44e2c62",
+  "headRef": "owner-decline-stays-resolved",
+  "base": "3f5f88e855e1501f9b564bd49312334b63016987",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A Projector review leaves <b>finding threads</b> on a pull request: inline comments that carry a hidden <code>projector-finding</code> marker. On every later head the reviewer checks each one and settles it with <code>project review settle</code>, which posts a reply and resolves or unresolves the thread. Until now the reviewer's word was final, so it could reopen a thread that anyone had resolved.",
+   "That was wrong on another person's pull request. When the author resolved a finding thread there, often after declining the finding, the reviewer reopened it. The reviewer does not own the merge, so it was overriding the owner's decision about their own change.",
+   "This pull request makes <code>settle --result reopened</code> refuse when the pull request's author resolved the thread and the author is not the reviewer. It also adds an <b>Overruled</b> case to the <code>review-pr</code> skill: leave a declined finding resolved and name it in the review body, and post a new finding when a claimed fix does not hold. A self-review, where the author is the reviewer, behaves as before."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Self-review</b>: the reviewer's account wrote the pull request.</li><li><b>Cross-author review</b>: someone else wrote it, such as a person's pull request that the CI bot reviews.</li><li><b>Settle</b>: reply on a finding thread with a verify marker and set it resolved or open.</li><li><b>Overruled</b>: the new case, where the author resolved the thread on their own pull request.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "What the review flagged",
+    "html": "<p>One P2 finding: the refusal's message says the owner <em>declined</em> the finding and tells the reviewer to leave it resolved. That is also what it says when the author resolved the thread after a fix that does not hold, the case where the skill says to post a new finding. One suggestion: add who resolved each thread to <code>census --json</code>.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "guard",
+   "title": "The refusal in settle",
+   "kicker": "How settle tells an owner's resolution from any other",
+   "intro": [
+    "<code>settle</code> already reads the thread from GitHub before it changes anything, to check that the thread is a Projector finding on this pull request. That query now also asks for <code>resolvedBy</code>, the login that resolved the thread, and the pull request's <code>author</code>.",
+    "The new <code>overruled</code> function is true when the thread is resolved, the resolver is the author, and the author is not the reviewer. It compares logins without regard to case. <code>settle</code> checks it only for <code>--result reopened</code>, and raises before it takes a token or posts anything."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "The query gains two fields, <code>finding_thread</code> returns them, and <code>settle</code> refuses an overruled reopen.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The refusal runs before <code>reviewer_token</code> and before any mutation, so a refused reopen posts no reply. <code>test_refuses_to_reopen_a_thread_another_author_resolved_on_their_pull_request</code> asserts no mutation ran, and it passed on this head."
+      },
+      {
+       "kind": "flag",
+       "line": 1933,
+       "text": "The message says the owner \"has declined the finding\" and tells the reviewer to leave it resolved. When the author resolved the thread after a fix that does not hold, the skill says to post a new finding instead, so this message points the reviewer the wrong way. This is the review's open P2 finding."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "The fake GraphQL node gains <code>resolvedBy</code> and the pull request's author, and two tests cover a refused reopen and the three reopens that still work."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The skills and documentation",
+   "kicker": "What the reviewer and the author are told to do now",
+   "intro": [
+    "<code>review-pr</code> no longer calls the reviewer's resolution final in every case, and adds the <b>Overruled</b> bullet beside Fixed, Accepted, Kept, and Reopened. <code>fix-pr</code> tells the author what to expect on a pull request another login reviews. <code>docs/cli.md</code> lists the new refusal, and <code>docs/plugins.md</code> says the same in its overview."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "<code>fix-pr</code> resolves a thread once it pushes a fix, so on a cross-author pull request most author-resolved threads claim a fix, not a decline. The skill tells the two apart by reading the author's replies."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "The Verify earlier findings section gains the Overruled case."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Tells the author that the reviewer leaves a thread the author resolved alone."
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
