@@ -131,6 +131,7 @@ SETTINGS: dict[str, type] = {
     "ios.project": str,
     "ios.output": str,
     "hosted.url": str,
+    "hosted.relay": str,
 }
 
 # The least value `project config set` accepts for each whole-number key. The
@@ -160,7 +161,8 @@ PRIORITY = re.compile(r"[1-9][0-9]?")
 # The settings that say where your data goes. The owner of a repository's
 # default branch may not be you, so a value read from it applies only once you
 # allow it with `project config allow`.
-DESTINATIONS: frozenset[str] = frozenset({"agent.relay", "agent.s3_endpoint", "agent.s3_profile", "hosted.url"})
+DESTINATIONS: frozenset[str] = frozenset({"agent.relay", "agent.s3_endpoint", "agent.s3_profile", "hosted.url",
+                                          "hosted.relay"})
 
 # The forms `agent.relay` takes: `origin`, the checkout's own repository, a
 # GitHub repository the relay carries records through, or an S3 bucket and
@@ -232,9 +234,10 @@ def relay_location(value: str) -> Optional[str | S3Relay]:
                       "github:acme/agents, or s3://<bucket>/<prefix>, such as s3://acme-agents/relay")
 
 
-def s3_endpoint(value: str) -> str:
-    """An `agent.s3_endpoint` value as a location's identity writes it: `https://`, the host in lowercase, and its
-    port unless it is 443. A value with a path, query, fragment, or user info is refused."""
+def s3_endpoint(value: str, key: str = "agent.s3_endpoint") -> str:
+    """An `agent.s3_endpoint` value, or that of the setting `key` names, as a location's identity writes it:
+    `https://`, the host in lowercase, and its port unless it is 443. A value with a path, query, fragment, or user
+    info is refused."""
 
     try:
         parts: Optional[urllib.parse.SplitResult] = urllib.parse.urlsplit(value)
@@ -243,15 +246,17 @@ def s3_endpoint(value: str) -> str:
         parts, port = None, None
     if (parts is None or parts.scheme.lower() != "https" or not parts.hostname or parts.path not in ("", "/")
             or parts.query or parts.fragment or "@" in parts.netloc or value.endswith(("?", "#"))):
-        raise ConfigError(f"agent.s3_endpoint is {value!r}, and it takes an https:// URL with no path, query, or "
+        raise ConfigError(f"{key} is {value!r}, and it takes an https:// URL with no path, query, or "
                           "user info, such as https://s3.example.com")
     host = parts.hostname.lower()
     host = f"[{host}]" if ":" in host else host
     return f"https://{host}" + (f":{port}" if port not in (None, 443) else "")
 
 
-# The hosted Projector service `hosted.url` names when no file sets it.
+# The hosted Projector service `hosted.url` names when no file sets it, and the store of its relay, which
+# `hosted.relay` names.
 HOSTED_URL = "https://api.projector.bot"
+HOSTED_RELAY = "https://relay.projector.bot"
 LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
@@ -491,6 +496,8 @@ def parse_value(key: str, text: str) -> Any:
             s3_endpoint(text)
         elif key == "hosted.url":
             hosted_url(text)
+        elif key == "hosted.relay":
+            s3_endpoint(text, key)
     except ConfigError as error:
         raise UsageError(str(error)) from None
     return text
