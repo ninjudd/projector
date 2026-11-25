@@ -3894,7 +3894,8 @@ branches reach below that bottom, so a lookup that fails or finds no stack
 after the bottom layer merges keeps the name. `MOVED`,
 `MERGED`, and `CLOSED` use the same name. For a layer of a stack, `MERGED`
 and `CLOSED` tell the session to send the subagent no more work for that
-layer and to finish it once no layer of its stack is open.
+layer, after any follow-up on its suggestions that a `MERGED` line names,
+and to finish it once no layer of its stack is open.
 
 GitHub records each upper layer of a stack as merged into the branch of the
 layer below it, even when the whole stack merged into the default branch as
@@ -3903,8 +3904,8 @@ the daemon checks whether that base reached the default branch, and words
 `MERGED` to say so:
 
 ```text
-MERGED acme/app#13 with its stack into main at 2026-11-19T18:02:11Z (merge commit 4be1c2d9) — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
-MERGED acme/app#13 into layer-12 at 2026-11-19T18:02:11Z (merge commit 4be1c2d9), which is not in main yet — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
+MERGED acme/app#13 with its stack into main at 2026-11-19T18:02:11Z (merge commit 4be1c2d9) — have subagent fix-stack-12 take any suggestion it deferred on acme/app#13 into a follow-up pull request, then send it no more work for acme/app#13, and finish it once no layer of its stack is open
+MERGED acme/app#13 into layer-12 at 2026-11-19T18:02:11Z (merge commit 4be1c2d9), which is not in main yet — have subagent fix-stack-12 take any suggestion it deferred on acme/app#13 into a follow-up pull request, then send it no more work for acme/app#13, and finish it once no layer of its stack is open
 ```
 
 The daemon walks down the chain of base branches. At each step it takes the
@@ -3943,7 +3944,7 @@ records it.
 | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
 | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
 | `MOVED` | any | Another session owns the role now |
-| `MERGED`, `CLOSED` | any | The pull request merged or closed; `MERGED` says whether a layer's base reached the default branch |
+| `MERGED`, `CLOSED` | any | The pull request merged or closed; `MERGED` says whether a layer's base reached the default branch, and tells the fixer to take the suggestions still owed on it into a follow-up pull request |
 | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
 
 A `LABEL` line is not work. The review commands set the `clean` and
@@ -3962,6 +3963,22 @@ of an earlier head is history, so it reports nothing. The daemon announces
 each review once. A pull request that a session on this machine reviews
 waits for that review without a line of its own, and a draft waits on its
 author.
+
+A pull request can merge while suggestions on it are still owed, so the
+fixer's `MERGED` line sends the `fix-pr` skill after them. When the merged
+head lists suggestions, the line counts them, as `project review
+suggestions` lists them on that head, and says to run `fix-pr` to take them
+into a follow-up pull request:
+
+```text
+MERGED acme/app#12 into main at 2026-10-23T01:36:44Z (merge commit ea9a364a) — run fix-pr on acme/app#12 in subagent fix-12 to take the 2 suggestions its merged head lists into a follow-up pull request, then finish it
+```
+
+When it lists none, the line says to have the subagent take any suggestion
+it deferred on an earlier head into one, because only the subagent knows
+those. `fix-pr` verifies each suggestion against the base as it stands,
+opens one follow-up for those that hold up without asking you, and leaves
+its merge to you. A `CLOSED` line owes no follow-up.
 
 A draft means its author is still working on the pull request, so a
 repository subscription announces nothing for one: no `NEW PR`, `NEW HEAD`,

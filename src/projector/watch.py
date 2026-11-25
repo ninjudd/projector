@@ -1694,7 +1694,8 @@ class Pass:
                 if detail is None:
                     detail = self.closed_detail(ref, number, repo, entry)
                 fixer = self.fixer(pull, repo, pr) if "fix" in names else ""
-                self.tell(session, f"{detail} — {closing_actions(repo, number, names, fixer)}")
+                suggestions = self.merged_suggestions(repo, entry) if "fix" in names else None
+                self.tell(session, f"{detail} — {closing_actions(repo, number, names, fixer, suggestions)}")
         for name in session_names(self.root):
             remove(self.root, name, repo, number, None)
         for state in self.states.values():
@@ -1704,6 +1705,16 @@ class Pass:
         for label in [label for label in owners if label_pull(label)[0] == pull]:
             del owners[label]
         self.forget_adopted(repo, number, adopted)
+
+    def merged_suggestions(self, repo: str, entry: dict) -> Optional[int]:
+        """How many suggestions `project review suggestions` lists on a merged pull request's last head, as
+        `REVIEW` counts them, or None when it closed without merging and its suggestions went with it."""
+        pr = pull_request(entry)
+        if pr.get("state") != "MERGED":
+            return None
+        visibility = (entry.get("repository") or {}).get("visibility")
+        return sum(standing_suggestions(entry.get("reviews") or [], pr.get("headRefOid") or "",
+                                        self.daemon.operator or "", visibility, self.counted_logins(repo)).values())
 
     def closed_detail(self, ref: str, number: int, repo: str, entry: dict) -> str:
         pr = pull_request(entry)
@@ -2311,15 +2322,30 @@ def stack_layers(stack: Optional[dict]) -> list[dict]:
             if isinstance(layer, dict) and isinstance(layer.get("number"), int)]
 
 
-def closing_actions(repo: str, number: int, names: list[str], fixer: str) -> str:
-    """What each role's owner does once the pull request merges or closes. A stack's fixer goes on fixing the
-    layers still open, because the user can merge a stack's lower layers first."""
+def closing_actions(repo: str, number: int, names: list[str], fixer: str, suggestions: Optional[int] = None) -> str:
+    """What each role's owner does once the pull request merges or closes. A merged pull request's fixer takes
+    the suggestions still owed on it into a follow-up pull request: the `suggestions` its last head lists, which
+    a fixer never started for it learns of only here, or else any it deferred on an earlier head, which only the
+    fixer remembers. `suggestions` is None for a pull request closed without merging, which owes none. A stack's
+    fixer goes on fixing the layers still open, because the user can merge a stack's lower layers first."""
+    ref = f"{repo}#{number}"
+    stack = fixer.startswith("fix-stack-")
+
+    def finish(who: str) -> str:
+        return f"send {who} no more work for {ref}, and finish it once no layer of its stack is open" if stack \
+            else f"finish {who}"
+
     actions = []
-    if "fix" in names and fixer.startswith("fix-stack-"):
-        actions.append(f"send subagent {fixer} no more work for {repo}#{number}, and finish it once no layer of "
-                       "its stack is open")
+    if "fix" in names and suggestions:
+        listed = "the suggestion" if suggestions == 1 else f"the {suggestions} suggestions"
+        actions.append(f"run fix-pr on {ref} in subagent {fixer} to take {listed} its merged head lists into a "
+                       f"follow-up pull request, then {finish('it')}")
+    elif "fix" in names and suggestions == 0:
+        deferred = f"it deferred on {ref}" if stack else "it deferred"
+        actions.append(f"have subagent {fixer} take any suggestion {deferred} into a follow-up pull request, then "
+                       f"{finish('it')}")
     elif "fix" in names:
-        actions.append(f"finish subagent {fixer}")
+        actions.append(finish(f"subagent {fixer}"))
     for name in names:
         if name != "fix":
             model = name.split(" ", 1)[1]

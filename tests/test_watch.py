@@ -496,6 +496,10 @@ class WatchCase(unittest.TestCase):
         return "\n".join(" ".join(call) for call in self.github.calls)
 
 
+# What a merged pull request's fixer does when its last head lists no suggestion.
+FOLLOW_UP = "take any suggestion it deferred into a follow-up pull request, then finish it"
+
+
 def fix_action(number: int, repo: str = "acme/app") -> str:
     return f"run fix-pr on {repo}#{number} in subagent fix-{number}"
 
@@ -1346,11 +1350,32 @@ class FixRoleTests(WatchCase):
         events = self.cycle()["fixer"]
         after = self.cycle()["fixer"]
 
-        self.assertEqual(["MERGED acme/app#1 into main at 2026-10-23T01:36:44Z (merge commit ea9a3640) — finish "
-                          "subagent fix-1"], events)
+        self.assertEqual(["MERGED acme/app#1 into main at 2026-10-23T01:36:44Z (merge commit ea9a3640) — have "
+                          f"subagent fix-1 {FOLLOW_UP}"], events)
         self.assertEqual(["!acme/app#1 review claude-opus-5-5 operator"], self.lines("fixer"))
         self.assertEqual([], after)
         self.assertEqual([], self.github.queried())
+
+    def test_a_merged_pull_request_sends_its_fixer_to_follow_up_on_the_suggestions_its_last_head_lists(self) -> None:
+        # The fixer never started, since the merge came first, so only the line tells the session to start it.
+        # The review of head A is history: head B's full review says what is still owed.
+        self.github.pull_request(1, head=SHA_B, state="MERGED", reviews=[
+            rest_review(81, who="operator", body=projector_body(SHA_A, count=3), at="2026-10-30T00:00:00Z"),
+            rest_review(82, who="operator", sha=SHA_B, body=projector_body(SHA_B, count=2),
+                        at="2026-10-30T01:00:00Z")])
+        self.fixer("acme/app#1 fix")
+
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(["MERGED acme/app#1 into main — run fix-pr on acme/app#1 in subagent fix-1 to take the 2 "
+                          "suggestions its merged head lists into a follow-up pull request, then finish it"], events)
+
+    def test_a_pull_request_closed_without_merging_owes_no_follow_up(self) -> None:
+        self.github.pull_request(2, state="CLOSED", reviews=[
+            rest_review(81, who="operator", body=projector_body(SHA_A, count=2))])
+        self.fixer("acme/app#2 fix")
+
+        self.assertEqual(["CLOSED acme/app#2 without merging — finish subagent fix-2"], self.cycle()["fixer"])
 
     def test_a_closed_pull_request_is_announced_once_without_a_merge(self) -> None:
         self.github.pull_request(2, state="CLOSED", threads=[thread("T2")])
@@ -1381,7 +1406,7 @@ class FixRoleTests(WatchCase):
         recovered = self.cycle()["fixer"]
 
         self.assertEqual([], failed)
-        self.assertEqual(["MERGED acme/app#1 into main — finish subagent fix-1"], recovered)
+        self.assertEqual([f"MERGED acme/app#1 into main — have subagent fix-1 {FOLLOW_UP}"], recovered)
 
     def test_the_subscriptions_are_read_again_on_every_pass(self) -> None:
         self.github.pull_request(1, threads=[thread("T1")])
@@ -2289,7 +2314,7 @@ class OwnerTests(WatchCase):
         self.github.pull_request(1, state="MERGED")
         events = self.cycle()
 
-        self.assertEqual(["MERGED acme/app#1 into main — finish subagent fix-1"], events["fixer"])
+        self.assertEqual([f"MERGED acme/app#1 into main — have subagent fix-1 {FOLLOW_UP}"], events["fixer"])
         self.assertEqual([f"MERGED acme/app#1 into main — have subagent review-1 run project review finish 1 --repo "
                           f"acme/app --model {MODEL} --force, then finish it"], events["reviewer"])
         self.assertEqual(([], [], []), (self.lines("lapsed"), self.lines("fixer"), self.lines("reviewer")))
@@ -2445,13 +2470,27 @@ class StackFixerTests(WatchCase):
         self.github.pull_request(6, ref="layer-6", base="main", draft=True)
         events = self.cycle()["fixer"]
 
-        self.assertEqual(["MERGED acme/app#5 into main — send subagent fix-stack-5 no more work for acme/app#5, and "
-                          "finish it once no layer of its stack is open"], events)
+        self.assertEqual([f"MERGED acme/app#5 into main — {self.ACTION.format(5)}"], events)
+
+    def test_a_merged_layers_suggestions_go_to_the_stacks_fixer_which_keeps_its_open_layers(self) -> None:
+        self.github.stack(20, 5, 6)
+        self.layers(5, 6)
+        self.live("fixer", "acme/app#5 fix", "acme/app#6 fix")
+        self.cycle()
+
+        self.github.pull_request(5, ref="layer-5", state="MERGED", reviews=[
+            rest_review(81, who="operator", body=projector_body(SHA_A, count=1))])
+        self.github.pull_request(6, ref="layer-6", base="main", draft=True)
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(["MERGED acme/app#5 into main — run fix-pr on acme/app#5 in subagent fix-stack-5 to take the "
+                          "suggestion its merged head lists into a follow-up pull request, then send it no more work "
+                          "for acme/app#5, and finish it once no layer of its stack is open"], events)
 
     # When the stack merges: GitHub merges its layers one second apart, from the bottom up.
     MERGED_AT = ("2026-11-16T22:01:00Z", "2026-11-16T22:01:01Z", "2026-11-16T22:01:02Z")
-    ACTION = ("send subagent fix-stack-5 no more work for acme/app#{}, and finish it once no layer of its stack is "
-              "open")
+    ACTION = ("have subagent fix-stack-5 take any suggestion it deferred on acme/app#{0} into a follow-up pull "
+              "request, then send it no more work for acme/app#{0}, and finish it once no layer of its stack is open")
 
     def merge(self, *numbers: int, base: str = "main", times: tuple[str, ...] = MERGED_AT) -> dict[int, str]:
         """Merge the chained layers `numbers` at `times`, the first into `base` and each other into the one below
@@ -2574,7 +2613,7 @@ class StackFixerTests(WatchCase):
         self.github.pull_request(1, state="MERGED")
         events = self.cycle()["fixer"]
 
-        self.assertEqual(["MERGED acme/app#1 into main — finish subagent fix-1"], events)
+        self.assertEqual([f"MERGED acme/app#1 into main — have subagent fix-1 {FOLLOW_UP}"], events)
         self.assertEqual(([], []), (self.github.stack_lookups(), self.head_lookups()))
 
     def merge_the_bottom_and_refresh(self) -> list[str]:
