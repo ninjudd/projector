@@ -1,0 +1,111 @@
+{
+ "version": 1,
+ "name": "Numbered question answers",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 628,
+  "title": "Answer a question by its option's number, even when you edit the option's words",
+  "head": "09bc6d9e506902272164e878d85e203e500e2c89",
+  "headRef": "worktree-label-answer-number",
+  "base": "1d7611056a203703efe5d0e9874d9c2d6b0ddd48",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel shows an agent's open questions. When you press one of a question's options, the panel puts the quoted question and the option in your prompt, and sending that prompt records the answer. Before this change, the panel recognized the answer only when the option's words were unchanged on their line. Editing them, even slightly, turned the answer into a reply, so the question stayed open.",
+   "This change puts the option's number in front of its words, as the drawer already shows it, for example <code>2: Add a budget</code>. The number is now what answers, so you can reword the option and still answer with it. Text without a number answers by the old rule, so an option typed by hand still works.",
+   "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Text under the quote</th><th>Result</th></tr></thead><tbody><tr><td><code>2: Add a budget of three</code></td><td class=\"r\">Answers option 2</td></tr><tr><td><code>2:</code></td><td class=\"r\">Answers option 2</td></tr><tr><td><code>Add a budget</code> on its own line</td><td class=\"r\">Answers by words, as before</td></tr><tr><td><code>3: …</code> on a two-option question</td><td class=\"r\">Reply</td></tr><tr><td><code>1:30 tomorrow</code></td><td class=\"r\">Reply (a time, not a number)</td></tr><tr><td>A line of your own, then <code>2: …</code></td><td class=\"r\">Reply</td></tr></tbody></table></div>",
+   "Requests keep reading their outcome by words, because a request's option digits shift when its start action comes and goes."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Quote</b>: the <code>[3] \"subject\"</code> line the panel writes for an item.</li><li><b>Drawer</b>: the panel's expanded view of one item, with its option buttons.</li><li><b>Proposal</b>: the panel's record of what a drawer put in the prompt, used to tell apart two questions with the same subject.</li><li><b>Stale</b>: a proposal made before its question was revised. It can only reply.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The Projector review of <code>09bc6d9</code> found no defects. The gate passed: plugin validation, 263 hook tests, and the <code>check</code> CI job.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "parser",
+   "title": "Reading the answer from a prompt",
+   "kicker": "How the panel finds the option a sent prompt picks",
+   "intro": [
+    "<code>readPrompt</code> in <code>hooks/inbox.ts</code> reads each sent prompt and decides, for each quoted question, whether the text below the quote answers it, replies to it, or says you don't understand it. This group changes the answer rule from matching an option's words to matching its number first.",
+    "Two helpers carry it. <code>optionIn</code> now returns the option's index: a leading number picks that option, and without one it falls back to the old word match. <code>picks</code> decides whether the text matches what a particular drawer put there, which is how the panel tells apart two questions that share a subject."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "The new number rule in <code>optionIn</code> and <code>picks</code>, and the <code>ask</code> tool's description of what an agent receives.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The lookahead after the colon is what stops a time such as <code>1:30</code> from reading as option 1. Numbers start at 1, so <code>0:</code> never matches.",
+       "line": 159
+      },
+      {
+       "kind": "verify",
+       "text": "A number above the question's option count returns <code>undefined</code> rather than falling back to the words, so it replies. Checked by reading and by the test suite, which passed at this head.",
+       "line": 180
+      },
+      {
+       "kind": "verify",
+       "text": "Discuss proposals, whose answer is empty, still match through the separate <code>one.answer === ''</code> branch of the source lookup, so the number check does not break them. Checked by reading the call site.",
+       "line": 194
+      },
+      {
+       "kind": "context",
+       "text": "When a question was revised, the panel can hold both a stale and a fresh proposal with the same number. <code>findLast</code> takes the fresh one because <code>propose</code> appends it last.",
+       "line": 354
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "New cases for numbered answers, edited words, two questions sharing a subject, and the numbers that still reply."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "Filling the prompt from the drawer",
+   "kicker": "The drawer writes the number before the option's words",
+   "intro": [
+    "When you press an option, the panel's <code>pick</code> handler now writes <code>pickOf(index, choice)</code>, the number and the words, into the prompt and records the same text as the drawer's proposal. The number comes from the same <code>question.choices</code> index that <code>optionIn</code> reads back, so the digit you see and the letter recorded agree."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "<code>pick</code> takes the option's index and fills <code>pickOf</code>'s text."
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Existing panel tests now expect the numbered fill, and one now edits the words before sending."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The panel section of the plugins guide",
+   "intro": [
+    "The panel section of <code>docs/plugins.md</code> now describes the number rule, shows an edited example, and lists the cases that still reply."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
