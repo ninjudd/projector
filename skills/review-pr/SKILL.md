@@ -873,7 +873,9 @@ is marked resolved is a hint, not the answer: an author may resolve a thread
 before the fix works, and another may fix the code and never resolve it. So
 before choosing a verdict, verify every Projector finding thread on the pull
 request, resolved or not, against this head, and settle each one yourself.
-You are the only party whose resolution is final. This command lists them,
+Your resolution is final, with one exception: on a cross-author pull request,
+a thread its author resolved is the owner's decision, as **Overruled** below
+describes. This command lists them,
 reading every page so that a pull request with more than a hundred threads is
 read to the end; it keys on the finding marker, never on a login:
 
@@ -881,9 +883,12 @@ read to the end; it keys on the finding marker, never on a login:
 project review census <number> --json
 ```
 
-Each thread carries its id, whether it is resolved, its `path` and `line`,
-whether it is outdated, and its comments, the finding first and then the
-replies. Without `--json` it prints the count the review body states, such as
+Each thread carries its id, whether it is resolved and the `resolved_by` login
+of whoever resolved it, its `path` and `line`, whether it is outdated, and its
+comments, the finding first and then the replies. The result also names the
+pull request's `author`, so a resolved thread whose `resolved_by` is that
+author, on a pull request you did not write, is **Overruled**. Without
+`--json` it prints the count the review body states, such as
 `6 finding threads: 4 resolved, 2 open`, and each open thread's `path:line`.
 
 An `outdated` thread is one whose line the fix moved: GitHub nulls `line` and
@@ -923,6 +928,14 @@ as the author answering.
 - **Reopened:** the thread is resolved but the finding is not addressed at
   this head. Run `--result reopened` with what still fails; the command
   unresolves the thread.
+- **Overruled:** on a cross-author pull request, the author resolved the
+  thread. That is the owner's decision, and `settle` refuses to reopen it.
+  When the author declined the finding, leave the thread resolved and post
+  nothing on it, however the reasoning reads; name the finding in the
+  review body as declined by the owner, and never raise it again as a new
+  thread. When the author resolved it as fixed and the fix does not hold,
+  post a new finding on the code at this head that still fails. None of
+  this applies to a self-review, where the author is you.
 - **Still open:** open, not fixed, and not answered. Leave it; the finding
   already says what to do.
 

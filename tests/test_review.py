@@ -1073,13 +1073,15 @@ class CiGateTests(ReviewCase):
 
 
 def thread(thread_id: str, body: str, *, resolved: bool = False, outdated: bool = False,
-           path: str = "src/x.py", line: int | None = 3, original: int | None = None) -> dict:
+           path: str = "src/x.py", line: int | None = 3, original: int | None = None,
+           resolved_by: str | None = None) -> dict:
     return {"id": thread_id, "isResolved": resolved, "isOutdated": outdated, "path": path,
+            "resolvedBy": {"login": resolved_by} if resolved_by else None,
             "line": line, "originalLine": original, "comments": {"nodes": [{"databaseId": 9, "body": body}]}}
 
 
-def page(nodes: list[dict], next_cursor: str | None) -> dict:
-    return {"data": {"repository": {"pullRequest": {"reviewThreads": {
+def page(nodes: list[dict], next_cursor: str | None, author: str = "operator") -> dict:
+    return {"data": {"repository": {"pullRequest": {"author": {"login": author}, "reviewThreads": {
         "pageInfo": {"hasNextPage": next_cursor is not None, "endCursor": next_cursor}, "nodes": nodes}}}}}
 
 
@@ -1089,7 +1091,7 @@ class CensusTests(ReviewCase):
     def setUp(self) -> None:
         super().setUp()
         self.github.pages = [
-            page([thread("T1", self.FINDING), thread("T2", self.FINDING, resolved=True),
+            page([thread("T1", self.FINDING), thread("T2", self.FINDING, resolved=True, resolved_by="maintainer"),
                   thread("T3", "Could this be a constant?")], "1"),
             page([thread("T4", self.FINDING, outdated=True, line=None, original=7, path="src/y.py")], None),
         ]
@@ -1112,6 +1114,18 @@ class CensusTests(ReviewCase):
         self.assertEqual((3, 1, 2), (result["total"], result["resolved"], result["open"]))
         self.assertEqual(["T1", "T2", "T4"], [t["id"] for t in result["threads"]])
         self.assertEqual(self.FINDING, result["threads"][0]["comments"][0]["body"])
+
+    def test_json_names_the_author_and_who_resolved_each_thread(self) -> None:
+        for pages in (self.github.pages[0], self.github.pages[1]):
+            pages["data"]["repository"]["pullRequest"]["author"] = {"login": "Maintainer"}
+
+        code, out, err = self.later("census", "--repo", REPO, "--json")
+
+        self.assertEqual(0, code, err)
+        result = json.loads(out)
+        self.assertEqual("Maintainer", result["author"])
+        self.assertEqual({"T1": None, "T2": "maintainer", "T4": None},
+                         {t["id"]: t["resolved_by"] for t in result["threads"]})
 
     def test_finds_the_repository_from_the_review_set_up_for_the_pull_request(self) -> None:
         self.assertEqual(0, self.setup_review()[0])
@@ -2793,8 +2807,8 @@ class SettleTests(PublishCase):
         self.addCleanup(patcher.stop)
 
     def add_thread(self, thread_id: str, first: str, *, number: int = 1, repo: str = REPO,
-                   resolved: bool = False) -> None:
-        self.threads[thread_id] = {"resolved": resolved, "number": number, "repo": repo,
+                   resolved: bool = False, resolved_by: str = "operator") -> None:
+        self.threads[thread_id] = {"resolved": resolved, "resolved_by": resolved_by, "number": number, "repo": repo,
                                    "comments": [{"databaseId": 500 + len(self.threads), "body": first,
                                                  "login": "operator"}]}
 
@@ -2805,7 +2819,9 @@ class SettleTests(PublishCase):
         last = found["comments"][-1]
         return json.dumps({"data": {"node": {
             "isResolved": found["resolved"],
-            "pullRequest": {"number": found["number"], "repository": {"nameWithOwner": found["repo"]}},
+            "resolvedBy": {"login": found["resolved_by"]} if found["resolved"] else None,
+            "pullRequest": {"number": found["number"], "author": {"login": self.github.pr["user"]["login"]},
+                            "repository": {"nameWithOwner": found["repo"]}},
             "first": {"nodes": [{"body": found["comments"][0]["body"]}]},
             "last": {"nodes": [{"databaseId": last["databaseId"], "body": last["body"]}]}}}})
 
@@ -2863,6 +2879,32 @@ class SettleTests(PublishCase):
                                                               "as answered without it")
                 self.assertIn(f"replied {result} on thread {self.THREAD} of {REPO}#1 at {self.head[:7]}", out)
                 self.assertIn(f"the thread is {'resolved' if after else 'open'}", out)
+
+    def test_refuses_to_reopen_a_thread_another_author_resolved_on_their_pull_request(self) -> None:
+        self.github.pr["user"]["login"] = "Maintainer"
+        self.add_thread(self.THREAD, FINDING % self.head, resolved=True, resolved_by="maintainer")
+
+        code, _, err = self.settle("reopened")
+
+        self.assertEqual(1, code)
+        self.assertIn(f"maintainer wrote {REPO}#1 and resolved thread {self.THREAD}", err)
+        self.assertIn("owner's decision and stays resolved", err)
+        self.assertIn("declined the finding, name it in the review body", err)
+        self.assertIn("resolved it as fixed and it still fails, post a new finding", err)
+        self.assertEqual([], self.mutations(), "nothing was posted or unresolved")
+        self.assertTrue(self.threads[self.THREAD]["resolved"])
+
+    def test_reopens_a_thread_the_reviewer_or_another_person_resolved(self) -> None:
+        for author, resolver in (("operator", "operator"), ("maintainer", "operator"),
+                                 ("maintainer", "bystander")):
+            with self.subTest(author=author, resolver=resolver):
+                self.github.pr["user"]["login"] = author
+                self.add_thread(self.THREAD, FINDING % self.head, resolved=True, resolved_by=resolver)
+
+                code, _, err = self.settle("reopened")
+
+                self.assertEqual(0, code, err)
+                self.assertFalse(self.threads[self.THREAD]["resolved"])
 
     def test_the_marker_names_the_head_and_model_the_review_state_records(self) -> None:
         self.github.pr["head"]["sha"] = self.push_head("second head")

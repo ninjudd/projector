@@ -2104,7 +2104,9 @@ head it moved from and that head's merge base as `moved_from`, so
 `setup` does. `census` lists every
 thread whose first comment carries the `projector-finding` marker, reading
 every page, and prints how many are resolved and open and each open thread's
-`path:line`; with `--json` each thread also carries its comments. It counts
+`path:line`; with `--json` it also names the pull request's `author`, and each
+thread carries its comments and the `resolved_by` login of whoever resolved
+it, so a reviewer can tell which resolved threads the author decided. It counts
 every model's threads alike and takes `--model` like the commands around it,
 so a reviewing session passes the same flags to each. `--model` and `--loop`
 also pick the review whose lock `census` touches, as the lock paragraph below
@@ -2138,7 +2140,10 @@ marker, as after a run that stopped once it replied, `settle` posts no
 second reply and only sets the thread. It refuses, exiting 1 and posting
 nothing, a thread that is not a review thread on the pull request, one whose
 first comment carries no finding marker, an empty body, and a body that
-carries a Projector marker of its own. A `--result` outside the five exits 2.
+carries a Projector marker of its own. It also refuses `--result reopened`
+on a thread that the pull request's author resolved when the author is not
+the reviewer, because on another author's pull request that resolution is the
+owner's decision. A `--result` outside the five exits 2.
 With `--json` it prints the `thread`, the `result`, the `sha` and `model` the
 marker names, the reply's `comment` id and `url`, and whether the thread is
 `resolved`.
