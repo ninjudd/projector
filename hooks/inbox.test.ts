@@ -109,6 +109,9 @@ test('the ask tool tells the agent that a pick arrives by number and a reply as 
   expect(ASK_DESCRIPTION).toContain(
     'The call returns the question’s number, such as 3. When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
   )
+  expect(ASK_DESCRIPTION).toContain(
+    'A pick they send from their prompt arrives as that prompt instead, quoting the question with the option they picked and any notes under it.',
+  )
   expect(ASK_DESCRIPTION).toContain('the reply arrives as their prompt, quoting the question after its number in brackets, such as `[3] "…"`, and the question stays open')
   expect(ASK_DESCRIPTION).toMatch(/withdraw the question if the reply settles it, revise it if it was unclear/)
   expect(ASK_DESCRIPTION).toContain(
@@ -253,14 +256,56 @@ test('a sent prompt answers each question whose quote an option follows', () => 
   expect(answersIn('"Decline the finding?"\n\nAdd a budget', [answered])).toEqual([])
 })
 
+test('an option on its own line answers its question with notes below it', () => {
+  const open = [question(), question({ ref: '2', number: 2, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
+  const read = (text: string, proposed: readonly Proposal[] = []) => readPrompt(text, open, proposed)
+  const budget = '[1] "Decline the finding?"\n\nAdd a budget\n\nand log each retry'
+  expect(read(budget)).toEqual({ answers: [{ question: open[0], letter: 'b' }], outcomes: [], replies: [], unclears: [] })
+  // The notes can start on the very next line, after spaces, and run on for lines.
+  expect(answersIn('"Decline the finding?"\n\nDecline it \t\nthe cap covers it\n\nthanks', open)).toEqual([
+    { question: open[0], letter: 'a' },
+  ])
+  // A drawer's pick with notes added below still answers the drawer's question.
+  expect(read(budget, [pick('1', 'Add a budget')]).answers).toEqual([{ question: open[0], letter: 'b' }])
+  // The notes end at the next quoted item, which takes its own answer.
+  expect(answersIn('"Decline the finding?"\n\nDecline it\nper the cap\n"Rebase first?"\n\nRebase\nafter CI', open)).toEqual([
+    { question: open[0], letter: 'a' },
+    { question: open[1], letter: 'b' },
+  ])
+})
+
+test('notes under a pick answer the question whose drawer put the pick there when two share a subject', () => {
+  const older = question({ postedAt: NOW - 120_000, subject: 'Merge it?', choices: ['Yes', 'No'] })
+  const newer = question({ ref: '2', number: 2, subject: 'Merge it?', choices: ['Yes', 'No'] })
+  const merge = (ref: string, answer: string): Proposal => ({ ref, quote: '"Merge it?"', answer })
+  expect(readPrompt('"Merge it?"\n\nNo\n\nwait for CI', [older, newer], [merge('2', 'No')])).toEqual({
+    answers: [{ question: newer, letter: 'b' }],
+    outcomes: [],
+    replies: [],
+    unclears: [],
+  })
+})
+
+test('an option that spans lines answers as itself, not as a shorter option that leads it', () => {
+  const asked = question({ choices: ['Decline it', 'Decline it\nand note why'] })
+  expect(answersIn('"Decline the finding?"\n\nDecline it\nand note why', [asked])).toEqual([{ question: asked, letter: 'b' }])
+  expect(answersIn('"Decline the finding?"\n\nDecline it\nand note why\n\nin the thread', [asked])).toEqual([
+    { question: asked, letter: 'b' },
+  ])
+  expect(answersIn('"Decline the finding?"\n\nDecline it\nand say so', [asked])).toEqual([{ question: asked, letter: 'a' }])
+})
+
 test('anything after a quoted question but one of its options replies to it without answering', () => {
   const open = [question(), question({ ref: '2', number: 2, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
   const replies = [
     // Free text, as discuss leaves room for.
     '"Rebase first?"\t\n\nkeep it',
-    // An option with more text after it, on its line or on the next.
+    // An option with more text after it on its own line, or a shorter
+    // option's words leading a longer line.
     '"Decline the finding?"\n\nAdd a budget of two per host',
-    '"Decline the finding?"\n\nAdd a budget\n\nand log each retry',
+    '"Decline the finding?"\n\nDecline it, but log it',
+    // Notes before the option.
+    '"Decline the finding?"\n\nafter some thought\nDecline it',
     // A question back, under the quote or on its line.
     '"Decline the finding?"\n\nWhat does the cap cover?',
     '"Decline the finding?" what does the cap cover?',

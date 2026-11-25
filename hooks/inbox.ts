@@ -148,6 +148,20 @@ export const mayBeUnclear = (text: string) => text.replaceAll('’', "'").includ
 /** One answer a sent prompt gives: the letter of the option it picks. */
 export type Given = { question: Question; letter: string }
 
+/** Whether text starts with words that end its line, so anything after them starts on a later line. */
+const leads = (text: string, words: string) => text.startsWith(words) && /^[ \t]*(\n|$)/.test(text.slice(words.length))
+
+/**
+ * The option a question's quote takes: the one the text under the quote
+ * starts with, ending its line, so notes can follow on the lines below. When
+ * two options lead it, as one that spans lines can lead another, the longer
+ * one is what it says.
+ */
+function optionIn(question: Question, said: string | undefined): string | undefined {
+  if (said === undefined) return undefined
+  return question.choices.filter(choice => leads(said, choice)).sort((one, other) => other.length - one.length)[0]
+}
+
 /**
  * What a request's drawer offers after any start, in order: the options its
  * agent gave, or a single `Done` when it gave none. Each puts its words under
@@ -190,11 +204,12 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
  * Reads a sent prompt as the panel writes it, each quote speaking to one
  * question or request. A quoted open question takes an answer only when its
  * quote ends its line and the text after it, up to the next quoted item or
- * the prompt's end, is one of its options, whatever blank lines and spaces
- * surround it: what pressing an option puts in the prompt. A quoted open
- * request takes an outcome only when its quote ends its line and the first
- * line after it that is not blank is exactly one of its options, a plain
- * `Done`, or a plain `Declined`; the rest is the person's notes. A quote that
+ * the prompt's end, starts with one of its options, whatever blank lines and
+ * spaces come before it, and the option ends its line: what pressing an
+ * option puts in the prompt, and any notes the person adds below it. A
+ * quoted open request takes an outcome only when its quote ends its line and
+ * the first line after it that is not blank is exactly one of its options, a
+ * plain `Done`, or a plain `Declined`; the rest is the person's notes. A quote that
  * a drawer put in the prompt, with that answer or alone through discuss,
  * speaks to the item of the drawer that did so last, `proposed` holding them
  * oldest first: one of its options resolves it, and any other text replies to
@@ -269,13 +284,14 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
   const isFree = (ref: string) => isOpen(ref) && !replied.has(ref)
   const isRequest = (ref: string) => items.some(item => item.ref === ref && item.kind === 'request')
   // Whether the text after an item's quote resolves it: one of a question's
-  // options, or a request's outcome.
+  // options, or a request's outcome, either with notes after it.
   const takes = (item: Answerable, said: string | undefined) =>
-    item.kind === 'question' ? said !== undefined && item.choices.includes(said) : outcomeIn(item, said) !== undefined
+    (item.kind === 'question' ? optionIn(item, said) : outcomeIn(item, said)) !== undefined
   const resolve = (item: Answerable, said: string) => {
     answered.add(item.ref)
     if (item.kind === 'question') {
-      answers.push({ question: item, letter: letterAt(item.choices.indexOf(said)) })
+      const option = optionIn(item, said)
+      if (option !== undefined) answers.push({ question: item, letter: letterAt(item.choices.indexOf(option)) })
       return
     }
     const outcome = outcomeIn(item, said)
@@ -293,14 +309,15 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
       continue
     }
     // The drawer that put this text in the prompt: the last to put this
-    // quote there with this answer or alone, through discuss, leaving out an
-    // item an earlier quote in this prompt resolved. A request's drawer owns
-    // its quote whatever follows it, since notes follow its outcome.
+    // quote there with the answer this text starts with, notes or not, or
+    // alone, through discuss, leaving out an item an earlier quote in this
+    // prompt resolved. A request's drawer owns its quote whatever follows
+    // it, since notes follow its outcome.
     const source = proposed.findLast(
       one =>
         one.quote === quote &&
         aims(one) &&
-        (isRequest(one.ref) || one.answer === said || one.answer === '') &&
+        (isRequest(one.ref) || (said !== undefined && leads(said, one.answer)) || one.answer === '') &&
         !answered.has(one.ref),
     )
     if (source !== undefined) {
@@ -526,6 +543,7 @@ export const ASK_DESCRIPTION = described([
   'Name the pull request the question is about in `pr`, as owner/repo#number.',
   'Keep working on anything the answer does not block. The call returns the question’s number, such as 3.',
   'When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
+  'A pick they send from their prompt arrives as that prompt instead, quoting the question with the option they picked and any notes under it.',
   'When they restore a question after you heard `DISMISSED 3`, `RESTORED 3` arrives, and the question is open again.',
   unclearArrives('question'),
   'When they reply in their own words instead, the reply arrives as their prompt, quoting the question after its number in brackets, such as `[3] "…"`, and the question stays open:',

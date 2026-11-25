@@ -2018,8 +2018,9 @@ export const register: Register = on => {
     // bulleted `-`; an open question's line takes `QUESTION_COLOR`, and a
     // resolved or snoozed item's `subtle`. An open question's drawer numbers
     // its options; choosing one puts the question and that answer in the
-    // prompt as text, for you to send or change, and sending it unchanged is
-    // what answers the question. Discuss puts the question alone, for a reply
+    // prompt as text, for you to send or change, and sending it with that
+    // option still leading the text under the quote, notes below it or not,
+    // is what answers the question. Discuss puts the question alone, for a reply
     // in your own words, which answers nothing. A resolved question's drawer
     // lists its options with nothing to press, and an answer typed with
     // `project inbox answer --text` after them.
