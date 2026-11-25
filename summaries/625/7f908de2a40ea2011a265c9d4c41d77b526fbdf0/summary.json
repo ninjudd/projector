@@ -1,0 +1,118 @@
+{
+ "version": 1,
+ "name": "Carry a review across a moved head",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 625,
+  "title": "Carry a review across a moved head instead of starting it over",
+  "head": "7f908de2a40ea2011a265c9d4c41d77b526fbdf0",
+  "headRef": "carry-review-across-move",
+  "base": "3f5f88e855e1501f9b564bd49312334b63016987",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's <code>review-pr</code> skill reviews one exact head of a pull request. When the author pushes while a full review is still running, the reviewer runs <code>project review move</code>, which points the review's state, lock, and start comment at the new head. Until now nothing kept the head the review had been reading, so the reviewer read the whole pull request again at the new head and ran the gate again, even when the push changed one line.",
+   "This pull request keeps that head. <code>move</code> records it as <code>moved_from</code>, and a new <code>project review interdiff --since-move</code> prints only the pull request's own change since then. The skill gains a section that tells the reviewer to read that change by the full method, keep its reading of the lines the push left alone, and start over when the push is too large or resolves a hard conflict.",
+   "<ul><li><b>Incremental reviews are unchanged.</b> They still measure from the last published full review, with their rules.</li><li><b>The verdict is still a full one.</b> <code>--since-move</code> applies none of the incremental rules, and the review publishes as before.</li><li><b>What it gives up</b> is a second reading of lines the push did not touch.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Head</b>: the commit at the tip of the pull request's branch.</li><li><b>Merge base</b>: the commit on the base branch the pull request forks from. It moves when the author merges or rebases onto the base.</li><li><b>Gate</b>: the repository's validation checks, which <code>project review gate</code> runs or reads from CI.</li><li><b><code>measure</code></b>: the function incremental reviews use to compute a pull request's own change between two heads, leaving out what the base brought in.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>A Projector review of <code>7f908de</code> found no issues and signed the head off. CI's <code>check</code> job passed on this head.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "cli",
+   "title": "Record the head and measure the change since it",
+   "kicker": "What <code>move</code> keeps, and the new <code>interdiff --since-move</code>",
+   "intro": [
+    "When <code>move</code> carries a review to a new head, it now saves the head it left and that head's merge base in the review's state file as <code>moved_from</code>. <code>interdiff --since-move</code> passes those to <code>measure</code>, the function incremental reviews already use, so a merge or a rebase of the base stays out of the patch and a resolved conflict shows how the author resolved it.",
+    "It also reports two facts the skill uses to decide whether the earlier gate run still counts: whether the merge base moved, and whether the last gate run passed on the head the review moved from. It exits 0 once it has measured the change, and 1 when the review never moved or the change cannot be measured."
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "<code>move</code> records <code>moved_from</code>; new <code>moved_change</code> measures from it; the text output's shared parts are factored out of <code>interdiff_lines</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1407,
+       "text": "<code>moved_from</code> is read from <code>state[\"sha\"]</code> and <code>state[\"base\"]</code> before <code>state.update</code> overwrites them. A fresh <code>setup</code> writes a state without it, so the next head starts with no move."
+      },
+      {
+       "kind": "context",
+       "line": 2172,
+       "text": "<code>gate_passed</code> holds only when the last gate record names the head the review moved from and exited 0. After a second move it names the head just before, so a gate run two heads back reads as no passing run."
+      },
+      {
+       "kind": "context",
+       "line": 2175,
+       "text": "<code>measure</code> reads commits from the checkout's object store, not from the worktree <code>move</code> removed. A head the checkout lacks raises <code>Unmeasurable</code>, which becomes a refusal."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>--since-move</code> flag to <code>review interdiff</code>, returns before the incremental rules when it is set, and prints <code>moved from</code> after a <code>move</code>."
+    }
+   ]
+  },
+  {
+   "id": "skill",
+   "title": "Tell the reviewer what to do with the patch",
+   "kicker": "The skill text that carries the review across the move",
+   "intro": [
+    "The skills are the instructions the reviewing agent follows, so this group decides what a carried review actually does. The reviewer reads the patch by the full method and follows each definition it changes to the code that depends on it. It keeps its reading of the rest, rechecks the findings it was about to post, and says in the review which head it read the pull request at.",
+    "It starts over at the new head when <code>--since-move</code> refuses, when the push resolves a conflict that is not trivial, or when the push reworks much of what it had read."
+   ],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "The new section \"Carry a review across a moved head\", and links to it from step 7, the start-comment section, the <code>NEW HEAD</code> event, and the subagent rules.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The reviewer may skip the gate at the new head only when it passed on the earlier head, the merge base held, and every hunk of the push is presentation, prose, or formatting, the same kinds the incremental section defines."
+      }
+     ]
+    },
+    {
+     "path": "skills/review-repo/SKILL.md",
+     "note": "Says that a SHA pushed during a review starts no cycle of its own."
+    },
+    {
+     "path": "skills/review-pr/method.md",
+     "note": "Adds the carried review to the list of disclosures a review body names."
+    }
+   ]
+  },
+  {
+   "id": "docs-tests",
+   "title": "Reference documentation and tests",
+   "kicker": "The CLI reference and the tests that build real moved heads",
+   "intro": [
+    "<code>docs/cli.md</code> describes the new state field and the flag's output. The tests check that the patch holds only the push since the earlier head, and that a review that never moved is refused."
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents <code>moved_from</code>, <code>--since-move</code>'s output, and its JSON fields."
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "<code>MovedChangeTests</code> builds real heads in temporary Git repositories: a push, a merge after a moved trunk, a failing gate, a second move, the next head's <code>setup</code>, and a missing earlier head."
+    }
+   ]
+  }
+ ]
+}

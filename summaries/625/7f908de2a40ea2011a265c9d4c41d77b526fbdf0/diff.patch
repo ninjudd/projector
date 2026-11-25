@@ -1,0 +1,498 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index e22342f8..9a03d034 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2017,6 +2017,7 @@ project review census 66 --json
+ project review settle 66 --thread PRRT_kwDOAbc123 --result fixed --body reply.md
+ project review publish 66 --verdict clean --body body.md --covered 12/12 --loop example-review-claude-opus-5-5
+ project review interdiff 66
++project review interdiff 66 --since-move
+ project review publish 66 --incremental --body body.md
+ project review release 66
+ project review finish 66
+@@ -2096,8 +2097,11 @@ support, they leave the effort out rather than guess it.
+ 
+ `move` follows a head that moved mid-review: it creates a worktree for the new
+ head, rechecks trust, edits the start comment in place to name it, re-reads the
+-comment to confirm the edit, and updates the state file. It then removes the
+-worktree of the head it moved from, as `setup` does. `census` lists every
++comment to confirm the edit, and updates the state file. The state records the
++head it moved from and that head's merge base as `moved_from`, so
++`interdiff --since-move` can measure what changed since, and `move` prints
++`moved from <sha>`. It then removes the worktree of the head it moved from, as
++`setup` does. `census` lists every
+ thread whose first comment carries the `projector-finding` marker, reading
+ every page, and prints how many are resolved and open and each open thread's
+ `path:line`; with `--json` each thread also carries its comments. It counts
+@@ -2560,6 +2564,29 @@ passes and 1 otherwise. With `--json` it prints one object:
+ | `files` | The paths the change touches, empty when it was not measured. |
+ | `patch` | The change, or `""` when it was not measured. |
+ 
++`interdiff --since-move` measures what a review that `move` carried to a new
++head has left to read: the pull request's own change from the head the review
++moved from to its head now. It measures that change as `interdiff` measures the
++change since a full review, from the merge base `move` recorded for the
++earlier head, and applies none of the incremental rules. It prints
++`moved from:` with the earlier head, the `kind`, any conflicted paths, the
++counts, `merge base: moved` or `merge base: unchanged`, `gate: passed` or
++`gate: no passing run` at the earlier head, any path the patch cannot show,
++and the patch. It exits 0 once it has measured the change, and 1, printing
++`refused:` with the reason, when the review has not moved since `setup` or the
++change cannot be measured. With `--json` it prints one object with `kind`,
++`unchanged_commits`, `conflicts`, `insertions`, `deletions`, `files`, and
++`patch` as above, and these fields:
++
++| Field | Value |
++| --- | --- |
++| `measured` | `true` when it measured the change. |
++| `reason` | Why it did not, in words, or `null`. |
++| `from` | The full SHA of the head the review moved from, or `null` when it has not moved. |
++| `base_moved` | `true` when the merge base moved since that head, or `null` when the review has not moved. |
++| `gate_passed` | `true` when the last `gate` run was on that head and exited 0, or `null` when the review has not moved. |
++| `unreadable` | The paths the patch cannot show: binary files, symlinks, and submodules. |
++
+ `publish --incremental` publishes the incremental review. It applies the same
+ rules to the live state, and `--body` names a file of at most 600 characters,
+ once its placeholders are filled, on what changed and what was checked. It
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 06211a26..d0354005 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -419,8 +419,9 @@ describes. Every other head continues here.
+ 7. Re-fetch the head before publishing. If it moved, the review in progress is
+    of a stale head: run `project review move <number>`, which repeats steps 1
+    to 3 for the replacement SHA and edits the start comment as described next
+-   instead of posting another, and revalidate every prospective finding against
+-   the new head.
++   instead of posting another. Then carry the review to the new head, as
++   [Carry a review across a moved head](#carry-a-review-across-a-moved-head)
++   describes.
+ 
+ ### Run a head's code only when the head is trusted
+ 
+@@ -508,7 +509,10 @@ edits the existing comment in place so it names the new short SHA, says the
+ head moved from the old one, and says the review is being updated for the new
+ changes, keeping its `📽️` signature line and setting its marker's `sha=` to the
+ new full SHA. It re-reads the comment and refuses, exiting non-zero, unless the
+-edit took; it also refuses when the head has not moved.
++edit took; it also refuses when the head has not moved. It records the head it
++moved from, so the review goes on from what it has read, as
++[Carry a review across a moved head](#carry-a-review-across-a-moved-head)
++describes.
+ 
+ Once the review is published and verified, the start comment goes:
+ `project review publish` deletes it as its last step. The review's signature
+@@ -535,6 +539,69 @@ replaces it.
+ Do not invoke a separate Codex, Cursor, Bugbot, or other reviewer unless the
+ user explicitly requests that service. This skill performs the local review.
+ 
++### Carry a review across a moved head
++
++A push that lands while a full review is still running moves the review to
++the new head; it does not start the review over. What you read at the
++earlier head still holds wherever the push left the code alone, so read what
++the push changed, not the whole pull request again. After
++`project review move <number>`, run:
++
++```sh
++project review interdiff <number> --since-move [--json]
++```
++
++It measures the pull request's own change from the head the review moved from
++to the new head, as `interdiff` measures the change since a full review: a
++merge or a rebase brings in none of the base's changes, and a resolved
++conflict shows the conflict region removed and the resolution added. It
++prints the head it measured from, how the head moved, any conflicted paths,
++the counts, whether the merge base moved, whether the last
++`project review gate` run passed on the earlier head, and the patch. It exits
++0 once it has measured the change. It exits 1, naming why, when the review
++has not moved or the change cannot be measured.
++
++On exit 0, go on with the review at the new head:
++
++- **Read the change by the full method.** Apply step 5's passes to every hunk
++  of the patch at the new head, and follow each definition it changes to the
++  code that depends on it, even code you read before the move. Read a file
++  the patch cannot show, such as a binary file, at the new head as step 5
++  would.
++- **Keep the rest of what you read.** Your reading of every line the push
++  left unchanged still holds. Finish at the new head whatever you had not
++  read when the head moved.
++- **Recheck what you were about to post.** Revalidate every prospective
++  finding against the new head: drop one the push fixed, and file each one
++  that still holds at the line where it now is. Run again any focused test or
++  reproduction whose code the push changed.
++- **Gate the head you publish.** Run the gate on the new head, unless it
++  passed on the earlier head, the merge base did not move, and every hunk of
++  the patch is presentation, prose, or formatting, as
++  [Review a minimal push incrementally](#review-a-minimal-push-incrementally)
++  defines them. Then the earlier run speaks for the new head: say in the
++  disclosures that the gate passed at the earlier head and that the push
++  changed only presentation, prose, or formatting.
++- **Say what you read where.** The signature line's `over <n> heads` already
++  says the review spanned heads. Add a disclosure that names the head you
++  read the pull request at and the change you read at the new head, with the
++  size `--since-move` printed, such as "Reviewed at `a1b2c3d`; the push to
++  `9f3c2a1`, +1 −1 lines in 1 file, was read at the new head." `--covered`
++  counts, over the files the new head changes, each one you read at either
++  head.
++
++Start the review over at step 5 on the new head instead when
++`--since-move` exits 1, when the patch resolves a conflict and a resolved
++hunk is not trivial, as the incremental section's list of kinds judges one,
++or when the push reworks much of what you read or changes what the pull
++request sets out to do.
++
++When the head moves again, run `move` and `--since-move` again. Each move
++records the head just before it, so each patch is the change since the head
++you were last reading. This section is for a full review. An incremental
++review in progress starts again at `interdiff`, which measures from the full
++review either way.
++
+ ## Review a minimal push incrementally
+ 
+ An incremental review reads only the change since the last full review of
+@@ -1176,8 +1243,10 @@ NEW HEAD acme/app#14 9f3c2a1 — run review-pr on acme/app#14 in subagent review
+   subagent, as the next section describes, and have it review the head.
+ - **`NEW HEAD`** reports a head this model has not reviewed. Send it to the
+   pull request's subagent as a message, or start one when the pull request
+-  has none. A `NEW HEAD` that arrives mid-review is the moved-head case that
+-  [One start comment per review](#one-start-comment-per-review) covers.
++  has none. A `NEW HEAD` that arrives mid-review moves the review in
++  progress to the head instead of starting another, as
++  [Carry a review across a moved head](#carry-a-review-across-a-moved-head)
++  describes.
+ - **A `NEW HEAD` that says its last review stalled** reports that the
+   session's review of the pull request ran no `project review` command for
+   `watch.review_stall` seconds, 30 minutes by default, and that the daemon
+@@ -1263,7 +1332,11 @@ that history instead of rediscovering it.
+   same subagent as a message; never start a second one for it, except after
+   a stall. Each message is another run of this skill, for the head it
+   names; a `RESPONDED` re-review of an unmoved head runs
+-  `project review setup` with `--rereview`.
++  `project review setup` with `--rereview`. The exception is a `NEW HEAD`
++  that arrives while the subagent's review is still unpublished: the
++  subagent moves that review to the head and goes on from what it has read,
++  as [Carry a review across a moved head](#carry-a-review-across-a-moved-head)
++  describes.
+ - The subagent reports each published review back: the SHA, the verdict,
+   the review id, how many threads it opened, for an incremental review the
+   head of the full review it builds on, whether the head is signed off, and a
+diff --git a/skills/review-pr/method.md b/skills/review-pr/method.md
+index 8fd76d98..a00ea22e 100644
+--- a/skills/review-pr/method.md
++++ b/skills/review-pr/method.md
+@@ -312,7 +312,9 @@ reads in this order:
+    two numbers.
+ 4. Disclosures, when any: an advisory check skipped for a new dependency, a
+    file too large for a pass to read in full, a test that could not run, a
+-   head reviewed without running its code because the head is not trusted.
++   head reviewed without running its code because the head is not trusted, a
++   review carried across a moved head, naming the head it read the pull
++   request at and the change it read at the new head.
+ 5. On a clean head, what was checked, as `SKILL.md` requires.
+ 
+ Never write the suggestions into the body yourself. Give each P3 to
+diff --git a/skills/review-repo/SKILL.md b/skills/review-repo/SKILL.md
+index 67debfc6..12521478 100644
+--- a/skills/review-repo/SKILL.md
++++ b/skills/review-repo/SKILL.md
+@@ -136,7 +136,10 @@ under "Answer a `PEER MESSAGE` line". So does a `PEER REPLY` line, which
+ Every pushed SHA, including a fix-only SHA, starts a review cycle that ends
+ in a verdict published on that SHA, full or incremental. `review-pr` decides
+ which: a head that changed little since the session's last full review can
+-get an incremental review, and every other head gets a full one. Green CI
++get an incremental review, and every other head gets a full one. A SHA
++pushed while a review is still running starts no cycle of its own: the
++review moves to it and reads only what changed, as `../review-pr/SKILL.md`
++describes under "Carry a review across a moved head". Green CI
+ and resolved threads are evidence about state, not substitutes for review.
+ Keep acting on events until the user asks you to stop.
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index cf204f16..f3280a4d 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -966,6 +966,9 @@ def parser() -> argparse.ArgumentParser:
+     review_publish.add_argument("--incremental", action="store_true",
+                                 help="publish a clean incremental review of the change since this loop's last "
+                                      "full review, when `project review interdiff` allows one")
++    review_interdiff.add_argument("--since-move", action="store_true",
++                                  help="measure the change since the head the review moved from, for a review "
++                                       "that `project review move` carried to a new head")
+ 
+     add_inbox_parser(subcommands)
+     subcommands.add_parser("console", help="list every live session in a terminal, and answer or discuss each one's "
+@@ -2663,6 +2666,13 @@ def run_review(arguments: argparse.Namespace) -> int:
+         if command == "interdiff":
+             state = review.read_state(paths)
+             review.touch_head(paths, state, loop)
++            if arguments.since_move:
++                result = review.moved_change(state)
++                if arguments.json_output:
++                    print(json.dumps(result, indent=2))
++                else:
++                    print("\n".join(review.moved_lines(result, state["base_ref"])))
++                return 0 if result["measured"] else 1
+             enabled = incremental_enabled(Path(state["checkout"]))
+             result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled)
+             if arguments.json_output:
+@@ -2730,6 +2740,8 @@ def run_review(arguments: argparse.Namespace) -> int:
+         print(json.dumps(state, indent=2))
+     else:
+         print(f"reviewing {state['repo']}#{state['number']} at {state['sha']} (head {state['heads']})")
++        if command == "move":
++            print(f"moved from {state['moved_from']['sha']}")
+         print(f"merge base {state['base']}")
+         print(f"worktree {state['worktree']}")
+         print("trusted" if state["trusted"] else f"untrusted: {state['untrusted_because']}; review it by reading")
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 6eb09bbc..417044bf 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -47,7 +47,7 @@
+ import time
+ from collections import Counter
+ from contextlib import AbstractContextManager, suppress
+-from dataclasses import dataclass
++from dataclasses import asdict, dataclass
+ from datetime import datetime, timedelta, timezone
+ from importlib import resources
+ from pathlib import Path
+@@ -1404,7 +1404,8 @@ def move(paths: Paths, loop: Optional[str]) -> dict:
+         raise
+     paths.lock(old).unlink(missing_ok=True)
+     kept, removed = remove_superseded(paths, state["checkout"], state["worktrees"], worktree)
+-    state.update(sha=sha, base=merge_base, base_ref=pr["base"]["ref"], worktree=str(worktree),
++    moved_from = {"sha": old, "base": state["base"]}
++    state.update(sha=sha, base=merge_base, moved_from=moved_from, base_ref=pr["base"]["ref"], worktree=str(worktree),
+                  trusted=trusted, untrusted_because=why or None,
+                  cross_repository=((pr["head"].get("repo") or {}).get("full_name")) != state["repo"],
+                  heads=state["heads"] + 1, worktrees=kept + [str(worktree)])
+@@ -2153,27 +2154,76 @@ def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: boo
+     return result
+ 
+ 
++def moved_change(state: dict) -> dict:
++    """The pull request's own change from the head this review moved from to the head it is on now.
++
++    A review that `move` carried to a new head has already read the head it left, so it reads this change
++    in place of the whole pull request again. `gate_passed` says whether the last gate run passed on the
++    head it left, and `base_moved` whether the merge base moved since that head, since together they
++    decide whether the gate's result there still speaks for the new head."""
++    result: dict = {"measured": False, "reason": None, "from": None, "base_moved": None, "gate_passed": None,
++                    "kind": None, "unchanged_commits": None, "conflicts": None, "insertions": None,
++                    "deletions": None, "files": [], "unreadable": [], "patch": ""}
++    moved = state.get("moved_from")
++    if not moved:
++        result["reason"] = f"the review has not moved from {state['sha'][:7]}, the head `setup` set it up on"
++        return result
++    gate_record = state.get("gate") or {}
++    result.update({"from": moved["sha"], "base_moved": moved["base"] != state["base"],
++                   "gate_passed": gate_record.get("sha") == moved["sha"] and gate_record.get("exit_code") == 0})
++    try:
++        measured = measure(Path(state["checkout"]), moved["sha"], moved["base"], state["sha"], state["base"])
++    except Unmeasurable as exc:
++        result["reason"] = f"the change cannot be measured: {exc}"
++        return result
++    result.update(asdict(measured), measured=True)
++    return result
++
++
+ def interdiff_lines(result: dict, base_ref: str) -> list[str]:
+     """`review interdiff`'s output without --json: what it found, the verdict on the rules, and the patch."""
+     lines = []
+     if result["from"]:
+         lines.append(f"earlier full review: {result['from'][:7]}" + (f", {result['review']}" if result["review"] else ""))
+-    if result["kind"]:
+-        kind = KINDS[result["kind"]].format(base=base_ref)
+-        if result["unchanged_commits"] is not None:
+-            kind += ("; every reviewed commit carried over unchanged" if result["unchanged_commits"]
+-                     else "; a reviewed commit changed")
+-        lines.append(f"kind: {kind}")
+-        if result["conflicts"]:
+-            lines.append(f"conflicts: {', '.join(result['conflicts'])}")
+-        lines.append(f"change: {change_size(result)}")
++    lines += measured_lines(result, base_ref)
+     if result["incremental"]:
+         lines.append("incremental: every rule passes")
+     else:
+         lines.append(f"refused: {result['reason']}" + (" (needs_gate)" if result["needs_gate"] else ""))
+-    if result["patch"]:
+-        lines += ["", result["patch"].rstrip("\n")]
+-    return lines
++    return lines + patch_lines(result)
++
++
++def moved_lines(result: dict, base_ref: str) -> list[str]:
++    """`review interdiff --since-move`'s output without --json: the head the review moved from, the change
++    since it, what that means for the gate, and the patch."""
++    lines = [f"moved from: {result['from'][:7]}"] if result["from"] else []
++    lines += measured_lines(result, base_ref)
++    if result["from"]:
++        lines.append(f"merge base: {'moved' if result['base_moved'] else 'unchanged'}")
++        lines.append(f"gate: {'passed' if result['gate_passed'] else 'no passing run'} at {result['from'][:7]}")
++    if result["unreadable"]:
++        lines.append(f"unreadable: {', '.join(result['unreadable'])}")
++    if not result["measured"]:
++        lines.append(f"refused: {result['reason']}")
++    return lines + patch_lines(result)
++
++
++def measured_lines(result: dict, base_ref: str) -> list[str]:
++    """How the head moved, any conflicted paths, and the change's size, once the change was measured."""
++    if not result["kind"]:
++        return []
++    kind = KINDS[result["kind"]].format(base=base_ref)
++    if result["unchanged_commits"] is not None:
++        kind += ("; every reviewed commit carried over unchanged" if result["unchanged_commits"]
++                 else "; a reviewed commit changed")
++    lines = [f"kind: {kind}"]
++    if result["conflicts"]:
++        lines.append(f"conflicts: {', '.join(result['conflicts'])}")
++    return lines + [f"change: {change_size(result)}"]
++
++
++def patch_lines(result: dict) -> list[str]:
++    return ["", result["patch"].rstrip("\n")] if result["patch"] else []
+ 
+ 
+ def change_size(result: dict) -> str:
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 2b0f653d..344acdaa 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -587,11 +587,15 @@ def test_follows_a_moved_head_from_anywhere_and_edits_the_start_comment_in_place
+         new = self.push_head("second head")
+         self.github.pr["head"]["sha"] = new
+ 
+-        code, _, err = self.later("move", cwd=Path(tempfile.mkdtemp()))
++        base = self.read_state()["base"]
++
++        code, out, err = self.later("move", cwd=Path(tempfile.mkdtemp()))
+ 
+         self.assertEqual(0, code, err)
+         state = self.read_state()
+         self.assertEqual((new, 2), (state["sha"], state["heads"]))
++        self.assertEqual({"sha": old, "base": base}, state["moved_from"], "interdiff --since-move measures from it")
++        self.assertIn(f"moved from {old}\n", out)
+         self.assertEqual(new, git(Path(state["worktree"]), "rev-parse", "HEAD"))
+         body = self.github.comments[101]
+         self.assertEqual([101], list(self.github.comments), "edited in place, not a second comment")
+@@ -4107,6 +4111,116 @@ def test_an_empty_change_across_a_moved_base_still_needs_the_gate(self) -> None:
+                                             result["needs_gate"]))
+ 
+ 
++class MovedChangeTests(IncrementalCase):
++    """A full review in progress on `self.pushed()`'s head, which widens row r2, carried by `move` to a newer one."""
++
++    def move_to(self, sha: str) -> None:
++        self.push_feature(sha)
++        code, _, err = self.later("move")
++        self.assertEqual(0, code, err)
++
++    def since_move(self) -> dict:
++        code, out, err = self.later("interdiff", "--since-move", "--json")
++        result = json.loads(out)
++        self.assertEqual(0 if result["measured"] else 1, code, err)
++        return result
++
++    def test_measures_only_the_push_since_the_head_the_review_moved_from(self) -> None:
++        # Measured from the last full review instead, the change would still hold row r2's edit, the one the
++        # review in progress was already reading, so the carried review would read it again.
++        started = self.pushed()
++        self.move_to(self.build(started, {"a.css": css(r1=9, r2=9, r3=9)}))
++
++        result = self.since_move()
++
++        self.assertTrue(result["measured"], result["reason"])
++        self.assertEqual((started, "push", 1, 1, ["a.css"], False, False),
++                         (result["from"], result["kind"], result["insertions"], result["deletions"],
++                          result["files"], result["base_moved"], result["gate_passed"]))
++        self.assertIn("-.r3 { padding: 8px; }\n+.r3 { padding: 9px; }", result["patch"])
++        self.assertNotIn("-.r2 { padding: 8px; }", result["patch"])
++        self.assertEqual(2, self.interdiff()["insertions"], "without --since-move it measures from the full review")
++
++    def test_prints_the_head_it_moved_from_the_change_and_what_it_means_for_the_gate(self) -> None:
++        started = self.pushed()
++        self.move_to(self.build(started, {"a.css": css(r1=9, r2=9, r3=9)}))
++
++        code, out, err = self.later("interdiff", "--since-move")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([f"moved from: {started[:7]}", "kind: push", "change: +1 −1 lines in 1 file",
++                          "merge base: unchanged", f"gate: no passing run at {started[:7]}", ""],
++                         out.splitlines()[:6])
++        self.assertIn("+.r3 { padding: 9px; }", out)
++
++    def test_a_gate_that_passed_on_the_earlier_head_is_reported_with_a_merge_that_moved_the_base(self) -> None:
++        started = self.pushed()
++        self.assertEqual(0, self.gate())
++        self.move_trunk({"trunk.txt": "moved\n"})
++        self.move_to(self.build(self.merge(started, self.trunk), {"a.css": css(r1=9, r2=9, r3=9)}))
++
++        result = self.since_move()
++
++        self.assertEqual(("merge", 1, 1, ["a.css"], True, True),
++                         (result["kind"], result["insertions"], result["deletions"], result["files"],
++                          result["base_moved"], result["gate_passed"]))
++        self.assertNotIn("trunk.txt", result["patch"], "what the trunk brought in stays out")
++
++    def test_a_gate_that_failed_on_the_earlier_head_does_not_count_as_passed(self) -> None:
++        started = self.pushed()
++        self.assertNotEqual(0, self.gate("false"))
++        self.move_to(self.build(started, {"a.css": css(r1=9, r2=9, r3=9)}))
++
++        self.assertFalse(self.since_move()["gate_passed"])
++
++    def test_a_second_move_measures_from_the_head_just_before_it(self) -> None:
++        started = self.pushed()
++        second = self.build(started, {"a.css": css(r1=9, r2=9, r3=9)})
++        self.move_to(second)
++        self.move_to(self.build(second, {"a.css": css(r1=9, r2=9, r3=9, r4=9)}))
++
++        result = self.since_move()
++
++        self.assertEqual((second, 1, 1), (result["from"], result["insertions"], result["deletions"]))
++        self.assertIn("+.r4 { padding: 9px; }", result["patch"])
++        self.assertNotIn("+.r3", result["patch"])
++
++    def test_refuses_a_review_that_has_not_moved(self) -> None:
++        started = self.pushed()
++
++        code, out, _ = self.later("interdiff", "--since-move")
++
++        self.assertEqual(1, code)
++        self.assertEqual([f"refused: the review has not moved from {started[:7]}, the head `setup` set it up on"],
++                         out.splitlines())
++
++    def test_the_next_heads_setup_forgets_the_move_of_the_review_before_it(self) -> None:
++        # A move the published review carried belongs to that review; the next one starts from its own head.
++        started = self.pushed()
++        self.move_to(self.build(started, {"a.css": css(r1=9, r2=9, r3=9)}))
++        self.assertEqual(0, self.publish("clean")[0])
++        self.review_head(self.build(self.github.pr["head"]["sha"], {"a.css": css(r1=9, r2=9, r3=9, r4=9)}))
++
++        result = self.since_move()
++
++        self.assertFalse(result["measured"])
++        self.assertIn("has not moved", result["reason"])
++
++    def test_an_earlier_head_missing_from_the_checkout_is_refused_as_unmeasurable(self) -> None:
++        started = self.pushed()
++        self.move_to(self.build(started, {"a.css": css(r1=9, r2=9, r3=9)}))
++        path = self.folder() / "state.json"
++        state = json.loads(path.read_text())
++        state["moved_from"]["sha"] = "0" * 40
++        path.write_text(json.dumps(state))
++
++        result = self.since_move()
++
++        self.assertFalse(result["measured"])
++        self.assertEqual("the change cannot be measured: the checkout lacks the earlier head 0000000",
++                         result["reason"])
++
++
+ class IncrementalPublishTests(IncrementalCase):
+     def test_publishes_a_clean_incremental_self_review_with_exactly_its_parts(self) -> None:
+         head = self.pushed()
