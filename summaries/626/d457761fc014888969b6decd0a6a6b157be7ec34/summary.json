@@ -1,0 +1,122 @@
+{
+ "version": 1,
+ "name": "Follow-up for merged suggestions",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 626,
+  "title": "Take a merged pull request's outstanding suggestions into a follow-up pull request",
+  "head": "d457761fc014888969b6decd0a6a6b157be7ec34",
+  "headRef": "follow-up-merged-suggestions",
+  "base": "62c718b31d43252e774c97efd157139ada5a396d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's reviews can list <b>suggestions</b>: optional improvements the code is correct without, which never block a sign-off. The <code>fix-pr</code> skill, the <b>fixer</b>, decides each one, implementing it or deferring it. The watch daemon is the background process that polls pull requests and sends each subscribed agent session one-line events, such as <code>MERGED</code> when a pull request merges.",
+   "Before this change, a pull request could merge while suggestions on it were still owed: the owner merged a signed-off head before the fixer built them, or the fixer had deferred one as reaching beyond the change. The <code>MERGED</code> line only said to finish the fixer, so those suggestions were lost.",
+   "Now the <code>MERGED</code> line sends the fixer after them, and <code>fix-pr</code> gains a section that verifies each one against the base as it stands and builds the warranted ones as one follow-up pull request, without asking the owner first. A <code>CLOSED</code> line is unchanged, because a pull request closed without merging owes nothing.",
+   "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Merged head lists</th><th>Fixer's action in the <code>MERGED</code> line</th></tr></thead><tbody><tr><td>1 or more suggestions</td><td class=\"r\">run fix-pr … to take the N suggestions its merged head lists into a follow-up pull request, then finish it</td></tr><tr><td>no suggestion</td><td class=\"r\">have subagent … take any suggestion it deferred into a follow-up pull request, then finish it</td></tr><tr><td>(closed, not merged)</td><td class=\"r\">finish subagent …</td></tr></tbody></table></div>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review, at <code>d457761</code>: clean, with no finding threads.</li><li>The <code>check</code> CI job and the plugin validation gate passed on this head.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Suggestion</b>: a P3 review item, listed in the review body, never a thread.</li><li><b>Fixer</b>: the <code>fix-&lt;number&gt;</code> or <code>fix-stack-&lt;number&gt;</code> subagent that runs <code>fix-pr</code>.</li><li><b>Deferred</b>: a suggestion the fixer chose not to build on the pull request, recorded only in its report.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "The MERGED line counts what is owed",
+   "kicker": "The watch daemon words the fixer's closing action from the merged head's suggestions",
+   "intro": [
+    "When a pull request merges, the daemon now counts the suggestions its last head lists and picks one of three wordings for the fixer's action. A count above zero says to run <code>fix-pr</code> on the pull request, which also starts a fixer when none ran. A count of zero still asks the fixer to take any suggestion it deferred on an earlier head, because only the fixer remembers those.",
+    "The count goes in the fixer's action, not the detail before the dash, because a reviewer subscribed to the same pull request hears that detail too."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "<code>merged_suggestions</code> counts the merged head's suggestions; <code>closing_actions</code> words the fixer's action from that count.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1709,
+       "text": "<code>merged_suggestions</code> calls <code>standing_suggestions</code> with the operator and <code>counted_logins</code>, the same call the <code>REVIEW</code> events make, and returns <code>None</code> for a pull request closed without merging. Traced by reading; the reviews it counts come from the entry <code>refresh</code> caches for every polled pull request."
+      },
+      {
+       "kind": "context",
+       "line": 2343,
+       "text": "A count of zero still produces a follow-up action, so every merged pull request with a fixer now gets one, even when nothing was deferred. The fixer then opens nothing and reports that."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Three new tests, and every earlier <code>MERGED</code> expectation updated to the new wording.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1359,
+       "text": "Only the merged head's review counts: the earlier head's review lists 3 suggestions, and the line says 2."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "skill",
+   "title": "fix-pr follows up on a merged pull request",
+   "kicker": "A new skill section says how the fixer builds the follow-up",
+   "intro": [
+    "The new \"Follow up on a merged pull request\" section has five steps: gather the candidates with <code>project review suggestions</code> plus any deferred ones, verify each against the current base, keep the ones that are clearly right and need neither the owner's decision nor a spec, build them as one change through <code>implement</code>'s hand-over, and report.",
+    "The rest of the skill points at that section: the description, the opening, \"Choose the pull request\", the defer rule, the event list, the subagent's report, and the readiness report."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Adds the follow-up section and the references to it.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 519,
+       "text": "The fixer verifies each candidate against <code>origin/&lt;baseRefName&gt;</code>, not the merged head, because the merge or a later change can already carry it."
+      },
+      {
+       "kind": "verify",
+       "line": 499,
+       "text": "The sections this section cites, <code>implement</code>'s \"Start from a description\" and \"Stack dependent work\", exist at this head, checked by reading <code>skills/implement/SKILL.md</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI reference and plugin overview describe the new line",
+   "intro": [
+    "<code>docs/cli.md</code> shows the new <code>MERGED</code> wording for a single pull request and for a stack layer. <code>docs/plugins.md</code> says that <code>fix-pr</code> opens the follow-up without asking and leaves its review and merge to you."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "New example lines and a paragraph on the follow-up."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "One added sentence in the <code>fix-pr</code> overview."
+    }
+   ]
+  }
+ ]
+}

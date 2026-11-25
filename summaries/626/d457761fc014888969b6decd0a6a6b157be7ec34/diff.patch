@@ -1,0 +1,422 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 9a03d034..8611ce78 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3894,7 +3894,8 @@ branches reach below that bottom, so a lookup that fails or finds no stack
+ after the bottom layer merges keeps the name. `MOVED`,
+ `MERGED`, and `CLOSED` use the same name. For a layer of a stack, `MERGED`
+ and `CLOSED` tell the session to send the subagent no more work for that
+-layer and to finish it once no layer of its stack is open.
++layer, after any follow-up on its suggestions that a `MERGED` line names,
++and to finish it once no layer of its stack is open.
+ 
+ GitHub records each upper layer of a stack as merged into the branch of the
+ layer below it, even when the whole stack merged into the default branch as
+@@ -3903,8 +3904,8 @@ the daemon checks whether that base reached the default branch, and words
+ `MERGED` to say so:
+ 
+ ```text
+-MERGED acme/app#13 with its stack into main at 2026-11-19T18:02:11Z (merge commit 4be1c2d9) — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
+-MERGED acme/app#13 into layer-12 at 2026-11-19T18:02:11Z (merge commit 4be1c2d9), which is not in main yet — send subagent fix-stack-12 no more work for acme/app#13, and finish it once no layer of its stack is open
++MERGED acme/app#13 with its stack into main at 2026-11-19T18:02:11Z (merge commit 4be1c2d9) — have subagent fix-stack-12 take any suggestion it deferred on acme/app#13 into a follow-up pull request, then send it no more work for acme/app#13, and finish it once no layer of its stack is open
++MERGED acme/app#13 into layer-12 at 2026-11-19T18:02:11Z (merge commit 4be1c2d9), which is not in main yet — have subagent fix-stack-12 take any suggestion it deferred on acme/app#13 into a follow-up pull request, then send it no more work for acme/app#13, and finish it once no layer of its stack is open
+ ```
+ 
+ The daemon walks down the chain of base branches. At each step it takes the
+@@ -3943,7 +3944,7 @@ records it.
+ | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
+ | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
+ | `MOVED` | any | Another session owns the role now |
+-| `MERGED`, `CLOSED` | any | The pull request merged or closed; `MERGED` says whether a layer's base reached the default branch |
++| `MERGED`, `CLOSED` | any | The pull request merged or closed; `MERGED` says whether a layer's base reached the default branch, and tells the fixer to take the suggestions still owed on it into a follow-up pull request |
+ | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
+ 
+ A `LABEL` line is not work. The review commands set the `clean` and
+@@ -3963,6 +3964,22 @@ each review once. A pull request that a session on this machine reviews
+ waits for that review without a line of its own, and a draft waits on its
+ author.
+ 
++A pull request can merge while suggestions on it are still owed, so the
++fixer's `MERGED` line sends the `fix-pr` skill after them. When the merged
++head lists suggestions, the line counts them, as `project review
++suggestions` lists them on that head, and says to run `fix-pr` to take them
++into a follow-up pull request:
++
++```text
++MERGED acme/app#12 into main at 2026-10-23T01:36:44Z (merge commit ea9a364a) — run fix-pr on acme/app#12 in subagent fix-12 to take the 2 suggestions its merged head lists into a follow-up pull request, then finish it
++```
++
++When it lists none, the line says to have the subagent take any suggestion
++it deferred on an earlier head into one, because only the subagent knows
++those. `fix-pr` verifies each suggestion against the base as it stands,
++opens one follow-up for those that hold up without asking you, and leaves
++its merge to you. A `CLOSED` line owes no follow-up.
++
+ A draft means its author is still working on the pull request, so a
+ repository subscription announces nothing for one: no `NEW PR`, `NEW HEAD`,
+ reminder, or `RESPONDED`. A review that stalls while it waits is still
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 37a99209..f598cb13 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -37,7 +37,11 @@ such as a suggestion it implements or a change you ask for, it converts the
+ pull request to a draft with `project review hold`, so the pull request
+ never looks ready to merge while the changes are coming. Once the push that
+ carries them lands, it marks the pull request ready for review again with
+-`project review ready`. The reviewer settles its own
++`project review ready`. When you merge a pull request before every
++suggestion on it is built, or after `fix-pr` deferred one as reaching
++beyond the change, `fix-pr` takes those that still hold up into a follow-up
++pull request without asking, and leaves its review and merge to you. The
++reviewer settles its own
+ findings on every head: it resolves one it verifies fixed, reopens one resolved
+ too early, and keeps one whose decline does not hold, so its verdict rests on
+ what it checked rather than on who clicked resolve. In a repository with a
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 3890ea13..ea0288ab 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: fix-pr
+-description: Fix one pull request's outstanding review work once. Merge its base when the branch conflicts, verify each finding, fix and push the valid ones, reply to and resolve their threads, decline the rest with evidence, and implement or defer each suggestion, holding the pull request in draft while a change is built. Each push subscribes the session to fix the pull request, so later review work arrives as an event that runs this skill again in one subagent per pull request. Use when the user asks to fix, address, or answer review feedback on a pull request, or to resolve its merge conflicts.
++description: Fix one pull request's outstanding review work once. Merge its base when the branch conflicts, verify each finding, fix and push the valid ones, reply to and resolve their threads, decline the rest with evidence, and implement or defer each suggestion, holding the pull request in draft while a change is built. Once it merges, take the suggestions still owed on it into a follow-up pull request without asking. Each push subscribes the session to fix the pull request, so later review work arrives as an event that runs this skill again in one subagent per pull request. Use when the user asks to fix, address, or answer review feedback on a pull request, or to resolve its merge conflicts.
+ ---
+ 
+ # Fix a pull request
+@@ -9,9 +9,12 @@ Bring one pull request's current head to where a review can sign it off.
+ Merge its base when the branch conflicts, and answer every outstanding
+ finding with a pushed fix or a declined reply. Implement or defer each
+ suggestion a review lists, and hold the pull request in draft while you
+-build a change no review has read. The fix runs once. Each push subscribes
+-the session to fix the pull request, so later work on it arrives as an
+-event, and the session runs this skill again for it, as
++build a change no review has read. Once the pull request merges, take the
++suggestions still owed on it into a follow-up pull request, as
++[Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
++describes. The fix runs once. Each push subscribes the session to fix the
++pull request, so later work on it arrives as an event, and the session runs
++this skill again for it, as
+ [Act on the session's events](#act-on-the-sessions-events) describes.
+ 
+ ## Choose the pull request
+@@ -27,6 +30,11 @@ gh pr view --json number,url,state,isDraft,headRefOid,baseRefName
+ When that finds no pull request, or finds one that is not open, ask the user
+ which pull request to fix rather than guessing.
+ 
++A merged pull request has no review work left. When the pull request you are
++given has merged, as a `MERGED` event says, follow up on its suggestions as
++[Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
++describes, and do nothing else to it.
++
+ Work in a checkout of the pull request's head branch that has no uncommitted
+ changes, such as a worktree of that branch. Never discard or overwrite
+ uncommitted work to switch branches.
+@@ -184,7 +192,10 @@ no review lists a suggestion. Decide every suggestion it lists.
+ - **Defer** a suggestion that is large, reaches beyond this change, needs a
+   decision you cannot make, or does not hold up when you verify it. Record
+   it in your report with a one-line reason, and post nothing about it on the
+-  pull request.
++  pull request. A deferred suggestion is weighed again once the pull
++  request merges, for the follow-up that
++  [Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
++  describes.
+ 
+ An instruction from the owner in the conversation overrides the default, in
+ either direction: "defer the suggestions" or "take the second one". A
+@@ -485,6 +496,59 @@ When the user asks the session to stop fixing a pull request, run
+ `project watch remove <owner>/<repo>#<number>` and stop its subagent. A
+ subscription also ends by itself when the pull request merges or closes.
+ 
++## Follow up on a merged pull request
++
++The owner can merge a signed-off head before every suggestion on it is
++built: while you are still deciding them, or after you deferred one as
++reaching beyond the change. Those suggestions are still owed. So when the
++pull request merges, take each one that is warranted into a follow-up pull
++request yourself, and do not ask the owner whether to open it. The merge
++was their decision to make, and the follow-up's review and merge stay
++theirs. A pull request closed without merging owes no follow-up, because its
++suggestions went with its change.
++
++1. **Gather the candidates.** List the suggestions on the merged head:
++
++   ```sh
++   project review suggestions <number> --repo <owner>/<repo>
++   ```
++
++   Add each suggestion you deferred on an earlier head that the list leaves
++   out. Drop one the owner told you not to take, and one you deferred
++   because it did not hold up.
++2. **Verify each against the base as it is now.** Run `git fetch origin`,
++   and verify each candidate against `origin/<baseRefName>` as you verify a
++   finding under [Verify and fix findings](#verify-and-fix-findings): quote
++   the lines it names there, and confirm that the change it describes is
++   still correct. The merge, or a later change to the base, can already
++   carry the change or have moved the code it names.
++3. **Take the warranted ones.** A suggestion is warranted when it holds up
++   on the base, is clearly right, needs no decision only the owner can make,
++   and needs no spec first, by the test `../implement/SKILL.md` gives under
++   "Start from a description". Leave out the rest, each with a one-line
++   reason for your report.
++4. **Build the follow-up.** When you take any, build them as one change, as
++   `../implement/SKILL.md` builds a change the user describes: from a new
++   branch off the fetched tip of the base, in a worktree of its own, through
++   the gate, and through its hand-over, which opens the pull request as a
++   draft, subscribes the session to fix it, and marks it ready. Its rules
++   under "Stack dependent work" place the branch when the merged change is
++   not on the default branch yet, as when a stack layer merged into the
++   layer below it, or when the follow-up changes files an open stack
++   changes. A suggestion you were building when the pull request merged
++   carries over: copy its commits onto the new branch with
++   `git cherry-pick` rather than build it again. In the body, name the
++   merged pull request and link the review each suggestion comes from.
++5. **Report.** Report the follow-up's URL and the suggestions it carries,
++   each suggestion you left out with its reason, and the validation results.
++   When you take none, open nothing, and report each with its reason.
++
++A merged pull request takes no hold and no `project review ready`, because
++GitHub can no longer merge it; the follow-up is the pull request you mark
++ready. The follow-up is then a pull request like any other: its findings and
++suggestions arrive as events of its own, and the session starts a subagent
++for it under its own name when the first one arrives.
++
+ ## Report the result
+ 
+ A pull request is clean only when:
+@@ -615,8 +679,12 @@ role are these:
+   `MERGED acme/app#75 with its stack into main` means its change reached
+   the default branch with the layers below it, and
+   `MERGED acme/app#75 into layer-74 at 2026-10-23T01:36:44Z, which is not in main yet`
+-  means it did not. The daemon removes the subscription itself. Act as the next section
+-  describes.
++  means it did not. The daemon removes the subscription itself. A
++  `MERGED` line's action tells the fixer to follow up on the suggestions
++  still owed. When the merged head lists any, it counts them, as
++  `run fix-pr on acme/app#74 in subagent fix-74 to take the 2 suggestions its merged head lists into a follow-up pull request, then finish it`.
++  Otherwise it says to have the subagent take any suggestion it deferred
++  into one. Act as the next section describes.
+ - **`MISSING`** reports that the pull request does not exist or that the
+   operator cannot see it, and that the daemon removed the subscription.
+   Tell the user.
+@@ -691,14 +759,22 @@ reopened thread as the recurrence it is instead of as new work.
+ - The subagent reports each run back: the head SHA, each layer's new head
+   when it carried a change up a stack, the merge commit if it made one, the
+   fix commits, the declined findings, the suggestions it implemented, each
+-  one it deferred with its reason, any hold it made and ended, and the
+-  validation results. A question for the user comes
+-  back to the session to ask, and the subagent goes on with the pull
+-  request's unrelated work meanwhile.
++  one it deferred with its reason, any hold it made and ended, any
++  follow-up pull request it opened, and the validation results. A question
++  for the user comes back to the session to ask, and the subagent goes on
++  with the pull request's unrelated work meanwhile.
+ - On `MERGED` or `CLOSED`, tell the user that the pull request merged or
+-  closed, and send its subagent no more work for it. Tell the subagent to
+-  finish, remove its worktrees, and close only when no layer it owns is
+-  still open. The user merges a stack as a unit, the whole of it or any
++  closed, and send its subagent no more work for it but the follow-up a
++  `MERGED` line names. When the line counts suggestions on the merged head,
++  have the subagent run this skill to take them into a follow-up pull
++  request, starting the subagent if the pull request has none. When the
++  line counts none, have the subagent take any suggestion it deferred into
++  one. Either way it follows up as
++  [Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
++  describes, without asking the owner first, and you tell the user the
++  follow-up's URL. Then tell the subagent to finish, remove its worktrees,
++  and close only when no layer it owns is still open. The user merges a
++  stack as a unit, the whole of it or any
+   number of layers from the bottom up, so when only the bottom layers
+   merge, the `fix-stack-<number>` subagent keeps its name and goes on fixing
+   the layers left open. It starts with the update the lowest of them needs
+@@ -725,7 +801,10 @@ conditions in [Report the result](#report-the-result), and report its state
+ with the head SHA, fix commits, declined findings, deferred suggestions, and
+ validation results. A held pull request, a draft, is not clean however clean
+ its review. Say so, and why: "#12 is held in draft while 2 changes are
+-implemented", naming the changes you hold it for.
++implemented", naming the changes you hold it for. A merged pull request has
++no clean state left to report. Report its follow-up instead: "#12 merged;
++#15 follows up on 2 of its suggestions and leaves out 1", with the reason
++for each one left out.
+ 
+ Report a stack's readiness as one unit, the same unit its subagent fixes,
+ because the user merges it as one from GitHub. Check every open layer
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 1ae0d6b5..cbc441a4 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -1694,7 +1694,8 @@ def close(self, pull: tuple[str, int], roles: dict, owners: dict[str, str], entr
+                 if detail is None:
+                     detail = self.closed_detail(ref, number, repo, entry)
+                 fixer = self.fixer(pull, repo, pr) if "fix" in names else ""
+-                self.tell(session, f"{detail} — {closing_actions(repo, number, names, fixer)}")
++                suggestions = self.merged_suggestions(repo, entry) if "fix" in names else None
++                self.tell(session, f"{detail} — {closing_actions(repo, number, names, fixer, suggestions)}")
+         for name in session_names(self.root):
+             remove(self.root, name, repo, number, None)
+         for state in self.states.values():
+@@ -1705,6 +1706,16 @@ def close(self, pull: tuple[str, int], roles: dict, owners: dict[str, str], entr
+             del owners[label]
+         self.forget_adopted(repo, number, adopted)
+ 
++    def merged_suggestions(self, repo: str, entry: dict) -> Optional[int]:
++        """How many suggestions `project review suggestions` lists on a merged pull request's last head, as
++        `REVIEW` counts them, or None when it closed without merging and its suggestions went with it."""
++        pr = pull_request(entry)
++        if pr.get("state") != "MERGED":
++            return None
++        visibility = (entry.get("repository") or {}).get("visibility")
++        return sum(standing_suggestions(entry.get("reviews") or [], pr.get("headRefOid") or "",
++                                        self.daemon.operator or "", visibility, self.counted_logins(repo)).values())
++
+     def closed_detail(self, ref: str, number: int, repo: str, entry: dict) -> str:
+         pr = pull_request(entry)
+         if pr.get("state") != "MERGED":
+@@ -2311,15 +2322,30 @@ def stack_layers(stack: Optional[dict]) -> list[dict]:
+             if isinstance(layer, dict) and isinstance(layer.get("number"), int)]
+ 
+ 
+-def closing_actions(repo: str, number: int, names: list[str], fixer: str) -> str:
+-    """What each role's owner does once the pull request merges or closes. A stack's fixer goes on fixing the
+-    layers still open, because the user can merge a stack's lower layers first."""
++def closing_actions(repo: str, number: int, names: list[str], fixer: str, suggestions: Optional[int] = None) -> str:
++    """What each role's owner does once the pull request merges or closes. A merged pull request's fixer takes
++    the suggestions still owed on it into a follow-up pull request: the `suggestions` its last head lists, which
++    a fixer never started for it learns of only here, or else any it deferred on an earlier head, which only the
++    fixer remembers. `suggestions` is None for a pull request closed without merging, which owes none. A stack's
++    fixer goes on fixing the layers still open, because the user can merge a stack's lower layers first."""
++    ref = f"{repo}#{number}"
++    stack = fixer.startswith("fix-stack-")
++
++    def finish(who: str) -> str:
++        return f"send {who} no more work for {ref}, and finish it once no layer of its stack is open" if stack \
++            else f"finish {who}"
++
+     actions = []
+-    if "fix" in names and fixer.startswith("fix-stack-"):
+-        actions.append(f"send subagent {fixer} no more work for {repo}#{number}, and finish it once no layer of "
+-                       "its stack is open")
++    if "fix" in names and suggestions:
++        listed = "the suggestion" if suggestions == 1 else f"the {suggestions} suggestions"
++        actions.append(f"run fix-pr on {ref} in subagent {fixer} to take {listed} its merged head lists into a "
++                       f"follow-up pull request, then {finish('it')}")
++    elif "fix" in names and suggestions == 0:
++        deferred = f"it deferred on {ref}" if stack else "it deferred"
++        actions.append(f"have subagent {fixer} take any suggestion {deferred} into a follow-up pull request, then "
++                       f"{finish('it')}")
+     elif "fix" in names:
+-        actions.append(f"finish subagent {fixer}")
++        actions.append(finish(f"subagent {fixer}"))
+     for name in names:
+         if name != "fix":
+             model = name.split(" ", 1)[1]
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index 92a3bd12..5fbf0b74 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -496,6 +496,10 @@ def rest_paths(self) -> str:
+         return "\n".join(" ".join(call) for call in self.github.calls)
+ 
+ 
++# What a merged pull request's fixer does when its last head lists no suggestion.
++FOLLOW_UP = "take any suggestion it deferred into a follow-up pull request, then finish it"
++
++
+ def fix_action(number: int, repo: str = "acme/app") -> str:
+     return f"run fix-pr on {repo}#{number} in subagent fix-{number}"
+ 
+@@ -1346,12 +1350,33 @@ def test_a_merged_pull_request_is_announced_once_and_its_lines_end(self) -> None
+         events = self.cycle()["fixer"]
+         after = self.cycle()["fixer"]
+ 
+-        self.assertEqual(["MERGED acme/app#1 into main at 2026-10-23T01:36:44Z (merge commit ea9a3640) — finish "
+-                          "subagent fix-1"], events)
++        self.assertEqual(["MERGED acme/app#1 into main at 2026-10-23T01:36:44Z (merge commit ea9a3640) — have "
++                          f"subagent fix-1 {FOLLOW_UP}"], events)
+         self.assertEqual(["!acme/app#1 review claude-opus-5-5 operator"], self.lines("fixer"))
+         self.assertEqual([], after)
+         self.assertEqual([], self.github.queried())
+ 
++    def test_a_merged_pull_request_sends_its_fixer_to_follow_up_on_the_suggestions_its_last_head_lists(self) -> None:
++        # The fixer never started, since the merge came first, so only the line tells the session to start it.
++        # The review of head A is history: head B's full review says what is still owed.
++        self.github.pull_request(1, head=SHA_B, state="MERGED", reviews=[
++            rest_review(81, who="operator", body=projector_body(SHA_A, count=3), at="2026-10-30T00:00:00Z"),
++            rest_review(82, who="operator", sha=SHA_B, body=projector_body(SHA_B, count=2),
++                        at="2026-10-30T01:00:00Z")])
++        self.fixer("acme/app#1 fix")
++
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(["MERGED acme/app#1 into main — run fix-pr on acme/app#1 in subagent fix-1 to take the 2 "
++                          "suggestions its merged head lists into a follow-up pull request, then finish it"], events)
++
++    def test_a_pull_request_closed_without_merging_owes_no_follow_up(self) -> None:
++        self.github.pull_request(2, state="CLOSED", reviews=[
++            rest_review(81, who="operator", body=projector_body(SHA_A, count=2))])
++        self.fixer("acme/app#2 fix")
++
++        self.assertEqual(["CLOSED acme/app#2 without merging — finish subagent fix-2"], self.cycle()["fixer"])
++
+     def test_a_closed_pull_request_is_announced_once_without_a_merge(self) -> None:
+         self.github.pull_request(2, state="CLOSED", threads=[thread("T2")])
+         self.fixer("acme/app#2 fix")
+@@ -1381,7 +1406,7 @@ def test_a_failed_query_announces_no_merge(self) -> None:
+         recovered = self.cycle()["fixer"]
+ 
+         self.assertEqual([], failed)
+-        self.assertEqual(["MERGED acme/app#1 into main — finish subagent fix-1"], recovered)
++        self.assertEqual([f"MERGED acme/app#1 into main — have subagent fix-1 {FOLLOW_UP}"], recovered)
+ 
+     def test_the_subscriptions_are_read_again_on_every_pass(self) -> None:
+         self.github.pull_request(1, threads=[thread("T1")])
+@@ -2289,7 +2314,7 @@ def test_a_merge_reaches_each_owner_and_ends_every_sessions_lines(self) -> None:
+         self.github.pull_request(1, state="MERGED")
+         events = self.cycle()
+ 
+-        self.assertEqual(["MERGED acme/app#1 into main — finish subagent fix-1"], events["fixer"])
++        self.assertEqual([f"MERGED acme/app#1 into main — have subagent fix-1 {FOLLOW_UP}"], events["fixer"])
+         self.assertEqual([f"MERGED acme/app#1 into main — have subagent review-1 run project review finish 1 --repo "
+                           f"acme/app --model {MODEL} --force, then finish it"], events["reviewer"])
+         self.assertEqual(([], [], []), (self.lines("lapsed"), self.lines("fixer"), self.lines("reviewer")))
+@@ -2445,13 +2470,27 @@ def test_a_merged_layer_leaves_the_stacks_fixer_to_its_open_layers(self) -> None
+         self.github.pull_request(6, ref="layer-6", base="main", draft=True)
+         events = self.cycle()["fixer"]
+ 
+-        self.assertEqual(["MERGED acme/app#5 into main — send subagent fix-stack-5 no more work for acme/app#5, and "
+-                          "finish it once no layer of its stack is open"], events)
++        self.assertEqual([f"MERGED acme/app#5 into main — {self.ACTION.format(5)}"], events)
++
++    def test_a_merged_layers_suggestions_go_to_the_stacks_fixer_which_keeps_its_open_layers(self) -> None:
++        self.github.stack(20, 5, 6)
++        self.layers(5, 6)
++        self.live("fixer", "acme/app#5 fix", "acme/app#6 fix")
++        self.cycle()
++
++        self.github.pull_request(5, ref="layer-5", state="MERGED", reviews=[
++            rest_review(81, who="operator", body=projector_body(SHA_A, count=1))])
++        self.github.pull_request(6, ref="layer-6", base="main", draft=True)
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(["MERGED acme/app#5 into main — run fix-pr on acme/app#5 in subagent fix-stack-5 to take the "
++                          "suggestion its merged head lists into a follow-up pull request, then send it no more work "
++                          "for acme/app#5, and finish it once no layer of its stack is open"], events)
+ 
+     # When the stack merges: GitHub merges its layers one second apart, from the bottom up.
+     MERGED_AT = ("2026-11-16T22:01:00Z", "2026-11-16T22:01:01Z", "2026-11-16T22:01:02Z")
+-    ACTION = ("send subagent fix-stack-5 no more work for acme/app#{}, and finish it once no layer of its stack is "
+-              "open")
++    ACTION = ("have subagent fix-stack-5 take any suggestion it deferred on acme/app#{0} into a follow-up pull "
++              "request, then send it no more work for acme/app#{0}, and finish it once no layer of its stack is open")
+ 
+     def merge(self, *numbers: int, base: str = "main", times: tuple[str, ...] = MERGED_AT) -> dict[int, str]:
+         """Merge the chained layers `numbers` at `times`, the first into `base` and each other into the one below
+@@ -2574,7 +2613,7 @@ def test_a_pull_request_merged_into_main_reads_no_stack_and_names_main(self) ->
+         self.github.pull_request(1, state="MERGED")
+         events = self.cycle()["fixer"]
+ 
+-        self.assertEqual(["MERGED acme/app#1 into main — finish subagent fix-1"], events)
++        self.assertEqual([f"MERGED acme/app#1 into main — have subagent fix-1 {FOLLOW_UP}"], events)
+         self.assertEqual(([], []), (self.github.stack_lookups(), self.head_lookups()))
+ 
+     def merge_the_bottom_and_refresh(self) -> list[str]:
