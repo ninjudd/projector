@@ -587,11 +587,15 @@ class MoveTests(ReviewCase):
         new = self.push_head("second head")
         self.github.pr["head"]["sha"] = new
 
-        code, _, err = self.later("move", cwd=Path(tempfile.mkdtemp()))
+        base = self.read_state()["base"]
+
+        code, out, err = self.later("move", cwd=Path(tempfile.mkdtemp()))
 
         self.assertEqual(0, code, err)
         state = self.read_state()
         self.assertEqual((new, 2), (state["sha"], state["heads"]))
+        self.assertEqual({"sha": old, "base": base}, state["moved_from"], "interdiff --since-move measures from it")
+        self.assertIn(f"moved from {old}\n", out)
         self.assertEqual(new, git(Path(state["worktree"]), "rev-parse", "HEAD"))
         body = self.github.comments[101]
         self.assertEqual([101], list(self.github.comments), "edited in place, not a second comment")
@@ -4105,6 +4109,116 @@ class InterdiffRuleTests(IncrementalCase):
 
         self.assertEqual(([], 0, 0, True), (result["files"], result["insertions"], result["deletions"],
                                             result["needs_gate"]))
+
+
+class MovedChangeTests(IncrementalCase):
+    """A full review in progress on `self.pushed()`'s head, which widens row r2, carried by `move` to a newer one."""
+
+    def move_to(self, sha: str) -> None:
+        self.push_feature(sha)
+        code, _, err = self.later("move")
+        self.assertEqual(0, code, err)
+
+    def since_move(self) -> dict:
+        code, out, err = self.later("interdiff", "--since-move", "--json")
+        result = json.loads(out)
+        self.assertEqual(0 if result["measured"] else 1, code, err)
+        return result
+
+    def test_measures_only_the_push_since_the_head_the_review_moved_from(self) -> None:
+        # Measured from the last full review instead, the change would still hold row r2's edit, the one the
+        # review in progress was already reading, so the carried review would read it again.
+        started = self.pushed()
+        self.move_to(self.build(started, {"a.css": css(r1=9, r2=9, r3=9)}))
+
+        result = self.since_move()
+
+        self.assertTrue(result["measured"], result["reason"])
+        self.assertEqual((started, "push", 1, 1, ["a.css"], False, False),
+                         (result["from"], result["kind"], result["insertions"], result["deletions"],
+                          result["files"], result["base_moved"], result["gate_passed"]))
+        self.assertIn("-.r3 { padding: 8px; }\n+.r3 { padding: 9px; }", result["patch"])
+        self.assertNotIn("-.r2 { padding: 8px; }", result["patch"])
+        self.assertEqual(2, self.interdiff()["insertions"], "without --since-move it measures from the full review")
+
+    def test_prints_the_head_it_moved_from_the_change_and_what_it_means_for_the_gate(self) -> None:
+        started = self.pushed()
+        self.move_to(self.build(started, {"a.css": css(r1=9, r2=9, r3=9)}))
+
+        code, out, err = self.later("interdiff", "--since-move")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([f"moved from: {started[:7]}", "kind: push", "change: +1 −1 lines in 1 file",
+                          "merge base: unchanged", f"gate: no passing run at {started[:7]}", ""],
+                         out.splitlines()[:6])
+        self.assertIn("+.r3 { padding: 9px; }", out)
+
+    def test_a_gate_that_passed_on_the_earlier_head_is_reported_with_a_merge_that_moved_the_base(self) -> None:
+        started = self.pushed()
+        self.assertEqual(0, self.gate())
+        self.move_trunk({"trunk.txt": "moved\n"})
+        self.move_to(self.build(self.merge(started, self.trunk), {"a.css": css(r1=9, r2=9, r3=9)}))
+
+        result = self.since_move()
+
+        self.assertEqual(("merge", 1, 1, ["a.css"], True, True),
+                         (result["kind"], result["insertions"], result["deletions"], result["files"],
+                          result["base_moved"], result["gate_passed"]))
+        self.assertNotIn("trunk.txt", result["patch"], "what the trunk brought in stays out")
+
+    def test_a_gate_that_failed_on_the_earlier_head_does_not_count_as_passed(self) -> None:
+        started = self.pushed()
+        self.assertNotEqual(0, self.gate("false"))
+        self.move_to(self.build(started, {"a.css": css(r1=9, r2=9, r3=9)}))
+
+        self.assertFalse(self.since_move()["gate_passed"])
+
+    def test_a_second_move_measures_from_the_head_just_before_it(self) -> None:
+        started = self.pushed()
+        second = self.build(started, {"a.css": css(r1=9, r2=9, r3=9)})
+        self.move_to(second)
+        self.move_to(self.build(second, {"a.css": css(r1=9, r2=9, r3=9, r4=9)}))
+
+        result = self.since_move()
+
+        self.assertEqual((second, 1, 1), (result["from"], result["insertions"], result["deletions"]))
+        self.assertIn("+.r4 { padding: 9px; }", result["patch"])
+        self.assertNotIn("+.r3", result["patch"])
+
+    def test_refuses_a_review_that_has_not_moved(self) -> None:
+        started = self.pushed()
+
+        code, out, _ = self.later("interdiff", "--since-move")
+
+        self.assertEqual(1, code)
+        self.assertEqual([f"refused: the review has not moved from {started[:7]}, the head `setup` set it up on"],
+                         out.splitlines())
+
+    def test_the_next_heads_setup_forgets_the_move_of_the_review_before_it(self) -> None:
+        # A move the published review carried belongs to that review; the next one starts from its own head.
+        started = self.pushed()
+        self.move_to(self.build(started, {"a.css": css(r1=9, r2=9, r3=9)}))
+        self.assertEqual(0, self.publish("clean")[0])
+        self.review_head(self.build(self.github.pr["head"]["sha"], {"a.css": css(r1=9, r2=9, r3=9, r4=9)}))
+
+        result = self.since_move()
+
+        self.assertFalse(result["measured"])
+        self.assertIn("has not moved", result["reason"])
+
+    def test_an_earlier_head_missing_from_the_checkout_is_refused_as_unmeasurable(self) -> None:
+        started = self.pushed()
+        self.move_to(self.build(started, {"a.css": css(r1=9, r2=9, r3=9)}))
+        path = self.folder() / "state.json"
+        state = json.loads(path.read_text())
+        state["moved_from"]["sha"] = "0" * 40
+        path.write_text(json.dumps(state))
+
+        result = self.since_move()
+
+        self.assertFalse(result["measured"])
+        self.assertEqual("the change cannot be measured: the checkout lacks the earlier head 0000000",
+                         result["reason"])
 
 
 class IncrementalPublishTests(IncrementalCase):

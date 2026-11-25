@@ -419,8 +419,9 @@ describes. Every other head continues here.
 7. Re-fetch the head before publishing. If it moved, the review in progress is
    of a stale head: run `project review move <number>`, which repeats steps 1
    to 3 for the replacement SHA and edits the start comment as described next
-   instead of posting another, and revalidate every prospective finding against
-   the new head.
+   instead of posting another. Then carry the review to the new head, as
+   [Carry a review across a moved head](#carry-a-review-across-a-moved-head)
+   describes.
 
 ### Run a head's code only when the head is trusted
 
@@ -508,7 +509,10 @@ edits the existing comment in place so it names the new short SHA, says the
 head moved from the old one, and says the review is being updated for the new
 changes, keeping its `📽️` signature line and setting its marker's `sha=` to the
 new full SHA. It re-reads the comment and refuses, exiting non-zero, unless the
-edit took; it also refuses when the head has not moved.
+edit took; it also refuses when the head has not moved. It records the head it
+moved from, so the review goes on from what it has read, as
+[Carry a review across a moved head](#carry-a-review-across-a-moved-head)
+describes.
 
 Once the review is published and verified, the start comment goes:
 `project review publish` deletes it as its last step. The review's signature
@@ -534,6 +538,69 @@ replaces it.
 
 Do not invoke a separate Codex, Cursor, Bugbot, or other reviewer unless the
 user explicitly requests that service. This skill performs the local review.
+
+### Carry a review across a moved head
+
+A push that lands while a full review is still running moves the review to
+the new head; it does not start the review over. What you read at the
+earlier head still holds wherever the push left the code alone, so read what
+the push changed, not the whole pull request again. After
+`project review move <number>`, run:
+
+```sh
+project review interdiff <number> --since-move [--json]
+```
+
+It measures the pull request's own change from the head the review moved from
+to the new head, as `interdiff` measures the change since a full review: a
+merge or a rebase brings in none of the base's changes, and a resolved
+conflict shows the conflict region removed and the resolution added. It
+prints the head it measured from, how the head moved, any conflicted paths,
+the counts, whether the merge base moved, whether the last
+`project review gate` run passed on the earlier head, and the patch. It exits
+0 once it has measured the change. It exits 1, naming why, when the review
+has not moved or the change cannot be measured.
+
+On exit 0, go on with the review at the new head:
+
+- **Read the change by the full method.** Apply step 5's passes to every hunk
+  of the patch at the new head, and follow each definition it changes to the
+  code that depends on it, even code you read before the move. Read a file
+  the patch cannot show, such as a binary file, at the new head as step 5
+  would.
+- **Keep the rest of what you read.** Your reading of every line the push
+  left unchanged still holds. Finish at the new head whatever you had not
+  read when the head moved.
+- **Recheck what you were about to post.** Revalidate every prospective
+  finding against the new head: drop one the push fixed, and file each one
+  that still holds at the line where it now is. Run again any focused test or
+  reproduction whose code the push changed.
+- **Gate the head you publish.** Run the gate on the new head, unless it
+  passed on the earlier head, the merge base did not move, and every hunk of
+  the patch is presentation, prose, or formatting, as
+  [Review a minimal push incrementally](#review-a-minimal-push-incrementally)
+  defines them. Then the earlier run speaks for the new head: say in the
+  disclosures that the gate passed at the earlier head and that the push
+  changed only presentation, prose, or formatting.
+- **Say what you read where.** The signature line's `over <n> heads` already
+  says the review spanned heads. Add a disclosure that names the head you
+  read the pull request at and the change you read at the new head, with the
+  size `--since-move` printed, such as "Reviewed at `a1b2c3d`; the push to
+  `9f3c2a1`, +1 −1 lines in 1 file, was read at the new head." `--covered`
+  counts, over the files the new head changes, each one you read at either
+  head.
+
+Start the review over at step 5 on the new head instead when
+`--since-move` exits 1, when the patch resolves a conflict and a resolved
+hunk is not trivial, as the incremental section's list of kinds judges one,
+or when the push reworks much of what you read or changes what the pull
+request sets out to do.
+
+When the head moves again, run `move` and `--since-move` again. Each move
+records the head just before it, so each patch is the change since the head
+you were last reading. This section is for a full review. An incremental
+review in progress starts again at `interdiff`, which measures from the full
+review either way.
 
 ## Review a minimal push incrementally
 
@@ -1176,8 +1243,10 @@ NEW HEAD acme/app#14 9f3c2a1 — run review-pr on acme/app#14 in subagent review
   subagent, as the next section describes, and have it review the head.
 - **`NEW HEAD`** reports a head this model has not reviewed. Send it to the
   pull request's subagent as a message, or start one when the pull request
-  has none. A `NEW HEAD` that arrives mid-review is the moved-head case that
-  [One start comment per review](#one-start-comment-per-review) covers.
+  has none. A `NEW HEAD` that arrives mid-review moves the review in
+  progress to the head instead of starting another, as
+  [Carry a review across a moved head](#carry-a-review-across-a-moved-head)
+  describes.
 - **A `NEW HEAD` that says its last review stalled** reports that the
   session's review of the pull request ran no `project review` command for
   `watch.review_stall` seconds, 30 minutes by default, and that the daemon
@@ -1263,7 +1332,11 @@ that history instead of rediscovering it.
   same subagent as a message; never start a second one for it, except after
   a stall. Each message is another run of this skill, for the head it
   names; a `RESPONDED` re-review of an unmoved head runs
-  `project review setup` with `--rereview`.
+  `project review setup` with `--rereview`. The exception is a `NEW HEAD`
+  that arrives while the subagent's review is still unpublished: the
+  subagent moves that review to the head and goes on from what it has read,
+  as [Carry a review across a moved head](#carry-a-review-across-a-moved-head)
+  describes.
 - The subagent reports each published review back: the SHA, the verdict,
   the review id, how many threads it opened, for an incremental review the
   head of the full review it builds on, whether the head is signed off, and a

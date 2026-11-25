@@ -2017,6 +2017,7 @@ project review census 66 --json
 project review settle 66 --thread PRRT_kwDOAbc123 --result fixed --body reply.md
 project review publish 66 --verdict clean --body body.md --covered 12/12 --loop example-review-claude-opus-5-5
 project review interdiff 66
+project review interdiff 66 --since-move
 project review publish 66 --incremental --body body.md
 project review release 66
 project review finish 66
@@ -2096,8 +2097,11 @@ support, they leave the effort out rather than guess it.
 
 `move` follows a head that moved mid-review: it creates a worktree for the new
 head, rechecks trust, edits the start comment in place to name it, re-reads the
-comment to confirm the edit, and updates the state file. It then removes the
-worktree of the head it moved from, as `setup` does. `census` lists every
+comment to confirm the edit, and updates the state file. The state records the
+head it moved from and that head's merge base as `moved_from`, so
+`interdiff --since-move` can measure what changed since, and `move` prints
+`moved from <sha>`. It then removes the worktree of the head it moved from, as
+`setup` does. `census` lists every
 thread whose first comment carries the `projector-finding` marker, reading
 every page, and prints how many are resolved and open and each open thread's
 `path:line`; with `--json` each thread also carries its comments. It counts
@@ -2559,6 +2563,29 @@ passes and 1 otherwise. With `--json` it prints one object:
 | `insertions`, `deletions` | The change's line counts, or `null` when it was not measured. |
 | `files` | The paths the change touches, empty when it was not measured. |
 | `patch` | The change, or `""` when it was not measured. |
+
+`interdiff --since-move` measures what a review that `move` carried to a new
+head has left to read: the pull request's own change from the head the review
+moved from to its head now. It measures that change as `interdiff` measures the
+change since a full review, from the merge base `move` recorded for the
+earlier head, and applies none of the incremental rules. It prints
+`moved from:` with the earlier head, the `kind`, any conflicted paths, the
+counts, `merge base: moved` or `merge base: unchanged`, `gate: passed` or
+`gate: no passing run` at the earlier head, any path the patch cannot show,
+and the patch. It exits 0 once it has measured the change, and 1, printing
+`refused:` with the reason, when the review has not moved since `setup` or the
+change cannot be measured. With `--json` it prints one object with `kind`,
+`unchanged_commits`, `conflicts`, `insertions`, `deletions`, `files`, and
+`patch` as above, and these fields:
+
+| Field | Value |
+| --- | --- |
+| `measured` | `true` when it measured the change. |
+| `reason` | Why it did not, in words, or `null`. |
+| `from` | The full SHA of the head the review moved from, or `null` when it has not moved. |
+| `base_moved` | `true` when the merge base moved since that head, or `null` when the review has not moved. |
+| `gate_passed` | `true` when the last `gate` run was on that head and exited 0, or `null` when the review has not moved. |
+| `unreadable` | The paths the patch cannot show: binary files, symlinks, and submodules. |
 
 `publish --incremental` publishes the incremental review. It applies the same
 rules to the live state, and `--body` names a file of at most 600 characters,
