@@ -47,7 +47,7 @@ import tempfile
 import time
 from collections import Counter
 from contextlib import AbstractContextManager, suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from importlib import resources
 from pathlib import Path
@@ -1404,7 +1404,8 @@ def move(paths: Paths, loop: Optional[str]) -> dict:
         raise
     paths.lock(old).unlink(missing_ok=True)
     kept, removed = remove_superseded(paths, state["checkout"], state["worktrees"], worktree)
-    state.update(sha=sha, base=merge_base, base_ref=pr["base"]["ref"], worktree=str(worktree),
+    moved_from = {"sha": old, "base": state["base"]}
+    state.update(sha=sha, base=merge_base, moved_from=moved_from, base_ref=pr["base"]["ref"], worktree=str(worktree),
                  trusted=trusted, untrusted_because=why or None,
                  cross_repository=((pr["head"].get("repo") or {}).get("full_name")) != state["repo"],
                  heads=state["heads"] + 1, worktrees=kept + [str(worktree)])
@@ -2153,27 +2154,76 @@ def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: boo
     return result
 
 
+def moved_change(state: dict) -> dict:
+    """The pull request's own change from the head this review moved from to the head it is on now.
+
+    A review that `move` carried to a new head has already read the head it left, so it reads this change
+    in place of the whole pull request again. `gate_passed` says whether the last gate run passed on the
+    head it left, and `base_moved` whether the merge base moved since that head, since together they
+    decide whether the gate's result there still speaks for the new head."""
+    result: dict = {"measured": False, "reason": None, "from": None, "base_moved": None, "gate_passed": None,
+                    "kind": None, "unchanged_commits": None, "conflicts": None, "insertions": None,
+                    "deletions": None, "files": [], "unreadable": [], "patch": ""}
+    moved = state.get("moved_from")
+    if not moved:
+        result["reason"] = f"the review has not moved from {state['sha'][:7]}, the head `setup` set it up on"
+        return result
+    gate_record = state.get("gate") or {}
+    result.update({"from": moved["sha"], "base_moved": moved["base"] != state["base"],
+                   "gate_passed": gate_record.get("sha") == moved["sha"] and gate_record.get("exit_code") == 0})
+    try:
+        measured = measure(Path(state["checkout"]), moved["sha"], moved["base"], state["sha"], state["base"])
+    except Unmeasurable as exc:
+        result["reason"] = f"the change cannot be measured: {exc}"
+        return result
+    result.update(asdict(measured), measured=True)
+    return result
+
+
 def interdiff_lines(result: dict, base_ref: str) -> list[str]:
     """`review interdiff`'s output without --json: what it found, the verdict on the rules, and the patch."""
     lines = []
     if result["from"]:
         lines.append(f"earlier full review: {result['from'][:7]}" + (f", {result['review']}" if result["review"] else ""))
-    if result["kind"]:
-        kind = KINDS[result["kind"]].format(base=base_ref)
-        if result["unchanged_commits"] is not None:
-            kind += ("; every reviewed commit carried over unchanged" if result["unchanged_commits"]
-                     else "; a reviewed commit changed")
-        lines.append(f"kind: {kind}")
-        if result["conflicts"]:
-            lines.append(f"conflicts: {', '.join(result['conflicts'])}")
-        lines.append(f"change: {change_size(result)}")
+    lines += measured_lines(result, base_ref)
     if result["incremental"]:
         lines.append("incremental: every rule passes")
     else:
         lines.append(f"refused: {result['reason']}" + (" (needs_gate)" if result["needs_gate"] else ""))
-    if result["patch"]:
-        lines += ["", result["patch"].rstrip("\n")]
-    return lines
+    return lines + patch_lines(result)
+
+
+def moved_lines(result: dict, base_ref: str) -> list[str]:
+    """`review interdiff --since-move`'s output without --json: the head the review moved from, the change
+    since it, what that means for the gate, and the patch."""
+    lines = [f"moved from: {result['from'][:7]}"] if result["from"] else []
+    lines += measured_lines(result, base_ref)
+    if result["from"]:
+        lines.append(f"merge base: {'moved' if result['base_moved'] else 'unchanged'}")
+        lines.append(f"gate: {'passed' if result['gate_passed'] else 'no passing run'} at {result['from'][:7]}")
+    if result["unreadable"]:
+        lines.append(f"unreadable: {', '.join(result['unreadable'])}")
+    if not result["measured"]:
+        lines.append(f"refused: {result['reason']}")
+    return lines + patch_lines(result)
+
+
+def measured_lines(result: dict, base_ref: str) -> list[str]:
+    """How the head moved, any conflicted paths, and the change's size, once the change was measured."""
+    if not result["kind"]:
+        return []
+    kind = KINDS[result["kind"]].format(base=base_ref)
+    if result["unchanged_commits"] is not None:
+        kind += ("; every reviewed commit carried over unchanged" if result["unchanged_commits"]
+                 else "; a reviewed commit changed")
+    lines = [f"kind: {kind}"]
+    if result["conflicts"]:
+        lines.append(f"conflicts: {', '.join(result['conflicts'])}")
+    return lines + [f"change: {change_size(result)}"]
+
+
+def patch_lines(result: dict) -> list[str]:
+    return ["", result["patch"].rstrip("\n")] if result["patch"] else []
 
 
 def change_size(result: dict) -> str:

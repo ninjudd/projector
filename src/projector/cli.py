@@ -966,6 +966,9 @@ def parser() -> argparse.ArgumentParser:
     review_publish.add_argument("--incremental", action="store_true",
                                 help="publish a clean incremental review of the change since this loop's last "
                                      "full review, when `project review interdiff` allows one")
+    review_interdiff.add_argument("--since-move", action="store_true",
+                                  help="measure the change since the head the review moved from, for a review "
+                                       "that `project review move` carried to a new head")
 
     add_inbox_parser(subcommands)
     subcommands.add_parser("console", help="list every live session in a terminal, and answer or discuss each one's "
@@ -2663,6 +2666,13 @@ def run_review(arguments: argparse.Namespace) -> int:
         if command == "interdiff":
             state = review.read_state(paths)
             review.touch_head(paths, state, loop)
+            if arguments.since_move:
+                result = review.moved_change(state)
+                if arguments.json_output:
+                    print(json.dumps(result, indent=2))
+                else:
+                    print("\n".join(review.moved_lines(result, state["base_ref"])))
+                return 0 if result["measured"] else 1
             enabled = incremental_enabled(Path(state["checkout"]))
             result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled)
             if arguments.json_output:
@@ -2730,6 +2740,8 @@ def run_review(arguments: argparse.Namespace) -> int:
         print(json.dumps(state, indent=2))
     else:
         print(f"reviewing {state['repo']}#{state['number']} at {state['sha']} (head {state['heads']})")
+        if command == "move":
+            print(f"moved from {state['moved_from']['sha']}")
         print(f"merge base {state['base']}")
         print(f"worktree {state['worktree']}")
         print("trusted" if state["trusted"] else f"untrusted: {state['untrusted_because']}; review it by reading")

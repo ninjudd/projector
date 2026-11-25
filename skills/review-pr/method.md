@@ -312,7 +312,9 @@ reads in this order:
    two numbers.
 4. Disclosures, when any: an advisory check skipped for a new dependency, a
    file too large for a pass to read in full, a test that could not run, a
-   head reviewed without running its code because the head is not trusted.
+   head reviewed without running its code because the head is not trusted, a
+   review carried across a moved head, naming the head it read the pull
+   request at and the change it read at the new head.
 5. On a clean head, what was checked, as `SKILL.md` requires.
 
 Never write the suggestions into the body yourself. Give each P3 to

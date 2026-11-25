@@ -136,7 +136,10 @@ under "Answer a `PEER MESSAGE` line". So does a `PEER REPLY` line, which
 Every pushed SHA, including a fix-only SHA, starts a review cycle that ends
 in a verdict published on that SHA, full or incremental. `review-pr` decides
 which: a head that changed little since the session's last full review can
-get an incremental review, and every other head gets a full one. Green CI
+get an incremental review, and every other head gets a full one. A SHA
+pushed while a review is still running starts no cycle of its own: the
+review moves to it and reads only what changed, as `../review-pr/SKILL.md`
+describes under "Carry a review across a moved head". Green CI
 and resolved threads are evidence about state, not substitutes for review.
 Keep acting on events until the user asks you to stop.
 
