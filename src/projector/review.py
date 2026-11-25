@@ -2259,7 +2259,7 @@ CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
 # as `{short_sha}` does, so it is filled; a placeholder inside longer code is quoted code.
 LONE_PLACEHOLDER = re.compile(r"`" + PLACEHOLDER.pattern + r"`")
 # A comment of Projector's own at the start of a line, as a review or finding carries it.
-OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental|suggestions)\b", re.M)
+OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental|suggestions|follow-ups)\b", re.M)
 SIGNATURE = re.compile(
     r"^" + re.escape(MARK) + r" \*\*Projector review\*\* of `[0-9a-f]{7}` · `[^`\n]+` · model `[^`\n]+` · "
     r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · (?:incremental from `[0-9a-f]{7}` · )?"
@@ -2268,7 +2268,7 @@ SIGNATURE = re.compile(
 # A review's marker line. Publish writes `projector=` and `clean`, but a marker an earlier release wrote
 # may name no version or spell a clean verdict `approved`, and it still reads as the verdict it gives. Every
 # earlier release reads a marker holding a field it does not know as no verdict, so a new fact about a review
-# goes on a line of its own, as the incremental line and the suggestions count do.
+# goes on a line of its own, as the incremental line and the suggestions and follow-ups counts do.
 MARKER = re.compile(
     r"^<!-- projector-review v=1 verdict=(clean|approved|changes-requested) (?:projector=(\S+) )?model=(\S+) "
     r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
@@ -2366,19 +2366,21 @@ def load_threads(path: Optional[Path]) -> list[dict]:
     return threads
 
 
-def is_suggestion(entry: object) -> bool:
-    """Whether an entry of the threads file is a P3, which `publish` lists in the body rather than posting."""
-    return isinstance(entry, dict) and entry.get("priority") == "P3"
+def listed_kind(entry: object) -> Optional[Listing]:
+    """The listing an entry of the threads file belongs to, a P3 to the suggestions and a follow-up to the
+    follow-ups, which `publish` lists in the body rather than posting, or None for a finding it posts."""
+    priority = entry.get("priority") if isinstance(entry, dict) else None
+    return next((listing for listing in LISTINGS if listing.priority == priority), None)
 
 
 def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]]) -> None:
-    """Refuse a P1 or P2 finding GitHub could not anchor or a reader could not act on. `suggestion_entries`
-    checks the P3 entries."""
+    """Refuse a P1 or P2 finding GitHub could not anchor or a reader could not act on. `listing_entries`
+    checks the P3 and follow-up entries."""
     for i, t in enumerate(threads, 1):
         where = f"finding {i}"
         if not isinstance(t, dict):
             raise ReviewError(f"{where} is not an object with path, line, priority, and body")
-        if is_suggestion(t):
+        if listed_kind(t):
             continue
         path, line, priority, body = t.get("path"), t.get("line"), t.get("priority"), t.get("body") or ""
         if not path or not isinstance(line, int) or isinstance(line, bool) or line < 1:
@@ -2393,7 +2395,7 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
             raise ReviewError(f"{where}: {path}:{line} is outside the pull request's diff hunks ({listed}); "
                               "anchor it to a changed line")
         if priority not in ("P1", "P2"):
-            raise ReviewError(f"{where}: priority must be P1, P2, or P3")
+            raise ReviewError(f"{where}: priority must be P1, P2, P3, or follow-up")
         if OWN_MARKER.search(body):
             raise ReviewError(f"{where}: leave the finding marker out of the body; publish writes it with "
                               "the head's SHA")
@@ -2404,94 +2406,121 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
             raise ReviewError(f"{where}: the body must carry a `**Fix:**` line")
 
 
-# Suggestions
+# Suggestions and follow-ups
 
-# The label of a review body's suggestions section, in every form a reviewer has written one: a heading of
-# level 1 to 4, a line in bold, or a plain `Suggestions:` line, in any case, with an aside such as `(P3)`.
-SUGGESTIONS_NAME = r"suggestions(?:\s*\([^)\n]*\))?"
-SUGGESTIONS_LABEL = re.compile(rf"^(?:#{{1,4}}\s*{SUGGESTIONS_NAME}:?|\*\*{SUGGESTIONS_NAME}:?\*\*:?|"
-                               rf"{SUGGESTIONS_NAME}:)$", re.I)
-# A line that ends the section: another heading, a line in bold, or a `Label:` line such as `What was checked:`.
+# A line that ends a listed section: another heading, a line in bold, or a `Label:` line such as `What was checked:`.
 SECTION_END = re.compile(r"^(?:#{1,6}(?:\s|$)|\*\*[^*\n].*\*\*:?$|[A-Z][^:\n]*:$)")
 # A list item's indent and text.
 LIST_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$")
 FENCE = re.compile(r"^(```|~~~)")
-# The file and line a suggestion opens with: in code font, as `publish` writes it, or bare as path:line.
+# The file and line a listed item opens with: in code font, as `publish` writes it, or bare as path:line.
 CODE_PLACE = re.compile(r"`([^`\s:]+)(?::(\d+)(?:[-–]\d+)?)?`(\s*:)?")
 BARE_PLACE = re.compile(r"([^`\s:]+):(\d+)(?:[-–]\d+)?(?=[\s:,;.]|$)")
-# What joins that place to the suggestion's text.
+# What joins that place to the item's text.
 SEPARATOR = re.compile(r"^\s*(?:[:,;.—–]|--?(?=\s))?\s*")
-SUGGESTION_PATH = re.compile(r"[^\s`:]+")
-# The line `publish` writes directly before a suggestions section's label, counting its items. It is a line of
-# its own rather than a field of the review's marker, which every earlier release would then read as no verdict.
-SUGGESTIONS_COUNT = re.compile(r"^<!-- projector-suggestions v=1 count=(\d+) -->$", re.M)
+LISTED_PATH = re.compile(r"[^\s`:]+")
 
 
-def suggestion_entries(threads: list) -> list[dict]:
-    """The threads file's P3 entries, as the suggestions `publish` lists in the review body: each its `path`,
-    its `line` or None, and its `body` joined onto one line as its `text`. Refuses an entry the list could not
-    show as `suggestions_section` writes it."""
+def section_label(name: str) -> re.Pattern:
+    """The label that opens a listed section named `name`, in every form a reviewer has written one: a heading
+    of level 1 to 4, a line in bold, or a plain `Name:` line, in any case, with an aside such as `(P3)`."""
+    named = rf"{name}(?:\s*\([^)\n]*\))?"
+    return re.compile(rf"^(?:#{{1,4}}\s*{named}:?|\*\*{named}:?\*\*:?|{named}:)$", re.I)
+
+
+@dataclass(frozen=True)
+class Listing:
+    """A kind of item a review lists in its body rather than posting as a thread. `priority` is the threads
+    file's priority that gives one, and `heading` the label of the section `publish` writes. `label` opens
+    that section in every form a reviewer has written it, and `count` matches the line `publish` writes
+    directly before the label, counting its items. The count is a line of its own rather than a field of
+    the review's marker, which every earlier release would then read as no verdict."""
+    priority: str
+    heading: str
+    label: re.Pattern
+    count: re.Pattern
+
+    @property
+    def marker(self) -> str:
+        return f"projector-{self.heading.lower()}"
+
+
+# A change the code is correct without, which `fix-pr` implements or defers on the pull request.
+SUGGESTIONS = Listing("P3", "Suggestions", section_label("suggestions"),
+                      re.compile(r"^<!-- projector-suggestions v=1 count=(\d+) -->$", re.M))
+# A defect or a change outside the pull request's scope, which `fix-pr` takes on once the pull request merges.
+FOLLOW_UPS = Listing("follow-up", "Follow-ups", section_label("follow[- ]?ups"),
+                     re.compile(r"^<!-- projector-follow-ups v=1 count=(\d+) -->$", re.M))
+LISTINGS = (SUGGESTIONS, FOLLOW_UPS)
+
+
+def listing_entries(threads: list, listing: Listing) -> list[dict]:
+    """The threads file's entries of `listing`'s priority, as `publish` lists them in the review body: each its
+    `path`, its `line` or None, and its `body` joined onto one line as its `text`. Refuses an entry the list
+    could not show as `section` writes it."""
     entries = []
+    kind = listing.priority
     for i, t in enumerate(threads, 1):
-        if not is_suggestion(t):
+        if listed_kind(t) is not listing:
             continue
         where, path, line, body = f"finding {i}", t.get("path"), t.get("line"), t.get("body")
         text = " ".join(part.strip() for part in body.splitlines() if part.strip()) if isinstance(body, str) else ""
-        if not isinstance(path, str) or not SUGGESTION_PATH.fullmatch(path):
-            raise ReviewError(f"{where} is a P3 and needs the path of the file it suggests changing, with no space, "
+        if not isinstance(path, str) or not LISTED_PATH.fullmatch(path):
+            raise ReviewError(f"{where} is a {kind} and needs the path of the file it names, with no space, "
                               f"colon, or backtick (got {path!r})")
         if line is not None and (not isinstance(line, int) or isinstance(line, bool) or line < 1):
-            raise ReviewError(f"{where}: a P3's line is a line number, or left out (got {line!r})")
+            raise ReviewError(f"{where}: a {kind}'s line is a line number, or left out (got {line!r})")
         if not text:
-            raise ReviewError(f"{where}: a P3 needs a body that says the change")
+            raise ReviewError(f"{where}: a {kind} needs a body that says the change")
         if re.search(r"<!--\s*projector-", text):
-            raise ReviewError(f"{where}: leave Projector's markers out of a P3's body")
+            raise ReviewError(f"{where}: leave Projector's markers out of a {kind}'s body")
         entries.append({"path": path, "line": line, "text": text})
     return entries
 
 
 def place(item: dict) -> str:
-    """The file and line a suggestion names, as `path:line`, or `path` when it names no line."""
+    """The file and line a listed item names, as `path:line`, or `path` when it names no line."""
     return item["path"] + ("" if item["line"] is None else f":{item['line']}")
 
 
-def suggestions_section(entries: list[dict]) -> str:
-    """The suggestions section `publish` ends a review body with, in the one form `method.md` § 7 gives: a
-    `### Suggestions` heading and an item per suggestion, opening with its `path:line` in code font."""
-    return "### Suggestions\n\n" + "\n".join(f"- `{place(entry)}`: {entry['text']}" for entry in entries)
+def section(entries: list[dict], listing: Listing) -> str:
+    """The section `publish` lists `entries` in, in the one form `method.md` § 7 gives: a heading and an item
+    per entry, opening with its `path:line` in code font."""
+    return f"### {listing.heading}\n\n" + "\n".join(f"- `{place(entry)}`: {entry['text']}" for entry in entries)
 
 
-def suggestions_label(lines: list[str]) -> Optional[int]:
-    """The index of the first line outside fenced code that `SUGGESTIONS_LABEL` matches, or None."""
+def find_label(lines: list[str], listing: Listing) -> Optional[int]:
+    """The index of the first line outside fenced code that opens `listing`'s section, or None."""
     fenced = False
     for i, line in enumerate(lines):
         if FENCE.match(line.strip()):
             fenced = not fenced
-        elif not fenced and SUGGESTIONS_LABEL.match(line.strip()):
+        elif not fenced and listing.label.match(line.strip()):
             return i
     return None
 
 
-def with_suggestions_count(body: str) -> str:
-    """`body` with the line that counts its suggestions directly before their label, or as it is when it lists
-    none."""
-    items = parse_suggestions(body)
-    if not items:
-        return body
+def with_counts(body: str) -> str:
+    """`body` with the line that counts each listed section's items directly before its label, leaving out a
+    section that lists none."""
+    for listing in LISTINGS:
+        items = parse_listing(body, listing)
+        if items:
+            lines = body.splitlines()
+            lines.insert(find_label(lines, listing), f"<!-- {listing.marker} v=1 count={len(items)} -->")
+            body = "\n".join(lines)
+    return body
+
+
+def parse_listing(body: str, listing: Listing) -> Optional[list[dict]]:
+    """The items of a review body's section for `listing`, each its `path` and `line`, None where the item
+    names none, and its `text`, or None when the body has no such section.
+
+    The section opens at the first line outside fenced code that `listing.label` matches, and ends at a line
+    `SECTION_END` matches or at a paragraph after a blank line. Each list item at the first item's indent is
+    one item, and the lines under it, a deeper list included, join its text."""
     lines = body.splitlines()
-    lines.insert(suggestions_label(lines), f"<!-- projector-suggestions v=1 count={len(items)} -->")
-    return "\n".join(lines)
-
-
-def parse_suggestions(body: str) -> Optional[list[dict]]:
-    """The items of a review body's suggestions section, each its `path` and `line`, None where the item names
-    none, and its `text`, or None when the body has no such section.
-
-    The section opens at the first line outside fenced code that `SUGGESTIONS_LABEL` matches, and ends at a
-    line `SECTION_END` matches or at a paragraph after a blank line. Each list item at the first item's indent
-    is a suggestion, and the lines under it, a deeper list included, join its text."""
-    lines = body.splitlines()
-    start = suggestions_label(lines)
+    start = find_label(lines, listing)
     if start is None:
         return None
     items: list[list[str]] = []
@@ -2516,11 +2545,11 @@ def parse_suggestions(body: str) -> Optional[list[dict]]:
         elif items:
             items[-1].append(stripped)
             blank = False
-    return [suggestion_item(" ".join(parts)) for parts in items]
+    return [listed_item(" ".join(parts)) for parts in items]
 
 
-def suggestion_item(text: str) -> dict:
-    """A suggestion's `path`, `line`, and `text`, from an item that opens with the place it names, or with
+def listed_item(text: str) -> dict:
+    """A listed item's `path`, `line`, and `text`, from an item that opens with the place it names, or with
     neither when it opens with none. A code span opens with a place when it holds a line number, a `/` or a
     `.`, or a colon follows it."""
     code, bare = CODE_PLACE.match(text), BARE_PLACE.match(text)
@@ -2533,12 +2562,12 @@ def suggestion_item(text: str) -> dict:
     return {"path": path, "line": int(line) if line else None, "text": SEPARATOR.sub("", rest)}
 
 
-def listed_suggestions(review: dict) -> int:
-    """How many suggestions a review lists: the count `publish` wrote before their label, or, in a review an
-    earlier release published, the items of its body's section."""
+def listed_count(review: dict, listing: Listing) -> int:
+    """How many items of `listing` a review lists: the count `publish` wrote before their label, or, in a
+    review an earlier release published, the items of its body's section."""
     body = review.get("body") or ""
-    found = SUGGESTIONS_COUNT.search(body)
-    return int(found.group(1)) if found else len(parse_suggestions(body) or [])
+    found = listing.count.search(body)
+    return int(found.group(1)) if found else len(parse_listing(body, listing) or [])
 
 
 def with_full_review(review: dict, reviews: list[dict]) -> list[dict]:
@@ -2716,7 +2745,7 @@ def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
         if known is None or order(entry) >= order(known[0]):
             newest[key] = (entry, found)
     for entry, found in newest.values():
-        entry["suggestions"] = sum(map(listed_suggestions, with_full_review(found, reviews)))
+        entry["suggestions"] = sum(listed_count(r, SUGGESTIONS) for r in with_full_review(found, reviews))
     return sorted((entry for entry, _ in newest.values()), key=order, reverse=True)
 
 
@@ -2751,7 +2780,7 @@ def status(repo: str, number: int, reviewer: str, also: tuple[str, ...] = ()) ->
     newest = verdict["newest"]
     return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
             "verdict": newest["verdict"] if newest else "unreviewed", "newest": newest, "models": verdict["models"],
-            "suggestions": sum(map(listed_suggestions, suggesting_reviews(head, found))),
+            "suggestions": sum(listed_count(r, SUGGESTIONS) for r in suggesting_reviews(head, found)),
             "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads],
             "signed_off": verdict["signed_off"], "labels": sorted(label_names(pr) & LABELS.keys()),
             "check": commit_status(repo, head)}
@@ -2795,13 +2824,41 @@ def suggestions(repo: str, number: int, reviewer: str, also: tuple[str, ...] = (
     `text`."""
     pr = read_pull_request(repo, number)
     reviews = suggesting_reviews(pr["head"]["sha"], verdicts(repo, number, reviewer, repo_visibility(pr), also))
+    return listed_items(reviews, SUGGESTIONS)
+
+
+def follow_ups(repo: str, number: int, reviewer: str, also: tuple[str, ...] = ()) -> list[dict]:
+    """`review follow-ups`: the follow-ups `fix-pr` takes on once the pull request merges, as `follow_up_items`
+    finds them among the reviews `status` counts."""
+    pr = read_pull_request(repo, number)
+    return follow_up_items(verdicts(repo, number, reviewer, repo_visibility(pr), also))
+
+
+def follow_up_items(reviews: list[dict]) -> list[dict]:
+    """The follow-ups every Projector review among `reviews` lists, whichever head it read, oldest first, each
+    once however many reviews list it. A follow-up names code outside the change, so a later push leaves it
+    standing, and a review of that later head need not list it again."""
+    ordered = sorted((r for r in reviews if verdict_marker(r.get("body") or "")), key=lambda r: r.get("at") or "")
+    seen: set[tuple] = set()
+    items = []
+    for item in listed_items(ordered, FOLLOW_UPS):
+        key = (item["path"], item["line"], item["text"])
+        if key not in seen:
+            seen.add(key)
+            items.append(item)
+    return items
+
+
+def listed_items(reviews: list[dict], listing: Listing) -> list[dict]:
+    """The items of `listing` each of `reviews` lists, in order. Each has its review's `url` and the head `sha`
+    that review's marker names, and the item's `path`, `line`, and `text`."""
     return [{"url": r.get("url"), "sha": verdict_marker(r.get("body") or "").sha, **item}
-            for r in reviews for item in parse_suggestions(r.get("body") or "") or []]
+            for r in reviews for item in parse_listing(r.get("body") or "", listing) or []]
 
 
-def suggestions_text(items: list[dict]) -> str:
-    """`review suggestions` without --json: a block for each suggestion, naming the place it names and the
-    head of the review it comes from, with its text below."""
+def listed_text(items: list[dict]) -> str:
+    """`review suggestions` and `review follow-ups` without --json: a block for each item, naming the place it
+    names and the head of the review it comes from, with its text below."""
     return "\n\n".join(f"{place(item) if item['path'] else '(no file named)'}, in the review of {item['sha'][:7]}: "
                        f"{item['url']}\n{item['text']}" for item in items)
 
@@ -2859,23 +2916,27 @@ def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime
 
 
 def compose(state: dict, verdict: str, body: str, covered: str, findings: int, census_line: str,
-            at: datetime, entries: list[dict]) -> str:
-    """The review's text: the signature line and marker, then the body with its placeholders filled, then
-    the section listing the suggestions `entries` gives. A body that lists suggestions of its own, as one an
-    older skill wrote, publishes as written, but never beside `entries`. Either way the line that counts the
-    suggestions comes directly before their label."""
+            at: datetime, entries: dict[Listing, list[dict]]) -> str:
+    """The review's text: the signature line and marker, then the body with its placeholders filled, then a
+    section for each listing `entries` gives items of, the suggestions before the follow-ups. A body that
+    lists suggestions of its own, as one an older skill wrote, publishes as written, but never beside entries
+    of the same listing. Either way the line that counts a section's items comes directly before its label."""
     check_body(body)
     if "{census}" not in prose(body):
         raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
                           "outside code")
-    if entries and parse_suggestions(body) is not None:
-        raise ReviewError("the body has a suggestions section of its own, and the threads file gives P3 entries; "
-                          "take the section out of the body, and publish lists the P3 entries in its place")
+    for listing in LISTINGS:
+        if entries.get(listing) and parse_listing(body, listing) is not None:
+            name = listing.heading.lower()
+            raise ReviewError(f"the body has a {name} section of its own, and the threads file gives "
+                              f"{listing.priority} entries; take the section out of the body, and publish lists "
+                              f"the {listing.priority} entries in its place")
     signature, marker, values = heading(state, verdict, findings, covered, at)
     filled = fill(body, dict(values, census=census_line)).strip()
-    if entries:
-        filled += f"\n\n{suggestions_section(entries)}"
-    return f"{signature}\n\n{marker}\n\n{with_suggestions_count(filled)}\n"
+    for listing in LISTINGS:
+        if entries.get(listing):
+            filled += f"\n\n{section(entries[listing], listing)}"
+    return f"{signature}\n\n{marker}\n\n{with_counts(filled)}\n"
 
 
 def listed(items: list[str]) -> str:
@@ -2970,7 +3031,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
             raise ReviewError(f"the body file {body_path} does not exist; compose the review there first")
         body = body_path.read_text(encoding="utf-8")
         threads = load_threads(threads_path)
-        entries = suggestion_entries(threads)
+        entries = {listing: listing_entries(threads, listing) for listing in LISTINGS}
         pr = pull_request(repo, number)
         if pr["head"]["sha"] != sha:
             raise ReviewError(f"the head moved to {pr['head']['sha'][:7]} since {sha[:7]} was set up; "
@@ -2988,8 +3049,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
             text = compose_incremental(state, body, rules, not mine, now())
             event = "COMMENT"
         else:
-            check_threads(threads, diff_lines(repo, number) if any(not is_suggestion(t) for t in threads) else {})
-            threads = [t for t in threads if not is_suggestion(t)]
+            check_threads(threads, diff_lines(repo, number) if any(not listed_kind(t) for t in threads) else {})
+            threads = [t for t in threads if not listed_kind(t)]
             tally = census(repo, number)
             open_now = tally["open"] + len(threads)
             if verdict == "clean" and open_now:
