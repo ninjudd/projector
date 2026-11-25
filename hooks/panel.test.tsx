@@ -2475,11 +2475,11 @@ test('an option puts the question and its answer in the prompt, and sending it a
 
   // Choosing an option answers nothing yet: it fills the prompt, and the drawer stays open.
   await ui.press({ key: 'answer:1.b' })
-  expect(session.filled).toEqual(['insert:[1] "Decline the finding?"\n\nAdd a budget\n'])
+  expect(session.filled).toEqual(['insert:[1] "Decline the finding?"\n\n2: Add a budget\n'])
   expect(session.store.store.get('1')?.answer).toBeUndefined()
   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
 
-  const text = 'Thanks.\n[1] "Decline the finding?"\n\nAdd a budget\n'
+  const text = 'Thanks.\n[1] "Decline the finding?"\n\n2: Add a budget\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.submitted).toEqual([
@@ -3100,8 +3100,8 @@ test('a question another shares the text of takes only the answer its own drawer
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'answer:2.a' })
-  expect(session.filled).toEqual(['insert:[2] "Decline the finding?"\n\nDecline it\n'])
-  await $.prompt.submit({ text: '[2] "Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
+  expect(session.filled).toEqual(['insert:[2] "Decline the finding?"\n\n1: Decline it\n'])
+  await $.prompt.submit({ text: '[2] "Decline the finding?"\n\n1: Decline it\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
   expect(session.store.store.get('1')?.answer).toBeUndefined()
@@ -3122,7 +3122,7 @@ test('a proposal you cleared from the prompt does not take the answer you sent f
   await ui.press({ key: 'close:2' })
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'answer:1.b' })
-  await $.prompt.submit({ text: '[1] "Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
+  await $.prompt.submit({ text: '[1] "Decline the finding?"\n\n2: Add a budget\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
   expect(session.store.store.get('2')?.answer).toBeUndefined()
@@ -3209,7 +3209,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
 
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
-  // You choose an option, then add to it on its own line before you send.
+  // You choose an option, then delete its number and add to its words before you send.
   await ui.press({ key: 'answer:1.b' })
   const text = '[1] "Decline the finding?"\n\nAdd a budget, but what does the cap cover?\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
@@ -3237,7 +3237,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   await ui.unmount()
 })
 
-test('notes you add below a chosen option answer the question, and the prompt carries them to the subagent that asked', async ($, on) => {
+test('a chosen option answers its question with its words edited and notes below, and the prompt carries them to the subagent that asked', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held({ agentId: 'agent-1' })], { agents: [running('running')] })
@@ -3246,7 +3246,7 @@ test('notes you add below a chosen option answer the question, and the prompt ca
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'answer:1.b' })
-  const text = '[1] "Decline the finding?"\n\nAdd a budget\n\nBut what does the cap cover?\n'
+  const text = '[1] "Decline the finding?"\n\n2: Add a budget of two per host\n\nBut what does the cap cover?\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.submitted).toEqual([
@@ -3293,7 +3293,7 @@ test('a prompt about one of two questions that share a subject leaves the other 
   await ui.press({ key: 'answer:2.b' })
   await ui.press({ key: 'close:2' })
   await ui.press({ key: 'item:1' })
-  const answer = '[2] "Merge it?"\n\nNo\n'
+  const answer = '[2] "Merge it?"\n\n2: No\n'
   await $.prompt.submit({ text: answer, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.submitted.at(-1)).toEqual({
@@ -3324,7 +3324,7 @@ test('a quote’s reference picks one of two questions that share a subject, ove
   // You pick No in the second question's drawer, then write to the first question by its reference instead.
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'answer:2.b' })
-  expect(session.filled).toEqual(['insert:[2] "Merge it?"\n\nNo\n'])
+  expect(session.filled).toEqual(['insert:[2] "Merge it?"\n\n2: No\n'])
   const reply = '[1] "Merge it?"\n\nwhy now?'
   await $.prompt.submit({ text: reply, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
@@ -3333,8 +3333,9 @@ test('a quote’s reference picks one of two questions that share a subject, ove
     context: ['The subagent Fix #7 (agent-a) asked [1] "Merge it?"; send it the reply this prompt gives, which leaves the question open.'],
   })
 
-  // The second question's pick still stands, so its quote with the reference edited out answers it.
-  await $.prompt.submit({ text: '"Merge it?"\n\nNo\n', wait: false, origin: { kind: 'composer' } })
+  // The second question's pick still stands, so its quote with the reference edited out answers it, with
+  // the option's words edited too.
+  await $.prompt.submit({ text: '"Merge it?"\n\n2: No, not yet\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([
     'inbox answer 2.b --session s1 --json',
@@ -4243,8 +4244,8 @@ test('the revise tool redraws the question with its new text at once, keeping it
 
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'answer:1.c' })
-  expect(session.filled.at(-1)).toBe('insert:[1] "Decline the retry finding?"\n\nAsk the reviewer\n')
-  await $.prompt.submit({ text: '[1] "Decline the retry finding?"\n\nAsk the reviewer\n', wait: false, origin: { kind: 'composer' } })
+  expect(session.filled.at(-1)).toBe('insert:[1] "Decline the retry finding?"\n\n3: Ask the reviewer\n')
+  await $.prompt.submit({ text: '[1] "Decline the retry finding?"\n\n3: Ask the reviewer\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'Ask the reviewer' }))
   expect(session.store.store.get('1')?.ref).toBe('1')
@@ -4876,8 +4877,8 @@ test('an open question’s options are Buttons on the digits 1 to 5, only while 
   expect((await ui.find({ type: 'Button', key: 'unclear:1' }))?.props.hotkey).toBe('6')
   // Pressing the fifth, by its digit or Enter, fills the prompt as clicking its number did, and sending it answers.
   await ui.press({ key: 'answer:1.e' })
-  expect(session.filled).toEqual(['insert:[1] "Decline the finding?"\n\nSplit the change\n'])
-  await $.prompt.submit({ text: '[1] "Decline the finding?"\n\nSplit the change\n', wait: false, origin: { kind: 'composer' } })
+  expect(session.filled).toEqual(['insert:[1] "Decline the finding?"\n\n5: Split the change\n'])
+  await $.prompt.submit({ text: '[1] "Decline the finding?"\n\n5: Split the change\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'e', text: 'Split the change' }))
 
