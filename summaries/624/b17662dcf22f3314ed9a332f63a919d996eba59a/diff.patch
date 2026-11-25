@@ -1,0 +1,286 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 37a99209..129bb9a3 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -751,26 +751,37 @@ the agent can tell apart two questions that ask the same thing:
+ Add a budget of two retries per host, and keep the total cap
+ ```
+ 
+-The drawer stays open until you send. Sending the prompt as the option
+-filled it in answers the question and closes its drawer, so the panel shows
+-its list again. The panel finds each quoted question whose quote ends its
+-line, and reads the text after the quote, up to the next quoted item or the
+-end of the prompt. When that text is one of the question's options, whatever
+-blank lines and spaces surround it, that option answers the question.
++The drawer stays open until you send. Sending the prompt with the option
++still under the quote answers the question and closes its drawer, so the
++panel shows its list again. You can add notes on the lines below the option,
++and your prompt carries them to the agent with the answer. The panel finds
++each quoted question whose quote ends its line, and reads the text after the
++quote, up to the next quoted item or the end of the prompt. When that text
++starts with one of the question's options, after any blank lines and spaces,
++and the option ends its line, that option answers the question, and the
++lines after it are your notes:
++
++```text
++[3] "Decline the finding about the retry budget?"
++
++Add a budget of two retries per host, and keep the total cap
++
++Log each retry, so we can tune the budget later.
++```
+ 
+ Anything else you send under a quoted question is a reply, not an answer:
+-your own words, an option with more text after it, or a question back. The
+-panel records nothing and closes the question's drawer, and the question
+-stays in the list. Your prompt carries the reply to the agent, which answers
+-what you asked and then settles the question. It withdraws the question if
+-your reply settles it, revises it if your reply shows it was unclear or the
+-choice has changed, or leaves it open while it still needs you. A revised
+-question keeps its place in the list, and the panel shows its new text as
+-soon as the agent revises it. An option that a drawer put in your prompt
+-before the revision answers no question, and neither does an option you
+-type under a quote that **Discuss** put there before it: either one replies
+-to the revised question. To answer, choose again in the revised question's
+-drawer.
++your own words, an option with more text after it on its own line, notes
++written above the option, or a question back. The panel records nothing and
++closes the question's drawer, and the question stays in the list. Your
++prompt carries the reply to the agent, which answers what you asked and then
++settles the question. It withdraws the question if your reply settles it,
++revises it if your reply shows it was unclear or the choice has changed, or
++leaves it open while it still needs you. A revised question keeps its place
++in the list, and the panel shows its new text as soon as the agent revises
++it. An option that a drawer put in your prompt before the revision answers
++no question, and neither does an option you type under a quote that
++**Discuss** put there before it: either one replies to the revised question.
++To answer, choose again in the revised question's drawer.
+ 
+ Each quote speaks to one question. A quote's number in brackets picks the
+ question it speaks to, whatever another drawer put in your prompt. When you
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index fc499e9b..e940cc70 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -109,6 +109,9 @@ test('the ask tool tells the agent that a pick arrives by number and a reply as
+   expect(ASK_DESCRIPTION).toContain(
+     'The call returns the question’s number, such as 3. When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
+   )
++  expect(ASK_DESCRIPTION).toContain(
++    'A pick they send from their prompt arrives as that prompt instead, quoting the question with the option they picked and any notes under it.',
++  )
+   expect(ASK_DESCRIPTION).toContain('the reply arrives as their prompt, quoting the question after its number in brackets, such as `[3] "…"`, and the question stays open')
+   expect(ASK_DESCRIPTION).toMatch(/withdraw the question if the reply settles it, revise it if it was unclear/)
+   expect(ASK_DESCRIPTION).toContain(
+@@ -253,14 +256,56 @@ test('a sent prompt answers each question whose quote an option follows', () =>
+   expect(answersIn('"Decline the finding?"\n\nAdd a budget', [answered])).toEqual([])
+ })
+ 
++test('an option on its own line answers its question with notes below it', () => {
++  const open = [question(), question({ ref: '2', number: 2, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
++  const read = (text: string, proposed: readonly Proposal[] = []) => readPrompt(text, open, proposed)
++  const budget = '[1] "Decline the finding?"\n\nAdd a budget\n\nand log each retry'
++  expect(read(budget)).toEqual({ answers: [{ question: open[0], letter: 'b' }], outcomes: [], replies: [], unclears: [] })
++  // The notes can start on the very next line, after spaces, and run on for lines.
++  expect(answersIn('"Decline the finding?"\n\nDecline it \t\nthe cap covers it\n\nthanks', open)).toEqual([
++    { question: open[0], letter: 'a' },
++  ])
++  // A drawer's pick with notes added below still answers the drawer's question.
++  expect(read(budget, [pick('1', 'Add a budget')]).answers).toEqual([{ question: open[0], letter: 'b' }])
++  // The notes end at the next quoted item, which takes its own answer.
++  expect(answersIn('"Decline the finding?"\n\nDecline it\nper the cap\n"Rebase first?"\n\nRebase\nafter CI', open)).toEqual([
++    { question: open[0], letter: 'a' },
++    { question: open[1], letter: 'b' },
++  ])
++})
++
++test('notes under a pick answer the question whose drawer put the pick there when two share a subject', () => {
++  const older = question({ postedAt: NOW - 120_000, subject: 'Merge it?', choices: ['Yes', 'No'] })
++  const newer = question({ ref: '2', number: 2, subject: 'Merge it?', choices: ['Yes', 'No'] })
++  const merge = (ref: string, answer: string): Proposal => ({ ref, quote: '"Merge it?"', answer })
++  expect(readPrompt('"Merge it?"\n\nNo\n\nwait for CI', [older, newer], [merge('2', 'No')])).toEqual({
++    answers: [{ question: newer, letter: 'b' }],
++    outcomes: [],
++    replies: [],
++    unclears: [],
++  })
++})
++
++test('an option that spans lines answers as itself, not as a shorter option that leads it', () => {
++  const asked = question({ choices: ['Decline it', 'Decline it\nand note why'] })
++  expect(answersIn('"Decline the finding?"\n\nDecline it\nand note why', [asked])).toEqual([{ question: asked, letter: 'b' }])
++  expect(answersIn('"Decline the finding?"\n\nDecline it\nand note why\n\nin the thread', [asked])).toEqual([
++    { question: asked, letter: 'b' },
++  ])
++  expect(answersIn('"Decline the finding?"\n\nDecline it\nand say so', [asked])).toEqual([{ question: asked, letter: 'a' }])
++})
++
+ test('anything after a quoted question but one of its options replies to it without answering', () => {
+   const open = [question(), question({ ref: '2', number: 2, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
+   const replies = [
+     // Free text, as discuss leaves room for.
+     '"Rebase first?"\t\n\nkeep it',
+-    // An option with more text after it, on its line or on the next.
++    // An option with more text after it on its own line, or a shorter
++    // option's words leading a longer line.
+     '"Decline the finding?"\n\nAdd a budget of two per host',
+-    '"Decline the finding?"\n\nAdd a budget\n\nand log each retry',
++    '"Decline the finding?"\n\nDecline it, but log it',
++    // Notes before the option.
++    '"Decline the finding?"\n\nafter some thought\nDecline it',
+     // A question back, under the quote or on its line.
+     '"Decline the finding?"\n\nWhat does the cap cover?',
+     '"Decline the finding?" what does the cap cover?',
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index a16a329d..f57180e3 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -148,6 +148,20 @@ export const mayBeUnclear = (text: string) => text.replaceAll('’', "'").includ
+ /** One answer a sent prompt gives: the letter of the option it picks. */
+ export type Given = { question: Question; letter: string }
+ 
++/** Whether text starts with words that end its line, so anything after them starts on a later line. */
++const leads = (text: string, words: string) => text.startsWith(words) && /^[ \t]*(\n|$)/.test(text.slice(words.length))
++
++/**
++ * The option a question's quote takes: the one the text under the quote
++ * starts with, ending its line, so notes can follow on the lines below. When
++ * two options lead it, as one that spans lines can lead another, the longer
++ * one is what it says.
++ */
++function optionIn(question: Question, said: string | undefined): string | undefined {
++  if (said === undefined) return undefined
++  return question.choices.filter(choice => leads(said, choice)).sort((one, other) => other.length - one.length)[0]
++}
++
+ /**
+  * What a request's drawer offers after any start, in order: the options its
+  * agent gave, or a single `Done` when it gave none. Each puts its words under
+@@ -190,11 +204,12 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
+  * Reads a sent prompt as the panel writes it, each quote speaking to one
+  * question or request. A quoted open question takes an answer only when its
+  * quote ends its line and the text after it, up to the next quoted item or
+- * the prompt's end, is one of its options, whatever blank lines and spaces
+- * surround it: what pressing an option puts in the prompt. A quoted open
+- * request takes an outcome only when its quote ends its line and the first
+- * line after it that is not blank is exactly one of its options, a plain
+- * `Done`, or a plain `Declined`; the rest is the person's notes. A quote that
++ * the prompt's end, starts with one of its options, whatever blank lines and
++ * spaces come before it, and the option ends its line: what pressing an
++ * option puts in the prompt, and any notes the person adds below it. A
++ * quoted open request takes an outcome only when its quote ends its line and
++ * the first line after it that is not blank is exactly one of its options, a
++ * plain `Done`, or a plain `Declined`; the rest is the person's notes. A quote that
+  * a drawer put in the prompt, with that answer or alone through discuss,
+  * speaks to the item of the drawer that did so last, `proposed` holding them
+  * oldest first: one of its options resolves it, and any other text replies to
+@@ -269,13 +284,14 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
+   const isFree = (ref: string) => isOpen(ref) && !replied.has(ref)
+   const isRequest = (ref: string) => items.some(item => item.ref === ref && item.kind === 'request')
+   // Whether the text after an item's quote resolves it: one of a question's
+-  // options, or a request's outcome.
++  // options, or a request's outcome, either with notes after it.
+   const takes = (item: Answerable, said: string | undefined) =>
+-    item.kind === 'question' ? said !== undefined && item.choices.includes(said) : outcomeIn(item, said) !== undefined
++    (item.kind === 'question' ? optionIn(item, said) : outcomeIn(item, said)) !== undefined
+   const resolve = (item: Answerable, said: string) => {
+     answered.add(item.ref)
+     if (item.kind === 'question') {
+-      answers.push({ question: item, letter: letterAt(item.choices.indexOf(said)) })
++      const option = optionIn(item, said)
++      if (option !== undefined) answers.push({ question: item, letter: letterAt(item.choices.indexOf(option)) })
+       return
+     }
+     const outcome = outcomeIn(item, said)
+@@ -293,14 +309,15 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
+       continue
+     }
+     // The drawer that put this text in the prompt: the last to put this
+-    // quote there with this answer or alone, through discuss, leaving out an
+-    // item an earlier quote in this prompt resolved. A request's drawer owns
+-    // its quote whatever follows it, since notes follow its outcome.
++    // quote there with the answer this text starts with, notes or not, or
++    // alone, through discuss, leaving out an item an earlier quote in this
++    // prompt resolved. A request's drawer owns its quote whatever follows
++    // it, since notes follow its outcome.
+     const source = proposed.findLast(
+       one =>
+         one.quote === quote &&
+         aims(one) &&
+-        (isRequest(one.ref) || one.answer === said || one.answer === '') &&
++        (isRequest(one.ref) || (said !== undefined && leads(said, one.answer)) || one.answer === '') &&
+         !answered.has(one.ref),
+     )
+     if (source !== undefined) {
+@@ -526,6 +543,7 @@ export const ASK_DESCRIPTION = described([
+   'Name the pull request the question is about in `pr`, as owner/repo#number.',
+   'Keep working on anything the answer does not block. The call returns the question’s number, such as 3.',
+   'When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
++  'A pick they send from their prompt arrives as that prompt instead, quoting the question with the option they picked and any notes under it.',
+   'When they restore a question after you heard `DISMISSED 3`, `RESTORED 3` arrives, and the question is open again.',
+   unclearArrives('question'),
+   'When they reply in their own words instead, the reply arrives as their prompt, quoting the question after its number in brackets, such as `[3] "…"`, and the question stays open:',
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 32155186..65965436 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -3209,9 +3209,9 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
+ 
+   const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:1' })
+-  // You choose an option, then add to it before you send.
++  // You choose an option, then add to it on its own line before you send.
+   await ui.press({ key: 'answer:1.b' })
+-  const text = '[1] "Decline the finding?"\n\nAdd a budget\n\nBut what does the cap cover?\n'
++  const text = '[1] "Decline the finding?"\n\nAdd a budget, but what does the cap cover?\n'
+   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+   expect(session.submitted).toEqual([
+@@ -3237,6 +3237,31 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
+   await ui.unmount()
+ })
+ 
++test('notes you add below a chosen option answer the question, and the prompt carries them to the subagent that asked', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held({ agentId: 'agent-1' })], { agents: [running('running')] })
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'answer:1.b' })
++  const text = '[1] "Decline the finding?"\n\nAdd a budget\n\nBut what does the cap cover?\n'
++  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.submitted).toEqual([
++    {
++      text,
++      context: ['The subagent Fix #7 (agent-1) asked [1] "Decline the finding?"; send it the answer this prompt gives.'],
++    },
++  ])
++  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
++  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
++  expect(session.sent).toEqual([])
++  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
++  await ui.unmount()
++})
++
+ test('a prompt about one of two questions that share a subject leaves the other alone', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 8ea0be01..57a80ebc 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -2018,8 +2018,9 @@ export const register: Register = on => {
+     // bulleted `-`; an open question's line takes `QUESTION_COLOR`, and a
+     // resolved or snoozed item's `subtle`. An open question's drawer numbers
+     // its options; choosing one puts the question and that answer in the
+-    // prompt as text, for you to send or change, and sending it unchanged is
+-    // what answers the question. Discuss puts the question alone, for a reply
++    // prompt as text, for you to send or change, and sending it with that
++    // option still leading the text under the quote, notes below it or not,
++    // is what answers the question. Discuss puts the question alone, for a reply
+     // in your own words, which answers nothing. A resolved question's drawer
+     // lists its options with nothing to press, and an answer typed with
+     // `project inbox answer --text` after them.

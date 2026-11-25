@@ -1,0 +1,109 @@
+{
+ "version": 1,
+ "name": "Question answers with notes",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 624,
+  "title": "Answer a question when notes follow its option in the prompt",
+  "head": "b17662dcf22f3314ed9a332f63a919d996eba59a",
+  "headRef": "worktree-answer-prefix-dismiss",
+  "base": "3f5f88e855e1501f9b564bd49312334b63016987",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel lists the questions an agent asks you. When you choose one of a question's options in the panel, the panel writes the quoted question and that option into your prompt, and sending the prompt answers the question. The panel reads each prompt you send with <code>readPrompt</code> in <code>hooks/inbox.ts</code>, deciding for each quoted question whether the text under the quote answers it or replies to it.",
+   "Before this change, a question took an answer only when the text under its quote was exactly one of its options. If you added a line of notes under the option, the panel read the whole text as a reply, so the question stayed open even though you had picked an answer. A request already read its outcome from the first line and kept the rest as notes.",
+   "This change reads a question the same way. A quoted question takes an option when the text under the quote starts with that option and the option ends its line. The lines below are notes, and your prompt carries them to the agent. Editing the option's own line, such as <code>Yes, but wait for CI</code>, or writing above the option, is still a reply."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Quote</b>: the question's number in brackets and its subject in quotes, such as <code>[3] \"Decline the finding?\"</code>, which the panel writes into the prompt.</li><li><b>Drawer</b>: the panel's expanded view of one question, which lists its options.</li><li><b>Proposal</b>: a record of what a drawer put in the prompt, which tells apart two questions that share a subject.</li><li><b>Reply</b>: text under a quote that answers nothing. The question stays open, and the agent reads your words.</li></ul>"
+   },
+   {
+    "id": "rule",
+    "title": "What answers and what replies",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Text under the quote</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td><code>Add a budget</code></td><td>Answer</td><td class=\"r\">Answer</td></tr><tr><td><code>Add a budget</code>, then notes on later lines</td><td>Reply</td><td class=\"r\">Answer, with notes</td></tr><tr><td><code>Add a budget of two per host</code></td><td>Reply</td><td class=\"r\">Reply</td></tr><tr><td>Notes, then <code>Decline it</code></td><td>Reply</td><td class=\"r\">Reply</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "reader",
+   "title": "Reading an option with notes below it",
+   "kicker": "How readPrompt picks the option a quoted question takes",
+   "intro": [
+    "Two small helpers replace the exact match that <code>readPrompt</code> used. <code>leads</code> says whether text starts with given words that end their line. <code>optionIn</code> returns the question's option that leads the text under the quote. When two options both lead it, as an option that spans lines can start with a shorter one, <code>optionIn</code> picks the longer one.",
+    "The same rule applies in the drawer lookup. When two open questions share a subject, the panel uses the proposals its drawers recorded to tell which question a quote speaks to. A proposal now matches when its option leads the text, so adding notes under a drawer's pick still answers that drawer's question rather than the oldest question with the same subject."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "The new <code>leads</code> and <code>optionIn</code> helpers, the reading rule in <code>readPrompt</code> and its docstring, and a sentence added to the <code>ask</code> tool description.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 160,
+       "text": "When two options lead the text, the longer one wins. So a drawer pick of <code>Decline it</code> followed by a note that happens to read <code>and note why</code> answers a question whose other option is <code>Decline it\\nand note why</code> with that other option. The tests pin this choice."
+      },
+      {
+       "kind": "verify",
+       "line": 320,
+       "text": "A discuss proposal (<code>answer</code> empty) and a stale proposal resolve as before. A pick you edit so it no longer leads the text still falls through to the oldest question that takes the text, as an exact match did before. I checked this by reading the lookup against the tests in <code>hooks/inbox.test.ts</code>, which pass."
+      }
+     ]
+    },
+    {
+     "path": "hooks/register.tsx",
+     "note": "Only a comment changes: it describes the drawer's pick as answering while the option still leads the text under the quote.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The prompt handler records only the option's letter and relays the prompt itself, so the notes reach a subagent through the relay note. I checked this by reading the <code>UserPromptSubmit</code> handler that calls <code>readPrompt</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Inbox and panel tests for the new rule",
+   "intro": [
+    "The inbox tests cover notes below an option, notes that run up to the next quoted item, a drawer pick with notes when two questions share a subject, and an option that spans lines. The reply test now uses an option edited on its own line and notes written above the option as its reply cases. In the panel tests, the old reply case moves to a single edited line, and a new test checks that notes below a pick record the answer and relay the prompt to the subagent that asked."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>project review gate</code> ran <code>claude plugin test .</code> on this head: 261 pass, 0 fail."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/inbox.test.ts"
+    },
+    {
+     "path": "hooks/panel.test.tsx"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The panel section of the plugins guide",
+   "intro": [
+    "The panel section of <code>docs/plugins.md</code> describes the new rule, gives an example of an answer with notes, and adds an option edited on its own line and notes above the option to the list of replies."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
