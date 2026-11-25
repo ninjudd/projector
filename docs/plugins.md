@@ -751,26 +751,37 @@ the agent can tell apart two questions that ask the same thing:
 Add a budget of two retries per host, and keep the total cap
 ```
 
-The drawer stays open until you send. Sending the prompt as the option
-filled it in answers the question and closes its drawer, so the panel shows
-its list again. The panel finds each quoted question whose quote ends its
-line, and reads the text after the quote, up to the next quoted item or the
-end of the prompt. When that text is one of the question's options, whatever
-blank lines and spaces surround it, that option answers the question.
+The drawer stays open until you send. Sending the prompt with the option
+still under the quote answers the question and closes its drawer, so the
+panel shows its list again. You can add notes on the lines below the option,
+and your prompt carries them to the agent with the answer. The panel finds
+each quoted question whose quote ends its line, and reads the text after the
+quote, up to the next quoted item or the end of the prompt. When that text
+starts with one of the question's options, after any blank lines and spaces,
+and the option ends its line, that option answers the question, and the
+lines after it are your notes:
+
+```text
+[3] "Decline the finding about the retry budget?"
+
+Add a budget of two retries per host, and keep the total cap
+
+Log each retry, so we can tune the budget later.
+```
 
 Anything else you send under a quoted question is a reply, not an answer:
-your own words, an option with more text after it, or a question back. The
-panel records nothing and closes the question's drawer, and the question
-stays in the list. Your prompt carries the reply to the agent, which answers
-what you asked and then settles the question. It withdraws the question if
-your reply settles it, revises it if your reply shows it was unclear or the
-choice has changed, or leaves it open while it still needs you. A revised
-question keeps its place in the list, and the panel shows its new text as
-soon as the agent revises it. An option that a drawer put in your prompt
-before the revision answers no question, and neither does an option you
-type under a quote that **Discuss** put there before it: either one replies
-to the revised question. To answer, choose again in the revised question's
-drawer.
+your own words, an option with more text after it on its own line, notes
+written above the option, or a question back. The panel records nothing and
+closes the question's drawer, and the question stays in the list. Your
+prompt carries the reply to the agent, which answers what you asked and then
+settles the question. It withdraws the question if your reply settles it,
+revises it if your reply shows it was unclear or the choice has changed, or
+leaves it open while it still needs you. A revised question keeps its place
+in the list, and the panel shows its new text as soon as the agent revises
+it. An option that a drawer put in your prompt before the revision answers
+no question, and neither does an option you type under a quote that
+**Discuss** put there before it: either one replies to the revised question.
+To answer, choose again in the revised question's drawer.
 
 Each quote speaks to one question. A quote's number in brackets picks the
 question it speaks to, whatever another drawer put in your prompt. When you

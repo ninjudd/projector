@@ -3209,9 +3209,9 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
 
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
-  // You choose an option, then add to it before you send.
+  // You choose an option, then add to it on its own line before you send.
   await ui.press({ key: 'answer:1.b' })
-  const text = '[1] "Decline the finding?"\n\nAdd a budget\n\nBut what does the cap cover?\n'
+  const text = '[1] "Decline the finding?"\n\nAdd a budget, but what does the cap cover?\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.submitted).toEqual([
@@ -3234,6 +3234,31 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   expect(session.sent).toEqual([])
   expect(session.submitted).toHaveLength(1)
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('notes you add below a chosen option answer the question, and the prompt carries them to the subagent that asked', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held({ agentId: 'agent-1' })], { agents: [running('running')] })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'answer:1.b' })
+  const text = '[1] "Decline the finding?"\n\nAdd a budget\n\nBut what does the cap cover?\n'
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.submitted).toEqual([
+    {
+      text,
+      context: ['The subagent Fix #7 (agent-1) asked [1] "Decline the finding?"; send it the answer this prompt gives.'],
+    },
+  ])
+  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
+  expect(session.sent).toEqual([])
+  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   await ui.unmount()
 })
 
