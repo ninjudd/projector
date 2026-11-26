@@ -1,0 +1,85 @@
+{
+ "version": 1,
+ "name": "Active turn inbox delivery",
+ "project": "watch-daemon/codex-steering",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 637,
+  "title": "Plan steering inbox replies into active Codex turns",
+  "head": "8e769118ef8d144937e25ebf6074efdb8be5eccb",
+  "headRef": "plan-inbox-steering",
+  "base": "635699c65f6921a579cc84c48d1f6557cd1e2fba",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s inbox records a user’s answer and asks the watch daemon to deliver it to the agent. Codex queue delivery waits until the current turn finishes. An agent waiting inside that turn can therefore miss the answer it needs to continue.",
+   "This pull request adds a draft plan to send user inbox messages into the active turn through <code>turn/steer</code>. Idle sessions and background watch events keep queue/resume delivery. The plan separates inbox batches from background batches so an older queued event cannot delay an answer.",
+   "No delivery code changes here. The clean review covers the plan and its current-code references; it does not establish that a live session can receive or acknowledge a steered batch."
+  ],
+  "cards": [
+   {
+    "id": "delivery-choice",
+    "title": "Choose delivery from session state",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Observation</th><th>Planned behavior</th></tr></thead><tbody><tr><td>Verified active turn</td><td>Steer the user’s inbox batch into that turn.</td></tr><tr><td>Confirmed idle session</td><td>Queue and resume the existing session.</td></tr><tr><td>Steering unavailable</td><td>Keep the answer recorded and show the delivery limitation.</td></tr><tr><td>Acceptance uncertain</td><td>Retain the batch and seek proof before resending.</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "readiness",
+    "title": "Three gates before ready",
+    "html": "<ul class=\"tight\"><li><b>Connection.</b> Reach the server that owns a disposable active thread and verify its turn ID.</li><li><b>Acknowledgment.</b> Find a native observation that proves the batch reached the conversation.</li><li><b>Errors.</b> Capture actual stale-turn, unsupported-method, and disconnect responses.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "steering-plan",
+   "title": "Deliver answers while the agent works",
+   "kicker": "Transport selection, durable delivery, and the evidence needed before implementation.",
+   "intro": [
+    "The plan keeps the inbox as the delivery owner. A claim reserves one owed line for a deliverer; a receipt records that a batch reached the conversation. Both queue and steering delivery reuse those records.",
+    "An inbox batch contains user replies. An event batch contains background work such as pull-request notifications. Separate lanes let an inbox batch proceed while a background batch waits, with one live submission per session.",
+    "Read the failure table together with the three verification gates. A successful API response alone does not settle an inbox item, and a failed connection must remain visible to the user."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/watch-daemon/codex-steering/readme.md",
+     "note": "Adds the draft plan, delivery flow, failure states, migration rules, acceptance criteria, and native verification gates.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 14,
+       "text": "Traced the current adapter: a zero queue-command exit records queued, and prepare waits behind the first pending batch. Those paths match the problem described here."
+      },
+      {
+       "kind": "context",
+       "line": 25,
+       "text": "Only the user’s inbox lines gain steering. Watch events and peer messages retain their queued path and existing authority."
+      },
+      {
+       "kind": "verify",
+       "line": 34,
+       "text": "Generated Codex 0.172.0’s schema and checked the <a href=\"https://developers.openai.com/codex/app-server/#steer-an-active-turn\">App Server guide</a>. Both require threadId, expectedTurnId, and input; the response names turnId."
+      },
+      {
+       "kind": "context",
+       "line": 77,
+       "text": "Accepted or uncertain legacy batches must finish through their existing acknowledgment. Splitting one during upgrade could duplicate an answer."
+      },
+      {
+       "kind": "context",
+       "line": 102,
+       "text": "The planned smoke test must prove delivery during an active turn and its acknowledgment. Simulated API replies cannot prove either native behavior."
+      },
+      {
+       "kind": "verify",
+       "line": 112,
+       "text": "Projector reports this project with draft status and now priority. The owning-server connection, native acknowledgment, and real error fixtures remain explicit gates before ready. No live steering probe ran in this review."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
