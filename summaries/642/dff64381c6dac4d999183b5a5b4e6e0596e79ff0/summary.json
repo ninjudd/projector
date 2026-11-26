@@ -1,0 +1,209 @@
+{
+ "version": 1,
+ "name": "Session artifact access",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 642,
+  "title": "Show saved artifacts in the session panel",
+  "head": "dff64381c6dac4d999183b5a5b4e6e0596e79ff0",
+  "headRef": "artifact-drawer",
+  "base": "bd4e37105346fcf07be2b285d09f140733e0b044",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "An artifact is a saved static HTML bundle with immutable versions. This change gives those bundles a place in each session panel, so their links remain findable after a conversation scrolls past them.",
+   "Open chooses the configured Projector site for published content or extracts a temporary loopback preview. Dismiss hides one artifact in one session without deleting a version or changing another session. A new version keeps the dismissal until you restore it.",
+   "The review requests changes for two Open failures: the terminal drawer does not display a fallback link when browser opening fails, and directory redirects in a local preview lose the token in the URL."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "The saved records",
+    "html": "<ul class=\"tight\"><li><b>Artifact ID:</b> the stable lowercase name across versions.</li><li><b>Version:</b> a digest of the manifest and exact asset bytes.</li><li><b>Catalog:</b> metadata read from cached Git refs, without fetching payloads.</li><li><b>Preview token:</b> a random path prefix checked by the temporary loopback server.</li></ul>"
+   },
+   {
+    "id": "checks",
+    "title": "Validation and limits",
+    "html": "<ul class=\"tight\"><li>The required gate passed, including 267 hook tests and CI.</li><li>All 117 focused Python tests passed.</li><li>The live desktop and phone browser check passed; both screenshots were inspected.</li><li>Two isolated reproductions confirmed the open P2 findings.</li><li>Large existing console, hook, and CLI modules were read through changed sections and affected callers.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "contract",
+   "title": "Expose artifact actions to both hosts",
+   "kicker": "The CLI and host types agree on metadata and actions.",
+   "intro": [
+    "The panel needs a small metadata record rather than an artifact payload. The CLI adds list, open, dismiss, and restore commands; the hook parser accepts only rows with the fields its renderer consumes.",
+    "The list command takes a session ID so visibility is specific to that session. Open takes the checkout, remote, and stable artifact ID, leaving the version selection and preview decision in the shared Python layer."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds the artifact row shape, header section, and revision-bearing panel state."
+    },
+    {
+     "path": "hooks/artifacts.ts",
+     "note": "Parses catalog output, filters malformed rows, and rejects unparseable replies."
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Defines the panel, open, dismiss, and restore command arguments."
+    },
+    {
+     "path": "src/projector/artifact.py",
+     "note": "Routes the new commands to shared catalog, visibility, and preview behavior."
+    }
+   ]
+  },
+  {
+   "id": "catalog",
+   "title": "Cache metadata and serve a local preview",
+   "kicker": "Discover saved bundles without repeatedly loading their files.",
+   "intro": [
+    "The catalog caches metadata by the tips of the fetched remote ref and local artifact ref. It reads latest pointers and manifests, gives local versions precedence, and skips invalid entries. A dismissal records the checkout, remote, and artifact ID as a stable key, so another revision does not make the row reappear.",
+    "Open uses the configured site when hosting is confirmed. Otherwise it validates and extracts the saved bundle, starts a loopback server under a random URL prefix, reuses a live preview for the same version, and removes extracted files when the preview expires."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/artifact_panel.py",
+     "note": "Adds the cached catalog, per-session dismissal store, hosted-link decision, and expiring preview server.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Focused tests checked that catalog refresh reads metadata without payloads, unchanged refs reuse the cache, dismissal survives a revision, and previews preserve binary bytes and expire."
+      },
+      {
+       "kind": "flag",
+       "line": 171,
+       "text": "A relative link to a directory without a trailing slash redirects after the token is stripped. The Location becomes /docs/ rather than /&lt;token&gt;/docs/, so following it returns 404. A disposable preview reproduced the failure."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "panels",
+   "title": "Keep artifact rows available in session panels",
+   "kicker": "Poll the catalog and attach Open and Dismiss controls.",
+   "intro": [
+    "The Claude Code panel polls artifact metadata alongside its existing content, counts artifacts in the header, and expands each row into its description and controls. A revision guard prevents a catalog read that started before Dismiss from putting that row back.",
+    "The terminal console includes artifacts in each session panel and rereads persisted dismissals when applying a refresh. The managed console extends the same path to durable sessions, including stopped ones; an artifact action remains separate from native agent handoff."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds polling, header counts, artifact drawers, and action dispatch with a stale-refresh guard.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The hook test held a catalog response until after Dismiss and verified that the late response did not restore the row."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/console.py",
+     "note": "Loads artifact rows, preserves dismissal across refreshes, and renders terminal drawer controls.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 1182,
+       "text": "When a browser does not open, visit stores a fallback URL in self.link, but this drawer does not render it. The console reproduction left the URL recorded and absent from every displayed line."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/agent_console.py",
+     "note": "Uses the shared artifact load path for managed sessions, including sessions that are stopped.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused test opened an artifact from a stopped managed session without sending a native runtime control action."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "validation",
+   "title": "Check persistence, races, and hosted content",
+   "kicker": "Exercise the new panel behavior and record the deferred live check.",
+   "intro": [
+    "The regression tests use temporary Git repositories for real saved versions and local preview processes. They cover per-session visibility, revision persistence, cached metadata, preview reuse and expiry, binary assets, host checks, console actions, and a refresh that completes after dismissal.",
+    "The live browser script selects the cache-explorer fixture by ID so unrelated published artifacts do not invalidate the check. It still exercises both saved versions, navigation, assets, keyboard controls, search, and full-screen behavior at desktop and phone sizes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_artifact_panel.py",
+     "note": "Adds the Python artifact panel and local-preview regressions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All 117 focused tests across artifact panels, both consoles, artifact storage, and packaging passed on Python 3.12."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Adds hook drawer actions, failed-read retention, revision refresh, and the dismissal race test.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The configured gate passed all 267 hook tests, along with validation, type checking, whitespace checks, and required CI."
+      }
+     ]
+    },
+    {
+     "path": "tests/artifact_ui.mjs",
+     "note": "Finds the browser fixture by ID while allowing other artifacts on the site.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The script passed against the live site at 1440 × 900 and 375 × 812; both screenshots were inspected."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Document session visibility and the completed live check",
+   "kicker": "Explain the new controls without changing saved artifact history.",
+   "intro": [
+    "The living documentation describes where artifacts appear, which actions affect one session, how to restore a row, and when Open starts a local preview. The authoring skill gives agents the same restoration boundary.",
+    "The completed artifact plan records the deferred hosted browser check as an outcome. It remains a record of completed work rather than a new readiness claim."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Documents the artifact section, Open and Dismiss, preview lifetime, and per-session restoration."
+    },
+    {
+     "path": "docs/site.md",
+     "note": "Adds the direct-open command and temporary-preview behavior to the artifact reference."
+    },
+    {
+     "path": "skills/artifact/SKILL.md",
+     "note": "Tells the authoring agent how session visibility and user-requested restoration work."
+    },
+    {
+     "path": "docs/projects/visualize/readme.md",
+     "note": "Records that the deferred live desktop and phone check completed.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The live browser run reproduced the recorded version, navigation, asset, binary-byte, search, and layout checks."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

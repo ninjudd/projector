@@ -1,0 +1,1190 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 9e76bb56..604d6449 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -635,6 +635,33 @@ its own muted text in `subtle`, which would vanish on it. The panel reads
+ the setting when the session starts and each time it reloads, so a change
+ shows within 30 seconds, without a restart.
+ 
++### Open and dismiss artifacts in the session panel
++
++The session panel has an **Artifacts** section for the saved artifacts in
++its checkout. It includes local versions and the remote versions already
++fetched by `project artifact list` or `project site serve`. Expand an
++artifact's row to open it or dismiss it. The section refreshes without
++restarting the session, and its count collapses or expands the list.
++
++**Open** uses the repository's configured site for a published artifact. A
++local artifact, or one whose hosting cannot be confirmed, opens in a
++temporary local preview. That preview preserves relative assets, listens
++only on the loopback address, and stops after 15 minutes without a request.
++Opening it again starts a new preview when needed.
++
++**Dismiss** hides the artifact from this session's panel. Its saved versions
++and published links stay available, and another session still lists it.
++Revising the artifact does not undo the dismissal. Restore it from the
++checkout with:
++
++```sh
++project artifact restore cache-explorer --session SESSION
++```
++
++The same rows and actions appear in `project console`. You can list or
++dismiss them from the shell with `project artifact panel --session SESSION`
++and `project artifact dismiss cache-explorer --session SESSION`.
++
+ ### Read your inbox in Projector's panel
+ 
+ An agent in Claude Code asks you a question with Projector's `ask` tool,
+diff --git a/docs/projects/visualize/readme.md b/docs/projects/visualize/readme.md
+index e2d7f90b..bc482b0c 100644
+--- a/docs/projects/visualize/readme.md
++++ b/docs/projects/visualize/readme.md
+@@ -351,9 +351,18 @@ second. Repository settings and Pages visibility stay unchanged.
+ builds both versions and uploads the site, but GitHub's deployment step
+ cannot find its upload. The upload is visible through the API after the
+ failure. [One deployment retry](https://github.com/ninjudd/projector/actions/runs/45786488192)
+-fails at the same step after uploading successfully. The public manifest
+-still contains no artifacts, so hosted browser verification remains blocked
+-on deployment. Neither run changes Pages settings or access rules. The
++fails at the same step after uploading successfully. At that point, the
++public manifest contains no artifacts, so hosted browser verification waits
++for deployment. Neither run changes Pages settings or access rules. The
+ storage, dispatch failure, existing-workflow selection,
+ remote-default-branch, and visibility boundaries also have local regression
+ coverage.
++
++A later check on November 26 confirms that the public site serves both
++versions. Browser verification passes against
++[the live artifact](https://ninjudd.io/projector/artifacts/cache-explorer/)
++at 1440 × 900 and 375 × 812, including direct latest and fixed links,
++version selection, browser back, query and live hash state, keyboard
++controls, relative JSON and SVG loads, exact binary bytes, search, and
++full-screen controls. Both screenshots are inspected, with no horizontal
++overflow or failed local requests. The deferred live check is complete.
+diff --git a/docs/site.md b/docs/site.md
+index 1edef655..07aff2e9 100644
+--- a/docs/site.md
++++ b/docs/site.md
+@@ -284,6 +284,13 @@ project artifact list --id cache-explorer --json
+ project artifact init cache-explorer --dir /tmp/cache-revision --from-published
+ ```
+ 
++Saved artifacts also appear in the [session panel](plugins.md#open-and-dismiss-artifacts-in-the-session-panel).
++Open a row to view its artifact, or dismiss it from that session without
++deleting any version. `project artifact open cache-explorer` opens the saved
++artifact directly; add `--print-url` to print the address without launching
++a browser. Local artifacts use a temporary preview server that expires
++after 15 minutes without a request.
++
+ The recovery directory must not exist. Add `--version FULL_DIGEST` to recover
+ a fixed version, or `--no-fetch` to use cached data. Add `--checkout CHECKOUT`
+ or `--remote REMOTE` to select the repository or remote explicitly.
+diff --git a/hooks/artifacts.ts b/hooks/artifacts.ts
+new file mode 100644
+index 00000000..9a83b2fa
+--- /dev/null
++++ b/hooks/artifacts.ts
+@@ -0,0 +1,16 @@
++import type { Artifact } from './types'
++
++export function parseArtifacts(text: string): Artifact[] | null {
++  try {
++    const parsed: unknown = JSON.parse(text)
++    if (typeof parsed !== 'object' || parsed === null || !('artifacts' in parsed) || !Array.isArray(parsed.artifacts)) return null
++    return parsed.artifacts.filter((row: unknown): row is Artifact =>
++      typeof row === 'object' && row !== null &&
++      ['id', 'title', 'description', 'version', 'key', 'checkout', 'remote'].every(
++        name => name in row && typeof (row as Record<string, unknown>)[name] === 'string',
++      ) && 'preview' in row && typeof row.preview === 'boolean',
++    )
++  } catch {
++    return null
++  }
++}
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index a19ce294..b68ba77c 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -478,6 +478,97 @@ test('draws one line per open pull request the session subscribes to', async ($,
+   await ui.unmount()
+ })
+ 
++test('lists saved artifacts, opens them, and dismisses a row from this session', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const row = {
++    id: 'cache-explorer', title: 'Cache explorer', description: 'Explore saved data',
++    version: 'a'.repeat(64), key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: false,
++  }
++  let dismissed = false
++  const { commands } = world(on, daemonFiles({ fix: ['o/r#1'] }), argv => {
++    if (argv[1] === 'artifact' && argv[2] === 'panel') return ran(JSON.stringify({ artifacts: dismissed ? [] : [row] }))
++    if (argv[1] === 'artifact' && argv[2] === 'dismiss') dismissed = true
++    return ran('{}')
++  })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  expect(await ui.find({ type: 'Text', text: 'Artifacts' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /Cache explorer/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /1 artifact/ })).toBeDefined()
++  await ui.press({ key: 'count:artifact' })
++  expect(await ui.find({ key: `open:artifact:${row.key}` })).toBeUndefined()
++  await ui.press({ key: 'count:artifact' })
++  await ui.press({ key: `open:artifact:${row.key}` })
++  expect(await ui.find({ type: 'Text', text: row.description })).toBeDefined()
++  await ui.press({ key: `visit:artifact:${row.key}` })
++  expect(commands).toContainEqual(['project', 'artifact', 'open', row.id, '--checkout', row.checkout, '--remote', 'origin'])
++  await ui.press({ key: `dismiss:artifact:${row.key}` })
++  await clock.settle()
++  expect(commands).toContainEqual(['project', 'artifact', 'dismiss', row.id, '--checkout', row.checkout,
++    '--remote', 'origin', '--session', SESSION])
++  expect(await ui.find({ type: 'Text', text: /Cache explorer/ })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('artifact polling keeps the last rows on a failed read and loads a new version on the next poll', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  let fail = false
++  let title = 'Original explorer'
++  world(on, {}, argv => argv[1] === 'artifact' && argv[2] === 'panel'
++    ? fail ? { ...ran(''), exitCode: 65, stderr: 'unavailable' } : ran(JSON.stringify({ artifacts: [{
++      id: 'explorer', title, description: '', version: 'a'.repeat(64), key: 'b'.repeat(64),
++      checkout: '/work/repo', remote: 'origin', preview: true,
++    }] })) : ran('{}'))
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  expect(await ui.find({ type: 'Text', text: /Original explorer.*local preview/ })).toBeDefined()
++  fail = true
++  await clock.advance(35_000)
++  await clock.settle()
++  expect(await ui.find({ type: 'Text', text: /Original explorer/ })).toBeDefined()
++  fail = false
++  title = 'Revised explorer'
++  await clock.advance(30_000)
++  await clock.settle()
++  expect(await ui.find({ type: 'Text', text: /Revised explorer/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /Original explorer/ })).toBeUndefined()
++  await ui.unmount()
++})
++
++test('an artifact can be dismissed while the catalog is being read', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const row = { id: 'explorer', title: 'Cache explorer', description: '', version: 'a'.repeat(64),
++    key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: true }
++  let reads = 0
++  let isDismissed = false
++  world(on, {}, argv => {
++    if (argv[1] === 'artifact' && argv[2] === 'dismiss') isDismissed = true
++    if (argv[1] !== 'artifact' || argv[2] !== 'panel') return ran('{}')
++    reads += 1
++    if (reads === 2) {
++      return clock.sleep(1_000).then(() => ran(JSON.stringify({ artifacts: [row] })))
++    }
++    return ran(JSON.stringify({ artifacts: isDismissed ? [] : [row] }))
++  })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: `open:artifact:${row.key}` })
++  await clock.advance(35_000)
++  expect(reads).toBe(2)
++  const dismissed = ui.press({ key: `dismiss:artifact:${row.key}` })
++  await clock.settle()
++  await clock.advance(1_000)
++  await dismissed
++  await clock.settle()
++  expect(isDismissed).toBe(true)
++  expect(await ui.find({ type: 'Text', text: /Cache explorer/ })).toBeUndefined()
++  await ui.unmount()
++})
++
+ test('a row says what holds it back first, then reviewing, clean, draft, or ready, with a draft’s number and word in italic', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -1669,8 +1760,8 @@ test('`/projector` only shows or hides the panel, whatever follows it', async ($
+   const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: ` ${TAGLINE}` })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+-  // The panel runs nothing but its reload's read of its setting.
+-  expect(commands.filter(argv => argv.slice(0, 3).join(' ') !== 'project config get')).toEqual([])
++  // Showing the panel reads its settings and artifact catalog without changing subscriptions.
++  expect(commands.filter(argv => !['project config get', 'project artifact panel'].includes(argv.slice(0, 3).join(' ')))).toEqual([])
+   await ui.unmount()
+ })
+ 
+@@ -2437,9 +2528,8 @@ test('an idle session with no questions runs no inbox command', async ($, on) =>
+   await clock.advance(3 * TICK)
+   await clock.settle()
+ 
+-  // Listing the store's directory starts no process; only a reload of the shown panel reads its setting, and the
+-  // session's start renews its subscriptions.
+-  expect(session.project().filter(command => !/^(config get|watch renew)/.test(command))).toEqual([])
++  // The artifact catalog and settings are separate from inbox delivery.
++  expect(session.project().filter(command => command.startsWith('inbox '))).toEqual([])
+   const ui = await $.ui.mount(PANEL)
+   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
+   await ui.unmount()
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 8fe16a2a..da9105ef 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
+ import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-code'
+ 
+ import type {
++  Artifact,
+   Checks,
+   Entry,
+   Item,
+@@ -18,6 +19,7 @@ import type {
+   Thread,
+ } from './types'
+ import { buildThreadsQuery, loadingOf, parseCache, parseThreads } from './github'
++import { parseArtifacts } from './artifacts'
+ import {
+   cachePathOf,
+   isPushCommand,
+@@ -221,7 +223,7 @@ const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice', 'm
+ const PR_SECTIONS = ['pr', 'review'] as const satisfies readonly Section[]
+ 
+ /** What the header counts, in its order: the pull requests, then each kind of item. */
+-const SECTIONS: readonly Section[] = [...PR_SECTIONS, ...ITEM_KINDS]
++const SECTIONS: readonly Section[] = [...PR_SECTIONS, 'artifact', ...ITEM_KINDS]
+ 
+ /** What the header calls each section of pull requests. */
+ const PR_NOUNS: Record<(typeof PR_SECTIONS)[number], string> = { pr: 'pull request', review: 'review request' }
+@@ -362,6 +364,7 @@ const SNOOZES = [
+ 
+ const subscribed = atom({ plugin: 'projector', key: 'panelSubscribed' } as const, [])
+ const snapshot = atom({ plugin: 'projector', key: 'panelSnapshot' } as const, EMPTY)
++const artifacts = atom({ plugin: 'projector', key: 'panelArtifacts' } as const, { rows: [], revision: 0 })
+ const now = atom({ plugin: 'projector', key: 'panelNow' } as const, 0)
+ const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, false)
+ const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
+@@ -402,6 +405,9 @@ let inFlight: Promise<void> | undefined
+ let queuedPoll: boolean | undefined
+ /** When the panel last polled GitHub. A shown panel polls every `POLL_MS`, and reads the daemon's files on every tick. */
+ let attemptedAt = 0
++let artifactsAttemptedAt: number | undefined
++let artifactsInFlight: Promise<void> | undefined
++let artifactsSession: string | undefined
+ /**
+  * Which session id the daemon last heard renew, by this copy of the module,
+  * and when. The engine moves the session to a new id on `/clear`, and that id
+@@ -629,6 +635,38 @@ async function cachedOf($: Engine, root: string | undefined, pr: TrackedPr): Pro
+   return text === undefined ? null : parseCache(pr, text)
+ }
+ 
++function checkArtifacts($: Engine): Promise<void> {
++  if (artifactsInFlight !== undefined) return artifactsInFlight
++  artifactsInFlight = (async () => {
++    const time = await $.clock.now()
++    const session = await sessionOf($)
++    if (session === undefined) return
++    const changed = artifactsSession !== session
++    if (!changed && artifactsAttemptedAt !== undefined && time - artifactsAttemptedAt < POLL_MS) return
++    if (changed && artifactsSession !== undefined) await update($, artifacts, before => ({ rows: [], revision: before.revision + 1 }))
++    artifactsSession = session
++    artifactsAttemptedAt = time
++    try {
++      const revision = (await read($, artifacts)).revision
++      const result = await project($, ['artifact', 'panel', '--session', session, '--json'])
++      if ((await sessionOf($)) !== session) return
++      const found = result.exitCode === 0 ? parseArtifacts(result.stdout) : null
++      if (found !== null) {
++        let added = false
++        await update($, artifacts, before => {
++          if (revision !== before.revision) return before
++          added = found.some(row => !before.rows.some(old => old.key === row.key))
++          return { rows: found, revision }
++        })
++        if (added && !(await read($, isShown))) show($)
++      }
++    } catch {
++      // A failed refresh keeps the previous links available.
++    }
++  })().finally(() => { artifactsInFlight = undefined })
++  return artifactsInFlight
++}
++
+ /**
+  * Lists the pull requests the session subscribes to, each with its roles.
+  * Each pull request's row comes from the daemon's cache, and one the daemon
+@@ -645,6 +683,7 @@ async function load($: Engine, isPolled: boolean): Promise<void> {
+     Promise.all(subscriptions.map(({ pr }) => cachedOf($, root, pr))),
+     isPolled ? readBackground($) : undefined,
+   ])
++  await checkArtifacts($)
+ 
+   const rows: Row[] = subscriptions.flatMap(({ pr: entry, roles }, index) => {
+     const pr = cached[index] ?? loadingOf(entry)
+@@ -733,6 +772,8 @@ async function closeLeftDrawer($: Engine, time: number): Promise<void> {
+   if (opened === null) return
+   const isListed = opened.startsWith('item:')
+     ? (await read($, items)).some(item => `item:${item.ref}` === opened && isShownAt(item, time))
++    : opened.startsWith('artifact:')
++      ? (await read($, artifacts)).rows.some(row => `artifact:${row.key}` === opened)
+     : opened.startsWith('entry:')
+       ? (await read($, entries)).some(entry => `entry:${entry.ref}` === opened && !isEntrySnoozedAt(entry, time))
+       : current(await read($, snapshot)).rows.some(row => keyOf(row.pr) === opened)
+@@ -1034,6 +1075,31 @@ async function act(
+   }
+ }
+ 
++async function artifactAction($: Engine, row: Artifact, action: 'open' | 'dismiss'): Promise<void> {
++  const key = `artifact:${row.key}`
++  if (acting.has(key)) return
++  acting.add(key)
++  try {
++    const session = await sessionOf($)
++    if (session === undefined) throw new Error('the session ID is unavailable')
++    const args = ['artifact', action, row.id, '--checkout', row.checkout, '--remote', row.remote]
++    if (action === 'dismiss') args.push('--session', session)
++    const ran = await project($, args)
++    if (ran.exitCode !== 0) throw new Error(errorOf(ran))
++    if (action === 'dismiss') {
++      await update($, artifacts, before => ({
++        rows: before.rows.filter(one => one.key !== row.key), revision: before.revision + 1,
++      }))
++      await closeDrawer($, key)
++      await refresh($)
++    }
++  } catch (error) {
++    void $.ui.toast(`projector: ${messageOf(error)}`)
++  } finally {
++    acting.delete(key)
++  }
++}
++
+ /**
+  * Dismisses a pull request from the session: `project watch drop` keeps it
+  * out of each role the session subscribes to it in, and the panel reloads
+@@ -1210,6 +1276,7 @@ async function tick($: Engine): Promise<void> {
+   // falls in the next tick's window.
+   const time = await $.clock.now()
+   void checkWatch($, time)
++  void checkArtifacts($)
+   await checkInbox($)
+   await closeLeftDrawer($, time).catch(() => undefined)
+   const since = tickedAt ?? time
+@@ -1491,7 +1558,7 @@ export const register: Register = on => {
+   on('session.start', async ($, e, next) => {
+     await $.command.register({
+       name: 'projector',
+-      description: 'Show or hide Projector’s panel of the pull requests you fix or review, and your inbox',
++      description: 'Show or hide Projector’s panel of pull requests, saved artifacts, and your inbox',
+     })
+     // A session whose engine cannot serve the tools keeps the panel.
+     for (const tool of [
+@@ -1513,6 +1580,7 @@ export const register: Register = on => {
+       .then(rows => paint($, rows.find(row => row.key === 'theme')?.value))
+       .catch(() => undefined)
+     $.clock.after(1, () => void readBackground($))
++    $.clock.after(1, () => void checkArtifacts($))
+     // Renewing starts the daemon, so it runs from a timer too.
+     watchSoon($)
+     $.clock.every(TICK_MS, () => void tick($))
+@@ -1793,6 +1861,7 @@ export const register: Register = on => {
+ 
+     const { Box, Button, Link, Markdown, Text } = $.ui.resolve(e)
+     const shown = current(await read($, snapshot))
++    const shownArtifacts = (await read($, artifacts)).rows
+     const time = await read($, now)
+     const opened = await read($, drawer)
+     const shownThreads = await read($, drawerThreads)
+@@ -1809,6 +1878,7 @@ export const register: Register = on => {
+     const sectioned = bySection(shown.rows, shown.viewer)
+     const sectionCounts: { section: Section; count: string | undefined }[] = [
+       ...PR_SECTIONS.map(section => ({ section, count: countOf(sectioned[section].length, PR_NOUNS[section]) })),
++      { section: 'artifact', count: countOf(shownArtifacts.length, 'artifact') },
+       ...ITEM_KINDS.map(kind => {
+         const open = shownItems.filter(
+           item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
+@@ -1894,7 +1964,7 @@ export const register: Register = on => {
+     const edgeColumns = columns + LINE_PADDING
+     const setting = await read($, background)
+     const color = setting === AUTO ? await read($, themeBackground) : setting
+-    const colorOf = kindColors(await read($, themeRequestColor))
++    const colorOf = { ...kindColors(await read($, themeRequestColor)), artifact: 'subtle' }
+     const hint = (await read($, isFocused)) ? FOCUSED_HINT : FOCUS_HINT
+     // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
+     // its left, and the counts and how long ago the panel reloaded at its
+@@ -2000,7 +2070,7 @@ export const register: Register = on => {
+         <Box flexDirection="column">{lines}</Box>
+       )
+ 
+-    if (shown.rows.length === 0 && shownItems.length === 0 && shownEntries.length === 0) {
++    if (shown.rows.length === 0 && shownArtifacts.length === 0 && shownItems.length === 0 && shownEntries.length === 0) {
+       return panel([
+         shown.fetchedAt === null ? (
+           <Text key="looking" color="subtle">
+@@ -2063,7 +2133,7 @@ export const register: Register = on => {
+     // action as an option's digit presses it, and an action without one takes
+     // a click or Enter. What a drawer asks in its actions' place draws the
+     // same way.
+-    type Line = { name: string; label: string; hotkey: string | undefined; onPress: () => void }
++    type Line = { name: string; label: string; hotkey: string | undefined; onPress: () => void | Promise<unknown> }
+     const drawLines = (id: string, lines: readonly Line[]) =>
+       lines.map(({ name, label, hotkey, onPress }) => (
+         <Button key={`${name}:${id}`} plain hotkey={hotkey} onPress={onPress}>
+@@ -2688,6 +2758,28 @@ export const register: Register = on => {
+     const focused = shownItems.find(item => opened === `item:${item.ref}`)
+     if (focused !== undefined) return panel(drawItem(focused), false)
+ 
++    const drawArtifact = (row: Artifact) => {
++      const key = `artifact:${row.key}`
++      const isOpen = opened === key
++      return (
++        <Box key={key} flexDirection="column">
++          <Button key={`open:${key}`} plain onPress={() => toggle(key, `open:${key}`, isOpen ? undefined : `visit:${key}`)}>
++            <Text>{`- ${row.title}${row.preview ? ' · local preview' : ''}`}</Text>
++          </Button>
++          {isOpen && (
++            <Box key={`drawer:${key}`} flexDirection="column" marginLeft={DRAWER_INDENT}>
++              <Text color="subtle">{`${row.id} · ${row.version.slice(0, 12)}`}</Text>
++              {row.description !== '' && <Text>{row.description}</Text>}
++              {drawActions(key, [
++                { name: 'visit', label: 'Open', hotkey: 'o', onPress: () => artifactAction($, row, 'open') },
++                { name: 'dismiss', label: 'Dismiss', hotkey: '8', onPress: () => artifactAction($, row, 'dismiss') },
++              ])}
++            </Box>
++          )}
++        </Box>
++      )
++    }
++
+     // Your pull requests come before the review requests, a blank line between
+     // them, and a collapsed section gives way to one line in its place.
+     const prLines = PR_SECTIONS.map(section => [
+@@ -2699,7 +2791,13 @@ export const register: Register = on => {
+         ...(at === 0 ? [] : [<Text key="before-reviews"> </Text>]),
+         ...lines,
+       ]),
+-      shownItems.length > 0 && shown.rows.length > 0 && (
++      ...(shownArtifacts.length === 0 ? [] : [
++        <Text key="before-artifacts"> </Text>,
++        <Text key="artifacts-heading" bold>Artifacts</Text>,
++        ...expander('artifact'),
++        ...(isCollapsed('artifact') ? [] : shownArtifacts.map(drawArtifact)),
++      ]),
++      shownItems.length > 0 && (shown.rows.length > 0 || shownArtifacts.length > 0) && (
+         <Text key="before-items"> </Text>
+       ),
+       // A collapsed kind's items give way to one line at the top of the list.
+@@ -2708,7 +2806,7 @@ export const register: Register = on => {
+         .filter(item => !isCollapsed(item.kind))
+         .sort((a, b) => b.postedAt - a.postedAt)
+         .map(drawItem),
+-      shownEntries.length > 0 && (shownItems.length > 0 || shown.rows.length > 0) && (
++      shownEntries.length > 0 && (shownItems.length > 0 || shown.rows.length > 0 || shownArtifacts.length > 0) && (
+         <Text key="before-entries"> </Text>
+       ),
+       ...shownEntries.map(drawEntry),
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 856b5e83..e27cb79c 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -57,6 +57,17 @@ export type PullRequest = {
+ /** One line of the panel: an open pull request and what the session does with it. */
+ export type Row = { pr: PullRequest; roles: Role[] }
+ 
++export type Artifact = {
++  id: string
++  title: string
++  description: string
++  version: string
++  preview: boolean
++  key: string
++  checkout: string
++  remote: string
++}
++
+ export type Snapshot = {
+   rows: Row[]
+   /** The operator's login, as the daemon's `daemon.json` names it; null until it does. */
+@@ -221,7 +232,7 @@ export type Answerable = Question | Request
+  * requests, the review requests someone else's pull requests make, or a kind
+  * of item.
+  */
+-export type Section = 'pr' | 'review' | Item['kind']
++export type Section = 'pr' | 'review' | 'artifact' | Item['kind']
+ 
+ /**
+  * An answer the panel claimed and is delivering: the claim's token, the route
+@@ -242,6 +253,7 @@ declare module 'claude-code' {
+       /** The pull requests the session subscribed to when the panel last looked, by `keyOf`, so a new one shows the panel. */
+       panelSubscribed: string[]
+       panelSnapshot: Snapshot
++      panelArtifacts: { rows: Artifact[]; revision: number }
+       panelNow: number
+       isPanelShown: boolean
+       /** The drawer that is open: a pull request's by `keyOf`, or `item:` and an item's reference. */
+diff --git a/skills/artifact/SKILL.md b/skills/artifact/SKILL.md
+index 39f2b2dc..70b936a6 100644
+--- a/skills/artifact/SKILL.md
++++ b/skills/artifact/SKILL.md
+@@ -98,6 +98,13 @@ Artifacts directory and version picker expose the saved history. GitHub
+ repository write permissions control publishing, and GitHub Pages controls
+ who can read all versions. A hidden ref is not a separate privacy boundary.
+ 
++Saved artifacts appear in the session panel, with Open and Dismiss actions.
++Dismiss hides the row from that session without deleting saved versions or
++published links. Use `project artifact restore ID --session SESSION` when
++the user asks to bring a dismissed row back. `project artifact open ID`
++opens a saved artifact on its site, or in a temporary local preview when
++hosting is unavailable.
++
+ Follow `../writing.md` for prose in the artifact and its hand-over. For the
+ file format, commands, and site access details, read the repository's
+ `docs/site.md` when working in Projector itself, or the installed Projector
+diff --git a/src/projector/agent_console.py b/src/projector/agent_console.py
+index 31c0fb1e..4a2cd2ad 100644
+--- a/src/projector/agent_console.py
++++ b/src/projector/agent_console.py
+@@ -63,6 +63,10 @@ def load(self, work):
+                 found.live[name] = (label, host, cwd, changed, signature, items)
+                 if name not in work.signatures:
+                     found.rows[name] = rows.rows_for(self.root, name)
++                if (work.rows or name not in work.signatures) and name not in found.artifacts:
++                    artifacts = console.read_artifacts(self.root, name, cwd)
++                    if artifacts is not None:
++                        found.artifacts[name] = artifacts
+                 if name not in found.entries:
+                     found.entries[name] = console.repo_inbox.repo_items(self.root, name, everything=True)
+             for launch in runtime.launches(self.root):
+diff --git a/src/projector/artifact.py b/src/projector/artifact.py
+index 7c741c6a..fce797ff 100644
+--- a/src/projector/artifact.py
++++ b/src/projector/artifact.py
+@@ -363,6 +363,29 @@ def run(arguments) -> int:
+     if root is None:
+         raise ArtifactError('artifact commands need a Git checkout; pass --checkout')
+     command, remote = arguments.artifact_command, arguments.remote
++    if command in ('panel', 'dismiss', 'restore', 'open'):
++        import webbrowser
++        from . import artifact_panel, watch
++
++        if command == 'open':
++            url = artifact_panel.open_url(root, remote, arguments.id)
++            if not arguments.print_url:
++                webbrowser.open(url)
++            print(url)
++        else:
++            session = watch.session_id(arguments.session)
++            if command == 'panel':
++                rows = artifact_panel.listing(root, remote, session)
++                if arguments.json_output:
++                    print(json.dumps({'artifacts': rows}, ensure_ascii=False))
++                else:
++                    for row in rows:
++                        print(f"{row['id']}\t{row['title']}")
++            else:
++                artifact_panel.dismiss(root, remote, session, arguments.id, restore=command == 'restore')
++                verb = 'restored' if command == 'restore' else 'dismissed'
++                print(f"{verb} {arguments.id} in session {session}; saved versions are unchanged")
++        return 0
+     if command == 'init' and not arguments.from_published:
+         if arguments.version or not arguments.title:
+             raise ArtifactError('a new artifact needs --title; --version goes with --from-published')
+diff --git a/src/projector/artifact_panel.py b/src/projector/artifact_panel.py
+new file mode 100644
+index 00000000..061f5b10
+--- /dev/null
++++ b/src/projector/artifact_panel.py
+@@ -0,0 +1,203 @@
++from __future__ import annotations
++
++import hashlib
++import http.server
++import json
++import os
++import secrets
++import shutil
++import signal
++import subprocess
++import sys
++import tempfile
++import threading
++import time
++import urllib.request
++from functools import partial
++from pathlib import Path
++from urllib.parse import urlsplit
++
++from . import artifact, refs, summary, watch
++from .inbox import locked, read_json, write_json
++
++PREVIEW_IDLE = 900
++
++
++def key(root: Path, remote: str, id: str) -> str:
++    return hashlib.sha256(json.dumps([str(root.resolve()), remote, id]).encode()).hexdigest()
++
++
++def catalog(root: Path, remote: str = 'origin') -> list[dict]:
++    tips = artifact.ref_versions(root, remote)
++    folder = watch.state_root() / 'artifact-catalog' / key(root, remote, '')
++    with locked(folder):
++        cache = read_json(folder / 'catalog.json') or {}
++        if cache.get('tips') == list(tips) and isinstance(cache.get('artifacts'), list):
++            return cache['artifacts']
++        found = {}
++        for tip, preview in zip(tips, (False, True)):
++            if not tip:
++                continue
++            reader = artifact.GitReader(root, tip)
++            ids = {path.split('/')[0] for path in reader.entries if path.endswith('/latest.json')}
++            for id in sorted(ids):
++                try:
++                    artifact.identifier(id)
++                    pointer = artifact.parse_json(reader.read(f'{id}/latest.json', artifact.MAX_JSON), id)
++                    version = pointer.get('version') if isinstance(pointer, dict) else None
++                    if not isinstance(version, str) or not artifact.VERSION.fullmatch(version):
++                        raise artifact.ArtifactError('invalid latest version')
++                    prefix = f'{id}/{version}'
++                    meta = artifact.manifest(artifact.parse_json(
++                        reader.read(f'{prefix}/artifact.json', artifact.MAX_JSON), prefix))
++                    if meta['id'] != id:
++                        raise artifact.ArtifactError('artifact ID does not match its directory')
++                    found[id] = {'id': id, 'title': meta['title'], 'description': meta['description'],
++                                 'version': version, 'preview': preview}
++                except (artifact.ArtifactError, refs.RefError) as error:
++                    found.pop(id, None)
++                    artifact.diagnostic(f'{id}: leaving it out of the panel: {error}')
++        rows = sorted(found.values(), key=lambda row: (row['title'].casefold(), row['id']))
++        write_json(folder / 'catalog.json', {'tips': list(tips), 'artifacts': rows})
++        return rows
++
++
++def dismissals(session: str, state: Path | None = None) -> set[str]:
++    folder = watch.session_folder(state or watch.state_root(), session)
++    hidden = (read_json(folder / 'artifact-dismissals.json') or {}).get('keys', [])
++    return {key for key in hidden if isinstance(key, str)} if isinstance(hidden, list) else set()
++
++
++def listing(root: Path, remote: str, session: str, state: Path | None = None) -> list[dict]:
++    hidden = dismissals(session, state)
++    return [{**row, 'key': key(root, remote, row['id']), 'checkout': str(root), 'remote': remote}
++            for row in catalog(root, remote) if key(root, remote, row['id']) not in hidden]
++
++
++def dismiss(root: Path, remote: str, session: str, id: str, *, restore: bool = False,
++            state: Path | None = None) -> None:
++    artifact.identifier(id)
++    folder = watch.session_folder(state or watch.state_root(), session)
++    name = key(root, remote, id)
++    with locked(folder):
++        path = folder / 'artifact-dismissals.json'
++        hidden = dismissals(session, state)
++        hidden.discard(name) if restore else hidden.add(name)
++        write_json(path, {'keys': sorted(hidden)})
++
++
++def open_url(root: Path, remote: str, id: str) -> str:
++    artifact.identifier(id)
++    row = next((row for row in catalog(root, remote) if row['id'] == id), None)
++    if row is None:
++        raise artifact.ArtifactError(f'{id}: no saved artifact')
++    if not row['preview']:
++        repo = artifact.repository(root, remote)
++        url, _ = summary.push_decision(repo) if repo else (None, '')
++        if url:
++            return f'{url}artifacts/{id}/'
++    tip = artifact.ref_versions(root, remote)[1 if row['preview'] else 0]
++    saved = artifact.read_version(artifact.GitReader(root, tip), f"{id}/{row['version']}")
++    folder = watch.state_root() / 'artifact-previews' / key(root, remote, id)
++    with locked(folder):
++        path = folder / 'preview.json'
++        previous = read_json(path) or {}
++        url = previous.get('url', '')
++        if previous.get('version') == saved.version and live_preview(url):
++            return url
++        work = Path(tempfile.mkdtemp(prefix='projector-artifact-open-'))
++        process = None
++        try:
++            artifact.write_source(saved, work / 'files')
++            ready = work / 'ready.json'
++            token = secrets.token_hex(16)
++            detached = ({'creationflags': subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
++                        if os.name == 'nt' else {'start_new_session': True})
++            process = subprocess.Popen(
++                [sys.executable, '-m', 'projector.artifact_panel', str(work), token],
++                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
++                env={**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parent.parent)}, **detached)
++            deadline = time.monotonic() + 10
++            while time.monotonic() < deadline:
++                record = read_json(ready)
++                if record and live_preview(record.get('url', '')):
++                    write_json(path, {**record, 'version': saved.version})
++                    threading.Thread(target=process.wait, daemon=True).start()
++                    return record['url']
++                if process.poll() is not None:
++                    break
++                time.sleep(0.05)
++            raise artifact.ArtifactError('the local artifact preview did not start')
++        except BaseException:
++            if process is not None:
++                if process.poll() is None:
++                    process.terminate()
++                try:
++                    process.wait(timeout=5)
++                except subprocess.TimeoutExpired:
++                    process.kill()
++                    process.wait()
++            shutil.rmtree(work, ignore_errors=True)
++            raise
++
++
++def live_preview(url: str) -> bool:
++    if not isinstance(url, str):
++        return False
++    try:
++        parsed = urlsplit(url)
++        if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or not parsed.path.startswith('/'):
++            return False
++        with urllib.request.urlopen(url, timeout=1) as response:
++            return response.status == 200
++    except (OSError, ValueError):
++        return False
++
++
++def serve(work: Path, token: str, idle: float = PREVIEW_IDLE) -> None:
++    class Server(http.server.HTTPServer):
++        def get_request(self):
++            connection, address = super().get_request()
++            connection.settimeout(5)
++            return connection, address
++
++    class Handler(http.server.SimpleHTTPRequestHandler):
++        def route(self):
++            host = self.headers.get('Host', '').split(':')[0]
++            prefix = f'/{token}/'
++            if host != '127.0.0.1' or not self.path.startswith(prefix):
++                self.send_error(404)
++                return False
++            self.path = self.path[len(prefix) - 1:]
++            server.last_request = time.monotonic()
++            return True
++
++        def do_GET(self):
++            if self.route():
++                super().do_GET()
++
++        def do_HEAD(self):
++            if self.route():
++                super().do_HEAD()
++
++        def log_message(self, format, *args):
++            pass
++
++    try:
++        with Server(('127.0.0.1', 0), partial(Handler, directory=str(work / 'files'))) as server:
++            server.timeout = 1
++            server.last_request = time.monotonic()
++            url = f'http://127.0.0.1:{server.server_port}/{token}/index.html'
++            write_json(work / 'ready.json', {'url': url, 'pid': os.getpid()})
++            while time.monotonic() - server.last_request < idle:
++                server.handle_request()
++    finally:
++        shutil.rmtree(work, ignore_errors=True)
++
++
++if __name__ == '__main__':
++    def interrupt(signum, frame):
++        raise KeyboardInterrupt
++
++    signal.signal(signal.SIGTERM, interrupt)
++    serve(Path(sys.argv[1]), sys.argv[2])
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index d40d16a4..131e2bb4 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1084,7 +1084,20 @@ def parser() -> argparse.ArgumentParser:
+     artifact_publish.add_argument("--dir", type=Path, required=True)
+     artifact_publish.add_argument("--local", action="store_true")
+     artifact_publish.add_argument("--no-dispatch", action="store_true")
+-    for command in (artifact_init, artifact_list, artifact_publish):
++    artifact_panel = artifact_commands.add_parser("panel", help="list this session's visible artifacts")
++    artifact_panel.add_argument("--session")
++    add_output(artifact_panel)
++    artifact_open = artifact_commands.add_parser("open", help="open an artifact, using a local preview when needed")
++    artifact_open.add_argument("id")
++    artifact_open.add_argument("--print-url", action="store_true")
++    artifact_dismiss = artifact_commands.add_parser("dismiss", help="hide an artifact from one session's panel")
++    artifact_dismiss.add_argument("id")
++    artifact_dismiss.add_argument("--session")
++    artifact_restore = artifact_commands.add_parser("restore", help="bring a dismissed artifact back to the panel")
++    artifact_restore.add_argument("id")
++    artifact_restore.add_argument("--session")
++    for command in (artifact_init, artifact_list, artifact_publish, artifact_panel, artifact_open,
++                    artifact_dismiss, artifact_restore):
+         command.add_argument("--checkout", type=Path)
+         command.add_argument("--remote", default="origin")
+     for command in (artifact_init, artifact_list):
+diff --git a/src/projector/console.py b/src/projector/console.py
+index d36dc466..8ca1e031 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -24,7 +24,7 @@
+ from pathlib import Path
+ from typing import Any, Callable, Optional, TextIO
+ 
+-from . import agents, codex_watch, inbox, repo_inbox, rows, session_titles, watch
++from . import agents, artifact_panel, codex_watch, inbox, repo_inbox, rows, session_titles, summary, watch
+ from .core import ProjectorError
+ 
+ INBOX_EVERY = 1.0
+@@ -74,6 +74,7 @@ class Session:
+     rows: list[rows.Row] = field(default_factory=list)
+     # The repository inbox's entries for the repository the session works in.
+     entries: list[dict] = field(default_factory=list)
++    artifacts: list[dict] = field(default_factory=list)
+ 
+ 
+ @dataclass
+@@ -133,6 +134,7 @@ class Work:
+     rows: bool
+     signatures: dict[str, Optional[tuple]]
+     items: dict[str, list[dict]] = field(default_factory=dict)
++    directories: dict[str, str] = field(default_factory=dict)
+     pull: Optional[rows.Pull] = None
+     drawer: Optional[str] = None
+ 
+@@ -144,6 +146,7 @@ class Found:
+     live: Optional[dict[str, tuple[str, str, str, Optional[float], tuple, Optional[list[dict]]]]] = None
+     rows: dict[str, list[rows.Row]] = field(default_factory=dict)
+     entries: dict[str, list[dict]] = field(default_factory=dict)
++    artifacts: dict[str, list[dict]] = field(default_factory=dict)
+     drawer: Optional[str] = None
+     threads: Optional[list[rows.Thread]] = None
+ 
+@@ -265,6 +268,7 @@ def counts_of(session: Session, now_ms: int) -> list[str]:
+     awake = [item for item in session.items if is_shown(item, now_ms) and is_awake(item, now_ms)]
+     parts = [counted(sum(1 for row in session.rows if row.section == section), NOUNS[section])
+              for section in rows.SECTIONS]
++    parts.append(counted(len(session.artifacts), 'artifact'))
+     parts += [counted(sum(1 for item in awake if item["kind"] == kind), NOUNS[kind]) for kind in KINDS]
+     return [part for part in parts if part is not None]
+ 
+@@ -350,6 +354,14 @@ def item_key(item: dict) -> str:
+     return f"item:{item['ref']}"
+ 
+ 
++def read_artifacts(state: Path, session: str, cwd: str) -> Optional[list[dict]]:
++    try:
++        checkout = summary.checkout_root(Path(cwd)) if cwd else None
++        return artifact_panel.listing(checkout, 'origin', session, state) if checkout else []
++    except (ProjectorError, OSError):
++        return None
++
++
+ class Console:
+     """What the console shows, and what each key does to it."""
+ 
+@@ -412,7 +424,8 @@ def tick(self) -> None:
+     def due(self, now: float) -> Optional[Work]:
+         work = Work(inbox=now >= self.next_inbox, rows=now >= self.next_rows,
+                     signatures={name: session.signature for name, session in self.sessions.items()},
+-                    items={name: session.items for name, session in self.sessions.items()})
++                    items={name: session.items for name, session in self.sessions.items()},
++                    directories={name: session.cwd for name, session in self.sessions.items()})
+         if work.inbox:
+             self.next_inbox = now + INBOX_EVERY
+         if work.rows:
+@@ -451,6 +464,10 @@ def load(self, work: Work) -> Found:
+         for name in names:
+             if work.rows or name not in work.signatures:
+                 found.rows[name] = rows.rows_for(self.root, name)
++                cwd = found.live[name][2] if found.live is not None else work.directories.get(name, '')
++                artifacts = read_artifacts(self.root, name, cwd)
++                if artifacts is not None:
++                    found.artifacts[name] = artifacts
+         if work.pull is not None:
+             found.threads = rows.fetch_threads(work.pull, self.gh)
+         return found
+@@ -471,6 +488,10 @@ def apply(self, found: Found) -> None:
+         for name, entries in found.entries.items():
+             if name in self.sessions:
+                 self.sessions[name].entries = entries
++        for name, artifacts in found.artifacts.items():
++            if name in self.sessions:
++                hidden = artifact_panel.dismissals(name, self.root)
++                self.sessions[name].artifacts = [row for row in artifacts if row['key'] not in hidden]
+         if found.drawer is not None and found.drawer == self.drawer:
+             self.threads = found.threads
+         self.settle_view()
+@@ -527,6 +548,7 @@ def entries(self) -> list[tuple[str, object]]:
+             return []
+         now = self.now_ms()
+         return ([(pull_key(row.pull), row) for row in session.rows]
++                + [(f"artifact:{entry['key']}", entry) for entry in session.artifacts]
+                 + [(item_key(item), item) for item in shown_items(session, now)]
+                 + [(entry_key(entry), entry) for entry in session.entries if not repo_inbox.is_snoozed(entry, now)])
+ 
+@@ -708,6 +730,11 @@ def open_drawer(self, key: str) -> None:
+         self.settle_view()
+ 
+     def controls(self) -> list[Control]:
++        if self.drawer and self.drawer.startswith('artifact:'):
++            row = dict(self.entries()).get(self.drawer)
++            if row is not None:
++                return [Control('o', 'Open', lambda: self.open_artifact(row)),
++                        Control('8', 'Dismiss', lambda: self.dismiss_artifact(row))]
+         row, item, entry = self.row(self.drawer), self.item(self.drawer), self.entry(self.drawer)
+         if row is not None:
+             return self.pull_controls(row)
+@@ -715,6 +742,23 @@ def controls(self) -> list[Control]:
+             return self.entry_controls(entry)
+         return self.item_controls(item) if item is not None else []
+ 
++    def open_artifact(self, row: dict) -> None:
++        try:
++            self.visit('o', artifact_panel.open_url(Path(row['checkout']), row['remote'], row['id']))
++        except (ProjectorError, OSError) as error:
++            self.status = str(error)
++
++    def dismiss_artifact(self, row: dict) -> None:
++        try:
++            artifact_panel.dismiss(Path(row['checkout']), row['remote'], self.session, row['id'], state=self.root)
++            session = self.viewed()
++            if session is not None:
++                session.artifacts = [item for item in session.artifacts if item['key'] != row['key']]
++            self.close_drawer()
++            self.settle_view()
++        except ProjectorError as error:
++            self.status = str(error)
++
+     def entry_controls(self, entry: dict) -> list[Control]:
+         """A repository inbox entry's keys. A peer's question takes its answers, and a request Done or its options
+         and Decline, each recorded at once as the user's and sealed back to the peer; no line goes to the session,
+@@ -1116,9 +1160,12 @@ def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+         state_width = max((len(row.state) for row in session.rows if not row.pull.is_loading), default=0)
+         previous = None
+         for key, entry in entries:
+-            group = entry.section if isinstance(entry, rows.Row) else "repo" if key.startswith("repo:") else "items"
++            group = (entry.section if isinstance(entry, rows.Row) else "artifact" if key.startswith('artifact:')
++                     else "repo" if key.startswith("repo:") else "items")
+             if previous is not None and group != previous:
+                 lines.append(Line([]))
++            if group == 'artifact' and previous != group:
++                lines.append(Line([('Artifacts', '')]))
+             previous = group
+             start = len(lines)
+             # The row is lit only while the focus is on the row itself, not on one of its drawer's controls.
+@@ -1127,6 +1174,12 @@ def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+                 lines.append(self.pull_line(entry, label_width, state_width, author_width, lit))
+                 if key == self.drawer:
+                     lines += self.pull_drawer(entry, width)
++            elif key.startswith('artifact:'):
++                suffix = ' · local preview' if entry['preview'] else ''
++                lines.append(Line([(f"- {entry['title']}{suffix}", '')], lit))
++                if key == self.drawer:
++                    lines.append(Line([(' ' * DRAWER_INDENT + entry['description'], 'subtle')]))
++                    lines.append(self.controls_line(self.controls()))
+             elif key.startswith("repo:"):
+                 lines.append(self.entry_line(entry, now, lit))
+                 if key == self.drawer:
+diff --git a/tests/artifact_ui.mjs b/tests/artifact_ui.mjs
+index 57b29211..41356cce 100644
+--- a/tests/artifact_ui.mjs
++++ b/tests/artifact_ui.mjs
+@@ -32,8 +32,8 @@ try {
+       const response = await context.request.get(`${base}site.json`);
+       assert(response.ok());
+       const site = await response.json();
+-      assert.equal(site.artifacts.length, 1);
+-      const artifact = site.artifacts[0];
++      assert.equal(site.artifacts.filter(item => item.id === 'cache-explorer').length, 1);
++      const artifact = site.artifacts.find(item => item.id === 'cache-explorer');
+       assert.equal(artifact.versions.length, 2);
+       const older = artifact.versions.find(version => version.version !== artifact.latest);
+       const latestRoute = `${base}artifacts/${artifact.id}/`;
+diff --git a/tests/test_artifact_panel.py b/tests/test_artifact_panel.py
+new file mode 100644
+index 00000000..e6973cbf
+--- /dev/null
++++ b/tests/test_artifact_panel.py
+@@ -0,0 +1,180 @@
++from __future__ import annotations
++
++import json
++import os
++import signal
++import subprocess
++import sys
++import tempfile
++import unittest
++import urllib.error
++import urllib.request
++from pathlib import Path
++from unittest import mock
++
++from projector import artifact, artifact_panel, cli, console, refs
++
++
++class ArtifactPanelTests(unittest.TestCase):
++    def setUp(self):
++        temp = tempfile.TemporaryDirectory()
++        self.addCleanup(temp.cleanup)
++        self.root = Path(temp.name)
++        self.repo = self.root / 'repo'
++        self.repo.mkdir()
++        self.git('init', '-q')
++        self.git('config', 'user.name', 'Test')
++        self.git('config', 'user.email', 'test@example.com')
++        self.git('config', 'commit.gpgsign', 'false')
++        self.env = mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root / 'state')})
++        self.env.start()
++        self.addCleanup(self.env.stop)
++        self.source = self.root / 'source'
++        artifact.init('explorer', self.source, 'Cache explorer', 'Explore saved data')
++        self.save()
++
++    def git(self, *args):
++        return subprocess.run(['git', '-C', str(self.repo), *args], check=True,
++                              capture_output=True, text=True).stdout.strip()
++
++    def save(self):
++        return artifact.publish(artifact.snapshot(self.source), self.repo, 'origin', push=False)
++
++    def listed(self, session='one'):
++        return artifact_panel.listing(self.repo, 'origin', session)
++
++    def test_existing_artifacts_appear_and_dismissal_survives_a_revision_only_in_its_session(self):
++        first = self.listed()[0]
++        tip = refs.ref_tip(self.repo, artifact.REF)
++        artifact_panel.dismiss(self.repo, 'origin', 'one', 'explorer')
++        self.assertEqual([], self.listed())
++        self.assertEqual(tip, refs.ref_tip(self.repo, artifact.REF))
++        self.assertEqual('Cache explorer', self.listed('two')[0]['title'])
++        meta = json.loads((self.source / 'artifact.json').read_text())
++        meta['title'] = 'Revised explorer'
++        (self.source / 'artifact.json').write_text(json.dumps(meta))
++        self.save()
++        self.assertEqual([], self.listed())
++        self.assertEqual('Revised explorer', self.listed('two')[0]['title'])
++        artifact_panel.dismiss(self.repo, 'origin', 'one', 'explorer', restore=True)
++        self.assertEqual(first['key'], self.listed()[0]['key'])
++        self.assertEqual('Revised explorer', self.listed()[0]['title'])
++
++    def test_cached_metadata_does_not_load_payloads_and_invalid_latest_keeps_valid_neighbors(self):
++        read = artifact.GitReader.read
++        paths = []
++
++        def recorded(reader, path, limit):
++            paths.append(path)
++            self.assertNotIn('/files/', path)
++            return read(reader, path, limit)
++
++        with mock.patch.object(artifact.GitReader, 'read', recorded):
++            self.assertEqual('explorer', self.listed()[0]['id'])
++        with mock.patch.object(artifact, 'GitReader', side_effect=AssertionError('unchanged refs were rescanned')):
++            self.assertEqual('explorer', self.listed()[0]['id'])
++        parent = refs.ref_tip(self.repo, artifact.REF)
++        tree = refs.write_tree(parent, {'artifacts/broken/latest.json': b'{"version":"bad"}'},
++                               run=lambda *args, **kwargs: refs.git(*args, root=self.repo, **kwargs))
++        commit = self.git('commit-tree', tree, '-p', parent, '-m', 'Add invalid neighbor')
++        self.git('update-ref', artifact.REF, commit)
++        self.assertEqual(['explorer'], [row['id'] for row in self.listed()])
++        self.assertTrue(paths)
++
++    def test_local_open_serves_relative_binary_files_reuses_the_preview_and_checks_the_host(self):
++        meta = json.loads((self.source / 'artifact.json').read_text())
++        meta['files'].append('data.bin')
++        (self.source / 'artifact.json').write_text(json.dumps(meta))
++        (self.source / 'data.bin').write_bytes(b'\x00\xff\x00\r\n')
++        self.save()
++        opened = subprocess.run([sys.executable, '-m', 'projector', 'artifact', 'open', 'explorer',
++                                 '--checkout', str(self.repo), '--print-url'],
++                                capture_output=True, text=True, timeout=15)
++        self.assertEqual(0, opened.returncode, opened.stderr)
++        url = opened.stdout.strip()
++        registry = next((artifact_panel.watch.state_root() / 'artifact-previews').glob('*/preview.json'))
++        pid = json.loads(registry.read_text())['pid']
++        self.addCleanup(lambda: os.kill(pid, signal.SIGTERM))
++        with urllib.request.urlopen(url) as response:
++            self.assertIn(b'Cache explorer', response.read())
++        with urllib.request.urlopen(url.removesuffix('index.html') + 'data.bin') as response:
++            self.assertEqual(b'\x00\xff\x00\r\n', response.read())
++        self.assertEqual(url, artifact_panel.open_url(self.repo, 'origin', 'explorer'))
++        for method in ('GET', 'HEAD'):
++            request = urllib.request.Request(url, method=method, headers={'Host': 'untrusted.example'})
++            with self.assertRaises(urllib.error.HTTPError) as error:
++                urllib.request.urlopen(request)
++            self.assertEqual(404, error.exception.code)
++
++    def test_console_opens_and_dismisses_an_artifact_without_changing_its_saved_versions(self):
++        state = artifact_panel.watch.state_root()
++        app = console.Console(state)
++        app.sessions['one'] = console.Session('one', 'codex', 'One', artifacts=self.listed())
++        previous = list(app.sessions['one'].artifacts)
++        app.open_panel('one')
++        app.key('enter')
++        self.assertIn('Artifacts', '\n'.join(line.text for line in app.panel_lines(100)[0]))
++        with mock.patch.object(artifact_panel, 'open_url', return_value='https://example.com/artifacts/explorer/'):
++            with mock.patch.object(app, 'open_url') as opened:
++                app.key('o')
++                opened.assert_called_once_with('https://example.com/artifacts/explorer/')
++        tip = refs.ref_tip(self.repo, artifact.REF)
++        app.key('8')
++        self.assertEqual([], self.listed())
++        self.assertEqual([], app.sessions['one'].artifacts)
++        self.assertEqual(tip, refs.ref_tip(self.repo, artifact.REF))
++        app.apply(console.Found(artifacts={'one': previous}))
++        self.assertEqual([], app.sessions['one'].artifacts)
++
++    def test_an_idle_preview_stops_and_removes_its_extracted_files(self):
++        work = self.root / 'preview'
++        artifact.write_source(artifact.snapshot(self.source), work / 'files')
++        result = subprocess.run([sys.executable, '-c',
++                                 'from pathlib import Path; import sys; '
++                                 'from projector.artifact_panel import serve; '
++                                 'serve(Path(sys.argv[1]), "test-token", idle=0.01)', str(work)],
++                                capture_output=True, text=True, timeout=10)
++        self.assertEqual(0, result.returncode, result.stderr)
++        self.assertFalse(work.exists())
++
++    def test_a_fetched_published_artifact_opens_its_configured_site_without_a_preview_process(self):
++        tip = refs.ref_tip(self.repo, artifact.REF)
++        self.git('update-ref', refs.tracking_ref('origin', artifact.REF), tip)
++        self.git('update-ref', '-d', artifact.REF)
++        self.assertFalse(self.listed()[0]['preview'])
++        with mock.patch.object(artifact, 'repository', return_value='example/repo'):
++            with mock.patch.object(artifact_panel.summary, 'push_decision', return_value=('https://example.com/tools/', '')):
++                self.assertEqual('https://example.com/tools/artifacts/explorer/',
++                                 artifact_panel.open_url(self.repo, 'origin', 'explorer'))
++        self.assertFalse((artifact_panel.watch.state_root() / 'artifact-previews').exists())
++
++    def test_cli_dismiss_and_restore_change_only_the_selected_session(self):
++        from contextlib import redirect_stdout
++        import io
++        arguments = ['--checkout', str(self.repo), '--session', 'one']
++        with redirect_stdout(io.StringIO()):
++            self.assertEqual(0, cli.main(['artifact', 'dismiss', 'explorer', *arguments]))
++            self.assertEqual([], self.listed())
++            self.assertEqual(1, len(self.listed('two')))
++            self.assertEqual(0, cli.main(['artifact', 'restore', 'explorer', *arguments]))
++        self.assertEqual(1, len(self.listed()))
++
++    def test_a_stopped_managed_session_still_lists_and_opens_its_artifacts(self):
++        from projector import agent_console
++        state = artifact_panel.watch.state_root()
++        app = agent_console.Console(state)
++        managed = {'one': {'cwd': str(self.repo), 'backend': 'codex', 'state': 'stopped'}}
++        with mock.patch.object(console, 'live_sessions', return_value={}):
++            with mock.patch.object(agent_console.runtime, 'sessions', return_value=managed):
++                with mock.patch.object(agent_console.runtime, 'launches', return_value=[]):
++                    found = app.load(console.Work(inbox=True, rows=True, signatures={}))
++        app.apply(found)
++        self.assertEqual('explorer', app.sessions['one'].artifacts[0]['id'])
++        app.open_panel('one')
++        app.key('enter')
++        with mock.patch.object(artifact_panel, 'open_url', return_value='https://example.com/artifacts/explorer/'):
++            with mock.patch.object(app, 'open_url') as opened:
++                with mock.patch.object(agent_console.runtime, 'control') as control:
++                    app.key('o')
++                    opened.assert_called_once_with('https://example.com/artifacts/explorer/')
++                    control.assert_not_called()
