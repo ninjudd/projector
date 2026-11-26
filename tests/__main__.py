@@ -1,6 +1,6 @@
 """Run the test suite across worker processes.
 
-    PYTHONPATH=src python3 -m tests [-j JOBS] [-v] [NAME ...]
+    PYTHONPATH=src python3 -m tests [-j JOBS] [-v] [--timeout SECONDS] [NAME ...]
 
 Each worker runs `python3 -m unittest` on a chunk of one test class, so a
 worker shares nothing with another but the machine. Chunks start largest
@@ -8,6 +8,10 @@ first and a free worker takes the next, which keeps every core busy until the
 end. A NAME narrows the run to a module, class, or test, as unittest takes it.
 The run prints each failing chunk's output, then one summary, and exits 1 when
 any chunk fails.
+
+A chunk reads nothing from the terminal, and one that runs past `--timeout`
+seconds is stopped with every process it started and fails, so a test waiting
+on something that never comes fails its chunk instead of holding up the run.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -25,6 +30,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CHUNK = 8
+# The slowest chunk takes under a minute, so one that runs five is waiting on something that never comes.
+TIMEOUT = 300
 
 
 def tests_in(suite: unittest.TestSuite):
@@ -55,15 +62,28 @@ def chunks(names: list[str]) -> list[list[str]]:
     return sorted(jobs, key=len, reverse=True)
 
 
-def run(ids: list[str], verbose: bool) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, "-m", "unittest", *(["-v"] if verbose else []), *ids],
-                          cwd=ROOT, capture_output=True, text=True)
+def run(ids: list[str], verbose: bool, timeout: float = TIMEOUT) -> subprocess.CompletedProcess:
+    """Run one chunk with no stdin, in a process group of its own, so that past `timeout` the whole group is
+    killed: a process a test started that waits on input would otherwise hold the output pipes open."""
+    command = [sys.executable, "-m", "unittest", *(["-v"] if verbose else []), *ids]
+    with subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
+        try:
+            out, err = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            out, err = process.communicate()
+            err += f"\nThe chunk ran past {timeout:g} seconds and was stopped.\n"
+            return subprocess.CompletedProcess(command, 1, out, err)
+    return subprocess.CompletedProcess(command, process.returncode, out, err)
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m tests", description=__doc__.split("\n\n")[0])
     parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1, help="worker processes (default: one per CPU)")
     parser.add_argument("-v", "--verbose", action="store_true", help="print every chunk's unittest output")
+    parser.add_argument("--timeout", type=float, default=TIMEOUT,
+                        help=f"seconds a chunk may run before it is stopped and fails (default: {TIMEOUT})")
     parser.add_argument("names", nargs="*", help="modules, classes, or tests to run (default: the whole suite)")
     args = parser.parse_args(argv)
 
@@ -72,7 +92,7 @@ def main(argv: list[str]) -> int:
     ran = skipped = 0
     failed: list[tuple[list[str], str]] = []
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        for ids, result in zip(jobs, pool.map(lambda ids: run(ids, args.verbose), jobs)):
+        for ids, result in zip(jobs, pool.map(lambda ids: run(ids, args.verbose, args.timeout), jobs)):
             output = result.stderr + result.stdout
             if args.verbose:
                 print(output, end="", flush=True)
