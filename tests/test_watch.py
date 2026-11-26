@@ -88,6 +88,15 @@ def projector_body(sha, *, model=MODEL, count=1, builds_on=None, body="Clean."):
     return f"Projector review\n\n{marker}\n\n{counted}{body}"
 
 
+SOCKET = "- `src/y.py:7`: Close the socket `fetch` opens when the request fails."
+FLAG = "- `docs/cli.md`: Document the `--cold` flag."
+
+
+def follow_ups(*items):
+    """The follow-ups section `project review publish` writes, listing `items`."""
+    return f"<!-- projector-follow-ups v=1 count={len(items)} -->\n### Follow-ups\n\n" + "\n".join(items)
+
+
 def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:00Z", association="COLLABORATOR",
                       model=MODEL, who="operator"):
     """A GraphQL review node by `who` whose body carries the marker line `project review publish` writes."""
@@ -1025,6 +1034,15 @@ class FixRoleTests(WatchCase):
             f"REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 1 suggestion: Projector review Clean. — {fix_action(1)}",
         ], events["fixer"])
 
+    def test_a_projector_review_that_lists_only_follow_ups_is_no_work_on_the_open_pull_request(self) -> None:
+        # The fixer takes a follow-up on only once the pull request merges, so a REVIEW line would start a
+        # subagent with nothing to do.
+        self.github.pull_request(1, reviews=[
+            rest_review(81, who="operator", body=projector_body(SHA_A, count=None, body=follow_ups(SOCKET)))])
+        self.fixer("acme/app#1 fix")
+
+        self.assertEqual([], self.cycle()["fixer"])
+
     def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
         self.github.pull_request(1, draft=False, threads=[thread("T1")], reviews=[rest_review(5)])
         self.fixer("acme/app#1 fix")
@@ -1369,6 +1387,32 @@ class FixRoleTests(WatchCase):
 
         self.assertEqual(["MERGED acme/app#1 into main — run fix-pr on acme/app#1 in subagent fix-1 to take the 2 "
                           "suggestions its merged head lists into a follow-up pull request, then finish it"], events)
+
+    def test_a_merged_pull_request_sends_its_fixer_to_take_the_follow_ups_every_head_lists(self) -> None:
+        # Head A's review is history for its suggestions, but not for its follow-up, which names code outside
+        # the change: head B's review repeats it, and it counts once.
+        self.github.pull_request(1, head=SHA_B, state="MERGED", reviews=[
+            rest_review(81, who="operator", body=projector_body(SHA_A, count=3, body=follow_ups(SOCKET)),
+                        at="2026-10-30T00:00:00Z"),
+            rest_review(82, who="operator", sha=SHA_B,
+                        body=projector_body(SHA_B, count=2, body=follow_ups(SOCKET, FLAG)),
+                        at="2026-10-30T01:00:00Z")])
+        self.fixer("acme/app#1 fix")
+
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(["MERGED acme/app#1 into main — run fix-pr on acme/app#1 in subagent fix-1 to take the 2 "
+                          "suggestions its merged head lists and the 2 follow-ups its reviews list into a follow-up "
+                          "pull request, then finish it"], events)
+
+    def test_a_merged_pull_request_with_only_a_follow_up_sends_its_fixer_to_take_it(self) -> None:
+        self.github.pull_request(1, state="MERGED", reviews=[
+            rest_review(81, who="operator", body=projector_body(SHA_A, count=None, body=follow_ups(SOCKET)))])
+        self.fixer("acme/app#1 fix")
+
+        self.assertEqual(["MERGED acme/app#1 into main — run fix-pr on acme/app#1 in subagent fix-1 to take the "
+                          "follow-up its reviews list into a follow-up pull request, then finish it"],
+                         self.cycle()["fixer"])
 
     def test_a_pull_request_closed_without_merging_owes_no_follow_up(self) -> None:
         self.github.pull_request(2, state="CLOSED", reviews=[

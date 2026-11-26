@@ -71,7 +71,8 @@ it; `review-repo` to review every pull request of yours in a repository the
 same way; `fix-pr` to fix a pull request's findings and merge conflicts,
 which the session that pushed a pull request runs again whenever a review
 finds something; `summarize-pr`, which summarizes a pull request's changes
-as a guided review page; `write`, which writes any prose so that it follows
+as a guided review page; `artifact`, which creates and versions interactive
+pages on the repository's site; `write`, which writes any prose so that it follows
 Projector's writing guide; `rewrite`, which revises existing text by
 that guide and writes it back where it lives; `message`, which lets a
 session find and talk to your other agent sessions; `cleanup`, which
@@ -105,7 +106,7 @@ carries none of your authority. See
 ## Publish a site
 
 Every repository can serve a site on GitHub Pages with its projects, its pull
-request summaries, and its docs. `project init` sets it up, and
+request summaries, its artifacts, and its docs. `project init` sets it up, and
 `project site serve` shows it locally without Pages. See
 [Set up the Projector site](docs/site.md).
 

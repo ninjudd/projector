@@ -9,7 +9,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 from unittest import mock
 
-from projector import cli, config, console, inbox, relay, repo_inbox, watch
+from projector import cli, config, console, inbox, relay, repo_inbox, session_titles, watch
 from projector.inbox import read_json, write_json
 
 SOURCE = Path(cli.__file__).resolve().parents[1]
@@ -52,6 +51,8 @@ class ConsoleCase(unittest.TestCase):
         self.home = self.scratch / "home"
         self.home.mkdir()
         environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state"), "HOME": str(self.home),
+                                               "CODEX_HOME": str(self.home / ".codex"),
+                                               "CLAUDE_CONFIG_DIR": str(self.home / ".claude"),
                                                "PROJECTOR_REMOTE": "0", "BROWSER": ""})
         environ.start()
         self.addCleanup(environ.stop)
@@ -197,8 +198,8 @@ class SessionSet(ConsoleCase):
 
         self.console.tick()
 
-        self.assertEqual([("00000000c0de", "codex", "acme/web codex-branch"), ("fixer", "claude", "acme/app main")],
-                         sorted((one.label, one.host, one.place) for one in self.console.home()))
+        self.assertEqual([("Unnamed session", "codex", str(checkout)), ("fixer", "claude", "")],
+                         sorted((one.label, one.host, one.cwd) for one in self.console.home()))
 
 
 class HomeOrder(ConsoleCase):
@@ -221,22 +222,10 @@ class HomeOrder(ConsoleCase):
         self.assertEqual(1, lines.count("/work/app-copy"))
         self.assertLess(lines.index("/work/app"), lines.index("/work/app-copy"))
         self.assertIn("Unknown working directory", lines)
+        self.assertTrue(all(lines[lines.index(heading) - 1] == "" for heading in
+                            ("/work/App", "/work/app", "/work/app-copy", "/work/app/nested",
+                             "Unknown working directory")))
         self.assertNotIn("/work/old", lines)
-
-    def test_a_session_summary_and_newest_item_stay_on_its_single_list_line(self) -> None:
-        self.claude("s1")
-        write_json(self.folder("s1") / "agent.json",
-                   {"schema_version": 1, "name": "fixer", "cwd": "/work/app", "summary": "Fixing the build"})
-        self.ask("s1", "Retry the build?")
-
-        self.console.tick()
-        lines = [line.text for line in self.console.lines(100)[0]]
-        summary = next(line for line in lines if "Fixing the build" in line)
-
-        self.assertIn("fixer", summary)
-        self.assertIn("1 question", summary)
-        self.assertIn("Retry the build?", summary)
-        self.assertIn("/work/app", lines)
 
     def test_a_refresh_keeps_the_initial_selection_when_another_session_moves_first(self) -> None:
         with mock.patch.object(inbox, "now_ms", return_value=int(self.clock.now * 1000)):
@@ -272,6 +261,140 @@ class HomeOrder(ConsoleCase):
         self.open_entry("s1", "item:1")
 
         self.assertIn("you: Which mirrors?", self.screen())
+
+
+class SessionColumns(ConsoleCase):
+    def test_a_codex_rename_appears_without_an_inbox_change_and_a_partial_name_waits_for_its_newline(self) -> None:
+        self.codex("s1", cwd="/work/app")
+        self.subscribe("s1", "acme/app review claude operator")
+        index = self.home / ".codex" / "session_index.jsonl"
+        index.parent.mkdir()
+        index.write_text('{"id":"s1","thread_name":"First title"}\n')
+        self.console.tick()
+        self.assertEqual("First title", self.console.viewed().label)
+
+        with index.open("a") as stream:
+            stream.write('not json\n{"id":"s1","thread_name":"Renamed')
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.assertEqual("First title", self.console.viewed().label)
+
+        with index.open("a") as stream:
+            stream.write(' session"}\n')
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.assertEqual("Renamed session", self.console.viewed().label)
+
+        index.write_text('{"id":"s1","thread_name":"New"}\n')
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.assertEqual("New", self.console.viewed().label)
+
+    def test_a_claude_session_uses_its_native_custom_title_after_a_large_non_title_entry(self) -> None:
+        self.claude("s1")
+        self.ask("s1")
+        transcript = self.home / ".claude" / "projects" / "project" / "s1.jsonl"
+        transcript.parent.mkdir(parents=True)
+        transcript.write_text(json.dumps({"type": "tool", "content": "x" * 400}) + "\n"
+                              + json.dumps({"type": "custom-title", "sessionId": "s1", "customTitle": "Ship preview"})
+                              + "\n")
+        with mock.patch.object(session_titles, "READ_BYTES", 128):
+            for _ in range(6):
+                self.console.tick()
+                self.clock.now += console.INBOX_EVERY
+
+        self.assertEqual("Ship preview", self.console.viewed().label)
+        self.assertNotIn("x" * 20, self.screen())
+
+    def test_session_titles_replace_ids_and_pr_counts_start_in_one_column(self) -> None:
+        anonymous = "019a2b3c-0000-7000-8000-00000000c0de"
+        self.codex(anonymous, cwd="/work/app")
+        index = self.home / ".codex" / "session_index.jsonl"
+        index.parent.mkdir()
+        index.write_text(json.dumps({"id": anonymous, "thread_name": "Build the preview"}) + "\n")
+        self.claude("named")
+        write_json(self.folder("named") / "agent.json",
+                   {"schema_version": 1, "name": "build-fixer", "cwd": "/work/app", "repo": "acme/app"})
+        self.subscribe(anonymous, "acme/app#12 fix")
+        self.subscribe("named", "acme/app#12 fix", "acme/app#13 fix")
+        self.cache("acme/app", 12)
+        self.cache("acme/app", 13)
+
+        self.console.tick()
+        lines = [line.text for line in self.console.lines(100)[0]]
+        codex = next(line for line in lines if "Build the preview" in line)
+        named = next(line for line in lines if "build-fixer" in line)
+
+        self.assertEqual(codex.index("1 PR"), named.index("2 PRs"))
+        self.assertNotIn("00000000c0de", "\n".join(lines))
+        self.assertNotIn("acme/app", "\n".join(lines))
+
+    def test_directory_headings_shorten_only_paths_within_the_home_directory(self) -> None:
+        for name, cwd in (("home", str(self.home)), ("child", str(self.home / "app")),
+                          ("sibling", str(self.home) + "-other/app")):
+            self.codex(name, cwd=cwd)
+            self.subscribe(name, "acme/app review claude operator")
+
+        self.console.tick()
+        lines = [line.text for line in self.console.lines(100)[0]]
+
+        self.assertIn("~", lines)
+        self.assertIn("~/app", lines)
+        self.assertIn(str(self.home) + "-other/app", lines)
+
+    def test_session_rows_follow_the_directory_without_field_headings(self) -> None:
+        self.codex("s1", cwd="/work/app")
+        self.subscribe("s1", "acme/app review claude operator")
+        self.console.tick()
+        lines = self.console.home_lines(100)[0]
+
+        self.assertEqual("", lines[1].text)
+        self.assertEqual("/work/app", lines[2].text)
+        self.assertTrue(lines[3].text.startswith("▸ "))
+        self.assertIn("0 PRs", lines[3].text)
+
+    def test_a_newer_notice_does_not_replace_the_latest_open_request(self) -> None:
+        self.claude("s1")
+        with mock.patch.object(inbox, "now_ms", return_value=int(self.clock.now * 1000) - 3000):
+            self.ask("s1", "Check the build?")
+        with mock.patch.object(inbox, "now_ms", return_value=int(self.clock.now * 1000) - 2000):
+            inbox.request("s1", "Test the preview")
+        inbox.tell("s1", "Uploaded the build")
+
+        self.console.tick()
+        row = next(line.text for line in self.console.lines(100)[0] if line.text.startswith("▸ "))
+
+        self.assertIn("Test the preview", row)
+        self.assertNotIn("Uploaded the build", row)
+        self.assertNotIn("Check the build?", row)
+
+        inbox.done("s1", "2")
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        row = next(line.text for line in self.console.lines(100)[0] if line.text.startswith("▸ "))
+        self.assertIn("Check the build?", row)
+        self.assertNotIn("Test the preview", row)
+
+    def test_the_right_edge_uses_the_pull_update_time_instead_of_polling_or_heartbeat_time(self) -> None:
+        self.codex("s1", cwd="/work/app")
+        self.subscribe("s1", "acme/app#12 fix")
+        self.cache("acme/app", 12, updatedAt=watch.stamp(self.clock.now - 120))
+        self.console.tick()
+
+        initial = next(line.text for line in self.console.lines(100)[0] if line.text.startswith("▸ "))
+        self.clock.now += 30
+        self.codex("s1", cwd="/work/app")
+        self.cache("acme/app", 12, updatedAt=watch.stamp(self.clock.now - 150))
+        self.console.tick()
+        polled = next(line.text for line in self.console.lines(100)[0] if line.text.startswith("▸ "))
+        self.cache("acme/app", 12, updatedAt=watch.stamp(self.clock.now - 10))
+        self.clock.now += console.ROWS_EVERY
+        self.console.tick()
+        changed = next(line.text for line in self.console.lines(100)[0] if line.text.startswith("▸ "))
+
+        self.assertEqual((100, "2m", "2m", "15s"),
+                         (len(initial), initial.rstrip().split()[-1], polled.rstrip().split()[-1],
+                          changed.rstrip().split()[-1]))
 
 
 class Recording(ConsoleCase):
@@ -840,8 +963,7 @@ class Ring(ConsoleCase):
         self.ask("s1")
 
     def test_the_arrows_move_one_focus_through_the_rows_and_the_open_drawers_options_and_actions(self) -> None:
-        # Catches arrows that stop at an open question's last option, skip its actions or the conversation's
-        # heading, wrap past either end, or close the drawer when the focus leaves it.
+        # Catches arrows that stop at an open question's last option, skip its actions, wrap past either end, or close the drawer when the focus leaves it.
         self.open_entry("s1", "item:1")
         seen = [self.focused()]
         for name in ("up", "up", "up", *["down"] * 9):
@@ -851,7 +973,7 @@ class Ring(ConsoleCase):
         self.assertEqual([["1: Decline it (recommended)"], ["- Decline the finding?"], ["#12"], ["#12"],
                           ["- Decline the finding?"], ["1: Decline it (recommended)"], ["2: Fix it"],
                           ["6: I don't understand"], ["7: Discuss"], ["8: Dismiss"],
-                          ["9: Snooze"], ["▸ Conversation"], ["▸ Conversation"]], seen)
+                          ["9: Snooze"], ["9: Snooze"], ["9: Snooze"]], seen)
         self.assertEqual("item:1", self.console.drawer)
 
     def test_a_pull_request_drawers_actions_follow_its_row_and_come_before_the_next_row(self) -> None:
@@ -1004,16 +1126,80 @@ class TerminalCase(ConsoleCase):
 
 
 class SplitLayout(TerminalCase):
+    def test_only_the_selected_agent_name_has_color_and_neither_session_row_is_reversed(self) -> None:
+        for name in ("first", "second"):
+            self.codex(name, cwd="/work/app")
+            write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
+        self.console.tick()
+        self.console.selected = "first"
+        lines = self.console.home_lines(100)[0]
+        rows = [line for line in lines if line.text.startswith(("▸ first", "  second"))]
+        window = FakeWindow(2, 100)
+        with mock.patch.dict(os.environ, {"NO_COLOR": ""}):
+            screen = console.Screen(window, self.console, ColorCurses(256))
+        screen.put(0, rows[0], 100)
+        screen.put(1, rows[1], 100)
+        names = {text.strip(): attributes for text, attributes in window.drawn if text.strip() in ("first", "second")}
+
+        self.assertGreater(names["first"] >> 8, 0)
+        self.assertEqual(0, names["second"])
+        self.assertFalse(any(attributes & FakeCurses.A_REVERSE for _, attributes in window.drawn))
+
+    def test_narrow_rows_shorten_the_request_and_preserve_the_rightmost_update_column(self) -> None:
+        self.codex("s1", cwd="/work/app")
+        self.ask("s1", "Review the new preview before the next release?")
+        self.console.tick()
+
+        for width in (20, 40, 80):
+            with self.subTest(width=width):
+                row = next(line.text for line in self.console.lines(width)[0] if line.text.startswith("▸ "))
+                self.assertEqual(width, len(row))
+                self.assertTrue(row.endswith("0s "), row)
+        row = next(line.text for line in self.console.lines(40)[0] if line.text.startswith("▸ "))
+        self.assertIn("…", row)
+        self.assertNotIn("release?", row)
+
+    def test_the_drawer_ends_after_its_items_without_a_conversation_row(self) -> None:
+        self.claude("s1")
+        self.ask("s1")
+        self.open_entry("s1", "item:1")
+        self.press("v")
+        for _ in range(15):
+            self.press("down")
+
+        self.assertNotIn("Conversation", self.draw())
+        self.assertEqual(["9: Snooze"], self.focused())
+        self.assertNotIn("v conversation", self.console.footer()[-1].text)
+
+    def test_status_width_keeps_pull_request_titles_aligned(self) -> None:
+        self.claude("s1")
+        self.subscribe("s1", "acme/app#12 fix", "acme/app#123 fix", "acme/app#124 fix")
+        self.cache("acme/app", 12, title="Ready title")
+        self.cache("acme/app", 123, title="Reviewed title", labels={"nodes": [{"name": "reviewing"}]})
+        self.cache("acme/app", 124, title="Conflict title", mergeable="CONFLICTING")
+        self.console.tick()
+        self.console.open_panel("s1")
+        lines = [line.text for line in self.console.lines(100)[0]]
+        ready = next(line for line in lines if "Ready title" in line)
+        reviewed = next(line for line in lines if "Reviewed title" in line)
+        conflict = next(line for line in lines if "Conflict title" in line)
+
+        self.assertEqual((ready.index("Ready title"), ready.index("Ready title")),
+                         (reviewed.index("Reviewed title"), conflict.index("Conflict title")))
+
     def test_the_bottom_panel_tracks_the_selected_session_and_records_only_for_it(self) -> None:
         with mock.patch.object(inbox, "now_ms", return_value=int(self.clock.now * 1000)):
             for name in ("first", "second"):
                 self.codex(name, cwd="/work/app")
                 self.ask(name, f"Question from {name}?")
         self.console.tick()
-        initial = self.draw().split("─" * self.window.width, 1)[1]
+        drawn = self.draw()
+        self.assertTrue(all(line.startswith(" ") for line in drawn.splitlines() if line))
+        self.assertTrue(all(len(line) <= self.window.width for line in drawn.splitlines()))
+        initial = drawn.split("─" * (self.window.width - 1), 1)[1]
 
         self.press_terminal(FakeCurses.KEY_DOWN)
-        moved = self.draw().split("─" * self.window.width, 1)[1]
+        moved = self.draw().split("─" * (self.window.width - 1), 1)[1]
         self.press("right", "enter", "1", "enter")
 
         self.assertIn("Question from first?", initial)
@@ -1028,6 +1214,7 @@ class SplitLayout(TerminalCase):
         for number in range(20):
             name = f"worker-{number:02}"
             self.codex(name, cwd="/work/app")
+            write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
             self.subscribe(name, "acme/app review claude operator")
         self.console.tick()
         for _ in range(19):
@@ -1067,8 +1254,7 @@ class Scrolling(TerminalCase):
     def test_page_down_reaches_the_last_message_and_controls_of_a_drawer_taller_than_the_screen(self) -> None:
         self.tall_question()
         opened = self.draw()
-        self.press_terminal(FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE,
-                            FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE)
+        self.press_terminal(*[FakeCurses.KEY_NPAGE] * 12)
         scrolled = self.draw()
         self.console.tick()
 
@@ -1125,151 +1311,7 @@ class Scrolling(TerminalCase):
         self.assertIn("- Merge it now?", self.draw())
 
 
-def claude_entry(who: str, text: str) -> str:
-    if who == "you":
-        return json.dumps({"type": "user", "origin": {"kind": "human"},
-                           "message": {"role": "user", "content": text}}) + "\n"
-    return json.dumps({"type": "assistant",
-                       "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}) + "\n"
 
-
-class Conversation(TerminalCase):
-    """The panel's conversation section, read from a Claude Code transcript under a temporary `CLAUDE_CONFIG_DIR`
-    and from a Codex rollout that `codex.json` names."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        environ = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.scratch / "claude")})
-        environ.start()
-        self.addCleanup(environ.stop)
-
-    def transcript(self, session: str) -> Path:
-        path = self.scratch / "claude" / "projects" / "-tmp-made-up" / f"{session}.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def say(self, path: Path, *said: tuple[str, str]) -> None:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write("".join(claude_entry(who, text) for who, text in said))
-
-    def test_the_conversation_is_collapsed_by_default_and_v_shows_it_for_that_session_only(self) -> None:
-        for session in ("s1", "s2"):
-            self.claude(session)
-            self.subscribe(session, "acme/app review claude operator")
-            self.say(self.transcript(session), ("you", f"Hello from {session}."), ("agent", f"Hi, {session}."))
-        self.console.tick()
-        self.console.open_panel("s1")
-        self.console.tick()
-        collapsed = self.screen()
-
-        self.press("v")
-        self.console.tick()
-        shown = self.screen()
-        self.press("left")
-        self.console.open_panel("s2")
-        self.console.tick()
-        other = self.screen()
-        self.press("left")
-        self.console.open_panel("s1")
-        self.console.tick()
-
-        self.assertEqual(("▸ Conversation", False, "▾ Conversation", True, True, "▸ Conversation", False, True),
-                         (collapsed.splitlines()[-1][:14], "agent: Hi, s1." in collapsed,
-                          shown.splitlines()[-3][:14], "you: Hello from s1." in shown, "agent: Hi, s1." in shown,
-                          other.splitlines()[-1][:14], "Hi, s2." in other, "agent: Hi, s1." in self.screen()))
-
-    def test_a_collapsed_conversation_is_never_read(self) -> None:
-        self.claude("s1")
-        self.subscribe("s1", "acme/app review claude operator")
-        self.say(self.transcript("s1"), ("you", "Hello."))
-        self.console.tick()
-        self.console.open_panel("s1")
-        for _ in range(3):
-            self.clock.now += 1
-            self.console.tick()
-
-        self.assertEqual(({}, {}), (self.console.readers, self.console.said))
-
-    def test_an_open_conversation_starts_at_its_newest_line_and_follows_it_until_you_scroll_back(self) -> None:
-        self.claude("s1")
-        self.ask("s1")
-        path = self.transcript("s1")
-        self.say(path, *(("agent", f"Old line {number}.") for number in range(1, 31)))
-        self.console.tick()
-        self.console.open_panel("s1")
-        self.press("v")
-        self.console.tick()
-        opened = self.draw()
-        self.say(path, ("you", "A newer question."), ("agent", "A newer answer."))
-        self.clock.now += 1
-        self.console.tick()
-        followed = self.draw()
-        self.press_terminal(FakeCurses.KEY_PPAGE)
-        back = self.draw()
-        self.say(path, ("agent", "The newest answer."))
-        self.clock.now += 1
-        self.console.tick()
-        stayed = self.draw()
-        self.press_terminal("G")
-        self.say(path, ("agent", "One more answer."))
-        self.clock.now += 1
-        self.console.tick()
-
-        self.assertEqual((True, False, True, True, False, False, True, True),
-                         ("agent: Old line 30." in opened, "Old line 1." in opened,
-                          "agent: A newer answer." in followed, "Old line 20." in back,
-                          "agent: A newer answer." in back, "The newest answer." in stayed, stayed == back,
-                          "agent: One more answer." in self.draw()))
-
-    def test_the_conversation_heading_is_the_rings_last_place_and_enter_on_it_shows_or_hides_it(self) -> None:
-        # Catches a ring that stops before the heading, Enter there opening nothing or a drawer instead of toggling
-        # the conversation as `v` does, or a shown conversation that keeps the focus or scrolls away from its newest
-        # line when the focus comes back to it.
-        self.claude("s1")
-        self.ask("s1")
-        self.say(self.transcript("s1"), *(("agent", f"Old line {number}.") for number in range(1, 31)))
-        self.open_entry("s1", "item:1")
-        self.focus_on("▸ Conversation")
-        reached = (self.console.drawer, self.console.expanded)
-        self.press("enter")
-        self.console.tick()
-        opened = self.draw()
-        self.press_terminal(FakeCurses.KEY_PPAGE)
-        back = self.draw()
-        self.press("up")
-        left = (self.focused(), self.draw())
-        self.press("down")
-        returned = self.draw()
-        self.press("enter")
-
-        self.assertEqual((("item:1", set()), True, None, True, False, ["- Decline the finding?"], True, True,
-                          set(), "▸ Conversation"),
-                         (reached, "agent: Old line 30." in opened, self.console.drawer, "Old line 20." in back,
-                          "Old line 30." in back, left[0], "- Decline the finding?" in left[1],
-                          "agent: Old line 30." in returned, self.console.expanded,
-                          self.screen().splitlines()[-1][:14]))
-
-    def test_a_codex_sessions_conversation_comes_from_the_rollout_codex_json_names(self) -> None:
-        rollout = self.scratch / "rollout.jsonl"
-        shutil.copy(Path(__file__).resolve().parent / "fixtures" / "conversation" / "codex.jsonl", rollout)
-        self.codex("019a2b3c-0000-7000-8000-00000000c0de", transcript_path=str(rollout))
-        self.subscribe("019a2b3c-0000-7000-8000-00000000c0de", "acme/app review claude operator")
-        self.console.tick()
-        self.console.open_panel("019a2b3c-0000-7000-8000-00000000c0de")
-        self.press("v")
-        self.console.tick()
-
-        self.assertIn("agent: Added farewell, and the README's usage section shows it.", self.screen())
-
-    def test_a_session_with_no_transcript_says_so(self) -> None:
-        self.claude("s1")
-        self.subscribe("s1", "acme/app review claude operator")
-        self.console.tick()
-        self.console.open_panel("s1")
-        self.press("v")
-        self.console.tick()
-
-        self.assertIn("No transcript found for this session.", self.screen())
 class ColorCurses(FakeCurses):
     """A terminal with `colors` colors, which keeps the foreground `init_pair` gave each pair."""
 
@@ -1328,6 +1370,9 @@ class Colors(ConsoleCase):
             with self.subTest(colors=colors, environ=environ):
                 drawn = self.foregrounds(ColorCurses(colors), environ)
                 self.assertEqual((question, conflict), (drawn["- Decline the finding?"], drawn["conflict"]))
+                self.assertEqual(None if environ.get("NO_COLOR") else
+                                 ColorCurses.COLOR_RED if colors == 8 else console.xterm_color(dark["claude"]),
+                                 drawn["1 PR"])
         self.assertEqual((67, 239, 147), (console.xterm_color((95, 135, 175)), console.xterm_color((80, 80, 80)),
                                           console.xterm_color((177, 185, 249))))
 

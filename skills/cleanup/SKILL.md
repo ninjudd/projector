@@ -32,8 +32,9 @@ holds nothing under Projector's state directory.
 
 1. Read the repository instructions.
 2. Reread the conversation and list each thing the user asked for. Add each
-   thing you said you would do later, each suggestion you deferred, and each
-   question you left for the user. For each item, find the evidence that it
+   thing you said you would do later, each suggestion you deferred, each
+   follow-up still owed on a pull request that merged, and each question you
+   left for the user. For each item, find the evidence that it
    was delivered: a pull request URL, a commit on the remote, an answer you
    gave, or a command's output.
 3. List what the session holds:

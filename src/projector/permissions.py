@@ -141,8 +141,8 @@ COMMANDS = "every `project` command but the few that reach outside Projector's o
 # justification Codex shows for it.
 CODEX_ALLOW = (
     (["project", ["check", "done", "help", "list", "owner", "preview", "priority", "search", "show", "status",
-                  "summary", "version", "watch", "worktree"]],
-     "Runs a Projector command that works on plans, watches, or pull request summaries, finds a branch's "
+                  "artifact", "summary", "version", "watch", "worktree"]],
+     "Runs a Projector command that works on plans or watches, publishes review summaries or artifacts, finds a branch's "
      "worktree or a pull request's Vercel preview, or prints its version or help."),
     (["project", "agent", ["list", "read", "register", "reply", "send", "unregister"]],
      "Registers or unregisters the session, lists your registered sessions, or sends, reads, or answers a message "
@@ -157,8 +157,9 @@ CODEX_ALLOW = (
     (["project", "ios", ["cleanup", "crashes", "devices", "install"]],
      "Lists paired iOS devices, installs a kept build, copies crash reports, or removes project ios's worktree "
      "and builds, but never builds or reads a device's log."),
-    (["project", "review", ["census", "ci-workflow", "finish", "hold", "interdiff", "move", "prune", "publish", "ready",
-                            "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
+    (["project", "review", ["census", "ci-workflow", "finish", "follow-ups", "hold", "interdiff", "move", "prune",
+                            "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions",
+                            "workflow"]],
      "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
     (["project", "site", ["page", "status", "workflow"]],
      "Builds a summary page, says where the site is hosted, or writes the site's workflow file."),

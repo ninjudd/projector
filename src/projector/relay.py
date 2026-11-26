@@ -53,6 +53,7 @@ from typing import Callable, NamedTuple, Optional, Protocol
 
 from . import agents, config, crypto, keychain, repo_inbox, review, s3, summary, watch
 from .config import INLINE_KEY, KEYCHAIN, ConfigError, inline_key, unset_value, user_config_path, write_value
+from .refs import tracking_ref
 from .core import ProjectorError, run_bounded
 from .inbox import SESSION, InboxError, locked, read_json, write_json
 from .keychain import KeychainError
@@ -516,7 +517,7 @@ def parse_ref(ref: str) -> Optional[tuple[str, str, str]]:
 
 
 def tracking(ref: str) -> str:
-    return summary.tracking_ref(REMOTE, ref)
+    return tracking_ref(REMOTE, ref)
 
 
 def repo_file(root: Path, folder: str, repo: str) -> Path:

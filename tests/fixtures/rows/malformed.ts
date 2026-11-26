@@ -55,7 +55,7 @@ export default [
           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 1, "author": null,
           "branch": "", "additions": 0, "deletions": 0, "changed_files": 2.5, "checks": "passing",
-          "is_cancelled": false, "labels": ["CLEAN"], "summary_url": null, "is_loading": false
+          "is_cancelled": false, "labels": ["CLEAN"], "summary_url": null, "is_loading": false, "updated_at": null
         }
       }
     ]

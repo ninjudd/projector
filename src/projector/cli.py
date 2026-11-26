@@ -27,7 +27,7 @@ from urllib.request import Request, url2pathname, urlopen
 
 from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
                summary, watch)
-from . import ci, hosted, rows
+from . import artifact, ci, hosted, rows
 from . import run as headless
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
@@ -876,6 +876,10 @@ def parser() -> argparse.ArgumentParser:
         "suggestions", help="list the suggestions the newest Projector reviews of a pull request's current head "
                             "give, for fix-pr to implement or defer"
     )
+    review_follow_ups = review_commands.add_parser(
+        "follow-ups", help="list the follow-ups Projector reviews of a pull request give, at any head, for fix-pr "
+                           "to take on once it merges"
+    )
     review_hold = review_commands.add_parser(
         "hold", help="convert your pull request to a draft while you build a change for it"
     )
@@ -903,7 +907,7 @@ def parser() -> argparse.ArgumentParser:
     review_run.add_argument("--plugin-dir", type=Path, help="load Projector's Claude Code plugin from this checkout")
     review_run.add_argument("--checkout", type=Path,
                             help="the checkout of the repository (default: the repository containing this directory)")
-    for command in (review_status, review_suggestions):
+    for command in (review_status, review_suggestions, review_follow_ups):
         command.add_argument("pr", type=int, help="the pull request number")
         command.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
                                             "this checkout's origin)")
@@ -991,7 +995,7 @@ def parser() -> argparse.ArgumentParser:
     # Without abbreviations, --prepare and --allow-prepare are always spelled in
     # full, so the ask rule `init` adds for them matches every spelling.
     site_build = site_commands.add_parser(
-        "build", help="build the site from the projects, the published reviews, and the docs", allow_abbrev=False
+        "build", help="build the site from projects, published reviews, artifacts, and docs", allow_abbrev=False
     )
     site_build.add_argument("--out", required=True)
     site_build.add_argument("--summaries", help="directory holding <number>/<head>/summary.json files")
@@ -1041,8 +1045,8 @@ def parser() -> argparse.ArgumentParser:
     site_serve.add_argument(
         "--summaries", help="directory holding <number>/<head>/summary.json files, instead of the summaries ref"
     )
-    site_serve.add_argument("--remote", default="origin", help="the remote to fetch summaries from (default: origin)")
-    site_serve.add_argument("--no-fetch", action="store_true", help="serve the summaries already fetched")
+    site_serve.add_argument("--remote", default="origin", help="the remote to fetch reviews and artifacts from (default: origin)")
+    site_serve.add_argument("--no-fetch", action="store_true", help="serve cached reviews and artifacts without fetching")
     site_serve.add_argument("--no-watch", action="store_true", help="build once instead of rebuilding on changes")
     site_serve.add_argument(
         "--prepare", metavar="COMMAND",
@@ -1063,6 +1067,30 @@ def parser() -> argparse.ArgumentParser:
     site_workflow.add_argument(
         "--branch", help="the default branch whose README and docs changes rebuild the site (default: origin's)"
     )
+
+    artifacts = subcommands.add_parser("artifact", help="create, recover, and publish versioned interactive pages")
+    artifact_commands = artifacts.add_subparsers(dest="artifact_command", required=True)
+    artifact_init = artifact_commands.add_parser("init", help="create a bundle or recover saved source")
+    artifact_init.add_argument("id")
+    artifact_init.add_argument("--dir", type=Path, required=True)
+    artifact_init.add_argument("--title")
+    artifact_init.add_argument("--description", default="")
+    artifact_init.add_argument("--from-published", action="store_true")
+    artifact_init.add_argument("--version")
+    artifact_list = artifact_commands.add_parser("list", help="list artifacts or an artifact's versions")
+    artifact_list.add_argument("--id")
+    add_output(artifact_list)
+    artifact_publish = artifact_commands.add_parser("publish", help="save a bundle on the hidden artifacts ref")
+    artifact_publish.add_argument("--dir", type=Path, required=True)
+    artifact_publish.add_argument("--local", action="store_true")
+    artifact_publish.add_argument("--no-dispatch", action="store_true")
+    for command in (artifact_init, artifact_list, artifact_publish):
+        command.add_argument("--checkout", type=Path)
+        command.add_argument("--remote", default="origin")
+    for command in (artifact_init, artifact_list):
+        command.add_argument("--no-fetch", action="store_true")
+    site_build.add_argument("--artifacts", type=Path, help="directory holding saved artifact versions")
+    site_serve.add_argument("--artifacts", type=Path, help="source bundle to preview over saved artifacts")
 
     version = subcommands.add_parser("version", help="print the version of this command")
     # Where this command's package lives, which `install.sh status` diffs against the checkout.
@@ -2529,8 +2557,9 @@ def incremental_enabled(checkout: Path) -> bool:
 
 
 def counted_reviewer(arguments: argparse.Namespace) -> str:
-    """The reviewer whose reviews `review status` and `review suggestions` count beside the repository's
-    accounts, found as `setup` finds it: --reviewer, then review.username, then the authenticated user."""
+    """The reviewer whose reviews `review status`, `review suggestions`, and `review follow-ups` count beside the
+    repository's accounts, found as `setup` finds it: --reviewer, then review.username, then the authenticated
+    user."""
     try:
         configured = load_config(review.checkout_root(Path.cwd())).get("review.username")
     except ProjectorError:
@@ -2548,15 +2577,17 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
     return 0
 
 
-def review_suggestions(root: Path, arguments: argparse.Namespace) -> int:
-    """`review suggestions`: the suggestions fix-pr decides on a pull request's head, printing nothing when
-    there are none; exit 1 only when the pull request cannot be read."""
+def review_listed(root: Path, arguments: argparse.Namespace) -> int:
+    """`review suggestions` and `review follow-ups`: the suggestions fix-pr decides on a pull request's head,
+    or the follow-ups it takes on once the pull request merges, printing nothing when there are none; exit 1
+    only when the pull request cannot be read."""
     repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
-    items = review.suggestions(repo, arguments.pr, counted_reviewer(arguments), counted_logins(Path.cwd()))
+    lister = review.suggestions if arguments.review_command == "suggestions" else review.follow_ups
+    items = lister(repo, arguments.pr, counted_reviewer(arguments), counted_logins(Path.cwd()))
     if arguments.json_output:
         print(json.dumps(items, indent=2))
     elif items:
-        print(review.suggestions_text(items))
+        print(review.listed_text(items))
     return 0
 
 
@@ -2627,8 +2658,8 @@ def run_review(arguments: argparse.Namespace) -> int:
     root = review.state_dir(arguments.state_dir)
     if arguments.review_command == "status":
         return review_status(root, arguments)
-    if arguments.review_command == "suggestions":
-        return review_suggestions(root, arguments)
+    if arguments.review_command in ("suggestions", "follow-ups"):
+        return review_listed(root, arguments)
     if arguments.review_command == "prune":
         result = review.prune(root, arguments.repo, arguments.apply)
         print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.prune_lines(result)))
@@ -3280,7 +3311,8 @@ def trunk_branch(root: Path) -> str:
     return head.split("/", 1)[1] if "/" in head else head
 
 
-def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, repo: str) -> str:
+def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, repo: str,
+                   artifacts: dict | None = None) -> str:
     """Build the site from a checkout, and summarize what it holds."""
     projects, projects_dir = site_projects(root)
 
@@ -3309,6 +3341,7 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
     entries, failures, proposed = site.build_site(
         out,
         summaries=summaries,
+        artifacts=artifacts,
         repo_root=root,
         projects=projects,
         projects_dir=projects_dir,
@@ -3336,7 +3369,9 @@ def run_site_build(arguments: argparse.Namespace) -> int:
     if command:
         run_prepare(root, command)
     summaries = Path(arguments.summaries) if arguments.summaries else None
-    built = build_checkout(root, Path(arguments.out), summaries, arguments.base, repo)
+    artifacts = artifact.read_saved(artifact.DirectoryReader(arguments.artifacts)) if arguments.artifacts else \
+        artifact.read_refs(root, "origin")
+    built = build_checkout(root, Path(arguments.out), summaries, arguments.base, repo, artifacts)
     print(f"wrote {arguments.out}/index.html: {built}")
     return 0
 
@@ -3355,16 +3390,23 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
         if fetched:
             print(f"serving the summaries already fetched; {arguments.remote} has none to fetch: {fetched}",
                   file=sys.stderr)
+    artifact_fetched = ""
+    if not arguments.no_fetch:
+        artifact_fetched = artifact.fetch(root, arguments.remote)
+        if artifact_fetched:
+            artifact.diagnostic(f"using cached artifacts: {artifact_fetched}")
     projects_dir = configured_projects_dir(root)
     watched = [root / "README.md", root / "docs"]
     if projects_dir is not None:
         watched.append(projects_dir if projects_dir.is_absolute() else root / projects_dir)
     if given is not None:
         watched.append(given)
+    if arguments.artifacts is not None:
+        watched.append(arguments.artifacts.resolve())
 
     def sources() -> tuple:
         files = serve.fingerprint([path for path in watched if path.exists()])
-        return files, published.version() if published is not None else ()
+        return files, published.version() if published is not None else (), artifact.ref_versions(root, arguments.remote)
 
     def build(out: Path) -> str:
         # The build copies what it needs from the summaries, so they outlive it only as long as it runs.
@@ -3372,7 +3414,14 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
             summaries = published.extract(Path(extracted)) if published is not None else given
             # The build reports each page as a deploy log would; a server keeps only its one-line result.
             with contextlib.redirect_stdout(io.StringIO()):
-                return build_checkout(root, out, summaries, base, repo)
+                artifacts = artifact.read_refs(root, arguments.remote)
+                if arguments.artifacts is not None:
+                    preview = artifact.snapshot(arguments.artifacts)
+                    preview.published_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    saved = artifacts.setdefault(preview.id, artifact.Saved())
+                    saved.versions[preview.version] = preview
+                    saved.latest, saved.preview = preview.version, True
+                return build_checkout(root, out, summaries, base, repo, artifacts)
 
     command = prepare_command(root, arguments)
     site_state = serve.Site(build, sources, (lambda: run_prepare(root, command)) if command else None)
@@ -3409,6 +3458,10 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
             if published is not None and not arguments.no_fetch:
                 threading.Thread(target=serve.keep_fetching, daemon=True,
                                  args=(published.fetch_quietly, stop, serve.FETCH_INTERVAL, report, fetched)).start()
+            if not arguments.no_fetch:
+                threading.Thread(target=serve.keep_fetching, daemon=True,
+                                 args=(lambda: artifact.fetch(root, arguments.remote, prompt=False), stop,
+                                       serve.FETCH_INTERVAL, report, artifact_fetched)).start()
         print(f"serving http://{shown}:{port}{base}; press Ctrl-C to stop", flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
@@ -4063,6 +4116,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_config(arguments)
     if arguments.command == "upgrade":
         return run_upgrade(arguments.target)
+    if arguments.command == "artifact":
+        return artifact.run(arguments)
     if arguments.command == "summary":
         return run_summary(arguments)
     if arguments.command == "site":

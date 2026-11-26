@@ -186,7 +186,7 @@ the section it enforces, such as `guidelines.md § 1`, `testing.md § 2`,
 the repository document and heading, or it is a preference and does not
 ship. When the rule is one the
 repository's own merged commits keep breaking, report the gap between the
-document and the practice as a P3 rather than as this change's fault.
+document and the practice as a follow-up rather than as this change's fault.
 
 ## 4. Follow the change outward
 
@@ -253,7 +253,7 @@ Apply these rules to the verified set, in this order:
 - **Every finding names its fix** in one sentence. A finding that cannot say
   what to change is an observation and is dropped.
 - **The change must introduce or worsen the defect.** Compare against the
-  base. A defect already present at the base is at most a P3 and says so,
+  base. A defect already present at the base is a follow-up and says so,
   unless the change worsens it. A change worsens a defect when the defect
   reaches more callers or data, or when it can no longer be repaired, as when
   the change erases the record that a repair would read. A worsened defect is
@@ -284,6 +284,16 @@ change introduces or worsens and violations of a written rule, a section of
 change the code is correct without and no written rule requires, and it goes
 to `publish` as a P3 entry, which lists it in the review body as a
 suggestion, never as a thread.
+
+A follow-up is work that belongs in a pull request of its own: a defect
+already present at the base that the change does not worsen, a problem in
+code the change does not touch, or an improvement too large or too far from
+the change's purpose to fold into it. A change that belongs in this pull
+request, however optional, is a P3; one that would make this pull request
+about two things is a follow-up. It goes to `publish` as a follow-up entry,
+which lists it in the review body under a heading of its own, never as a
+thread, and `fix-pr` takes it on once the pull request merges rather than
+on the pull request.
 
 There is no cap on the number of findings. The rules above are the filter,
 and every thread is one the author must answer, so post nothing you would not
@@ -335,6 +345,23 @@ saying the change. `publish` ends the review body with them in one form, a
 The one form is what lets `project review suggestions` hand `fix-pr` every
 item: a section written by hand comes out in whatever label and list style
 the reviewing model chose.
+
+Give each follow-up to `publish` the same way, with priority `follow-up`.
+`publish` lists the follow-ups after the suggestions, in the same form under
+a `### Follow-ups` heading and a line that counts them:
+
+```markdown
+<!-- projector-follow-ups v=1 count=1 -->
+### Follow-ups
+
+- `src/fetch.py:88`: Close the socket `fetch` opens when the request fails, which the base already leaks.
+```
+
+A follow-up names code outside the change, so a later push leaves it owed,
+and `project review follow-ups` lists those of every review of the pull
+request, whichever head it read. List each one once: before you give a
+follow-up, run `project review follow-ups <number>` and leave out any that
+an earlier review already lists.
 
 Each P1 or P2 thread's first comment, after its marker, has three parts:
 
