@@ -11,6 +11,7 @@ export default [
             "title": "Add the console",
             "url": "https://github.com/acme/app/pull/12",
             "state": "OPEN",
+            "updatedAt": "2026-01-01T00:00:00Z",
             "author": {"login": "ada"},
             "headRefName": "console/rows",
             "additions": 120,
@@ -45,7 +46,7 @@ export default [
           "author": "ada", "branch": "console/rows", "additions": 120, "deletions": 8, "changed_files": 4,
           "checks": null, "is_cancelled": false, "labels": ["enhancement"],
           "summary_url": "https://projector.bot/acme/app/reviews/12",
-          "is_loading": false
+          "is_loading": false, "updated_at": 1767225600000
         }
       },
       {
@@ -58,7 +59,7 @@ export default [
           "repo": "acme/app", "number": 11, "title": "Fix the cache", "url": "https://github.com/acme/app/pull/11",
           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
           "author": "bob", "branch": "fix-cache", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
+          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
         }
       }
     ]

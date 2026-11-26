@@ -543,6 +543,20 @@ test('a row says what holds it back first, then reviewing, clean, draft, or read
   await ui.unmount()
 })
 
+test('reserves the same status width before every pull request title', async ($, on) => {
+  const { clock } = panelWorld(on, { subscriptions: { fix: ['o/r#13', 'o/r#14', 'o/r#16'] } })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+
+  const states = await Promise.all([13, 14, 16].map(number => ui.find({ key: `state:o/r#${number}` })))
+  expect(states.map(state => [state?.text, state?.props.width])).toEqual([
+    ['ready', 9],
+    ['reviewing', 9],
+    ['conflict', 9],
+  ])
+  await ui.unmount()
+})
+
 test('draws no background and no header on a surface that does not lay text out in columns', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

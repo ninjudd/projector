@@ -92,6 +92,7 @@ class Pull:
     labels: list[str]
     summary_url: Optional[str]
     is_loading: bool = False
+    updated_at: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -312,6 +313,7 @@ def to_pull(repo: str, number: int, node: dict) -> Pull:
     url = node.get("url")
     body = node.get("body")
     found = SUMMARY.search(body) if isinstance(body, str) else None
+    changed = watch.seconds_of(node.get("updatedAt"))
     return Pull(
         repo=repo,
         number=number,
@@ -334,6 +336,7 @@ def to_pull(repo: str, number: int, node: dict) -> Pull:
         labels=[label["name"] for label in nodes_of(node.get("labels"))
                 if isinstance(label, dict) and isinstance(label.get("name"), str)],
         summary_url=found.group(1) if found else None,
+        updated_at=changed * 1000 if changed is not None else None,
     )
 
 

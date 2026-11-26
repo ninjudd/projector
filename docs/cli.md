@@ -3417,8 +3417,7 @@ pull request or the session.
 
 `project console` groups live Projector sessions by working directory and
 shows the selected session's panel below the list. In the panel, you answer
-its items, send it messages about its items and pull requests, and read its
-conversation.
+its items and send it messages about its items and pull requests.
 It works the same for Claude Code and Codex sessions, so it is how you answer
 a Codex session, which has no panel of its own. Run it in a split or a window
 of its own:
@@ -3430,25 +3429,43 @@ $ tmux split-window -h project console
 The console opens with the focus on the session list, one line per session.
 A session appears only while its deliverer renews it and it has a registered
 Projector agent, a watch subscription, or a visible inbox item. Delivery
-hooks alone do not put a session in the list. Claude Code sessions show as
-`claude`, and Codex sessions as `codex`.
+hooks alone do not put a session in the list.
 
 Directory headings sort by path and keep separate checkouts apart, even when
-they share a repository. Sessions whose records have no directory appear
-under `Unknown working directory`, after the other groups. Each session's
-line shows its name, or its short ID when it has none, its host, repository
-and branch, counts of pull requests, review requests, and open items, its
-summary, and its newest open item's subject. Long lines stop at the edge of
-the terminal. Within each directory, sessions with the most open questions
-and requests come first. Ties go to the session whose newest item is newest,
+they share a repository. Paths within your home directory start with `~`.
+Sessions whose records have no directory appear under `Unknown working
+directory`, after the other groups. A blank line precedes each group,
+including the first. The screen leaves one space at the left edge.
+
+The session list has four aligned fields, without headings:
+
+- **Session** shows the chat title from Codex's session index or Claude
+  Code's `/rename` metadata. It falls back to the registered session name,
+  then `Unnamed session` when neither is available. It uses normal text
+  color. The selected session name has color and a `▸` marker; the row has
+  no highlight.
+- **PRs** counts all open pull requests the session fixes or reviews, as
+  `0 PRs`, `1 PR`, or `5 PRs`, in orange.
+- **Latest request** shows the newest open, awake question or request.
+  Notices and messages do not replace it. A session with none shows `—`.
+- **Updated** leaves one space at the right edge and shows the age of the most recent
+  Projector activity: the agent registration's update, an inbox file change,
+  a pull request's GitHub update, or a repository inbox update. Polls and
+  delivery heartbeats do not change it. A session with no recorded time
+  shows `—`.
+
+Long names and requests shorten with an ellipsis to keep the other columns
+visible. Within each directory, sessions with the most open questions and
+requests come first. Ties go to the session whose newest item is newest,
 then to the name.
 
 Up and down select a session and update the bottom panel immediately. Press
 Enter or Right to move the focus into that panel. The session list stays
 visible above it, with its own scroll position. The panel lists the pull
 requests the session subscribes to, as Projector's panel does, then its
-inbox items, newest first, then its conversation. Each item line shows its
-subject, its state words (`sending`, `unclear`, and a request's `starting`,
+inbox items, newest first. Pull request statuses occupy a column as wide as
+the longest status, so the authors and titles after them line up. Each item
+line shows its subject, its state words (`sending`, `unclear`, and a request's `starting`,
 `ready`, or `blocked`), its pull request, and its age. Press Enter on a row
 to open its drawer:
 
@@ -3492,33 +3509,14 @@ which asks nothing of you, reads `sending` until its line is delivered, and
 then leaves the list 30 seconds later. A message about an item stays in that
 item's drawer.
 
-The conversation sits at the bottom of the panel, collapsed to its heading.
-Press `v`, or Enter on its heading, to show it, and either again to hide it.
-The console remembers which sessions show it until you quit. It lists what
-you said and what the agent said, newest last, and leaves out tool calls,
-tool results, thinking, and the instructions the host adds. What you said
-includes the prompts you typed and the inbox lines Projector delivered for
-you, such as `ANSWER 3.a` and `DISCUSS 5`, but not pull request events.
-Showing it moves the focus to its heading and starts at its newest line,
-which stays in view as the agent writes, until you scroll back with the page
-keys. Up moves the focus off it again. Collapsed suits a split whose other
-half shows the session's own chat; shown suits a session whose chat is not
-on screen.
-
-The console reads the conversation from the transcript the session's host
-writes: for Claude Code, `projects/<project>/<session>.jsonl` under
-`CLAUDE_CONFIG_DIR`, or under `~/.claude` when it is unset; for Codex, the
-rollout that the session's `codex.json` names. It reads the last 2 MiB of the
-transcript when you show the conversation, then only what was added, each
-second while it stays shown, and never while it is hidden. A transcript holds
-whatever the conversation held, including any secret an agent quoted there, so
-the console shows only what the session's own chat already shows you.
+Read the agent's reply in its own chat. The console panel contains pull
+requests and inbox items.
 
 In a panel, one focus moves through everything you can press. Up and down
 move it through the rows and, directly under the open drawer's row, the
-drawer's options and then its actions, and on past them to the next row,
-ending on the conversation's heading. The open drawer stays open while the
-focus moves, so you can look at another row first. Enter presses what has the focus: an option, an action
+drawer's options and then its actions, and on past them to the next row. The
+open drawer stays open while the focus moves, so you can look at another row
+first. Enter presses what has the focus: an option, an action
 such as `7: Discuss` or `9: Snooze`, or a row, which opens that row's drawer
 in place of the open one, or closes the drawer when it is the open row
 itself. A drawer without options opens with the focus on its row, so Enter
@@ -3538,14 +3536,13 @@ leave the session's panel.
 
 | Key | Effect |
 | --- | --- |
-| Up and down, or `k` and `j` | In the session list, select a session and update its bottom panel. In the panel, move the focus through the rows, the open drawer's options and actions, and the conversation's heading, and stay put at the first and the last |
-| Enter, or Right in the session list | Moves the focus into the selected session's panel. In the panel, Enter presses the focused option or action, closes the open drawer when its row has the focus, opens the focused row's drawer in place of the open one, or, on the conversation's heading, shows or hides the conversation |
+| Up and down, or `k` and `j` | In the session list, select a session and update its bottom panel. In the panel, move the focus through the rows, and the open drawer's options and actions, and stay put at the first and the last |
+| Enter, or Right in the session list | Moves the focus into the selected session's panel. In the panel, Enter presses the focused option or action, closes the open drawer when its row has the focus, opens the focused row's drawer in place of the open one |
 | An option's or action's own key, such as `2` or `8` | Presses it in the open drawer, as Enter on it does |
 | Left, Esc, or `0` | Closes the open drawer, leaving the focus on its row, or, with no drawer open, returns the focus to the session list |
 | `7` in a panel with no drawer open | Sends a message about the session |
-| `v` in a panel | Shows or hides the session's conversation |
-| Page Down or Space, Page Up or `b` | In the session list, moves a page between sessions. In the panel, scrolls a drawer or the conversation, when taller than its pane, a page down or up |
-| End or `G`, Home or `g` | In the session list, selects the last or first session. In the panel, scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
+| Page Down or Space, Page Up or `b` | In the session list, moves a page between sessions. In the panel, scrolls a drawer, when taller than its pane, a page down or up |
+| End or `G`, Home or `g` | In the session list, selects the last or first session. In the panel, scrolls a drawer to its controls or back to its top |
 | Enter in a text field | Sends the message, or, in a note field, records the option with the note you typed, if any. Esc or Ctrl-C cancels it, or goes back to the options, and Left and Right move the cursor |
 | Ctrl-C | Quits from the home list. In a panel, the first press shows `Press Ctrl-C again to exit`, and a second within 3 seconds quits |
 

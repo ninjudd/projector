@@ -1,9 +1,8 @@
 """`project console`: live Projector sessions grouped by directory, above the selected session's panel.
 
 Enter moves the focus from the session list into its panel: its pull request rows, as `rows.py` reads them,
-its inbox items, each with a drawer that answers, discusses, dismisses, or snoozes it, and a collapsible view of
-its conversation, as `conversation.py`
-reads it. Every choice and message is recorded with the functions `project inbox` runs, for the session on screen,
+its inbox items, each with a drawer that answers, discusses, dismisses, or snoozes it. Every choice and message
+is recorded with the functions `project inbox` runs, for the session on screen,
 and the session's own deliverer brings it in: Claude Code's panel, or the watch daemon's Codex adapter. The
 console never claims, delivers, or settles a line, so it never races a deliverer.
 
@@ -25,13 +24,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, TextIO
 
-from . import agents, codex_watch, conversation, inbox, repo_inbox, rows, watch
+from . import agents, codex_watch, inbox, repo_inbox, rows, session_titles, watch
 from .core import ProjectorError
 
 INBOX_EVERY = 1.0
 ROWS_EVERY = 5.0
 THREADS_EVERY = 30.0
-CONVERSATION_EVERY = 1.0
 # How long a resolved, delivered, or snoozed item stays listed, as in the panel.
 RESOLVED_MS = 30_000
 # The host each deliverer `watch.delivery` names belongs to.
@@ -48,8 +46,6 @@ SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "G", "home", "g")
 # The variables an SSH server sets in a session's environment. mosh's server starts over SSH, so its shells have
 # them too.
 SSH_VARIABLES = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
-# The key of the panel's last row, the session's conversation.
-CONVERSATION = "conversation"
 # How long after a panel's first Ctrl-C a second one quits, in seconds.
 EXIT_WINDOW = 3.0
 # What Enter on Snooze or on a pull request's Dismiss puts the focus on, and what leaving that question puts it back on.
@@ -71,9 +67,8 @@ class Session:
     name: str
     host: str
     label: str
-    place: str
-    summary: str
     cwd: str = ""
+    updated_at: Optional[float] = None
     signature: Optional[tuple] = None
     items: list[dict] = field(default_factory=list)
     rows: list[rows.Row] = field(default_factory=list)
@@ -140,21 +135,17 @@ class Work:
     items: dict[str, list[dict]] = field(default_factory=dict)
     pull: Optional[rows.Pull] = None
     drawer: Optional[str] = None
-    conversation: Optional[tuple[str, conversation.Reader]] = None
 
 
 @dataclass
 class Found:
     """What a refresh read."""
 
-    live: Optional[dict[str, tuple[str, str, str, str, str, tuple, Optional[list[dict]]]]] = None
+    live: Optional[dict[str, tuple[str, str, str, Optional[float], tuple, Optional[list[dict]]]]] = None
     rows: dict[str, list[rows.Row]] = field(default_factory=dict)
     entries: dict[str, list[dict]] = field(default_factory=dict)
     drawer: Optional[str] = None
     threads: Optional[list[rows.Thread]] = None
-    # The session whose conversation was read, whether its transcript started over, what was said since, and
-    # whether a transcript was found.
-    said: Optional[tuple[str, bool, list[conversation.Said], bool]] = None
 
 
 # Reading the sessions
@@ -169,28 +160,13 @@ def live_sessions(root: Path, now: float) -> dict[str, str]:
     return found
 
 
-def place_of(record: dict, cwd: str, checkouts: dict[str, str]) -> str:
-    """The repository and branch `agent.json` names, or those of the checkout `codex.json` runs in."""
-    place = " ".join(part for part in (record.get("repo"), record.get("branch")) if part)
-    if place or not cwd:
-        return place
-    if cwd not in checkouts:
-        try:
-            found = agents.checkout(Path(cwd))
-        except (ProjectorError, OSError):
-            found = {}
-        checkouts[cwd] = " ".join(part for part in (found.get("repo"), found.get("branch")) if part) or cwd
-    return checkouts[cwd]
-
-
-def describe(root: Path, name: str, delivery: str, checkouts: dict[str, str], record: dict
-             ) -> tuple[str, str, str, str, str]:
-    """The session's label, host, place, summary, and working directory."""
+def describe(root: Path, name: str, delivery: str, record: dict) -> tuple[str, str, str, Optional[float]]:
+    """The session's display name, host, directory, and registration's last update, in milliseconds."""
     host = HOSTS.get(delivery) or record.get("host") or "other"
+    label = record.get("name") or "Unnamed session"
     cwd = codex_watch.registration(watch.session_folder(root, name)).get("cwd") or record.get("cwd")
-    cwd = cwd if isinstance(cwd, str) else ""
-    place = place_of(record, cwd, checkouts)
-    return agents.label(record, name), host, place, record.get("summary") or "", cwd
+    changed = watch.seconds_of(record.get("updated_at"))
+    return label, host, cwd if isinstance(cwd, str) else "", changed * 1000 if changed is not None else None
 
 
 def signature(folder: Path) -> tuple:
@@ -303,8 +279,33 @@ def needs(session: Session, now_ms: int) -> tuple:
 
 
 def headline(session: Session, now_ms: int) -> Optional[dict]:
-    """The item a home entry names: the newest open one."""
-    return next((item for item in shown_items(session, now_ms) if is_awake(item, now_ms)), None)
+    """The newest open, awake question or request."""
+    return next((item for item in shown_items(session, now_ms)
+                 if item["kind"] in ASKING_KINDS and is_awake(item, now_ms)), None)
+
+
+def directory_label(cwd: str) -> str:
+    if not cwd:
+        return "Unknown working directory"
+    try:
+        relative = Path(cwd).relative_to(Path.home())
+    except ValueError:
+        return cwd
+    return "~" if relative == Path(".") else "~/" + str(relative)
+
+
+def fit(text: str, width: int) -> str:
+    text = printable(text)
+    if len(text) > width:
+        return text[:max(0, width - 1)] + ("…" if width else "")
+    return text.ljust(width)
+
+
+def last_update(session: Session) -> Optional[float]:
+    times = [session.updated_at, *(row.pull.updated_at for row in session.rows)]
+    times += [modified / 1_000_000 for _, _, modified in session.signature or ()]
+    times += [entry.get(key) for entry in session.entries for key in ("sent_at", "updated_at")]
+    return max((changed for changed in times if isinstance(changed, (int, float))), default=None)
 
 
 def is_remote(environ: Optional[dict] = None) -> bool:
@@ -366,7 +367,7 @@ class Console:
         self.lock = threading.RLock()
         self.refresh_now = threading.Event()
         self.sessions: dict[str, Session] = {}
-        self.checkouts: dict[str, str] = {}
+        self.titles = session_titles.SessionTitles()
         self.view = "home"
         self.session: Optional[str] = None
         self.selected: Optional[str] = None
@@ -393,17 +394,9 @@ class Console:
         self.home_offset = 1
         self.home_room = 1
         self.room = 1
-        # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
-        # each one's transcript was found.
-        self.expanded: set[str] = set()
-        self.readers: dict[str, conversation.Reader] = {}
-        self.said: dict[str, list[conversation.Said]] = {}
-        self.transcripts: dict[str, bool] = {}
-        # Whether the screen keeps the conversation's newest line in view.
-        self.follow = True
         self.status = ""
         self.quit = False
-        self.next_inbox = self.next_rows = self.next_threads = self.next_conversation = float("-inf")
+        self.next_inbox = self.next_rows = self.next_threads = float("-inf")
 
     # Refreshing
 
@@ -428,15 +421,7 @@ class Console:
         if row is not None and now >= self.next_threads:
             self.next_threads = now + THREADS_EVERY
             work.pull, work.drawer = row.pull, self.drawer
-        session = self.viewed()
-        if (session is not None and session.name in self.expanded
-                and now >= self.next_conversation):
-            self.next_conversation = now + CONVERSATION_EVERY
-            reader = self.readers.get(session.name)
-            if reader is None:
-                reader = self.readers[session.name] = conversation.reader_for(self.root, session.name, session.host)
-            work.conversation = (session.name, reader)
-        return work if work.inbox or work.rows or work.pull or work.conversation else None
+        return work if work.inbox or work.rows or work.pull else None
 
     def load(self, work: Work) -> Found:
         found = Found(drawer=work.drawer)
@@ -457,28 +442,26 @@ class Console:
                         or any(is_shown(item, now_ms) for item in current_items)
                         or any(not repo_inbox.is_snoozed(entry, now_ms) for entry in entries)):
                     continue
-                found.live[name] = (*describe(self.root, name, delivery, self.checkouts, record), seen, items)
+                found.live[name] = (*describe(self.root, name, delivery, record), seen, items)
                 found.entries[name] = entries
+            titles = self.titles.read({name: details[1] for name, details in found.live.items()})
+            for name, title in titles.items():
+                found.live[name] = (title, *found.live[name][1:])
             names = list(found.live)
         for name in names:
             if work.rows or name not in work.signatures:
                 found.rows[name] = rows.rows_for(self.root, name)
         if work.pull is not None:
             found.threads = rows.fetch_threads(work.pull, self.gh)
-        if work.conversation is not None:
-            name, reader = work.conversation
-            restarted, said = reader.read()
-            found.said = (name, restarted, said, reader.path is not None)
         return found
 
     def apply(self, found: Found) -> None:
         if found.live is not None:
             for name in set(self.sessions) - set(found.live):
                 del self.sessions[name]
-            for name, (label, host, place, summary, cwd, seen, items) in found.live.items():
-                session = self.sessions.setdefault(name, Session(name, host, label, place, summary))
-                session.host, session.label, session.place, session.summary = host, label, place, summary
-                session.cwd = cwd
+            for name, (label, host, cwd, changed, seen, items) in found.live.items():
+                session = self.sessions.setdefault(name, Session(name, host, label))
+                session.host, session.label, session.cwd, session.updated_at = host, label, cwd, changed
                 session.signature = seen
                 if items is not None:
                     session.items = items
@@ -490,14 +473,6 @@ class Console:
                 self.sessions[name].entries = entries
         if found.drawer is not None and found.drawer == self.drawer:
             self.threads = found.threads
-        if found.said is not None:
-            name, restarted, said, transcript = found.said
-            kept = self.said.setdefault(name, [])
-            if restarted:
-                kept.clear()
-            kept += said
-            del kept[:-conversation.KEEP]
-            self.transcripts[name] = transcript
         self.settle_view()
 
     def reload(self) -> None:
@@ -514,7 +489,7 @@ class Console:
         """Leave a panel whose session is gone, close a drawer whose row is gone, and close a note field whose
         option is gone."""
         if self.view == "panel" and self.session not in self.sessions:
-            self.status = f"{self.session} is no longer live"
+            self.status = "The selected session is no longer live"
             self.go_home()
             return
         if self.view != "panel":
@@ -558,7 +533,7 @@ class Console:
     def keys(self) -> list[str]:
         if self.view == "home":
             return [session.name for session in self.home()]
-        return [key for key, _ in self.entries()] + ([CONVERSATION] if self.viewed() is not None else [])
+        return [key for key, _ in self.entries()]
 
     def row(self, key: Optional[str]) -> Optional[rows.Row]:
         found = dict(self.entries()).get(key) if key and key.startswith("pr:") else None
@@ -601,7 +576,7 @@ class Console:
                 self.panel_key(name)
 
     def scroll(self, name: str) -> None:
-        """Page between sessions in the list, or scroll a panel's drawer or conversation."""
+        """Page between sessions in the list, or scroll a panel's open drawer."""
         if self.view == "home":
             keys = self.keys()
             if keys:
@@ -612,8 +587,6 @@ class Console:
                     self.move(max(1, self.home_room - 2) * (1 if name in ("pagedown", " ") else -1))
             return
         page = max(1, self.room - 1)
-        # `viewport` follows the conversation's newest line again once the offset reaches it.
-        self.follow = False
         if name in ("pagedown", " "):
             self.offset += page
         elif name in ("pageup", "b"):
@@ -650,14 +623,12 @@ class Console:
 
     def ring(self) -> list[tuple[str, Optional[str]]]:
         """Every place the panel's focus can be, in order: each row, as its key and None, with the open drawer's
-        controls, as its key and each control's, directly under its row, and last the conversation's heading."""
+        controls, as its key and each control's, directly under its row."""
         found: list[tuple[str, Optional[str]]] = []
         for key, _ in self.entries():
             found.append((key, None))
             if key == self.drawer:
                 found += [(key, one.key) for one in self.controls()]
-        if self.viewed() is not None:
-            found.append((CONVERSATION, None))
         return found
 
     def focus(self) -> tuple[Optional[str], Optional[str]]:
@@ -666,16 +637,12 @@ class Console:
         return key, self.control if key is not None and key == self.drawer else None
 
     def step_focus(self, step: int) -> None:
-        """Move the focus a place up or down the ring, staying put at either end. The open drawer stays open. Arriving
-        on the conversation's heading starts at its newest line, as `viewport` shows it."""
+        """Move the focus a place up or down the ring, staying put at either end. The open drawer stays open."""
         ring = self.ring()
         if not ring:
             return
         at = ring.index(self.focus()) if self.focus() in ring else 0
-        row = self.selected_key()
         self.selected, self.control = ring[max(0, min(len(ring) - 1, at + step))]
-        if self.selected != row:
-            self.follow = True
         self.reveal = True
 
     def open_panel(self, name: str) -> None:
@@ -704,8 +671,6 @@ class Console:
                 self.close_drawer()
         elif name == "enter":
             self.press_focus()
-        elif name == "v":
-            self.toggle_conversation()
         elif self.drawer is not None:
             control = next((one for one in self.controls() if one.key == name), None)
             if control is not None:
@@ -713,27 +678,10 @@ class Console:
         elif name == "7":
             self.open_field("session", None, "Message this session: ")
 
-    def toggle_conversation(self) -> None:
-        """Show or hide the viewed session's conversation, which the console remembers for each session while it
-        runs. Showing it moves the cursor there, so the page keys scroll it, and starts at its newest line."""
-        name = self.session or ""
-        if name in self.expanded:
-            self.expanded.discard(name)
-            return
-        self.expanded.add(name)
-        self.close_drawer()
-        self.selected, self.follow = CONVERSATION, True
-        self.next_conversation = float("-inf")
-        self.refresh_now.set()
-
     def press_focus(self) -> None:
-        """Enter: press the control the focus is on, close the drawer of the open row, open another row's, or show or
-        hide the conversation, as `v` does."""
+        """Enter: press the control the focus is on, close the drawer of the open row, open another row's."""
         key, control = self.focus()
         if key is None:
-            return
-        if key == CONVERSATION:
-            self.toggle_conversation()
             return
         found = next((one for one in self.controls() if one.key == control), None)
         if found is not None:
@@ -1025,7 +973,7 @@ class Console:
     def lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
         """Both panes, and the range containing the focused row and its drawer."""
         with self.lock:
-            home, home_focus = self.home_lines()
+            home, home_focus = self.home_lines(width)
             if self.viewed() is None:
                 return home, home_focus
             panel, panel_focus = self.panel_lines(width)
@@ -1036,7 +984,7 @@ class Console:
     def viewport(self, width: int, room: int) -> list[Line]:
         """Keep the session list above the selected session's independently scrolling panel."""
         with self.lock:
-            home, focus = self.home_lines()
+            home, focus = self.home_lines(width)
             if self.viewed() is None:
                 return home[:room]
             self.home_room = min(len(home), max(1, room // 2))
@@ -1055,18 +1003,18 @@ class Console:
             return [lines[last]]
         if room == 2:
             return [lines[0], lines[last]]
-        space = room - 1
+        prefix = lines[:2] if room > 3 else lines[:1]
+        space = room - len(prefix)
         if last - first + 1 > space:
             self.home_offset = min(max(self.home_offset, last - space + 2), last)
-            return [lines[0], lines[first], *lines[self.home_offset:self.home_offset + space - 1]]
+            return [*prefix, lines[first], *lines[self.home_offset:self.home_offset + space - 1]]
         self.home_offset = first + 1
-        return [lines[0], *lines[first:first + space]]
+        return [*prefix, *lines[first:first + space]]
 
     def panel_viewport(self, width: int, room: int) -> list[Line]:
         """The body's lines that fit in `room` rows. The offset survives each redraw and moves only as far as it
         must to show the cursor's row and its drawer. A drawer taller than the room shows a room's worth of itself,
-        starting at its row, and the scroll keys move the offset through the rest. The conversation starts at its
-        newest line instead, and keeps it in view as lines arrive until a scroll key moves away from it."""
+        starting at its row, and the scroll keys move the offset through the rest."""
         with self.lock:
             body, (first, last) = self.panel_lines(width)
             self.room = room
@@ -1081,12 +1029,7 @@ class Console:
                     offset = min(max(offset, spots[-1] - room + 1), spots[0])
                 return max(0, min(offset, len(body) - room))
 
-            following = self.view == "panel" and self.selected_key() == CONVERSATION
-            if following and self.follow:
-                self.offset = sys.maxsize
             self.offset = clamped(self.offset)
-            if following:
-                self.follow = self.offset == clamped(sys.maxsize)
             self.reveal = False
             return body[self.offset:self.offset + room]
 
@@ -1103,17 +1046,14 @@ class Console:
                 return [*lines, Line([("Press Ctrl-C again to exit", "warning")])]
             if self.view == "home":
                 hint = "↑↓ session · Enter or → focus panel · PgUp PgDn scroll · Ctrl-C quit"
-            elif self.selected_key() == CONVERSATION and self.session in self.expanded:
-                hint = ("↑↓ move · v or Enter hide · PgUp PgDn scroll · 7 message this session · ← or Esc back"
-                        " · Ctrl-C twice quit")
             elif self.drawer is None:
-                hint = ("↑↓ move · Enter open · 7 message this session · v conversation · ← or Esc back"
+                hint = ("↑↓ move · Enter open · 7 message this session · ← or Esc back"
                         " · Ctrl-C twice quit")
             else:
                 hint = "↑↓ move · Enter press or open · ← or Esc close · PgUp PgDn scroll · Ctrl-C twice quit"
             return [*lines, Line([(hint, "subtle")])]
 
-    def home_lines(self) -> tuple[list[Line], tuple[int, int]]:
+    def home_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
         now = self.now_ms()
         listed = self.home()
         lines = [Line([("Projector console", "bold"),
@@ -1121,6 +1061,25 @@ class Console:
         if not listed:
             lines.append(Line([("No live Projector sessions. Sessions appear when they register an agent, watch "
                                 "pull requests, or have inbox items.", "subtle")]))
+            return lines, (0, 0)
+        ages = {session.name: age(now - changed) if (changed := last_update(session)) is not None else "—"
+                for session in listed}
+        counts = {session.name: counted(len(session.rows), "PR") or "0 PRs" for session in listed}
+        count_width = max(len(value) for value in counts.values())
+        age_width = max(len(value) for value in ages.values())
+        name_width = min(max(5, *(len(session.label) for session in listed)), max(1, width // 4),
+                         max(1, width - count_width - age_width - 9))
+        request_width = max(0, width - 2 - name_width - count_width - age_width - 7)
+
+        def columns(label: str, count: str, request: str, changed: str, chosen: bool = False) -> Line:
+            if width < 20:
+                return Line([("▸ " if chosen else "  ", "subtle"),
+                             (fit(label, max(0, width - 2)), "suggestion" if chosen else "")])
+            return Line([("▸ " if chosen else "  ", "subtle"),
+                         (fit(label, name_width), "suggestion" if chosen else ""),
+                         (f"  {count.ljust(count_width)}  ", "claude"), (fit(request, request_width), ""),
+                         (f"  {changed.rjust(age_width)} ", "subtle")])
+
         viewed = self.viewed()
         chosen = viewed.name if viewed is not None else None
         focus = (0, 0)
@@ -1128,46 +1087,17 @@ class Console:
         group_start = 0
         for session in listed:
             if session.cwd != previous:
+                lines.append(Line([]))
                 group_start = len(lines)
-                lines.append(Line([(session.cwd or "Unknown working directory", "branch")]))
+                lines.append(Line([(directory_label(session.cwd), "branch")]))
                 previous = session.cwd
             start = len(lines)
-            counts = counts_of(session, now)
-            named = headline(session, now)
-            lines.append(Line([(("▸ " if session.name == chosen else "  ") + session.label, "bold"),
-                               (f"  {session.host}", "subtle"),
-                               *([(f"  {session.place}", "branch")]
-                                 if session.place and session.place != session.cwd else []),
-                               *([(f"  {' · '.join(counts)}", "")] if counts else []),
-                               *([(f"  {session.summary}", "subtle")] if session.summary else []),
-                               *([(f"  ‣ {named['subject']}", "")] if named is not None else [])],
-                              selected=session.name == chosen and self.view == "home"))
+            request = headline(session, now)
+            lines.append(columns(session.label, counts[session.name], request["subject"] if request else "—",
+                                 ages[session.name], session.name == chosen))
             if session.name == chosen:
                 focus = (group_start, start)
         return lines, focus
-
-    def conversation_lines(self, name: str, width: int, selected: bool) -> list[Line]:
-        """The conversation's heading, and, when it is shown, what the person and the agent said, newest last."""
-        shown = name in self.expanded
-        lines = [Line([(f"{'▾' if shown else '▸'} Conversation", "bold"),
-                       (f"  v {'hides' if shown else 'shows'} what you and the agent said", "subtle")], selected)]
-        if not shown:
-            return lines
-        indent = " " * DRAWER_INDENT
-        said = self.said.get(name) or []
-        if not said:
-            found = self.transcripts.get(name)
-            note = ("reading…" if found is None else "Nothing said yet." if found
-                    else "No transcript found for this session.")
-            return [*lines, Line([(indent + note, "subtle")])]
-        for one in said:
-            who = "you: " if one.who == "you" else "agent: "
-            wrap = max(1, width - DRAWER_INDENT - len(who))
-            parts = [part for paragraph in one.text.splitlines() for part in textwrap.wrap(paragraph, wrap) or [""]]
-            lines.append(Line([(indent + who, "subtle"), (parts[0], "accent" if one.who == "you" else "")]))
-            lines += [Line([(indent + " " * len(who) + part, "accent" if one.who == "you" else "")])
-                      for part in parts[1:]]
-        return lines
 
     def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
         session = self.viewed()
@@ -1175,12 +1105,7 @@ class Console:
             return [], (0, 0)
         now = self.now_ms()
         counts = counts_of(session, now)
-        lines = [Line([(session.label, "bold"), (f"  {session.host}", "subtle"),
-                       *([(f"  {session.place}", "branch")] if session.place else []),
-                       *([(f"  {' · '.join(counts)}", "subtle")] if counts else [])])]
-        if session.summary:
-            lines.append(Line([(session.summary, "subtle")]))
-        lines.append(Line([]))
+        lines = [Line([(session.label, ""), *([(f"  {' · '.join(counts)}", "subtle")] if counts else [])]), Line([])]
         entries = self.entries()
         if not entries:
             lines.append(Line([("No pull requests or items. Press 7 to send this session a message.", "subtle")]))
@@ -1188,6 +1113,7 @@ class Console:
         focus = (0, 0)
         label_width = max((len(row.label) for row in session.rows), default=0)
         author_width = max((len(row.pull.author or "") for row in session.rows if row.section == "review"), default=0)
+        state_width = max((len(row.state) for row in session.rows if not row.pull.is_loading), default=0)
         previous = None
         for key, entry in entries:
             group = entry.section if isinstance(entry, rows.Row) else "repo" if key.startswith("repo:") else "items"
@@ -1198,7 +1124,7 @@ class Console:
             # The row is lit only while the focus is on the row itself, not on one of its drawer's controls.
             lit = key == chosen and control is None
             if isinstance(entry, rows.Row):
-                lines.append(self.pull_line(entry, label_width, author_width, lit))
+                lines.append(self.pull_line(entry, label_width, state_width, author_width, lit))
                 if key == self.drawer:
                     lines += self.pull_drawer(entry, width)
             elif key.startswith("repo:"):
@@ -1211,20 +1137,15 @@ class Console:
                     lines += self.item_drawer(entry, width)
             if key == chosen:
                 focus = (start, len(lines) - 1)
-        lines.append(Line([]))
-        start = len(lines)
-        lines += self.conversation_lines(session.name, width, chosen == CONVERSATION)
-        if chosen == CONVERSATION:
-            focus = (start, len(lines) - 1)
         return lines, focus
 
-    def pull_line(self, row: rows.Row, label_width: int, author_width: int, selected: bool) -> Line:
+    def pull_line(self, row: rows.Row, label_width: int, state_width: int, author_width: int, selected: bool) -> Line:
         pull = row.pull
-        parts = [(row.label.ljust(label_width), "")]
+        state = "" if pull.is_loading else row.state
+        parts = [(row.label.ljust(label_width), ""), ("  " + state.ljust(state_width), WORD_STYLES.get(state, ""))]
         if pull.is_loading:
             parts.append(("  loading…", "subtle"))
             return Line(parts, selected)
-        parts.append((f"  {row.state}", WORD_STYLES.get(row.state, "")))
         if row.section == "review":
             parts.append((f"  {(pull.author or '').ljust(author_width)}", "subtle"))
         parts.append((f"  {pull.title}", ""))
@@ -1510,8 +1431,7 @@ def styles(curses: Any) -> dict[str, int]:
 
 
 def printable(text: str) -> str:
-    """Text as it can be drawn: an agent's subject or its conversation could hold a control character, which would
-    move the terminal's cursor."""
+    """Replace control characters so a subject or detail cannot move the terminal's cursor."""
     return "".join(character if character.isprintable() else " " for character in text)
 
 
@@ -1527,7 +1447,7 @@ class Screen:
         self.pending: list[object] = []
 
     def put(self, y: int, line: Line, width: int) -> None:
-        x = 0
+        x = 1
         for at, (text, style) in enumerate(line.parts):
             if x >= width:
                 break
@@ -1546,7 +1466,7 @@ class Screen:
         typing = self.console.field
         below = typing is not None and not typing.inline
         room = max(1, height - len(footer) - (1 if below else 0))
-        shown = self.console.viewport(width, room)
+        shown = self.console.viewport(max(0, width - 1), room)
         self.window.erase()
         for y, line in enumerate(shown):
             self.put(y, line, width)
@@ -1554,12 +1474,12 @@ class Screen:
             self.put(y, line, width)
         at = None
         if typing is not None and below:
-            space = max(1, width - len(typing.prompt) - 1)
+            space = max(1, width - len(typing.prompt) - 2)
             start = max(0, typing.cursor - space)
             self.put(height - 1, Line([(typing.prompt, "bold"), (typing.text[start:start + space], "")]), width)
-            at = (height - 1, min(width - 1, len(typing.prompt) + typing.cursor - start))
+            at = (height - 1, min(width - 1, 1 + len(typing.prompt) + typing.cursor - start))
         elif typing is not None:
-            at = next(((y, min(width - 1, line.cursor)) for y, line in enumerate(shown) if line.cursor is not None),
+            at = next(((y, min(width - 1, 1 + line.cursor)) for y, line in enumerate(shown) if line.cursor is not None),
                       None)
         if at is not None:
             self.window.move(*at)
