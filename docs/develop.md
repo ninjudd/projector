@@ -124,9 +124,13 @@ and says how to get them.
 
 `python3 -m tests` runs the suite in one worker process per CPU, each
 running `unittest` on a few tests of one class, and prints each failing
-chunk's output before one summary. Pass `-j` to set the number of workers,
-`-v` for every test's name, or a module, class, or test to run only that,
-as `unittest` takes it:
+chunk's output before one summary. A chunk runs with no stdin, and one that
+runs past `--timeout` seconds, 300 by default, is stopped with every process
+it started and fails, so a test that waits on something that never comes
+cannot hold up the run. Ctrl-C stops every running chunk the same way.
+Pass `-j` to set the number of workers, `-v` for
+every test's name, `--timeout` to change that limit, or a module, class, or
+test to run only that, as `unittest` takes it:
 
 ```sh
 PYTHONPATH=src python3 -m tests tests.test_review.GateTests
