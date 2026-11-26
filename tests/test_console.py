@@ -222,6 +222,9 @@ class HomeOrder(ConsoleCase):
         self.assertEqual(1, lines.count("/work/app-copy"))
         self.assertLess(lines.index("/work/app"), lines.index("/work/app-copy"))
         self.assertIn("Unknown working directory", lines)
+        self.assertTrue(all(lines[lines.index(heading) - 1] == "" for heading in
+                            ("/work/App", "/work/app", "/work/app-copy", "/work/app/nested",
+                             "Unknown working directory")))
         self.assertNotIn("/work/old", lines)
 
     def test_a_refresh_keeps_the_initial_selection_when_another_session_moves_first(self) -> None:
@@ -345,9 +348,10 @@ class SessionColumns(ConsoleCase):
         self.console.tick()
         lines = self.console.home_lines(100)[0]
 
-        self.assertEqual("/work/app", lines[1].text)
-        self.assertTrue(lines[2].text.startswith("▸ "))
-        self.assertIn("0 PRs", lines[2].text)
+        self.assertEqual("", lines[1].text)
+        self.assertEqual("/work/app", lines[2].text)
+        self.assertTrue(lines[3].text.startswith("▸ "))
+        self.assertIn("0 PRs", lines[3].text)
 
     def test_a_newer_notice_does_not_replace_the_latest_open_request(self) -> None:
         self.claude("s1")
@@ -1189,10 +1193,13 @@ class SplitLayout(TerminalCase):
                 self.codex(name, cwd="/work/app")
                 self.ask(name, f"Question from {name}?")
         self.console.tick()
-        initial = self.draw().split("─" * self.window.width, 1)[1]
+        drawn = self.draw()
+        self.assertTrue(all(line.startswith(" ") for line in drawn.splitlines() if line))
+        self.assertTrue(all(len(line) <= self.window.width for line in drawn.splitlines()))
+        initial = drawn.split("─" * (self.window.width - 1), 1)[1]
 
         self.press_terminal(FakeCurses.KEY_DOWN)
-        moved = self.draw().split("─" * self.window.width, 1)[1]
+        moved = self.draw().split("─" * (self.window.width - 1), 1)[1]
         self.press("right", "enter", "1", "enter")
 
         self.assertIn("Question from first?", initial)
@@ -1363,6 +1370,9 @@ class Colors(ConsoleCase):
             with self.subTest(colors=colors, environ=environ):
                 drawn = self.foregrounds(ColorCurses(colors), environ)
                 self.assertEqual((question, conflict), (drawn["- Decline the finding?"], drawn["conflict"]))
+                self.assertEqual(None if environ.get("NO_COLOR") else
+                                 ColorCurses.COLOR_RED if colors == 8 else console.xterm_color(dark["claude"]),
+                                 drawn["1 PR"])
         self.assertEqual((67, 239, 147), (console.xterm_color((95, 135, 175)), console.xterm_color((80, 80, 80)),
                                           console.xterm_color((177, 185, 249))))
 

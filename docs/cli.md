@@ -3408,7 +3408,8 @@ hooks alone do not put a session in the list.
 Directory headings sort by path and keep separate checkouts apart, even when
 they share a repository. Paths within your home directory start with `~`.
 Sessions whose records have no directory appear under `Unknown working
-directory`, after the other groups.
+directory`, after the other groups. A blank line precedes each group,
+including the first. The screen leaves one space at the left edge.
 
 The session list has four aligned fields, without headings:
 
@@ -3418,7 +3419,7 @@ The session list has four aligned fields, without headings:
   color. The selected session name has color and a `▸` marker; the row has
   no highlight.
 - **PRs** counts all open pull requests the session fixes or reviews, as
-  `0 PRs`, `1 PR`, or `5 PRs`.
+  `0 PRs`, `1 PR`, or `5 PRs`, in orange.
 - **Latest request** shows the newest open, awake question or request.
   Notices and messages do not replace it. A session with none shows `—`.
 - **Updated** leaves one space at the right edge and shows the age of the most recent

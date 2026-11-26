@@ -1003,12 +1003,13 @@ class Console:
             return [lines[last]]
         if room == 2:
             return [lines[0], lines[last]]
-        space = room - 1
+        prefix = lines[:2] if room > 3 else lines[:1]
+        space = room - len(prefix)
         if last - first + 1 > space:
             self.home_offset = min(max(self.home_offset, last - space + 2), last)
-            return [lines[0], lines[first], *lines[self.home_offset:self.home_offset + space - 1]]
+            return [*prefix, lines[first], *lines[self.home_offset:self.home_offset + space - 1]]
         self.home_offset = first + 1
-        return [lines[0], *lines[first:first + space]]
+        return [*prefix, *lines[first:first + space]]
 
     def panel_viewport(self, width: int, room: int) -> list[Line]:
         """The body's lines that fit in `room` rows. The offset survives each redraw and moves only as far as it
@@ -1076,7 +1077,7 @@ class Console:
                              (fit(label, max(0, width - 2)), "suggestion" if chosen else "")])
             return Line([("▸ " if chosen else "  ", "subtle"),
                          (fit(label, name_width), "suggestion" if chosen else ""),
-                         (f"  {count.ljust(count_width)}  ", ""), (fit(request, request_width), ""),
+                         (f"  {count.ljust(count_width)}  ", "claude"), (fit(request, request_width), ""),
                          (f"  {changed.rjust(age_width)} ", "subtle")])
 
         viewed = self.viewed()
@@ -1086,6 +1087,7 @@ class Console:
         group_start = 0
         for session in listed:
             if session.cwd != previous:
+                lines.append(Line([]))
                 group_start = len(lines)
                 lines.append(Line([(directory_label(session.cwd), "branch")]))
                 previous = session.cwd
@@ -1445,7 +1447,7 @@ class Screen:
         self.pending: list[object] = []
 
     def put(self, y: int, line: Line, width: int) -> None:
-        x = 0
+        x = 1
         for at, (text, style) in enumerate(line.parts):
             if x >= width:
                 break
@@ -1464,7 +1466,7 @@ class Screen:
         typing = self.console.field
         below = typing is not None and not typing.inline
         room = max(1, height - len(footer) - (1 if below else 0))
-        shown = self.console.viewport(width, room)
+        shown = self.console.viewport(max(0, width - 1), room)
         self.window.erase()
         for y, line in enumerate(shown):
             self.put(y, line, width)
@@ -1472,12 +1474,12 @@ class Screen:
             self.put(y, line, width)
         at = None
         if typing is not None and below:
-            space = max(1, width - len(typing.prompt) - 1)
+            space = max(1, width - len(typing.prompt) - 2)
             start = max(0, typing.cursor - space)
             self.put(height - 1, Line([(typing.prompt, "bold"), (typing.text[start:start + space], "")]), width)
-            at = (height - 1, min(width - 1, len(typing.prompt) + typing.cursor - start))
+            at = (height - 1, min(width - 1, 1 + len(typing.prompt) + typing.cursor - start))
         elif typing is not None:
-            at = next(((y, min(width - 1, line.cursor)) for y, line in enumerate(shown) if line.cursor is not None),
+            at = next(((y, min(width - 1, 1 + line.cursor)) for y, line in enumerate(shown) if line.cursor is not None),
                       None)
         if at is not None:
             self.window.move(*at)
