@@ -513,6 +513,53 @@ test('lists saved artifacts, opens them, and dismisses a row from this session',
   await ui.unmount()
 })
 
+test('artifact Open keeps the printed URL clickable when a browser cannot open', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const row = { id: 'explorer', title: 'Cache explorer', description: '',
+    version: 'a'.repeat(64), key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: true }
+  const url = 'http://127.0.0.1:8123/open-token/index.html'
+  world(on, {}, argv => argv[1] === 'artifact' && argv[2] === 'panel'
+    ? ran(JSON.stringify({ artifacts: [row] }))
+    : ran(`${url}\n`))
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: `open:artifact:${row.key}` })
+  await ui.press({ key: `visit:artifact:${row.key}` })
+  expect((await ui.findAll({ type: 'Link' })).map(link => link.props.href)).toEqual([url])
+  await ui.unmount()
+})
+
+test('a delayed artifact Open keeps other links and a revision hides its previous link', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const first = { id: 'explorer', title: 'Cache explorer', description: '',
+    version: 'a'.repeat(64), key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: true }
+  const second = { ...first, id: 'timeline', title: 'Timeline', key: 'c'.repeat(64) }
+  const firstUrl = 'http://127.0.0.1:8123/first-token/index.html'
+  const secondUrl = 'http://127.0.0.1:8123/second-token/index.html'
+  world(on, {}, argv => {
+    if (argv[1] !== 'artifact') return ran('{}')
+    if (argv[2] === 'panel') return ran(JSON.stringify({ artifacts: [first, second] }))
+    return argv[3] === first.id ? clock.sleep(1_000).then(() => ran(`${firstUrl}\n`)) : ran(`${secondUrl}\n`)
+  })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: `open:artifact:${first.key}` })
+  const opened = ui.press({ key: `visit:artifact:${first.key}` })
+  await clock.settle()
+  await ui.press({ key: `open:artifact:${second.key}` })
+  await ui.press({ key: `visit:artifact:${second.key}` })
+  await clock.advance(1_000)
+  await opened
+  expect((await ui.findAll({ type: 'Link' })).map(link => link.props.href)).toEqual([secondUrl])
+  second.version = 'd'.repeat(64)
+  await clock.advance(35_000)
+  await clock.settle()
+  expect(await ui.findAll({ type: 'Link' })).toEqual([])
+  await ui.unmount()
+})
+
 test('artifact discussion fills the prompt with its saved version and description', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

@@ -650,6 +650,9 @@ local artifact, or one whose hosting cannot be confirmed, opens in a
 temporary local preview. That preview preserves relative assets, listens
 only on the loopback address, and stops after 15 minutes without a request.
 Opening it again starts a new preview when needed.
+Claude Code's drawer also keeps a clickable URL after Open, so you can
+follow it when the command cannot launch a browser. After the list shows a
+new revision, press Open again to get its link.
 
 **Discuss** fills Claude Code's prompt with the artifact's ID, saved version,
 title, description, checkout, and remote, ready for you to add your question.

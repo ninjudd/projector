@@ -254,6 +254,7 @@ declare module 'claude-code' {
       panelSubscribed: string[]
       panelSnapshot: Snapshot
       panelArtifacts: { rows: Artifact[]; revision: number }
+      panelArtifactLinks: Record<string, { version: string; url: string }>
       panelNow: number
       isPanelShown: boolean
       /** The drawer that is open: a pull request's by `keyOf`, or `item:` and an item's reference. */

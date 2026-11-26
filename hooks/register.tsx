@@ -365,6 +365,7 @@ const SNOOZES = [
 const subscribed = atom({ plugin: 'projector', key: 'panelSubscribed' } as const, [])
 const snapshot = atom({ plugin: 'projector', key: 'panelSnapshot' } as const, EMPTY)
 const artifacts = atom({ plugin: 'projector', key: 'panelArtifacts' } as const, { rows: [], revision: 0 })
+const artifactLinks = atom({ plugin: 'projector', key: 'panelArtifactLinks' } as const, {})
 const now = atom({ plugin: 'projector', key: 'panelNow' } as const, 0)
 const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, false)
 const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
@@ -526,7 +527,7 @@ async function loadThreads($: Engine): Promise<void> {
   await update($, drawerThreads, () => ({ drawer: opened, threads: found }))
 }
 
-const PREVIEW_URL = /^https?:\/\/\S+$/
+const HTTP_URL = /^https?:\/\/\S+$/
 
 /**
  * Reads the Vercel preview of the pull request whose drawer is open, from
@@ -545,7 +546,7 @@ async function loadPreview($: Engine): Promise<void> {
   try {
     const ran = await project($, ['preview', `${row.pr.repo}#${String(row.pr.number)}`])
     const printed = ran.stdout.trim()
-    url = ran.exitCode === 0 && PREVIEW_URL.test(printed) ? printed : null
+    url = ran.exitCode === 0 && HTTP_URL.test(printed) ? printed : null
   } catch {
     return
   }
@@ -1086,6 +1087,11 @@ async function artifactAction($: Engine, row: Artifact, action: 'open' | 'dismis
     if (action === 'dismiss') args.push('--session', session)
     const ran = await project($, args)
     if (ran.exitCode !== 0) throw new Error(errorOf(ran))
+    if (action === 'open' && HTTP_URL.test(ran.stdout.trim())) {
+      await update($, artifactLinks, before => ({
+        ...before, [row.key]: { version: row.version, url: ran.stdout.trim() },
+      }))
+    }
     if (action === 'dismiss') {
       await update($, artifacts, before => ({
         rows: before.rows.filter(one => one.key !== row.key), revision: before.revision + 1,
@@ -1862,6 +1868,7 @@ export const register: Register = on => {
     const { Box, Button, Link, Markdown, Text } = $.ui.resolve(e)
     const shown = current(await read($, snapshot))
     const shownArtifacts = (await read($, artifacts)).rows
+    const openedArtifacts = await read($, artifactLinks)
     const time = await read($, now)
     const opened = await read($, drawer)
     const shownThreads = await read($, drawerThreads)
@@ -2761,6 +2768,7 @@ export const register: Register = on => {
     const drawArtifact = (row: Artifact) => {
       const key = `artifact:${row.key}`
       const isOpen = opened === key
+      const link = openedArtifacts[row.key]
       return (
         <Box key={key} flexDirection="column">
           <Button key={`open:${key}`} plain onPress={() => toggle(key, `open:${key}`, isOpen ? undefined : `visit:${key}`)}>
@@ -2777,6 +2785,7 @@ export const register: Register = on => {
                 { name: 'discuss', label: 'Discuss', hotkey: '7', onPress: () => fill(discussionOf(row)) },
                 { name: 'dismiss', label: 'Dismiss', hotkey: '8', onPress: () => artifactAction($, row, 'dismiss') },
               ])}
+              {link?.version === row.version && <Link href={link.url}>{link.url}</Link>}
             </Box>
           )}
         </Box>
