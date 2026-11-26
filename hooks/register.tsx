@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-code'
 
 import type {
+  Artifact,
   Checks,
   Entry,
   Item,
@@ -18,6 +19,7 @@ import type {
   Thread,
 } from './types'
 import { buildThreadsQuery, loadingOf, parseCache, parseThreads } from './github'
+import { parseArtifacts } from './artifacts'
 import {
   cachePathOf,
   isPushCommand,
@@ -221,7 +223,7 @@ const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice', 'm
 const PR_SECTIONS = ['pr', 'review'] as const satisfies readonly Section[]
 
 /** What the header counts, in its order: the pull requests, then each kind of item. */
-const SECTIONS: readonly Section[] = [...PR_SECTIONS, ...ITEM_KINDS]
+const SECTIONS: readonly Section[] = [...PR_SECTIONS, 'artifact', ...ITEM_KINDS]
 
 /** What the header calls each section of pull requests. */
 const PR_NOUNS: Record<(typeof PR_SECTIONS)[number], string> = { pr: 'pull request', review: 'review request' }
@@ -362,6 +364,7 @@ const SNOOZES = [
 
 const subscribed = atom({ plugin: 'projector', key: 'panelSubscribed' } as const, [])
 const snapshot = atom({ plugin: 'projector', key: 'panelSnapshot' } as const, EMPTY)
+const artifacts = atom({ plugin: 'projector', key: 'panelArtifacts' } as const, [])
 const now = atom({ plugin: 'projector', key: 'panelNow' } as const, 0)
 const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, false)
 const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
@@ -402,6 +405,10 @@ let inFlight: Promise<void> | undefined
 let queuedPoll: boolean | undefined
 /** When the panel last polled GitHub. A shown panel polls every `POLL_MS`, and reads the daemon's files on every tick. */
 let attemptedAt = 0
+let artifactsAttemptedAt: number | undefined
+let artifactsInFlight: Promise<void> | undefined
+let artifactsSession: string | undefined
+let artifactsRevision = 0
 /**
  * Which session id the daemon last heard renew, by this copy of the module,
  * and when. The engine moves the session to a new id on `/clear`, and that id
@@ -629,6 +636,38 @@ async function cachedOf($: Engine, root: string | undefined, pr: TrackedPr): Pro
   return text === undefined ? null : parseCache(pr, text)
 }
 
+function checkArtifacts($: Engine): Promise<void> {
+  if (artifactsInFlight !== undefined) return artifactsInFlight
+  artifactsInFlight = (async () => {
+    const time = await $.clock.now()
+    const session = await sessionOf($)
+    if (session === undefined) return
+    const changed = artifactsSession !== session
+    if (!changed && artifactsAttemptedAt !== undefined && time - artifactsAttemptedAt < POLL_MS) return
+    if (changed && artifactsSession !== undefined) await update($, artifacts, () => [])
+    artifactsSession = session
+    artifactsAttemptedAt = time
+    try {
+      const revision = artifactsRevision
+      const result = await project($, ['artifact', 'panel', '--session', session, '--json'])
+      if (revision !== artifactsRevision || (await sessionOf($)) !== session) return
+      const found = result.exitCode === 0 ? parseArtifacts(result.stdout) : null
+      if (found !== null) {
+        let added = false
+        await update($, artifacts, before => {
+          if (revision !== artifactsRevision) return before
+          added = found.some(row => !before.some(old => old.key === row.key))
+          return found
+        })
+        if (added && !(await read($, isShown))) show($)
+      }
+    } catch {
+      // A failed refresh keeps the previous links available.
+    }
+  })().finally(() => { artifactsInFlight = undefined })
+  return artifactsInFlight
+}
+
 /**
  * Lists the pull requests the session subscribes to, each with its roles.
  * Each pull request's row comes from the daemon's cache, and one the daemon
@@ -645,6 +684,7 @@ async function load($: Engine, isPolled: boolean): Promise<void> {
     Promise.all(subscriptions.map(({ pr }) => cachedOf($, root, pr))),
     isPolled ? readBackground($) : undefined,
   ])
+  await checkArtifacts($)
 
   const rows: Row[] = subscriptions.flatMap(({ pr: entry, roles }, index) => {
     const pr = cached[index] ?? loadingOf(entry)
@@ -733,6 +773,8 @@ async function closeLeftDrawer($: Engine, time: number): Promise<void> {
   if (opened === null) return
   const isListed = opened.startsWith('item:')
     ? (await read($, items)).some(item => `item:${item.ref}` === opened && isShownAt(item, time))
+    : opened.startsWith('artifact:')
+      ? (await read($, artifacts)).some(row => `artifact:${row.key}` === opened)
     : opened.startsWith('entry:')
       ? (await read($, entries)).some(entry => `entry:${entry.ref}` === opened && !isEntrySnoozedAt(entry, time))
       : current(await read($, snapshot)).rows.some(row => keyOf(row.pr) === opened)
@@ -1034,6 +1076,30 @@ async function act(
   }
 }
 
+async function artifactAction($: Engine, row: Artifact, action: 'open' | 'dismiss'): Promise<void> {
+  const key = `artifact:${row.key}`
+  if (acting.has(key)) return
+  acting.add(key)
+  try {
+    const session = await sessionOf($)
+    if (session === undefined) throw new Error('the session ID is unavailable')
+    const args = ['artifact', action, row.id, '--checkout', row.checkout, '--remote', row.remote]
+    if (action === 'dismiss') args.push('--session', session)
+    const ran = await project($, args)
+    if (ran.exitCode !== 0) throw new Error(errorOf(ran))
+    if (action === 'dismiss') {
+      artifactsRevision += 1
+      await update($, artifacts, rows => rows.filter(one => one.key !== row.key))
+      await closeDrawer($, key)
+      await refresh($)
+    }
+  } catch (error) {
+    void $.ui.toast(`projector: ${messageOf(error)}`)
+  } finally {
+    acting.delete(key)
+  }
+}
+
 /**
  * Dismisses a pull request from the session: `project watch drop` keeps it
  * out of each role the session subscribes to it in, and the panel reloads
@@ -1210,6 +1276,7 @@ async function tick($: Engine): Promise<void> {
   // falls in the next tick's window.
   const time = await $.clock.now()
   void checkWatch($, time)
+  void checkArtifacts($)
   await checkInbox($)
   await closeLeftDrawer($, time).catch(() => undefined)
   const since = tickedAt ?? time
@@ -1491,7 +1558,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'projector',
-      description: 'Show or hide Projector’s panel of the pull requests you fix or review, and your inbox',
+      description: 'Show or hide Projector’s panel of pull requests, saved artifacts, and your inbox',
     })
     // A session whose engine cannot serve the tools keeps the panel.
     for (const tool of [
@@ -1513,6 +1580,7 @@ export const register: Register = on => {
       .then(rows => paint($, rows.find(row => row.key === 'theme')?.value))
       .catch(() => undefined)
     $.clock.after(1, () => void readBackground($))
+    $.clock.after(1, () => void checkArtifacts($))
     // Renewing starts the daemon, so it runs from a timer too.
     watchSoon($)
     $.clock.every(TICK_MS, () => void tick($))
@@ -1793,6 +1861,7 @@ export const register: Register = on => {
 
     const { Box, Button, Link, Markdown, Text } = $.ui.resolve(e)
     const shown = current(await read($, snapshot))
+    const shownArtifacts = await read($, artifacts)
     const time = await read($, now)
     const opened = await read($, drawer)
     const shownThreads = await read($, drawerThreads)
@@ -1809,6 +1878,7 @@ export const register: Register = on => {
     const sectioned = bySection(shown.rows, shown.viewer)
     const sectionCounts: { section: Section; count: string | undefined }[] = [
       ...PR_SECTIONS.map(section => ({ section, count: countOf(sectioned[section].length, PR_NOUNS[section]) })),
+      { section: 'artifact', count: countOf(shownArtifacts.length, 'artifact') },
       ...ITEM_KINDS.map(kind => {
         const open = shownItems.filter(
           item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
@@ -1894,7 +1964,7 @@ export const register: Register = on => {
     const edgeColumns = columns + LINE_PADDING
     const setting = await read($, background)
     const color = setting === AUTO ? await read($, themeBackground) : setting
-    const colorOf = kindColors(await read($, themeRequestColor))
+    const colorOf = { ...kindColors(await read($, themeRequestColor)), artifact: 'subtle' }
     const hint = (await read($, isFocused)) ? FOCUSED_HINT : FOCUS_HINT
     // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
     // its left, and the counts and how long ago the panel reloaded at its
@@ -2000,7 +2070,7 @@ export const register: Register = on => {
         <Box flexDirection="column">{lines}</Box>
       )
 
-    if (shown.rows.length === 0 && shownItems.length === 0 && shownEntries.length === 0) {
+    if (shown.rows.length === 0 && shownArtifacts.length === 0 && shownItems.length === 0 && shownEntries.length === 0) {
       return panel([
         shown.fetchedAt === null ? (
           <Text key="looking" color="subtle">
@@ -2688,6 +2758,28 @@ export const register: Register = on => {
     const focused = shownItems.find(item => opened === `item:${item.ref}`)
     if (focused !== undefined) return panel(drawItem(focused), false)
 
+    const drawArtifact = (row: Artifact) => {
+      const key = `artifact:${row.key}`
+      const isOpen = opened === key
+      return (
+        <Box key={key} flexDirection="column">
+          <Button key={`open:${key}`} plain onPress={() => toggle(key, `open:${key}`, isOpen ? undefined : `visit:${key}`)}>
+            <Text>{`- ${row.title}${row.preview ? ' · local preview' : ''}`}</Text>
+          </Button>
+          {isOpen && (
+            <Box key={`drawer:${key}`} flexDirection="column" marginLeft={DRAWER_INDENT}>
+              <Text color="subtle">{`${row.id} · ${row.version.slice(0, 12)}`}</Text>
+              {row.description !== '' && <Text>{row.description}</Text>}
+              {drawActions(key, [
+                { name: 'visit', label: 'Open', hotkey: 'o', onPress: () => { void artifactAction($, row, 'open') } },
+                { name: 'dismiss', label: 'Dismiss', hotkey: '8', onPress: () => { void artifactAction($, row, 'dismiss') } },
+              ])}
+            </Box>
+          )}
+        </Box>
+      )
+    }
+
     // Your pull requests come before the review requests, a blank line between
     // them, and a collapsed section gives way to one line in its place.
     const prLines = PR_SECTIONS.map(section => [
@@ -2699,7 +2791,13 @@ export const register: Register = on => {
         ...(at === 0 ? [] : [<Text key="before-reviews"> </Text>]),
         ...lines,
       ]),
-      shownItems.length > 0 && shown.rows.length > 0 && (
+      ...(shownArtifacts.length === 0 ? [] : [
+        <Text key="before-artifacts"> </Text>,
+        <Text key="artifacts-heading" bold>Artifacts</Text>,
+        ...expander('artifact'),
+        ...(isCollapsed('artifact') ? [] : shownArtifacts.map(drawArtifact)),
+      ]),
+      shownItems.length > 0 && (shown.rows.length > 0 || shownArtifacts.length > 0) && (
         <Text key="before-items"> </Text>
       ),
       // A collapsed kind's items give way to one line at the top of the list.
@@ -2708,7 +2806,7 @@ export const register: Register = on => {
         .filter(item => !isCollapsed(item.kind))
         .sort((a, b) => b.postedAt - a.postedAt)
         .map(drawItem),
-      shownEntries.length > 0 && (shownItems.length > 0 || shown.rows.length > 0) && (
+      shownEntries.length > 0 && (shownItems.length > 0 || shown.rows.length > 0 || shownArtifacts.length > 0) && (
         <Text key="before-entries"> </Text>
       ),
       ...shownEntries.map(drawEntry),

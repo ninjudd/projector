@@ -98,6 +98,13 @@ Artifacts directory and version picker expose the saved history. GitHub
 repository write permissions control publishing, and GitHub Pages controls
 who can read all versions. A hidden ref is not a separate privacy boundary.
 
+Saved artifacts appear in the session panel, with Open and Dismiss actions.
+Dismiss hides the row from that session without deleting saved versions or
+published links. Use `project artifact restore ID --session SESSION` when
+the user asks to bring a dismissed row back. `project artifact open ID`
+opens a saved artifact on its site, or in a temporary local preview when
+hosting is unavailable.
+
 Follow `../writing.md` for prose in the artifact and its hand-over. For the
 file format, commands, and site access details, read the repository's
 `docs/site.md` when working in Projector itself, or the installed Projector

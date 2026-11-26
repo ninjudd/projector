@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, TextIO
 
-from . import agents, codex_watch, inbox, repo_inbox, rows, session_titles, watch
+from . import agents, artifact_panel, codex_watch, inbox, repo_inbox, rows, session_titles, summary, watch
 from .core import ProjectorError
 
 INBOX_EVERY = 1.0
@@ -74,6 +74,7 @@ class Session:
     rows: list[rows.Row] = field(default_factory=list)
     # The repository inbox's entries for the repository the session works in.
     entries: list[dict] = field(default_factory=list)
+    artifacts: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -133,6 +134,7 @@ class Work:
     rows: bool
     signatures: dict[str, Optional[tuple]]
     items: dict[str, list[dict]] = field(default_factory=dict)
+    directories: dict[str, str] = field(default_factory=dict)
     pull: Optional[rows.Pull] = None
     drawer: Optional[str] = None
 
@@ -144,6 +146,7 @@ class Found:
     live: Optional[dict[str, tuple[str, str, str, Optional[float], tuple, Optional[list[dict]]]]] = None
     rows: dict[str, list[rows.Row]] = field(default_factory=dict)
     entries: dict[str, list[dict]] = field(default_factory=dict)
+    artifacts: dict[str, list[dict]] = field(default_factory=dict)
     drawer: Optional[str] = None
     threads: Optional[list[rows.Thread]] = None
 
@@ -265,6 +268,7 @@ def counts_of(session: Session, now_ms: int) -> list[str]:
     awake = [item for item in session.items if is_shown(item, now_ms) and is_awake(item, now_ms)]
     parts = [counted(sum(1 for row in session.rows if row.section == section), NOUNS[section])
              for section in rows.SECTIONS]
+    parts.append(counted(len(session.artifacts), 'artifact'))
     parts += [counted(sum(1 for item in awake if item["kind"] == kind), NOUNS[kind]) for kind in KINDS]
     return [part for part in parts if part is not None]
 
@@ -412,7 +416,8 @@ class Console:
     def due(self, now: float) -> Optional[Work]:
         work = Work(inbox=now >= self.next_inbox, rows=now >= self.next_rows,
                     signatures={name: session.signature for name, session in self.sessions.items()},
-                    items={name: session.items for name, session in self.sessions.items()})
+                    items={name: session.items for name, session in self.sessions.items()},
+                    directories={name: session.cwd for name, session in self.sessions.items()})
         if work.inbox:
             self.next_inbox = now + INBOX_EVERY
         if work.rows:
@@ -451,6 +456,12 @@ class Console:
         for name in names:
             if work.rows or name not in work.signatures:
                 found.rows[name] = rows.rows_for(self.root, name)
+                cwd = found.live[name][2] if found.live is not None else work.directories.get(name, '')
+                try:
+                    checkout = summary.checkout_root(Path(cwd)) if cwd else None
+                    found.artifacts[name] = artifact_panel.listing(checkout, 'origin', name, self.root) if checkout else []
+                except (ProjectorError, OSError):
+                    pass
         if work.pull is not None:
             found.threads = rows.fetch_threads(work.pull, self.gh)
         return found
@@ -471,6 +482,10 @@ class Console:
         for name, entries in found.entries.items():
             if name in self.sessions:
                 self.sessions[name].entries = entries
+        for name, artifacts in found.artifacts.items():
+            if name in self.sessions:
+                hidden = artifact_panel.dismissals(name, self.root)
+                self.sessions[name].artifacts = [row for row in artifacts if row['key'] not in hidden]
         if found.drawer is not None and found.drawer == self.drawer:
             self.threads = found.threads
         self.settle_view()
@@ -527,6 +542,7 @@ class Console:
             return []
         now = self.now_ms()
         return ([(pull_key(row.pull), row) for row in session.rows]
+                + [(f"artifact:{entry['key']}", entry) for entry in session.artifacts]
                 + [(item_key(item), item) for item in shown_items(session, now)]
                 + [(entry_key(entry), entry) for entry in session.entries if not repo_inbox.is_snoozed(entry, now)])
 
@@ -708,12 +724,34 @@ class Console:
         self.settle_view()
 
     def controls(self) -> list[Control]:
+        if self.drawer and self.drawer.startswith('artifact:'):
+            row = dict(self.entries()).get(self.drawer)
+            if row is not None:
+                return [Control('o', 'Open', lambda: self.open_artifact(row)),
+                        Control('8', 'Dismiss', lambda: self.dismiss_artifact(row))]
         row, item, entry = self.row(self.drawer), self.item(self.drawer), self.entry(self.drawer)
         if row is not None:
             return self.pull_controls(row)
         if entry is not None:
             return self.entry_controls(entry)
         return self.item_controls(item) if item is not None else []
+
+    def open_artifact(self, row: dict) -> None:
+        try:
+            self.visit('o', artifact_panel.open_url(Path(row['checkout']), row['remote'], row['id']))
+        except (ProjectorError, OSError) as error:
+            self.status = str(error)
+
+    def dismiss_artifact(self, row: dict) -> None:
+        try:
+            artifact_panel.dismiss(Path(row['checkout']), row['remote'], self.session, row['id'], state=self.root)
+            session = self.viewed()
+            if session is not None:
+                session.artifacts = [item for item in session.artifacts if item['key'] != row['key']]
+            self.close_drawer()
+            self.settle_view()
+        except ProjectorError as error:
+            self.status = str(error)
 
     def entry_controls(self, entry: dict) -> list[Control]:
         """A repository inbox entry's keys. A peer's question takes its answers, and a request Done or its options
@@ -1116,9 +1154,12 @@ class Console:
         state_width = max((len(row.state) for row in session.rows if not row.pull.is_loading), default=0)
         previous = None
         for key, entry in entries:
-            group = entry.section if isinstance(entry, rows.Row) else "repo" if key.startswith("repo:") else "items"
+            group = (entry.section if isinstance(entry, rows.Row) else "artifact" if key.startswith('artifact:')
+                     else "repo" if key.startswith("repo:") else "items")
             if previous is not None and group != previous:
                 lines.append(Line([]))
+            if group == 'artifact' and previous != group:
+                lines.append(Line([('Artifacts', '')]))
             previous = group
             start = len(lines)
             # The row is lit only while the focus is on the row itself, not on one of its drawer's controls.
@@ -1127,6 +1168,12 @@ class Console:
                 lines.append(self.pull_line(entry, label_width, state_width, author_width, lit))
                 if key == self.drawer:
                     lines += self.pull_drawer(entry, width)
+            elif key.startswith('artifact:'):
+                suffix = ' · local preview' if entry['preview'] else ''
+                lines.append(Line([(f"- {entry['title']}{suffix}", '')], lit))
+                if key == self.drawer:
+                    lines.append(Line([(' ' * DRAWER_INDENT + entry['description'], 'subtle')]))
+                    lines.append(self.controls_line(self.controls()))
             elif key.startswith("repo:"):
                 lines.append(self.entry_line(entry, now, lit))
                 if key == self.drawer:

@@ -635,6 +635,33 @@ its own muted text in `subtle`, which would vanish on it. The panel reads
 the setting when the session starts and each time it reloads, so a change
 shows within 30 seconds, without a restart.
 
+### Open and dismiss artifacts in the session panel
+
+The session panel has an **Artifacts** section for the saved artifacts in
+its checkout. It includes local versions and the remote versions already
+fetched by `project artifact list` or `project site serve`. Expand an
+artifact's row to open it or dismiss it. The section refreshes without
+restarting the session, and its count collapses or expands the list.
+
+**Open** uses the repository's configured site for a published artifact. A
+local artifact, or one whose hosting cannot be confirmed, opens in a
+temporary local preview. That preview preserves relative assets, listens
+only on the loopback address, and stops after 15 minutes without a request.
+Opening it again starts a new preview when needed.
+
+**Dismiss** hides the artifact from this session's panel. Its saved versions
+and published links stay available, and another session still lists it.
+Revising the artifact does not undo the dismissal. Restore it from the
+checkout with:
+
+```sh
+project artifact restore cache-explorer --session SESSION
+```
+
+The same rows and actions appear in `project console`. You can list or
+dismiss them from the shell with `project artifact panel --session SESSION`
+and `project artifact dismiss cache-explorer --session SESSION`.
+
 ### Read your inbox in Projector's panel
 
 An agent in Claude Code asks you a question with Projector's `ask` tool,

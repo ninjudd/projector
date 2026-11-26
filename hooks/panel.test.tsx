@@ -478,6 +478,93 @@ test('draws one line per open pull request the session subscribes to', async ($,
   await ui.unmount()
 })
 
+test('lists saved artifacts, opens them, and dismisses a row from this session', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const row = {
+    id: 'cache-explorer', title: 'Cache explorer', description: 'Explore saved data',
+    version: 'a'.repeat(64), key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: false,
+  }
+  let dismissed = false
+  const { commands } = world(on, daemonFiles({ fix: ['o/r#1'] }), argv => {
+    if (argv[1] === 'artifact' && argv[2] === 'panel') return ran(JSON.stringify({ artifacts: dismissed ? [] : [row] }))
+    if (argv[1] === 'artifact' && argv[2] === 'dismiss') dismissed = true
+    return ran('{}')
+  })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: 'Artifacts' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Cache explorer/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /1 artifact/ })).toBeDefined()
+  await ui.press({ key: 'count:artifact' })
+  expect(await ui.find({ key: `open:artifact:${row.key}` })).toBeUndefined()
+  await ui.press({ key: 'count:artifact' })
+  await ui.press({ key: `open:artifact:${row.key}` })
+  expect(await ui.find({ type: 'Text', text: row.description })).toBeDefined()
+  await ui.press({ key: `visit:artifact:${row.key}` })
+  expect(commands).toContainEqual(['project', 'artifact', 'open', row.id, '--checkout', row.checkout, '--remote', 'origin'])
+  await ui.press({ key: `dismiss:artifact:${row.key}` })
+  await clock.settle()
+  expect(commands).toContainEqual(['project', 'artifact', 'dismiss', row.id, '--checkout', row.checkout,
+    '--remote', 'origin', '--session', SESSION])
+  expect(await ui.find({ type: 'Text', text: /Cache explorer/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('artifact polling keeps the last rows on a failed read and loads a new version on the next poll', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  let fail = false
+  let title = 'Original explorer'
+  world(on, {}, argv => argv[1] === 'artifact' && argv[2] === 'panel'
+    ? fail ? { ...ran(''), exitCode: 65, stderr: 'unavailable' } : ran(JSON.stringify({ artifacts: [{
+      id: 'explorer', title, description: '', version: 'a'.repeat(64), key: 'b'.repeat(64),
+      checkout: '/work/repo', remote: 'origin', preview: true,
+    }] })) : ran('{}'))
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: /Original explorer.*local preview/ })).toBeDefined()
+  fail = true
+  await clock.advance(30_000)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: /Original explorer/ })).toBeDefined()
+  fail = false
+  title = 'Revised explorer'
+  await clock.advance(30_000)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: /Revised explorer/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Original explorer/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('an artifact read begun before dismissal cannot put the dismissed row back', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const row = { id: 'explorer', title: 'Cache explorer', description: '', version: 'a'.repeat(64),
+    key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: true }
+  let reads = 0
+  let dismissed = false
+  let release = () => undefined as void
+  const pending = new Promise<Outcome>(resolve => { release = () => resolve(ran(JSON.stringify({ artifacts: [row] }))) })
+  world(on, {}, argv => {
+    if (argv[1] === 'artifact' && argv[2] === 'dismiss') dismissed = true
+    if (argv[1] !== 'artifact' || argv[2] !== 'panel') return ran('{}')
+    reads += 1
+    return reads === 1 ? ran(JSON.stringify({ artifacts: [row] })) : pending
+  })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: `open:artifact:${row.key}` })
+  await clock.advance(30_000)
+  await ui.press({ key: `dismiss:artifact:${row.key}` })
+  release()
+  await clock.settle()
+  const remaining = await ui.find({ type: 'Text', text: /Cache explorer/ })
+  if (remaining !== undefined) throw new Error(`The artifact returned after ${reads} catalog reads; dismissed=${dismissed}`)
+  await ui.unmount()
+})
+
 test('a row says what holds it back first, then reviewing, clean, draft, or ready, with a draft’s number and word in italic', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -1669,8 +1756,8 @@ test('`/projector` only shows or hides the panel, whatever follows it', async ($
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: ` ${TAGLINE}` })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  // The panel runs nothing but its reload's read of its setting.
-  expect(commands.filter(argv => argv.slice(0, 3).join(' ') !== 'project config get')).toEqual([])
+  // Showing the panel reads its settings and artifact catalog without changing subscriptions.
+  expect(commands.filter(argv => !['project config get', 'project artifact panel'].includes(argv.slice(0, 3).join(' ')))).toEqual([])
   await ui.unmount()
 })
 
@@ -2437,9 +2524,8 @@ test('an idle session with no questions runs no inbox command', async ($, on) =>
   await clock.advance(3 * TICK)
   await clock.settle()
 
-  // Listing the store's directory starts no process; only a reload of the shown panel reads its setting, and the
-  // session's start renews its subscriptions.
-  expect(session.project().filter(command => !/^(config get|watch renew)/.test(command))).toEqual([])
+  // The artifact catalog and settings are separate from inbox delivery.
+  expect(session.project().filter(command => command.startsWith('inbox '))).toEqual([])
   const ui = await $.ui.mount(PANEL)
   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await ui.unmount()

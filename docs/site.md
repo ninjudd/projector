@@ -284,6 +284,13 @@ project artifact list --id cache-explorer --json
 project artifact init cache-explorer --dir /tmp/cache-revision --from-published
 ```
 
+Saved artifacts also appear in the [session panel](plugins.md#open-and-dismiss-artifacts-in-the-session-panel).
+Open a row to view its artifact, or dismiss it from that session without
+deleting any version. `project artifact open cache-explorer` opens the saved
+artifact directly; add `--print-url` to print the address without launching
+a browser. Local artifacts use a temporary preview server that expires
+after 15 minutes without a request.
+
 The recovery directory must not exist. Add `--version FULL_DIGEST` to recover
 a fixed version, or `--no-fetch` to use cached data. Add `--checkout CHECKOUT`
 or `--remote REMOTE` to select the repository or remote explicitly.
