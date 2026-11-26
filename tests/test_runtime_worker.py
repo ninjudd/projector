@@ -140,6 +140,40 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.worker.ingest()
         self.assertIn('Only write inside the checkout.', self.worker.store.commands()[0]['text'])
 
+    async def test_typed_approval_conditions_reach_the_agent_after_denial(self):
+        cases = [
+            ('claude/approval', {'tool': 'Write'}, 'Only write inside the checkout.', None,
+             {'decision': 'decline', 'message': 'Only write inside the checkout.'},
+             'Only write inside the checkout.'),
+            ('item/commandExecution/requestApproval', {'command': 'touch output'},
+             'Only run inside the checkout.', 'Use the temporary fixture.', {'decision': 'decline'},
+             'Only run inside the checkout.\n\nUse the temporary fixture.'),
+            ('item/permissions/requestApproval', {'permissions': {'network': {'enabled': True}}},
+             'Keep network access disabled.', None, {'permissions': {}, 'scope': 'turn'},
+             'Keep network access disabled.'),
+        ]
+        for method, params, text, note, expected, forwarded in cases:
+            with self.subTest(method=method):
+                posted = asyncio.Event()
+                original = inbox.ask
+
+                def ask(*args, **kwargs):
+                    result = original(*args, **kwargs)
+                    posted.set()
+                    return result
+
+                with patch.object(inbox, 'ask', side_effect=ask):
+                    task = asyncio.create_task(self.worker.request(method, params))
+                    await asyncio.wait_for(posted.wait(), 1)
+                    ref = next(iter(self.worker.requests))
+                    inbox.answer(self.session, ref, 'c', text=text, note=note)
+                    result = await asyncio.wait_for(task, 1)
+                self.assertEqual(expected, result)
+                self.assertTrue(inbox.find(self.session, ref).get('deliveredAt'))
+                self.worker.ingest()
+                self.assertEqual('Your note on the native action (the action was denied):\n' + forwarded,
+                                 self.worker.store.commands()[-1]['text'])
+
     async def test_native_questions_keep_the_question_id_and_the_persons_note(self):
         task = asyncio.create_task(self.worker.request('item/tool/requestUserInput', {'questions': [
             {'id': 'target', 'question': 'Where should tests run?', 'options': [{'label': 'Local'}]}]}))

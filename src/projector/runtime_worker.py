@@ -346,15 +346,17 @@ class Worker:
                       "applyPatchApproval", "execCommandApproval", "item/permissions/requestApproval"):
             answer = await self.ask("Allow this agent action?", f"Runtime request: `{method}`\n\n```json\n{detail}\n```",
                                     ["Deny", "Allow once"], native=native)
-            allow = answer["text"] == "Allow once" and not answer["note"]
-            if answer["note"]:
+            text = answer["text"] if answer["text"] not in ("Deny", "Allow once") else ""
+            note = "\n\n".join(part for part in (text, answer["note"]) if part)
+            allow = answer["text"] == "Allow once" and not note
+            if note:
                 runtime.send(self.root, self.session,
-                             "Your note on the native action (the action was denied):\n" + answer["note"])
+                             "Your note on the native action (the action was denied):\n" + note)
             if method == "item/permissions/requestApproval":
                 return {"permissions": params.get("permissions", {}) if allow else {}, "scope": "turn"}
             result = {"decision": "accept" if allow else "decline"}
-            if method == "claude/approval" and answer["note"]:
-                result["message"] = answer["note"]
+            if method == "claude/approval" and note:
+                result["message"] = note
             return result
         if method in ("claude/question", "item/tool/requestUserInput"):
             answers = {}
