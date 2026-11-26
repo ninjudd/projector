@@ -1,19 +1,6 @@
-"""The Projector site: the static pages a repository serves from GitHub Pages.
+"""Build repository sites with plans, reviews, documents, and versioned artifacts.
 
-The site is built from content Projector keeps in the repository: its
-README, its `docs/` directory and the projects under it, and the pull request
-summaries published to refs/projector/summaries, which the site calls
-reviews. It has three sections, each at a real path under the site's base:
-the projects at the root and under projects/, every file of a project at its
-path inside the projects directory without `.md` or `.html`; the reviews
-under reviews/<number>/<head>/, with the newest head also at
-reviews/<number>/; and the docs under docs/, the README at docs/ itself and
-every other document at its path without `.md` or `.html`. An HTML page is
-shown as it is, in a frame inside the site, and the files beside it are
-copied too, so a page that loads its own data or a WebAssembly module works
-as it does from disk. GitHub Pages serves only files that exist, so each path
-gets a small shell page that loads the one shared copy of the assets and
-fetches its data.
+Every route has a shell file because GitHub Pages serves only files that exist.
 """
 
 from __future__ import annotations
@@ -29,6 +16,7 @@ import urllib.parse
 from importlib import resources
 from pathlib import Path
 
+from .. import artifact
 from ..core import Project, ProjectorError, project_from_text, title_from_text
 from ..review import identity, review_counts, verdict_marker
 from ..summary import (ATTRIBUTES_FILE, CONTEXT_MAX_BYTES, DIFF_FILE, HEAD_DIR, LEGACY_SUMMARY_FILE, SummaryError,
@@ -53,7 +41,7 @@ PURIFY = "https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.4.16/purify.min.js"
 CONTENT = "content"
 MAX_FILE_BYTES = 20 * 1024 * 1024
 PAGES = (".md", ".html")
-FIXED_ROUTES = ("", "projects/", "reviews/", "docs/", "search/")
+FIXED_ROUTES = ("", "projects/", "reviews/", "artifacts/", "docs/", "search/")
 # Where the site serves the head's copy of each file a summary page can expand.
 BLOBS = "reviews/blobs"
 
@@ -1038,11 +1026,33 @@ def review_row(entry: dict) -> dict:
     return row
 
 
+def build_artifacts(saved: dict, out: Path) -> tuple[list[dict], list[dict], list[str]]:
+    rows, search, routes, total = [], [], [], 0
+    for id, item in sorted(saved.items()):
+        rows.append(artifact.public(id, item))
+        if item.latest:
+            routes.append(f"artifacts/{id}/")
+        for version, bundle in item.versions.items():
+            routes.append(f"artifacts/{id}/{version}/")
+            for path, data in bundle.files.items():
+                target = out / CONTENT / "artifacts" / id / version / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+                total += len(data)
+            if version == item.latest:
+                text = html_text(bundle.files["index.html"].decode("utf-8", errors="replace"))
+                search.append({"route": f"artifacts/{id}/", "title": bundle.manifest["title"], "kind": "artifact",
+                               "text": f"{bundle.manifest['description']} {text}".strip()})
+    if rows:
+        print(f"{len(rows)} artifacts, {total} artifact bytes across all versions")
+    return rows, search, routes
+
+
 def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
                projects: list[Project] | None = None, projects_dir: Path | None = None,
                repo: str = "", branch: str = "main", base: str = "/",
                trunk: str | None = None, lookup=None, status_lookup=None,
-               stacks_lookup=None, counted: tuple[str, ...] = ()) -> tuple[list[dict], list[str], list[dict]]:
+               stacks_lookup=None, counted: tuple[str, ...] = (), artifacts: dict | None = None) -> tuple[list[dict], list[str], list[dict]]:
     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
 
     `branch` is the checked-out branch the site's GitHub links point at, and
@@ -1084,7 +1094,9 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
         if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
+    artifact_rows, artifact_search, artifact_routes = build_artifacts(artifacts or {}, out)
     manifest = {
+        "artifacts": artifact_rows,
         "repo": repo,
         "base": base,
         "branch": branch,
@@ -1099,9 +1111,10 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     }
     (out / "site.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
     index = search_index(out / CONTENT, readme, docs, described, projects_readme) if repo_root else []
+    index.extend(artifact_search)
     (out / "search.json").write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     shell = home_page(repo, base)
-    for route in site_routes(docs, described):
+    for route in sorted(set(site_routes(docs, described) + artifact_routes)):
         (out / route).mkdir(parents=True, exist_ok=True)
         (out / route / "index.html").write_text(shell, encoding="utf-8")
     (out / "404.html").write_text(shell, encoding="utf-8")

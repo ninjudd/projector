@@ -1,13 +1,8 @@
-"""Serve the Projector site from a checkout, without GitHub Pages.
+"""Serve a checkout's Projector site without GitHub Pages.
 
-`project site serve` builds the same static site a deploy does into a
-temporary directory and serves it over HTTP. It reads summaries from the
-checkout's copy of the hidden summaries ref, so it needs no GitHub Pages
-site and no workflow. While it runs it watches the files the site is built
-from and the summaries ref, fetching the ref again every minute, and
-rebuilds when either changes, as each publish redeploys a Pages site.
-`summary init --from-published` reads a pull request's newest summary from
-the same refs.
+The CLI builds into a temporary directory and watches content and published
+refs, including local previews. The server keeps an in-flight request's build
+until its replacement is ready.
 """
 
 from __future__ import annotations
@@ -24,6 +19,7 @@ from pathlib import Path
 from typing import Callable, NamedTuple
 from urllib.parse import urlsplit
 
+from ..refs import tracking_ref
 from ..summary import LEGACY_PAGES_REF, LEGACY_PAGES_ROOT, LEGACY_SUMMARY_FILE, PAGES_REF, PAGES_ROOT
 
 ThreadingHTTPServer = http.server.ThreadingHTTPServer
@@ -40,11 +36,6 @@ def run_git(root: Path, *args: str, detached: bool = False) -> subprocess.Comple
         return subprocess.run(["git", "-C", str(root), *args], capture_output=True)
     return subprocess.run(["git", "-C", str(root), *args], capture_output=True, stdin=subprocess.DEVNULL,
                           start_new_session=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
-
-
-def tracking_ref(remote: str, ref: str = PAGES_REF) -> str:
-    """Where `summary publish` keeps its copy of the remote's summaries ref."""
-    return ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
 
 
 def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF, prompt: bool = True) -> str:

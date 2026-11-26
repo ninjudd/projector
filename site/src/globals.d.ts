@@ -229,6 +229,21 @@ interface SiteReview {
   updated: string;
 }
 
+interface ArtifactVersion {
+  version: string;
+  title: string;
+  description: string;
+  publishedAt: string;
+  entry: string;
+}
+
+interface SiteArtifact {
+  id: string;
+  latest: string | null;
+  versions: ArtifactVersion[];
+  preview: boolean;
+}
+
 /** site.json: everything the build describes, from which the page draws every view. */
 interface SiteData {
   repo: string;
@@ -242,6 +257,7 @@ interface SiteData {
   projectsReadme: string | null;
   files: string[];
   reviews: SiteReview[];
+  artifacts?: SiteArtifact[];
 }
 
 /** One entry of search.json; `proposed` is the pull request that proposes the page's project, if one does. */

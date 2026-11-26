@@ -13,7 +13,7 @@ instructions and supporting scripts without a generated copy or host-specific
 fork.
 
 The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
-`review-repo`, `summarize-pr`, `write`, `rewrite`, `cleanup`,
+`review-repo`, `summarize-pr`, `artifact`, `write`, `rewrite`, `cleanup`,
 `write-tests`, and `work`.
 `summarize-pr` summarizes a pull request's changes as a guided review page.
 Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as

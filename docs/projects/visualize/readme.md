@@ -1,5 +1,5 @@
 ---
-status: ready
+status: completed
 priority: now
 ---
 
@@ -202,7 +202,7 @@ host needs an artifact API or MCP server.
 | `src/projector/summary.py` and a shared ref module | Extract hidden-ref fetch, temporary-index commits, and bounded push retries. Move summary callers without changing their schema, legacy migration, or publication behavior. |
 | `src/projector/cli.py` | Register commands and preview/build inputs. Reuse checkout, repository, hosting, and visibility helpers, extending visibility handling for internal repositories if needed. |
 | `src/projector/site/__init__.py` and `serve.py` | Read bundles, combine previews, copy files, emit routes and search data, and watch both ref families. |
-| `actions/site/action.yml` | Fetch and read the artifact ref alongside summaries; pass the directory to build. |
+| `actions/site/action.yml` | Fetch the artifact ref alongside summaries; let the build read validated Git objects directly. |
 | `site/src/site.ts`, `site/src/globals.d.ts`, and `site/assets/site.css` | Add directory, routes, menu, version picker, and types. Reuse HTML layout and search; commit rebuilt JavaScript. |
 | `tests/test_artifact.py`, `tests/test_site.py`, `tests/test_summary.py`, `tests/test_packaging.py` | Cover the boundaries below; add `artifact` to the exact published skill set. |
 | `README.md` and `docs/site.md` | Document commands, links, preview, access, limits, and action-pin upgrades. Leave completed plans unchanged. |
@@ -298,3 +298,49 @@ No blocking question remains. These defaults are reviewed with the plan;
 - **Workflow dispatch.** The workflow must exist on the default branch.
   Generated Projector workflows already have the manual trigger. See
   [GitHub's workflow dispatch reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch).
+
+
+## 9. Implementation and verification
+
+This change ships the shared `artifact` skill, all commands and
+routes in section 2, immutable content-based versions, source recovery,
+concurrent local and remote publication, and the site's directory, search,
+and version picker. Git publication mechanics live in `projector.refs` and
+are shared with summaries. The site action reads validated blobs directly
+from the fetched artifact ref instead of checking out an extracted bundle;
+this avoids applying Git filters or materializing invalid paths before
+validation.
+
+Browser verification passes at `/` and `/demo/`, at 1440 × 900 and
+375 × 812. `tests.artifact_ui.mjs` exercises directory filtering, direct
+latest and fixed routes, version selection, browser back, query and live
+hash state, keyboard controls, relative JSON and SVG loads, exact binary
+bytes, search, and full-screen controls. The Latest link follows hash
+changes inside the page. The browser regression failed on that navigation
+before the fix and passes after it. The desktop and phone screenshots were
+inspected, with no horizontal overflow or failed local requests.
+
+A running-server regression verifies local publication, fetched remote
+publication, and offline updates without a restart, while keeping review
+summaries visible. Disabling the artifact ref watcher makes this regression
+fail. Storage and shared-ref regressions cover the remaining boundaries,
+including summary and relay callers. The original 18 regression tests were
+also observed failing under their corresponding temporary mutations; the
+source was restored after every check. Reproduction commands for the browser
+check are in `docs/site.md`.
+
+The cost fixture uses 100 artifacts with five versions each, then one
+52,427,922-byte bundle. In a representative local benchmark, the 500
+small publications took 88.561 seconds, the large publication took 0.676
+seconds, and reading the saved history and building took 8.074 seconds.
+Small publications read 79,000 source bytes; the large one reads its
+52,427,922 payload bytes once. The output contains 53,612,930 bytes, including
+all versions and shared site assets. `tests.artifact_benchmark` reproduces
+the workload in a temporary repository and removes it after measurement.
+
+A live Pages publish is deferred until a site runs the merged action, tracked
+in [the implementation pull request](https://github.com/ninjudd/projector/pull/634). No
+repository settings, Pages visibility, or hosted artifact refs were changed
+by verification. The storage, dispatch failure, existing-workflow selection,
+remote-default-branch, and visibility boundaries are exercised without a
+live service.

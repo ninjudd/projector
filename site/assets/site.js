@@ -1,12 +1,6 @@
 "use strict";
-// Projector site: three sections, drawn from site.json. Projects lists the projects
-// and renders each one's files in a summary page's layout, beside a summary's
-// sidebar of its stacks, sections, and pages; Reviews lists the pull request
-// summaries; Docs renders the README and everything else under docs/ beside a
-// sidebar of that tree. A page is Markdown, rendered here, or HTML, shown as it is in a frame.
-// Every view has a real path under the site's base; links between views update
-// the address without a page load. Every page loads summary.js first, for the
-// helpers a summary page draws with too.
+// GitHub Pages needs real paths. The shared shell handles links between views
+// without a page load, and summary.js supplies the layout and text helpers.
 (function () {
     const STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];
     const PRIORITY_ORDER = ['now', 'next', 'later'];
@@ -146,6 +140,8 @@
             items.push([base, 'Projects', 'projects']);
         if (site.reviews.length > 0)
             items.push([`${base}reviews/`, 'Reviews', 'reviews']);
+        if ((site.artifacts ?? []).some(function (a) { return a.latest !== null; }))
+            items.push([`${base}artifacts/`, 'Artifacts', 'artifacts']);
         if (site.readme !== null || site.docs.length > 0)
             items.push([`${base}docs/`, 'Docs', 'docs']);
         return items.map(function (item) {
@@ -262,7 +258,7 @@
     // An HTML page as it is, in a frame of its copy under content/, so the files it
     // loads by relative path resolve beside it. The address's hash passes into the
     // frame and follows it back out, so a deep link into a hash-routed page works.
-    function showHtml(active, path, title, before, side, nav) {
+    function showHtml(active, path, title, before, side, nav, query = '', onHashChange) {
         const main = frame(active, title, '', side, true, undefined, nav);
         if (before !== null) {
             main.appendChild(before);
@@ -271,7 +267,7 @@
         const page = document.createElement('iframe');
         page.className = 'htmlpage';
         page.title = title;
-        page.src = contentUrl(path) + location.hash;
+        page.src = contentUrl(path) + query + location.hash;
         main.appendChild(page);
         fitFrame = function () {
             page.style.height = `${String(Math.max(240, window.innerHeight - page.getBoundingClientRect().top))}px`;
@@ -286,6 +282,7 @@
                     document.title = `${inner.document.title} · ${site.repo}`;
                 inner.addEventListener('hashchange', function () {
                     history.replaceState(null, '', location.pathname + location.search + inner.location.hash);
+                    onHashChange?.();
                 });
             }
             catch { /* a page that navigated elsewhere is no longer ours to read */ }
@@ -692,7 +689,7 @@
         });
     }
     function showSearch(query) {
-        const main = frame('search', query !== '' ? `Search: ${query}` : 'Search', '<h1>Search</h1><input class="filter" type="search" aria-label="Search the site" placeholder="Search the projects and docs">' +
+        const main = frame('search', query !== '' ? `Search: ${query}` : 'Search', '<h1>Search</h1><input class="filter" type="search" aria-label="Search the site" placeholder="Search the site">' +
             '<ol class="results"></ol>');
         const input = main.querySelector('.filter');
         const list = main.querySelector('.results');
@@ -721,6 +718,73 @@
             list.innerHTML = `<p class="note">Could not load the search index: ${esc(errorMessage(error))}</p>`;
         });
     }
+    function showArtifacts() {
+        const main = frame('artifacts', 'Artifacts', '<h1>Artifacts</h1>' +
+            '<input type="search" class="filter" aria-label="Filter artifacts" placeholder="Filter artifacts">' +
+            '<div class="artifactlist"></div>');
+        const input = main.querySelector('.filter');
+        const list = main.querySelector('.artifactlist');
+        if (input === null || list === null)
+            throw new Error('The artifacts view lost its filter or list');
+        const rows = (site.artifacts ?? []).flatMap(function (artifact) {
+            const latest = artifact.versions.find(function (v) { return v.version === artifact.latest; });
+            return latest !== undefined ? [{ artifact, latest }] : [];
+        }).sort(function (a, b) {
+            return b.latest.publishedAt.localeCompare(a.latest.publishedAt) || a.artifact.id.localeCompare(b.artifact.id);
+        });
+        input.value = new URLSearchParams(location.search).get('q') ?? '';
+        function draw() {
+            if (input === null || list === null)
+                return;
+            const q = input.value.trim().toLowerCase();
+            history.replaceState(null, '', `${base}artifacts/${q !== '' ? `?q=${encodeURIComponent(input.value.trim())}` : ''}`);
+            const shown = rows.filter(function (row) {
+                return `${row.artifact.id} ${row.latest.title} ${row.latest.description}`.toLowerCase().includes(q);
+            });
+            list.innerHTML = shown.length > 0 ? '<ul class="artifactrows">' + shown.map(function (row) {
+                return `<li><a href="${esc(`${base}artifacts/${row.artifact.id}/`)}">${esc(row.latest.title)}</a>` +
+                    (row.artifact.preview ? ' <span class="note">Local preview</span>' : '') +
+                    `<p>${esc(row.latest.description)}</p><span class="note">${esc(row.latest.publishedAt.slice(0, 10))} · ` +
+                    `${String(row.artifact.versions.length)} versions</span></li>`;
+            }).join('') + '</ul>' : '<p class="note">No artifacts match.</p>';
+        }
+        input.addEventListener('input', draw);
+        draw();
+    }
+    function showArtifact(id, version) {
+        const artifact = (site.artifacts ?? []).find(function (a) { return a.id === id; });
+        const selected = version ?? artifact?.latest;
+        const item = artifact?.versions.find(function (v) { return v.version === selected; });
+        if (artifact === undefined || item === undefined) {
+            frame('artifacts', 'Artifact not found', '<h1>Artifact not found</h1>');
+            return;
+        }
+        const toolbar = document.createElement('div');
+        toolbar.className = 'artifactbar';
+        toolbar.innerHTML = `<a href="${esc(`${base}artifacts/`)}">Artifacts</a><strong>${esc(item.title)}</strong>` +
+            (artifact.preview ? '<span class="note">Local preview</span>' : '') +
+            '<label>Version <select aria-label="Artifact version"></select></label>' +
+            `<a class="artifactlatest" href="${esc(`${base}artifacts/${id}/${location.search}${location.hash}`)}">Latest</a>`;
+        const picker = toolbar.querySelector('select');
+        const latest = toolbar.querySelector('.artifactlatest');
+        if (picker === null || latest === null)
+            throw new Error('The artifact toolbar lost its version controls');
+        artifact.versions.forEach(function (v) {
+            const option = document.createElement('option');
+            option.value = v.version;
+            option.textContent = `${v.publishedAt.slice(0, 10)} · ${v.version.slice(0, 12)}` + (v.version === artifact.latest ? ' (latest)' : '');
+            option.title = v.version;
+            option.selected = v.version === item.version;
+            picker.appendChild(option);
+        });
+        picker.addEventListener('change', function () {
+            history.pushState(null, '', `${base}artifacts/${id}/${picker.value}/${location.search}${location.hash}`);
+            route();
+        });
+        showHtml('artifacts', item.entry, item.title, toolbar, null, undefined, location.search, function () {
+            latest.href = `${base}artifacts/${id}/${location.search}${location.hash}`;
+        });
+    }
     function route() {
         const path = location.pathname;
         let rel = path.startsWith(base) ? path.slice(base.length) : path.replace(/^\//, '');
@@ -731,6 +795,8 @@
                 // A repository with no projects opens on its docs instead.
                 if (site.projects.length > 0)
                     showProjects();
+                else if (site.readme === null && site.docs.length === 0 && (site.artifacts ?? []).length > 0)
+                    showArtifacts();
                 else
                     showDocs(site.readme);
                 return;
@@ -740,12 +806,20 @@
             case 'reviews':
                 showReviews();
                 return;
+            case 'artifacts':
+                showArtifacts();
+                return;
             case 'docs':
                 showDocs(site.readme);
                 return;
             case 'search':
                 showSearch(new URLSearchParams(location.search).get('q') ?? '');
                 return;
+        }
+        const artifactRoute = /^artifacts\/([^/]+)(?:\/([^/]+))?$/.exec(rel);
+        if (artifactRoute !== null) {
+            showArtifact(artifactRoute[1] ?? '', artifactRoute[2]);
+            return;
         }
         const file = routes[`${rel}/`];
         if (file !== undefined) {
@@ -824,7 +898,7 @@
         return response.json();
     })
         .then(function (data) {
-        site = data;
+        site = { ...data, artifacts: data.artifacts ?? [] };
         if (root === null) {
             host.outerHTML = header('reviews', 'scrolls');
             return;

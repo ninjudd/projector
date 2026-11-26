@@ -2187,14 +2187,19 @@ class ReviewRulesTests(RepositoryTestCase):
     def test_a_codex_file_lacking_newer_rules_says_it_still_allows_the_summary_publish(self) -> None:
         rules = self.home / ".codex" / "rules" / "projector.rules"
         rules.parent.mkdir(parents=True)
-        # The file an earlier release wrote, before `project review ready` and `workflow` were allowed.
-        stale = permissions.CODEX_RULES.replace('"publish", "ready", ', '"publish", ').replace(', "workflow"]', ']')
-        self.assertNotEqual(permissions.CODEX_RULES, stale)
+        stale = ('prefix_rule(\n'
+                 '    pattern = ["project", ["status", "summary"]],\n'
+                 '    decision = "allow",\n'
+                 ')\n')
+        no_summary = ('prefix_rule(\n'
+                      '    pattern = ["project", ["status"]],\n'
+                      '    decision = "allow",\n'
+                      ')\n')
         cases = {
             "stale": (stale, True),
-            "one-line layout": ("\n".join(permissions.CODEX_PREFIX_RULES), True),
-            "no summary rule": (stale.replace('"status", "summary",', '"status",'), False),
-            "summary only prompts": (stale.replace('"status", "summary",', '"status",')
+            "one-line layout": ('prefix_rule(pattern = ["project", "summary"], decision = "allow")\n', True),
+            "no summary rule": (no_summary, False),
+            "summary only prompts": (no_summary
                                      + 'prefix_rule(pattern = ["project", "summary"], decision = "prompt")\n', False),
             "not Projector's layout": ('prefix_rule(pattern = ["project", "summary"]  ,decision="allow")\n', False),
             "empty": ("", False),

@@ -141,8 +141,8 @@ COMMANDS = "every `project` command but the few that reach outside Projector's o
 # justification Codex shows for it.
 CODEX_ALLOW = (
     (["project", ["check", "done", "help", "list", "owner", "preview", "priority", "search", "show", "status",
-                  "summary", "version", "watch", "worktree"]],
-     "Runs a Projector command that works on plans, watches, or pull request summaries, finds a branch's "
+                  "artifact", "summary", "version", "watch", "worktree"]],
+     "Runs a Projector command that works on plans or watches, publishes review summaries or artifacts, finds a branch's "
      "worktree or a pull request's Vercel preview, or prints its version or help."),
     (["project", "agent", ["list", "read", "register", "reply", "send", "unregister"]],
      "Registers or unregisters the session, lists your registered sessions, or sends, reads, or answers a message "
