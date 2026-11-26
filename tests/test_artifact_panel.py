@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -59,6 +60,13 @@ class ArtifactPanelTests(unittest.TestCase):
         self.assertEqual(0, code)
         return json.loads(output.getvalue())['artifacts']
 
+    def publishing_worktree(self):
+        self.git('switch', '--orphan', 'fixture')
+        self.git('commit', '--allow-empty', '-qm', 'Start fixture')
+        worktree = self.root / 'publishing-worktree'
+        self.git('worktree', 'add', '--detach', str(worktree), 'HEAD')
+        return worktree
+
     def test_sessions_only_list_artifacts_they_publish_or_explicitly_attach(self):
         self.assertEqual([], self.panel('unrelated'))
         tip = refs.ref_tip(self.repo, artifact.REF)
@@ -82,10 +90,7 @@ class ArtifactPanelTests(unittest.TestCase):
         self.assertEqual(['explorer'], [row['id'] for row in self.panel('unrelated')])
 
     def test_a_session_keeps_its_artifact_after_the_publishing_worktree_is_removed(self):
-        self.git('switch', '--orphan', 'fixture')
-        self.git('commit', '--allow-empty', '-qm', 'Start fixture')
-        worktree = self.root / 'publishing-worktree'
-        self.git('worktree', 'add', '--detach', str(worktree), 'HEAD')
+        worktree = self.publishing_worktree()
         with redirect_stdout(io.StringIO()):
             self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), '--local',
                                          '--checkout', str(worktree), '--session', 'publisher']))
@@ -146,6 +151,26 @@ class ArtifactPanelTests(unittest.TestCase):
         self.assertEqual([], self.listed('legacy'))
         path.unlink()
         self.assertEqual([], self.listed('legacy'))
+
+    def test_legacy_worktree_dismissal_is_migrated_once_and_explicit_restoration_sticks(self):
+        worktree = self.publishing_worktree()
+        published = ['artifact', 'publish', '--dir', str(self.source), '--local', '--checkout', str(worktree)]
+        for session, command, expected in [
+                ('published', published, []),
+                ('attached', ['artifact', 'attach', 'explorer', '--checkout', str(worktree)], ['explorer']),
+                ('restored', ['artifact', 'restore', 'explorer', '--checkout', str(worktree)], ['explorer'])]:
+            with self.subTest(command=command[1]), redirect_stdout(io.StringIO()):
+                delivery = artifact_panel.watch.session_folder(artifact_panel.watch.state_root(), session)
+                delivery.mkdir(parents=True)
+                encoded = json.dumps([str(worktree.resolve()), 'origin', 'explorer']).encode()
+                inbox.write_json(delivery / 'artifact-dismissals.json',
+                                 {'keys': [hashlib.sha256(encoded).hexdigest()]})
+                self.assertEqual(0, cli.main([*command, '--session', session]))
+                self.assertEqual(expected, [row['id'] for row in self.panel(session)])
+                self.assertEqual(0, cli.main(['artifact', 'restore', 'explorer', '--checkout', str(self.repo),
+                                             '--session', session]))
+                self.assertEqual(0, cli.main([*published, '--session', session]))
+                self.assertEqual(['explorer'], [row['id'] for row in self.panel(session)])
 
     def test_cached_metadata_does_not_load_payloads_and_invalid_latest_keeps_valid_neighbors(self):
         (self.source / 'index.html').write_text('<h1>Revised explorer</h1>')

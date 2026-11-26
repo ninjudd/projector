@@ -104,6 +104,7 @@ def context_checkout(root: Path, remote: str) -> Path:
 def attach(root: Path, remote: str, session: str, id: str, *, restore: bool = False,
            state: Path | None = None) -> None:
     artifact.identifier(id)
+    original_key = key(root, remote, id)
     root = context_checkout(root, remote)
     if not any(row['id'] == id for row in catalog(root, remote)):
         raise artifact.ArtifactError(f'{id}: no saved artifact')
@@ -114,6 +115,9 @@ def attach(root: Path, remote: str, session: str, id: str, *, restore: bool = Fa
         entries[name] = {'checkout': str(root.resolve()), 'remote': remote, 'id': id}
         write_json(folder / 'artifacts.json', {'artifacts': list(entries.values())})
         hidden = dismissals(session, state)
+        if original_key in hidden:
+            hidden.remove(original_key)
+            hidden.add(name)
         if restore:
             hidden.discard(name)
         write_json(folder / 'artifact-dismissals.json', {'keys': sorted(hidden)})
