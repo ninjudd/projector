@@ -70,7 +70,17 @@ class RuntimeStoreTests(unittest.TestCase):
         self.assertEqual(['future-event', 'text'], [row['kind'] for row in Store(self.folder).events(cursor)])
 
     def test_damaged_execution_state_is_reported_and_preserved(self):
-        self.store.path.write_bytes(b'broken\x00database')
-        with self.assertRaisesRegex(EnvironmentError, 'execution state'):
-            Store(self.folder)
-        self.assertEqual(b'broken\x00database', self.store.path.read_bytes())
+        for content in (b'broken\x00database', b''):
+            self.store.path.write_bytes(content)
+            with self.assertRaisesRegex(EnvironmentError, 'execution state'):
+                Store(self.folder)
+            self.assertEqual(content, self.store.path.read_bytes())
+
+    def test_display_retention_keeps_pending_commands_and_a_bounded_tail(self):
+        self.store.enqueue('pending', 'Do not lose this input.', ['message', 'fixture'])
+        for number in range(6000):
+            self.store.event('tool', {'item': {'id': str(number), 'name': 'Read', 'output': 'a' * 9000}})
+        events = self.store.events()
+        self.assertLessEqual(sum(event['size'] for event in events), 8388608)
+        self.assertEqual('5999', events[-1]['payload']['item']['id'])
+        self.assertEqual('queued', self.store.command('pending')['state'])

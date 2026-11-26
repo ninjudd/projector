@@ -61,7 +61,8 @@ class Codex(Backend):
             else:
                 result = await self.call("thread/start", fields)
             self.session = result["thread"]["id"]
-            self.policy = {"approval": result.get("approvalPolicy"), "sandbox": result.get("sandbox")}
+            self.policy = {"approval": result.get("approvalPolicy"), "sandbox": result.get("sandbox"),
+                           "reviewer": result.get("approvalsReviewer"), "profile": result.get("activePermissionProfile")}
             return self.session
         except BaseException:
             await self.close()
@@ -125,7 +126,7 @@ class Codex(Backend):
             params = message.get("params", {})
             if params.get("threadId", self.session) != self.session:
                 raise EnvironmentError("request belongs to another session")
-            result = await self.request(message["method"], params)
+            result = await self.request(message["method"], {**params, "_projector_request_id": message["id"]})
             await self.send({"id": message["id"], "result": result})
         except asyncio.CancelledError:
             raise
@@ -227,12 +228,13 @@ class Claude(Backend):
 
     async def permission(self, tool: str, inputs: dict, context: Any) -> Any:
         if tool == "AskUserQuestion":
-            result = await self.request("claude/question", inputs)
+            result = await self.request("claude/question", {**inputs, "_projector_request_id": context.tool_use_id})
             return self.sdk.PermissionResultAllow(updated_input={**inputs, "answers": result.get("answers", {})})
-        result = await self.request("claude/approval", {"tool": tool, "input": inputs})
+        result = await self.request("claude/approval", {"tool": tool, "input": inputs,
+                                                       "_projector_request_id": context.tool_use_id})
         if result.get("decision") == "accept":
             return self.sdk.PermissionResultAllow(updated_input=inputs)
-        return self.sdk.PermissionResultDeny(message="Denied by the user")
+        return self.sdk.PermissionResultDeny(message=result.get("message") or "Denied by the user")
 
     async def read(self) -> None:
         try:
@@ -242,6 +244,8 @@ class Claude(Backend):
             raise
         except Exception as error:
             self.emit("disconnected", error=str(error))
+        else:
+            self.emit("disconnected", error="Claude's message stream closed")
 
     def message(self, message: Any) -> None:
         name = type(message).__name__

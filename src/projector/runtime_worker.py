@@ -22,6 +22,8 @@ class Worker:
         self.session = launch.get("session")
         self.backend = None
         self.current = None
+        self.native_turn = None
+        self.confirmed = False
         self.requests: set[str] = set()
         self.paused = False
         self.interrupted = False
@@ -33,6 +35,7 @@ class Worker:
         self.text = ""
         self.text_item = None
         self.last_flush = time.monotonic()
+        self.next_ingest = self.next_control = 0.0
 
     def snapshot(self, *, owner="managed", error="") -> None:
         with locked(self.folder):
@@ -81,7 +84,7 @@ class Worker:
             for ref in self.store.value("requests", []):
                 with contextlib.suppress(ProjectorError):
                     inbox.dismiss(self.session, ref, withdrawn=True)
-            self.store.set(requests=[])
+            self.store.set(requests=[], pending_requests={})
             self.paused = bool(self.store.commands(("uncertain",)))
             self.state = "recovering" if self.paused else "ready"
             with codex_watch.submission(self.folder) as held:
@@ -158,7 +161,9 @@ class Worker:
                 codex_watch.save_queue(self.folder, [])
 
     def accepted(self, turn=None) -> None:
-        if self.current and self.store.accepted(self.current, self.generation, turn):
+        if self.current and not self.confirmed and self.store.accepted(self.current, self.generation, turn):
+            self.native_turn = turn
+            self.confirmed = True
             self.settle(self.current)
 
     def settle(self, ident: str) -> None:
@@ -167,8 +172,15 @@ class Worker:
             codex_watch.settle(self.folder, [command["source"]])
 
     async def tick(self) -> None:
-        self.ingest()
-        control = self.store.value("control")
+        now = time.monotonic()
+        inputs_due = now >= self.next_ingest
+        if inputs_due:
+            self.next_ingest = now + 0.5
+            self.ingest()
+        control = None
+        if now >= self.next_control:
+            self.next_control = now + 0.2
+            control = self.store.value("control")
         if control and control["id"] != self.control_seen:
             self.control_seen = control["id"]
             self.store.set(control_seen=self.control_seen)
@@ -187,7 +199,7 @@ class Worker:
         if self.backend is None:
             await asyncio.sleep(0.2)
             return
-        if self.current is None and not self.paused:
+        if self.current is None and not self.paused and (inputs_due or control):
             commands = self.store.commands(("queued",))
             if commands:
                 command = commands[0]
@@ -198,6 +210,8 @@ class Worker:
                 submitted = self.store.begin(command["id"], self.generation)
                 if submitted:
                     self.current = command["id"]
+                    self.native_turn = None
+                    self.confirmed = False
                     self.interrupted = False
                     self.state = "running"
                     self.snapshot()
@@ -211,10 +225,8 @@ class Worker:
                 self.flush()
             return
         kind = event["type"]
-        if event.get("turn") and self.current:
-            current = self.store.command(self.current)
-            if current.get("turn") and event["turn"] != current["turn"]:
-                return
+        if event.get("turn") and self.current and self.native_turn and event["turn"] != self.native_turn:
+            return
         if kind == "accepted":
             self.accepted(event.get("turn"))
         elif kind == "configuration":
@@ -225,7 +237,7 @@ class Worker:
                 self.flush()
             self.text_item = event.get("item")
             self.text += event.get("text", "")
-            if len(self.text.encode()) >= 16 * 1024:
+            if len(self.text.encode()) >= 16 * 1024 or time.monotonic() - self.last_flush >= 0.25:
                 self.flush()
         elif kind == "turn_end" and self.current:
             self.accepted(event.get("turn"))
@@ -284,12 +296,15 @@ class Worker:
         else:
             raise EnvironmentError("Unknown runtime control")
 
-    async def ask(self, title: str, detail: str, options: list[str]) -> str:
+    async def ask(self, title: str, detail: str, options: list[str], *, native: dict) -> dict:
         choices = options[:4] or ["Continue"]
         item = inbox.ask(self.session, " ".join(title.split())[:120], choices[0], choices[1:], detail=detail)
         ref = item["ref"]
         self.requests.add(ref)
-        self.store.set(requests=sorted(self.requests))
+        pending = self.store.value("pending_requests", {})
+        pending[ref] = {**native, "generation": self.generation, "command": self.current,
+                        "choices": choices, "active": True}
+        self.store.set(requests=sorted(self.requests), pending_requests=pending)
         self.state = "awaiting-user"
         self.snapshot()
         command = self.current
@@ -303,39 +318,56 @@ class Worker:
                 if answer:
                     claim = inbox.claim(self.session, ref)
                     inbox.settle(self.session, ref, claim["claim"]["token"], delivered=True)
-                    return "" if answer.get("dismissed") else answer.get("text", "")
+                    return {"text": "" if answer.get("dismissed") else answer.get("text", ""),
+                            "note": answer.get("note", "")}
                 await asyncio.sleep(0.1)
         finally:
             self.requests.discard(ref)
-            self.store.set(requests=sorted(self.requests))
+            pending = self.store.value("pending_requests", {})
+            pending.pop(ref, None)
+            self.store.set(requests=sorted(self.requests), pending_requests=pending)
             with contextlib.suppress(ProjectorError):
                 if not inbox.find(self.session, ref).get("answer"):
                     inbox.dismiss(self.session, ref, withdrawn=True)
-            self.state = "running" if self.current else "ready"
-            self.snapshot()
+            if not self.stopping and self.state != "failed":
+                self.state = "running" if self.current else "ready"
+                self.snapshot()
 
     async def request(self, method: str, params: dict) -> dict:
+        params = dict(params)
+        native = {"method": method, "id": params.pop("_projector_request_id", None)}
         detail = json.dumps(params, ensure_ascii=False, indent=2)
         if method in ("claude/approval", "item/commandExecution/requestApproval", "item/fileChange/requestApproval",
                       "applyPatchApproval", "execCommandApproval", "item/permissions/requestApproval"):
             answer = await self.ask("Allow this agent action?", f"Runtime request: `{method}`\n\n```json\n{detail}\n```",
-                                    ["Deny", "Allow once"])
-            allow = answer == "Allow once"
+                                    ["Deny", "Allow once"], native=native)
+            allow = answer["text"] == "Allow once" and not answer["note"]
+            if answer["note"]:
+                runtime.send(self.root, self.session,
+                             "Your note on the native action (the action was denied):\n" + answer["note"])
             if method == "item/permissions/requestApproval":
                 return {"permissions": params.get("permissions", {}) if allow else {}, "scope": "turn"}
-            return {"decision": "accept" if allow else "decline"}
+            result = {"decision": "accept" if allow else "decline"}
+            if method == "claude/approval" and answer["note"]:
+                result["message"] = answer["note"]
+            return result
         if method in ("claude/question", "item/tool/requestUserInput"):
             answers = {}
             for question in params.get("questions", []):
                 title = question.get("question") or question.get("header") or "The agent needs your input"
                 options = [one["label"] for one in question.get("options", [])]
-                answer = await self.ask(title, title, options)
+                answer = await self.ask(title, json.dumps(question, ensure_ascii=False, indent=2), options,
+                                        native={**native, "question": question.get("id", title)})
+                answer = "\n\n".join(part for part in (answer["text"], answer["note"]) if part)
                 key = question["question"] if method == "claude/question" else question["id"]
                 answers[key] = answer if method == "claude/question" else {"answers": [answer]}
             return {"answers": answers}
         if method == "mcpServer/elicitation/request":
+            if params.get("mode", "form") != "form":
+                return {"action": "decline", "content": None, "_meta": None}
             answer = await self.ask(params.get("message", "MCP server needs input"),
-                                    detail + "\n\nType a JSON object, or Cancel.", ["Cancel"])
+                                    detail + "\n\nType a JSON object, or Cancel.", ["Cancel"], native=native)
+            answer = answer["text"]
             if not answer or answer == "Cancel":
                 return {"action": "cancel", "content": None, "_meta": None}
             import jsonschema

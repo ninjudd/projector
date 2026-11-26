@@ -8,23 +8,34 @@ from pathlib import Path
 from typing import Iterator
 
 from .core import EnvironmentError
+from .inbox import locked
 
 
 class Store:
     def __init__(self, folder: Path) -> None:
         folder.mkdir(parents=True, exist_ok=True)
         self.path = folder / "runtime.sqlite"
-        with self.connection() as db:
-            db.executescript('''
+        with locked(folder):
+            if self.path.exists():
+                with self.path.open("rb") as stream:
+                    if stream.read(16) != b"SQLite format 3\0":
+                        raise EnvironmentError("Cannot read session execution state: invalid database header")
+            with self.connection() as db:
+                db.executescript('''
                 CREATE TABLE IF NOT EXISTS commands (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                     id TEXT NOT NULL UNIQUE, text TEXT NOT NULL, source TEXT NOT NULL,
                     state TEXT NOT NULL DEFAULT 'queued', generation TEXT, turn TEXT, outcome TEXT);
                 CREATE TABLE IF NOT EXISTS events (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                    command TEXT, kind TEXT NOT NULL, payload TEXT NOT NULL, at REAL NOT NULL, size INTEGER NOT NULL);
+                    command TEXT, kind TEXT NOT NULL, payload TEXT NOT NULL, at REAL NOT NULL, size INTEGER NOT NULL,
+                    generation TEXT, turn TEXT);
                 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            ''')
+                ''')
+                columns = {row["name"] for row in db.execute("PRAGMA table_info(events)")}
+                for column in ("generation", "turn"):
+                    if column not in columns:
+                        db.execute(f"ALTER TABLE events ADD COLUMN {column} TEXT")
 
     @contextlib.contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
@@ -122,11 +133,13 @@ class Store:
                            "truncated": True}
             else:
                 item = payload.get("item", {})
-                payload = {"item": {key: item[key] for key in ("id", "name", "type") if key in item},
+                payload = {"item": {key: item[key] for key in ("id", "tool_use_id", "name", "type") if key in item},
                            "preview": data[:16384].decode("utf-8", errors="replace"), "truncated": True}
             encoded = json.dumps(payload, ensure_ascii=False)
-        cursor = db.execute("INSERT INTO events(command,kind,payload,at,size) VALUES (?,?,?,?,?)",
-                            (command, kind, encoded, time.time(), len(encoded.encode("utf-8"))))
+        context = db.execute("SELECT generation,turn FROM commands WHERE id=?", (command,)).fetchone()
+        generation, turn = (context["generation"], context["turn"]) if context else (None, None)
+        cursor = db.execute("INSERT INTO events(command,kind,payload,at,size,generation,turn) VALUES (?,?,?,?,?,?,?)",
+                            (command, kind, encoded, time.time(), len(encoded.encode("utf-8")), generation, turn))
         if cursor.lastrowid % 100 == 0:
             db.execute("""DELETE FROM events WHERE sequence IN (
                 SELECT sequence FROM (

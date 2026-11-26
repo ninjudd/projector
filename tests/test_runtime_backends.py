@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from projector.core import EnvironmentError
-from projector.runtime_backends import Codex
+from projector.runtime_backends import Claude, Codex
 
 PEER = r'''
 import json, sys
@@ -98,3 +98,16 @@ class CodexAdapterTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(EnvironmentError, 'Invalid Codex stream'):
             await asyncio.wait_for(client.open(), 2)
         self.assertIsNotNone(client.process.returncode)
+
+
+class ClaudeAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_an_ended_native_stream_reports_disconnect_instead_of_hanging_the_worker(self):
+        class ClosedClient:
+            async def receive_messages(self):
+                if False:
+                    yield
+        backend = Claude({}, None)
+        backend.client = ClosedClient()
+        await backend.read()
+        event = await asyncio.wait_for(backend.events.get(), .1)
+        self.assertEqual('disconnected', event['type'])

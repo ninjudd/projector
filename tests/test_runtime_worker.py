@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from projector import codex_watch, inbox, runtime, watch
+from projector import agents, codex_watch, inbox, runtime, watch
 from projector.runtime_store import Store
 from projector.core import EnvironmentError, UsageError
 from projector.runtime_worker import Worker
@@ -129,3 +129,70 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(second)
         with runtime.worker_lock(self.worker.folder) as next_owner:
             self.assertIsNotNone(next_owner)
+
+    async def test_a_condition_on_an_approval_denies_the_original_action_and_preserves_the_note(self):
+        task = asyncio.create_task(self.worker.request('claude/approval', {'tool': 'Write'}))
+        await asyncio.sleep(0)
+        ref = next(iter(self.worker.requests))
+        inbox.answer(self.session, ref, 'b', note='Only write inside the checkout.')
+        result = await asyncio.wait_for(task, 1)
+        self.assertEqual({'decision': 'decline', 'message': 'Only write inside the checkout.'}, result)
+        self.worker.ingest()
+        self.assertIn('Only write inside the checkout.', self.worker.store.commands()[0]['text'])
+
+    async def test_native_questions_keep_the_question_id_and_the_persons_note(self):
+        task = asyncio.create_task(self.worker.request('item/tool/requestUserInput', {'questions': [
+            {'id': 'target', 'question': 'Where should tests run?', 'options': [{'label': 'Local'}]}]}))
+        await asyncio.sleep(0)
+        ref = next(iter(self.worker.requests))
+        inbox.answer(self.session, ref, 'a', note='Use the temporary fixture.')
+        self.assertEqual({'answers': {'target': {'answers': ['Local\n\nUse the temporary fixture.']}}},
+                         await asyncio.wait_for(task, 1))
+
+    async def test_interrupt_expires_a_native_request_before_a_new_turn_can_use_its_answer(self):
+        task = asyncio.create_task(self.worker.request('claude/approval', {'tool': 'Write'}))
+        await asyncio.sleep(0)
+        ref = next(iter(self.worker.requests))
+        self.worker.interrupted = True
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 1)
+        self.assertTrue(inbox.find(self.session, ref)['answer']['withdrawn'])
+        self.assertEqual(set(), self.worker.requests)
+
+    async def test_closing_a_pending_request_keeps_the_workers_failure_visible(self):
+        self.worker.current = 'active-command'
+        task = asyncio.create_task(self.worker.request('claude/approval', {'tool': 'Write'}))
+        await asyncio.sleep(0)
+        self.worker.state = 'failed'
+        self.worker.snapshot(error='Native transport disconnected')
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        current = runtime.record(self.worker.folder)
+        self.assertEqual(('failed', 'Native transport disconnected'), (current['state'], current['error']))
+
+    async def test_continuous_text_flushes_without_waiting_for_a_pause_in_native_output(self):
+        self.worker.store.enqueue('stream', 'work', [])
+        self.worker.last_flush -= 1
+        self.worker.backend.events.put_nowait({'type': 'text', 'text': 'visible now'})
+        await self.worker.tick()
+        self.assertEqual(['visible now'], [event['payload']['text'] for event in self.worker.store.events()
+                                         if event['kind'] == 'text'])
+        self.worker.next_ingest = time.monotonic() + 10
+        with patch.object(self.worker, 'ingest', side_effect=AssertionError('Rescanned inbox for each delta')), \
+                patch.object(self.worker.store, 'accepted', side_effect=AssertionError('Rewrote acceptance for each delta')):
+            self.worker.backend.events.put_nowait({'type': 'text', 'text': ' more'})
+            await self.worker.tick()
+
+    async def test_restart_withdraws_dead_native_approvals_and_preserves_uncertain_input(self):
+        item = inbox.ask(self.session, 'Allow the old tool?', 'Deny', ['Allow once'])
+        self.worker.store.set(requests=[item['ref']])
+        self.worker.store.enqueue('possibly-accepted', 'Do not replay', [])
+        self.worker.store.begin('possibly-accepted', 'dead-worker')
+        self.worker.stopping = True
+        with patch.object(agents, 'register', return_value=({}, '')):
+            await self.worker.run_owned()
+        self.assertTrue(inbox.find(self.session, item['ref'])['answer']['withdrawn'])
+        self.assertEqual('uncertain', self.worker.store.command('possibly-accepted')['state'])
+        self.assertTrue(self.worker.paused)
+        self.assertEqual([], self.worker.backend.submitted)

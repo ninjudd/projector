@@ -11,7 +11,7 @@ shared `now.md`, `next.md`, or `later.md` queue.
 
 ## Install
 
-One command installs the `project` command from the newest release and the
+One command installs the `project` and `projector` commands from the newest release and the
 plugin for Claude Code and Codex, whichever you have. It needs Python 3.11 or
 newer, Codex 0.107 or newer if you use Codex, and no git:
 
@@ -24,6 +24,9 @@ whether it changed anything `project init` writes, and every `project` command
 warns you when a newer release is out. To install only the CLI, pin a
 release, or install each plugin yourself, see
 [Install Projector](docs/plugins.md).
+
+Run `projector` for the human console. To launch Claude or Codex from it,
+first run `projector setup`; see [Run agents in the console](docs/agents.md).
 
 ## Get started
 

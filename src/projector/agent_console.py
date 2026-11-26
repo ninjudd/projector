@@ -10,12 +10,13 @@ import textwrap
 import time
 from pathlib import Path
 
-from . import agents, console, inbox, rows, runtime, watch
+from . import agents, console, inbox, native_handoff, rows, runtime, watch
 from .core import ProjectorError, UsageError
 from .runtime_store import Store
 
 Line = console.Line
 Field = console.Field
+CONVERSATION = "runtime:conversation"
 
 
 class Console(console.Console):
@@ -27,7 +28,9 @@ class Console(console.Console):
         self.stores = {}
         self.cursors = {}
         self.chats = {}
+        self.runtime_views = {}
         self.next_runtime = float("-inf")
+        self.follow = True
 
     def due(self, now):
         work = super().due(now)
@@ -54,24 +57,20 @@ class Console(console.Console):
                 label = record.get("name") or current.get("name") or agents.short_id(name)
                 host = current.get("backend") or record.get("host") or "process"
                 cwd = current.get("cwd") or record.get("cwd", "")
-                place = " ".join(filter(None, (record.get("repo"), record.get("branch"))))
-                summary = current.get("state", "") + (": " + current["error"] if current.get("error") else "")
-                signature = previous[5] if previous else console.signature(folder)
-                items = previous[6] if previous else inbox.load_items(folder)
-                found.live[name] = (label, host, place, summary, cwd, signature, items)
+                signature = previous[4] if previous else console.signature(folder)
+                items = previous[5] if previous else inbox.load_items(folder)
+                changed = console.describe(self.root, name, "managed", record)[3]
+                found.live[name] = (label, host, cwd, changed, signature, items)
                 if name not in work.signatures:
                     found.rows[name] = rows.rows_for(self.root, name)
                 if name not in found.entries:
                     found.entries[name] = console.repo_inbox.repo_items(self.root, name, everything=True)
             for launch in runtime.launches(self.root):
-                if launch.get("session") in managed or launch.get("state") == "live":
+                if launch.get("session") in managed or launch.get("state") in ("live", "cancelled"):
                     continue
                 name = "launch-" + launch["id"]
-                state = launch.get("state", "starting")
-                if state == "starting" and time.time() - launch.get("spawned_at", time.time()) > 120:
-                    state = "Launch did not register; inspect the worker log"
-                found.live[name] = (launch.get("name") or "New session", launch["backend"], "",
-                    launch.get("error") or state, launch["cwd"], (), [])
+                found.live[name] = (launch.get("name") or "New session", launch["backend"],
+                    launch["cwd"], launch.get("created_at", 0) * 1000, (), [])
                 found.rows[name] = []
                 found.entries[name] = []
             found.runtimes = managed
@@ -81,6 +80,10 @@ class Console(console.Console):
             try:
                 events = self.store(name).events(self.cursors.get(name, 0))
                 found.runtime_events = (name, events)
+                store = self.store(name)
+                found.runtime_view = (name, {"commands": store.commands(("queued", "uncertain")),
+                    "control_result": store.value("control_result", {}),
+                    "pending_requests": store.value("pending_requests", {})})
             except ProjectorError as error:
                 found.runtime_error = str(error)
         return found
@@ -91,13 +94,16 @@ class Console(console.Console):
             self.runtimes = found.runtimes
         if hasattr(found, "runtime_error"):
             self.status = found.runtime_error
+        if hasattr(found, "runtime_view"):
+            name, view = found.runtime_view
+            self.runtime_views[name] = view
         if hasattr(found, "runtime_events"):
             name, events = found.runtime_events
             chat = self.chats.setdefault(name, [])
             for event in events:
                 kind, payload = event["kind"], event["payload"]
                 if kind == "text" and chat and chat[-1][0] == "agent":
-                    chat[-1] = ("agent", chat[-1][1] + payload.get("text", ""))
+                    chat[-1] = ("agent", (chat[-1][1] + payload.get("text", ""))[-65536:])
                 elif kind in ("text", "user"):
                     chat.append(("agent" if kind == "text" else "you", payload.get("text", "")))
                 elif kind == "tool":
@@ -109,18 +115,73 @@ class Console(console.Console):
                 elif kind == "turn_end":
                     chat.append(("status", payload.get("outcome", "") + (": " + str(payload["error"]) if payload.get("error") else "")))
                 self.cursors[name] = event["sequence"]
-            self.chats[name] = chat[-1000:]
+                if payload.get("truncated"):
+                    chat.append(("status", "Display truncated; inspect native history for the full content."))
+            retained = []
+            size = 0
+            for entry in reversed(chat[-1000:]):
+                size += len(entry[1])
+                if size > 2 * 1024 * 1024:
+                    break
+                retained.append(entry)
+            self.chats[name] = list(reversed(retained))
 
-    def conversation_lines(self, name, width, selected):
-        if name in self.runtimes:
-            return self.runtime_lines(name, width, selected)
-        return super().conversation_lines(name, width, selected)
+    def keys(self):
+        keys = super().keys()
+        if self.view == "panel" and self.session in self.runtimes:
+            keys.append(CONVERSATION)
+        return keys
+
+    def ring(self):
+        ring = super().ring()
+        if self.session in self.runtimes:
+            ring.append((CONVERSATION, None))
+        return ring
+
+    def press_focus(self):
+        if self.selected_key() == CONVERSATION:
+            self.key("c")
+        else:
+            super().press_focus()
+
+    def scroll(self, name):
+        if self.view == "panel" and self.selected_key() == CONVERSATION:
+            self.follow = name in ("end", "G")
+        super().scroll(name)
+
+    def panel_viewport(self, width, room):
+        if self.session in self.runtimes and self.selected_key() == CONVERSATION and self.follow:
+            self.offset = sys.maxsize
+        return super().panel_viewport(width, room)
+
+    def panel_lines(self, width):
+        lines, focus = super().panel_lines(width)
+        session = self.viewed()
+        if session is not None and session.name.startswith("launch-"):
+            current = next((item for item in runtime.launches(self.root)
+                            if "launch-" + item["id"] == session.name), {})
+            lines += [Line([(current.get("error") or current.get("state", "starting"), "warning")]),
+                      Line([("r retry launch · x remove launch", "subtle")])]
+        if session is not None and session.name in self.runtimes:
+            start = len(lines) + 1
+            selected = self.view == "panel" and self.selected_key() == CONVERSATION
+            lines += [Line([]), *self.runtime_lines(session.name, width, selected)]
+            if selected:
+                focus = (start, len(lines) - 1)
+        return lines, focus
 
     def key(self, name):
         if name == "\x04":
             name = "ctrl-d"
         try:
             with self.lock:
+                if self.field is None and self.view == "panel" and self.session and self.session.startswith("launch-"):
+                    if name in ("r", "x"):
+                        runtime.change_launch(self.root, self.session.removeprefix("launch-"), retry=name == "r")
+                        self.ensure()
+                        self.next_inbox = float("-inf")
+                        self.refresh_now.set()
+                        return
                 if self.field is None and self.view == "home" and name == "n":
                     self.launch_form = {"backend": "claude", "cwd": str(Path.cwd()), "name": "", "model": ""}
                     self.field = Field("launch-backend", None, "Agent (claude or codex): ", "claude", 6)
@@ -129,7 +190,7 @@ class Console(console.Console):
                     if name == "v":
                         return
                     if name == "c":
-                        self.selected = console.CONVERSATION
+                        self.selected = CONVERSATION
                         self.follow = True
                         self.field = Field("chat", None, "Message (Enter: newline; Ctrl-D: send): ")
                         return
@@ -239,11 +300,41 @@ class Console(console.Console):
             return [Line([("Enter adds a line · Ctrl-D sends · Esc cancels", "subtle")])]
         return super().footer()
 
-    def home_lines(self):
-        lines, focus = super().home_lines()
+    def item_controls(self, item):
+        controls = super().item_controls(item)
+        if item["kind"] == "question" and not item.get("answer"):
+            controls.insert(len(item.get("choices", [])), console.Control("t", "Type an answer",
+                lambda: self.open_field("typed-answer", item["ref"], "Answer: ")))
+            pending = self.runtime_views.get(self.session, {}).get("pending_requests", {})
+            if item["ref"] in pending:
+                controls = [control for control in controls if control.key not in ("6", "7", "9")]
+        return controls
+
+    def item_drawer(self, item, width):
+        lines = super().item_drawer(item, width)
+        if item["ref"] in self.runtime_views.get(self.session, {}).get("pending_requests", {}):
+            lines.append(Line([("Native request: answer, type a clarification, or dismiss to deny/cancel.", "subtle")]))
+        if self.field is not None and self.field.purpose == "typed-answer" and self.field.target == item["ref"]:
+            lines.append(self.form_line(self.field))
+        return lines
+
+    def send(self, typing):
+        if typing.purpose != "typed-answer":
+            return super().send(typing)
+        item = self.item("item:" + typing.target)
+        if item is None:
+            raise UsageError("This question is no longer visible")
+        answer = self.record(lambda session: inbox.answer(session, typing.target, inbox.typed_letter(item),
+                            text=typing.text, subject=item["subject"], choices=item["choices"]))
+        if answer is not None:
+            self.field = None
+
+    def home_lines(self, width):
+        lines, focus = super().home_lines(width)
         if self.field is not None and self.field.purpose.startswith("launch-"):
             lines = [Line([("New agent session", "bold")]),
-                     Line([("Permissions: native runtime settings; actions that need approval go to your inbox.", "subtle")])]
+                     Line([("Native permission and sandbox settings apply, including configured automatic approvals.", "subtle")]),
+                     Line([("Effective policy appears when the runtime reports it; Projector adds no bypass.", "subtle")])]
             lines.extend(Line([(key + ": " + value, "subtle")]) for key, value in self.launch_form.items())
             lines.append(self.form_line(self.field))
             if self.status:
@@ -263,6 +354,9 @@ class Console(console.Console):
     def runtime_lines(self, name, width, selected):
         lines = []
         current = self.runtimes[name]
+        lines.append(Line([(f"{current.get('backend', 'Agent')} · {current.get('state', 'unknown')}", "bold")]))
+        if current.get("error"):
+            lines.append(Line([(current["error"], "error")]))
         if current.get("state") == "handed-off":
             lines.append(Line([("The native terminal owns this session. Projector input waits until you return.", "warning")]))
         policy = current.get("policy", {})
@@ -270,19 +364,19 @@ class Console(console.Console):
             sandbox = policy.get("sandbox", {})
             sandbox = sandbox.get("type", "native settings") if isinstance(sandbox, dict) else sandbox
             lines.append(Line([(f"Approvals: {policy.get('approval', 'native settings')} · sandbox: {sandbox}", "subtle")]))
+            if policy.get("reviewer") or policy.get("profile"):
+                profile = policy.get("profile") or {}
+                lines.append(Line([(f"Reviewer: {policy.get('reviewer', 'native settings')} · profile: {profile.get('id', 'native settings')}", "subtle")]))
         lines.append(Line([("c chat · i interrupt · x stop · o native terminal · r return/resume · s send queued", "accent")]))
         lines.append(Line([("e edit queued · d remove queued · R retry uncertain · D confirm received", "subtle")]))
-        try:
-            store = self.store(name)
-        except ProjectorError as error:
-            return [*lines, Line([(str(error), "error")])]
+        view = self.runtime_views.get(name, {})
         if current.get("paused"):
             lines.append(Line([("Queued work is paused. Press s when you want to send it.", "warning")]))
-        result = store.value("control_result", {})
+        result = view.get("control_result", {})
         if result.get("error"):
             lines.append(Line([(result["error"], "error")]))
         for state in ("queued", "uncertain"):
-            for at, command in enumerate(store.commands((state,)), 1):
+            for at, command in enumerate((command for command in view.get("commands", []) if command["state"] == state), 1):
                 preview = command["text"].replace("\n", " ↵ ")[:160]
                 lines.append(Line([(f"{state} {at}: {preview}", "warning" if state == "uncertain" else "subtle")]))
         lines.append(Line([("Conversation", "bold")], selected))
@@ -310,7 +404,7 @@ class Screen(console.Screen):
                     self.curses.def_prog_mode()
                     self.curses.endwin()
                     try:
-                        subprocess.run(command, check=False)
+                        native_handoff.wait(command)
                     finally:
                         self.curses.reset_prog_mode()
                         self.window.refresh()

@@ -35,6 +35,8 @@ class AgentConsoleTests(unittest.TestCase):
         with inbox.locked(folder):
             write_json(folder / 'runtime.json', {'schema_version': 1, 'session': name, 'backend': 'codex',
                 'owner': 'managed', 'state': state, 'cwd': self.temporary.name, 'renewed_at': time.time()})
+            write_json(folder / 'agent.json', {'schema_version': 1, 'host': 'codex',
+                       'cwd': self.temporary.name, 'updated_at': watch.stamp(self.now)})
         Store(folder)
         self.console.tick()
         return folder
@@ -56,7 +58,8 @@ class AgentConsoleTests(unittest.TestCase):
 
     def test_stopped_managed_sessions_remain_available_to_resume(self):
         self.managed(state='stopped')
-        self.assertEqual('stopped', self.console.sessions['managed-session'].summary)
+        self.assertEqual('stopped', self.console.runtimes['managed-session']['state'])
+        self.assertIsInstance(self.console.sessions['managed-session'].updated_at, (int, float))
         self.console.open_panel('managed-session')
         self.assertIn('r return/resume', '\n'.join(line.text for line in self.console.lines(100)[0]))
 
@@ -66,7 +69,7 @@ class AgentConsoleTests(unittest.TestCase):
         write_json(target / 'ready.json', {})
         executable = Path(self.temporary.name) / 'bin' / 'codex'
         executable.parent.mkdir()
-        executable.write_text('#!/bin/sh\nexit 0\n')
+        executable.write_text('#!/bin/sh\nprintf "codex-cli 0.172.0\\n"\n')
         executable.chmod(0o755)
         with patch.dict(os.environ, {'PATH': str(executable.parent)}):
             self.console.key('n')
@@ -127,3 +130,25 @@ class AgentConsoleTests(unittest.TestCase):
         self.replace_field('RETRY')
         self.console.key('enter')
         self.assertEqual('queued', store.command('uncertain')['state'])
+
+    def test_a_typed_answer_returns_the_actual_text_without_colliding_with_five_options(self):
+        self.managed()
+        item = inbox.ask('managed-session', 'Where should tests run?', 'Local', ['CI', 'Both', 'Later', 'Never'])
+        self.now += 2
+        self.console.tick()
+        self.console.open_panel('managed-session')
+        self.console.open_drawer('item:' + item['ref'])
+        controls = self.console.item_controls(item)
+        self.assertEqual(len(controls), len({control.key for control in controls}))
+        self.console.key('t')
+        self.type('An isolated sandbox')
+        self.console.key('enter')
+        self.assertEqual('An isolated sandbox', inbox.find('managed-session', item['ref'])['answer']['text'])
+
+    def test_redrawing_a_managed_conversation_reads_no_execution_database(self):
+        self.managed()
+        self.console.open_panel('managed-session')
+        self.console.tick()
+        with patch.object(Store, 'connection', side_effect=AssertionError('Database read during redraw')):
+            self.console.lines(100)
+            self.console.viewport(100, 30)

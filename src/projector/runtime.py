@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import importlib.metadata
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from .runtime_store import Store
 
 SDK = "claude-agent-sdk==0.2.189"
 LEASE = 90
+MINIMUM = {"claude": (2, 1, 332), "codex": (0, 172, 0)}
 
 
 def record(folder: Path) -> dict:
@@ -87,8 +89,18 @@ def setup(root: Path, *, run=subprocess.run) -> Path:
 
 def launch(root: Path, backend: str, cwd: str, prompt: str, *, name: str = "", model: str = "",
            parent: str = "") -> str:
+    from . import agents
     if backend not in ("claude", "codex"):
         raise UsageError("Choose claude or codex")
+    if name:
+        name = name.lower()
+        if not agents.NAME.fullmatch(name):
+            raise UsageError("Use a name of 1 to 32 letters, digits, and hyphens, starting with a letter or digit")
+        if any(value.get("name") == name and agents.live(root, session, time.time())
+               for session, value in agents.records(root).items()):
+            raise UsageError("An active local session already uses that name; choose another")
+    if model and not agents.MODEL_ID.fullmatch(model):
+        raise UsageError("Use a native model ID without spaces or control characters")
     directory = Path(cwd).expanduser().resolve()
     if not directory.is_dir():
         raise UsageError("Choose an existing working directory")
@@ -101,6 +113,10 @@ def launch(root: Path, backend: str, cwd: str, prompt: str, *, name: str = "", m
         raise EnvironmentError(f"Cannot start {backend}: {error}") from error
     if version.returncode:
         raise EnvironmentError(f"{backend} --version failed; repair its native installation first")
+    match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", version.stdout)
+    if match is None or tuple(map(int, match.groups())) < MINIMUM[backend]:
+        minimum = ".".join(map(str, MINIMUM[backend]))
+        raise EnvironmentError(f"Managed {backend} needs version {minimum} or newer; update the native CLI first")
     validate_text(prompt)
     target = environment(root)
     if not (target / "ready.json").exists():
@@ -148,6 +164,18 @@ def coordinate(root: Path) -> None:
             except OSError as error:
                 item.update(state="failed", error=str(error))
             write_json(folder / "launch.json", item)
+
+
+def change_launch(root: Path, ident: str, *, retry: bool) -> None:
+    folder = root / "launches" / ident
+    with worker_lock(folder) as acquired:
+        if acquired is None:
+            raise UsageError("The launch worker is still starting; wait for it to register")
+        with locked(folder):
+            current = read_json(folder / "launch.json")
+            if not current or current.get("session"):
+                raise UsageError("Use the registered session's controls")
+            write_json(folder / "launch.json", {**current, "state": "queued" if retry else "cancelled", "error": ""})
 
 
 def sessions(root: Path) -> dict[str, dict]:
@@ -220,6 +248,7 @@ def restart(root: Path, session: str, *, held: bool = False) -> None:
 
 
 def native_command(current: dict) -> list[str]:
+    executable = current.get("executable") or current["backend"]
     if current["backend"] == "claude":
-        return ["claude", "--resume", current["session"]]
-    return ["codex", "--no-daemon", "resume", current["session"]]
+        return [executable, "--resume", current["session"]]
+    return [executable, "--no-daemon", "resume", current["session"]]

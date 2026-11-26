@@ -9,6 +9,16 @@ from . import runtime, watch
 from .core import EnvironmentError
 
 
+def wait(command: list[str], **options) -> int:
+    process = subprocess.Popen(command, **options)
+    while True:
+        try:
+            return process.wait()
+        except KeyboardInterrupt:
+            # The foreground native CLI handles Ctrl-C; keep its lease until it exits.
+            continue
+
+
 def run(root: Path, session: str) -> int:
     folder = watch.session_folder(root, session)
     with runtime.worker_lock(folder, "runtime-native.lock") as descriptor:
@@ -23,8 +33,7 @@ def run(root: Path, session: str) -> int:
         env["PROJECTOR_SESSION"] = session
         env["PROJECTOR_PARENT_SESSION"] = current.get("parent", "")
         # The child keeps the lease even if this wrapper exits before it does.
-        return subprocess.run(runtime.native_command(current), cwd=current["cwd"], env=env,
-                              pass_fds=(descriptor,), check=False).returncode
+        return wait(runtime.native_command(current), cwd=current["cwd"], env=env, pass_fds=(descriptor,))
 
 
 if __name__ == "__main__":
