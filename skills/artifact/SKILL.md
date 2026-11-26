@@ -8,6 +8,9 @@ description: Create or revise a static interactive page, visual explanation, cha
 Build a finished interactive page for the user's question and publish it on
 the repository's Projector site. Artifacts live on a hidden Git ref, with a
 stable latest link, permanent version links, and a directory on the site.
+Choose the artifact's subject and ID from the user's request. Verify
+publishing with fixtures in disposable repositories. Publish a test demo
+only when the user asks for one.
 Use the `project` CLI shipped with Projector. If it rejects an artifact
 command as an invalid choice, run `project upgrade` and retry.
 
@@ -80,10 +83,13 @@ default. A request for local preview stays local. Run publication directly,
 as a tool call of its own, with no `cd`, wrapper, or chained command:
 
 ```sh
-project artifact publish --dir WORKDIR
+project artifact publish --dir WORKDIR --session SESSION
 ```
 
-Add `--checkout CHECKOUT` when needed. Use `--local` when the user wants a
+Use the conversation's session ID for `SESSION`, including when a subagent
+publishes for that conversation. The CLI also reads `PROJECTOR_SESSION` or
+`CLAUDE_CODE_SESSION_ID` when no explicit ID is given. Add
+`--checkout CHECKOUT` when needed. Use `--local` when the user wants a
 local saved version. The CLI validates the bundle before writing anything.
 Where hosting is absent, cannot be checked, or would expose private content,
 it saves locally and pushes nothing. Tell the user the preview route and
@@ -103,8 +109,11 @@ Artifacts directory and version picker expose the saved history. GitHub
 repository write permissions control publishing, and GitHub Pages controls
 who can read all versions. A hidden ref is not a separate privacy boundary.
 
-Saved artifacts appear in the session panel, with Open, Discuss, and Dismiss
-actions. Discuss brings the saved version and description into the session's
+Publication adds the artifact to that session's panel, with Open, Discuss,
+and Dismiss actions. The panel lists only artifacts published or explicitly
+attached in that session. Use `project artifact attach ID --session SESSION`
+when the user asks to bring an existing artifact into the conversation.
+Discuss brings the saved version and description into the session's
 conversation so the user can ask about it.
 Dismiss hides the row from that session without deleting saved versions or
 published links. Use `project artifact restore ID --session SESSION` when

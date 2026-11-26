@@ -255,7 +255,7 @@ Preview without saving, then publish:
 
 ```sh
 project site serve --artifacts /tmp/cache-explorer --no-fetch
-project artifact publish --dir /tmp/cache-explorer
+project artifact publish --dir /tmp/cache-explorer --session SESSION
 ```
 
 Open `artifacts/cache-explorer/` under the preview address. Stop the preview
@@ -284,8 +284,13 @@ project artifact list --id cache-explorer --json
 project artifact init cache-explorer --dir /tmp/cache-revision --from-published
 ```
 
-Saved artifacts also appear in the [session panel](plugins.md#use-saved-artifacts-in-the-session-panel)
-with their saved descriptions. Open a row to view or discuss its artifact,
+Publication with `--session SESSION` adds the artifact to that session's
+[panel](plugins.md#use-saved-artifacts-in-the-session-panel)
+with its saved description. The CLI also uses `PROJECTOR_SESSION` or
+`CLAUDE_CODE_SESSION_ID` when available. Without a session, publication saves
+the artifact without adding it to any session's panel. Use
+`project artifact attach cache-explorer --session SESSION` to add a saved
+artifact explicitly. Open a row to view or discuss its artifact,
 or dismiss it from that session without deleting any version.
 `project artifact open cache-explorer` opens the saved
 artifact directly; add `--print-url` to print the address without launching

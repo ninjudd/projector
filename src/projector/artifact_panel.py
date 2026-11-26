@@ -17,7 +17,7 @@ from functools import partial
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import artifact, refs, summary, watch
+from . import artifact, config, refs, summary, watch
 from .inbox import locked, read_json, write_json
 
 PREVIEW_IDLE = 900
@@ -68,10 +68,64 @@ def dismissals(session: str, state: Path | None = None) -> set[str]:
     return {key for key in hidden if isinstance(key, str)} if isinstance(hidden, list) else set()
 
 
-def listing(root: Path, remote: str, session: str, state: Path | None = None) -> list[dict]:
+def context(session: str, state: Path | None = None) -> dict[str, dict]:
+    folder = watch.session_folder(state or watch.state_root(), session)
+    entries = (read_json(folder / 'artifacts.json') or {}).get('artifacts', [])
+    found = {}
+    if not isinstance(entries, list):
+        return found
+    for entry in entries:
+        if (not isinstance(entry, dict)
+                or not all(isinstance(entry.get(name), str) and entry[name] for name in ('checkout', 'remote', 'id'))
+                or not Path(entry['checkout']).is_absolute() or not artifact.ID.fullmatch(entry['id'])):
+            continue
+        found[key(Path(entry['checkout']), entry['remote'], entry['id'])] = {
+            name: entry[name] for name in ('checkout', 'remote', 'id')}
+    return found
+
+
+def attach(root: Path, remote: str, session: str, id: str, *, restore: bool = False,
+           state: Path | None = None) -> None:
+    artifact.identifier(id)
+    tree = config.working_tree(root)
+    if tree is not None:
+        main = config.working_tree(tree.common.parent)
+        if (main is not None and main.common == tree.common
+                and artifact.repository(main.top, remote) == artifact.repository(root, remote)):
+            root = main.top
+    if not any(row['id'] == id for row in catalog(root, remote)):
+        raise artifact.ArtifactError(f'{id}: no saved artifact')
+    folder = watch.session_folder(state or watch.state_root(), session)
+    name = key(root, remote, id)
+    with locked(folder):
+        entries = context(session, state)
+        entries[name] = {'checkout': str(root.resolve()), 'remote': remote, 'id': id}
+        write_json(folder / 'artifacts.json', {'artifacts': list(entries.values())})
+        if restore:
+            hidden = dismissals(session, state)
+            hidden.discard(name)
+            write_json(folder / 'artifact-dismissals.json', {'keys': sorted(hidden)})
+
+
+def listing(session: str, state: Path | None = None) -> list[dict]:
     hidden = dismissals(session, state)
-    return [{**row, 'key': key(root, remote, row['id']), 'checkout': str(root), 'remote': remote}
-            for row in catalog(root, remote) if key(root, remote, row['id']) not in hidden]
+    catalogs = {}
+    found = []
+    for name, entry in context(session, state).items():
+        if name in hidden:
+            continue
+        root, remote = Path(entry['checkout']), entry['remote']
+        location = (root, remote)
+        if location not in catalogs:
+            try:
+                catalogs[location] = {row['id']: row for row in catalog(root, remote)}
+            except (artifact.ArtifactError, refs.RefError, OSError) as error:
+                artifact.diagnostic(f'{root}: could not read session artifacts: {error}')
+                catalogs[location] = {}
+        row = catalogs[location].get(entry['id'])
+        if row is not None:
+            found.append({**row, **entry, 'key': name})
+    return sorted(found, key=lambda row: (row['title'].casefold(), row['id'], row['key']))
 
 
 def discussion(row: dict) -> str:
@@ -82,15 +136,14 @@ def discussion(row: dict) -> str:
     return '; '.join(' '.join(line.splitlines()) for line in lines) + '. '
 
 
-def dismiss(root: Path, remote: str, session: str, id: str, *, restore: bool = False,
-            state: Path | None = None) -> None:
+def dismiss(root: Path, remote: str, session: str, id: str, *, state: Path | None = None) -> None:
     artifact.identifier(id)
     folder = watch.session_folder(state or watch.state_root(), session)
     name = key(root, remote, id)
     with locked(folder):
         path = folder / 'artifact-dismissals.json'
         hidden = dismissals(session, state)
-        hidden.discard(name) if restore else hidden.add(name)
+        hidden.add(name)
         write_json(path, {'keys': sorted(hidden)})
 
 

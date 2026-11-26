@@ -359,13 +359,23 @@ def repository(root: Path, remote: str) -> str:
 
 
 def run(arguments) -> int:
+    from . import artifact_panel, watch
+
+    command, remote = arguments.artifact_command, arguments.remote
+    if command == 'panel':
+        session = watch.session_id(arguments.session)
+        rows = artifact_panel.listing(session)
+        if arguments.json_output:
+            print(json.dumps({'artifacts': rows}, ensure_ascii=False))
+        else:
+            for row in rows:
+                print(f"{row['id']}\t{row['title']}")
+        return 0
     root = summary.checkout_root(arguments.checkout)
     if root is None:
         raise ArtifactError('artifact commands need a Git checkout; pass --checkout')
-    command, remote = arguments.artifact_command, arguments.remote
-    if command in ('panel', 'dismiss', 'restore', 'open'):
+    if command in ('attach', 'dismiss', 'restore', 'open'):
         import webbrowser
-        from . import artifact_panel, watch
 
         if command == 'open':
             url = artifact_panel.open_url(root, remote, arguments.id)
@@ -374,17 +384,12 @@ def run(arguments) -> int:
             print(url)
         else:
             session = watch.session_id(arguments.session)
-            if command == 'panel':
-                rows = artifact_panel.listing(root, remote, session)
-                if arguments.json_output:
-                    print(json.dumps({'artifacts': rows}, ensure_ascii=False))
-                else:
-                    for row in rows:
-                        print(f"{row['id']}\t{row['title']}")
+            if command in ('attach', 'restore'):
+                artifact_panel.attach(root, remote, session, arguments.id, restore=True)
             else:
-                artifact_panel.dismiss(root, remote, session, arguments.id, restore=command == 'restore')
-                verb = 'restored' if command == 'restore' else 'dismissed'
-                print(f"{verb} {arguments.id} in session {session}; saved versions are unchanged")
+                artifact_panel.dismiss(root, remote, session, arguments.id)
+            verb = {'attach': 'attached', 'restore': 'restored', 'dismiss': 'dismissed'}[command]
+            print(f"{verb} {arguments.id} in session {session}; saved versions are unchanged")
         return 0
     if command == 'init' and not arguments.from_published:
         if arguments.version or not arguments.title:
@@ -426,6 +431,7 @@ def run(arguments) -> int:
                               f"{row['latest']}\t{len(row['versions'])} versions"
                               f"{' (local preview)' if row['preview'] else ''}")
         return 0
+    session = watch.session_id(arguments.session, required=False)
     source = snapshot(arguments.dir)
     url, reason = None, ''
     repo = ''
@@ -436,6 +442,8 @@ def run(arguments) -> int:
         else:
             reason = f'{remote} is not a GitHub repository'
     saved = publish(source, root, remote, push=url is not None)
+    if session is not None:
+        artifact_panel.attach(root, remote, session, saved.id)
     if url is None:
         if reason:
             print(f'nothing pushed: {reason}')

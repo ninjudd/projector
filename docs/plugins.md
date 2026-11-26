@@ -637,9 +637,22 @@ shows within 30 seconds, without a restart.
 
 ### Use saved artifacts in the session panel
 
-The session panel has an **Artifacts** section for the saved artifacts in
-its checkout. It includes local versions and the remote versions already
-fetched by `project artifact list` or `project site serve`. Each row shows
+The session panel has an **Artifacts** section for artifacts published or
+explicitly attached in that session. Publishing with `--session SESSION`
+adds the saved artifact to that session's context. Other sessions in the
+same checkout keep their own lists. Existing repository artifacts are
+available through `project artifact list`; add one to a session with:
+
+```sh
+project artifact attach cache-explorer --session SESSION
+```
+
+Attach existing artifacts you want in the session; saved versions without
+a session association stay in the repository's artifact directory.
+
+The session keeps its list across restarts and working-directory changes.
+The panel reads local and already fetched remote versions for those
+artifacts, without fetching during a refresh. Each row shows
 its name and any brief description saved in `artifact.json` with that
 version in Git. The description stays visible when the row's drawer is
 closed. Expand a row to open, discuss, or dismiss it. The section refreshes
@@ -661,7 +674,8 @@ to send it with that context to the selected session. The saved version
 stays attached if the artifact changes while you type.
 
 **Dismiss** hides the artifact from this session's panel. Its saved versions
-and published links stay available, and another session still lists it.
+and published links stay available. Other sessions that have attached it
+keep their own rows.
 Revising the artifact does not undo the dismissal. Restore it from the
 checkout with:
 
