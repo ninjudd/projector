@@ -1,259 +1,295 @@
 ---
 status: draft
-priority: next
+priority: now
 ---
 
-# Launch sessions from the console
+# Run agents from the Projector console
 
-`project console` starts a new Claude Code or Codex session in the
-background, in a checkout you pick, with a prompt you type. It also opens any
-background session's chat in a split when you want it.
+`projector` lets you launch and run Claude and Codex from the terminal,
+while keeping the console useful for any process that uses Projector.
 
 ## 1. Problem
 
-The console (the parent project, `console`) lists every live session and
-lets you answer and discuss each one's items without the session's chat. It
-cannot start a session, though. To start one you open a terminal, change to
-the checkout, run `claude` or `codex`, and type the first prompt. Each
-session then holds a terminal window open, even though, once the console
-exists, you can steer it without ever looking at that window.
+The console lists live sessions, pull requests, and inbox items. You can
+answer or discuss an item, and read the session's transcript, but you need
+the agent's own interface to start work and manage its conversation. The
+console discovers only the Claude panel and Codex delivery hosts, even
+though Projector's agent registry and messages are not specific to them.
 
-Both hosts can already run a session with no window. `claude --bg` starts a
-Claude Code session in the background, and Projector's plugin loads in it.
-A `codex exec` run registers with Projector, and `codex queue --resume`
-wakes it again after its first turn, as § 6 records.
+The missing piece is control of agent execution. Projector already stores
+questions, requests, answers, messages, and review events. Adding another
+communication system would give a session two places to look for its work.
 
 ## 2. Solution
 
-The console's home list gets a **New session** form. You pick the host and
-the checkout, optionally give the session a name, and type the prompt. The
-console starts the session in the background with the host's own CLI,
-records the launch, and shows the session on the home list as `starting`
-until the session registers and becomes live. After that, the session is
-like any other row: you answer and discuss its items in its panel. A
-**Chat** key opens a background session's chat, in a tmux split when the
-console runs in tmux, or in the console's own terminal until you leave the
-chat.
+Keep Projector's communication layer and add Python workers that run native
+agent loops. The watch daemon coordinates the workers; each worker owns
+one agent connection and survives the console and daemon. The console
+becomes the place to launch, converse with, and supervise those sessions.
+External processes retain their existing inbox and messaging experience.
 
-### 2.1 Launching
+### 2.1 Launching and running a session
 
-1. On the home list, you press `n`. The form asks for these fields:
+1. Run `projector` to open the console. Keep `project console` as a
+   compatibility entry point. `project` remains the agent-facing CLI;
+   `projector` is the human-facing interface.
+2. Choose **New session**, then Claude or Codex, a checkout, an optional
+   name, a model, and a multiline prompt. Show the effective permission
+   policy before launch. Use the native runtime's configured defaults;
+   launching never implies permission bypass.
+3. The daemon records the launch and starts a detached worker in the
+   optional agent environment. The worker opens the runtime, records its
+   native resume ID, and registers with Projector. Normalize hook and
+   worker registration to one session identity and one console row.
+4. The worker delivers the prompt and streams text, tool activity, usage
+   when available, and turn outcomes. The conversation remains readable
+   after a turn or worker ends. The home list retains stopped managed
+   sessions so you can resume them; existing external-session visibility
+   and retention rules remain intact.
+5. Type a follow-up in the conversation. While a turn runs, follow-ups
+   queue in order and show their delivery state. You can edit or remove
+   unsent follow-ups. **Interrupt** ends the active turn without dropping
+   queued work; require an explicit send to run it afterward. **Stop**
+   closes the worker and leaves history and pending input available.
+6. Questions, requests, review events, agent messages, and your answers
+   travel through the existing inbox and watch delivery. A native approval
+   or question becomes an inbox item linked to its pending runtime request.
+   Your answer resumes that request, rather than starting an unrelated turn.
 
-   | Field | Default | Choices |
-   | --- | --- | --- |
-   | Host | The host of the session under the cursor, or Claude Code | Claude Code or Codex |
-   | Checkout | The console's working directory | The checkouts of the live sessions and of earlier launches, or a path you type |
-   | Name | None | Any name `project agent register` accepts |
-   | Prompt | None | One or more lines, sent when you press Enter twice |
+Use the official Python Claude Agent SDK's long-lived client for Claude,
+and a Python asynchronous JSON-RPC client for `codex app-server`. Port the
+useful Claude and Codex adapter contracts from `ninjudd/agent-sdk`; a port
+of its other backends is outside this project. Native events determine turn
+boundaries. A quiet transcript, a tool finishing, or a process going idle
+does not prove that a turn or a larger task succeeded.
 
-2. The console starts the session with an argument list, never through a
-   shell, so the prompt reaches the host exactly as you typed it:
+### 2.2 Opening a native session and returning
 
-   | Host | Command, run in the checkout |
-   | --- | --- |
-   | Claude Code | `claude --bg --session-id <uuid> [--name <name>] -- <prompt>`, with a UUID the console generates |
-   | Codex | `codex exec -C <checkout> --json -- <prompt>`, in a new process group, with standard input closed and standard output written to the launch's log |
+**Open in Claude** or **Open in Codex** is a controlled handoff. Quiesce the
+worker, resolve or cancel pending native requests, release the SDK connection
+and delivery ownership, then open the native CLI at the saved resume ID.
+Do not describe this as attaching to a live SDK terminal. Use a tmux pane
+when available, or suspend curses and restore it when the CLI exits.
 
-   The `--` ends each CLI's options, so a prompt that starts with `-`, such
-   as `-v hi` or `--help`, reaches the host as the prompt rather than as an
-   option. Codex reads more input from standard input when it is open, so
-   the console closes it. For Codex, the console reads the session's ID from
-   the log's first event, `{"type":"thread.started","thread_id":"…"}`.
-3. The console writes the launch record (§ 2.3), and the home list shows a
-   `starting` row with the name, or the short ID, and the checkout.
-4. The session registers itself through the host's own hooks: the panel's
-   mod in Claude Code, and the `SessionStart` hook in Codex. When
-   `watch.delivery(root, session, now)` reports the session live, the row
-   becomes a normal session row.
-5. A Codex session's first turn ends when `codex exec` exits. Later turns
-   arrive the way they arrive for any Codex session: the daemon's Codex
-   adapter sends each answer and `DISCUSS` line with
-   `codex queue --thread <id> --resume`.
-6. When the host's command exits with an error before the session goes
-   live, or the session does not go live within 60 seconds, the row shows
-   `failed` with the last line of the launch's log. `x` on that row
-   removes the record.
+During handoff, keep new input durable and suspend managed submission.
+An external native host can use its normal Projector delivery after the
+ownership transition. Returning to managed control closes that native
+controller, reacquires ownership, resumes the same history, and reconciles
+pending deliveries. If exclusive control cannot be established, remain
+handed off rather than starting a second controller.
 
-### 2.2 Opening a session's chat
+Prove this round trip separately for Claude and Codex before exposing it.
+Claude SDK sessions need an explicit resume ID rather than the native
+session picker. Repository instructions, skills, plugins, MCP configuration,
+and Projector actions must work on both sides. SDK-only in-process tools
+cannot silently disappear during handoff; use portable Projector CLI actions
+where possible and report unsupported configuration before launch.
 
-In a session's panel, `c` opens the session's chat:
+### 2.3 The launch and runtime records
 
-| Host | Command |
+The watch daemon discovers workers and routes existing events; it does not
+hold SDK connections. Its version replacement and five-minute idle shutdown
+must not terminate agents. Workers renew their own presence, reconnect to a
+new daemon, and retain pending work while it is unavailable. A coordinator
+restart can recover a launch in progress without launching it twice.
+
+Store runtime metadata beside the session's existing local watch state,
+using its lock and atomic-write conventions. Keep pre-registration launch
+records in a separate local launch directory until the native ID is known.
+These are execution records, not a second agent-message mailbox.
+
+| Record | Required content |
 | --- | --- |
-| Claude Code, in the background | `claude attach <session>` |
-| Codex | `codex resume <thread_id>` |
+| Launch | Launch ID, checkout, backend, requested settings, creation time, and worker identity; links to the registered session when known |
+| Runtime | Schema version, Projector session ID, native resume ID, backend and version, worker incarnation, ownership lease, capabilities, lifecycle state, and last error |
+| Command | Stable command ID, source reference and claim, runtime generation, input, queued/submitting/accepted/finished/uncertain state, native turn ID when available, and outcome |
+| Event | Increasing local sequence, session and runtime generation, command and native turn IDs when available, event kind, timestamp, and payload |
+| Pending request | Native request ID, runtime generation, inbox reference, allowed responses, and whether the request still accepts an answer |
 
-When `TMUX` is set, the console runs the command in a new pane with
-`tmux split-window -h`, and keeps running. Otherwise it suspends curses
-with `curses.endwin`, runs the command in its own terminal, and redraws when
-the command exits. A Claude Code session that runs in its own window has no
-background ID, so `c` says that its chat is already open elsewhere.
+A worker restart keeps the session ID but acquires a new runtime generation.
+Reject late callbacks and answers to obsolete requests. Expired approvals
+never authorize a later tool call. Separate native prompts that cannot be
+resumed after a crash from durable Projector questions that still need you.
 
-### 2.3 The launch record
+Persist lifecycle transitions and completed results before acknowledging
+consumption. Coalesce text deltas for storage and redraw; retain tool IDs
+and outcomes so reconnecting does not duplicate a tool or final answer.
+Native transcripts remain authoritative for native resume. The console's
+normalized event log supplies incremental display and command correlation.
 
-The console keeps one file per launch at
-`$XDG_STATE_HOME/projector/console/launches/<session>.json`, or under
-`~/.local/state/projector/console/launches/` when `XDG_STATE_HOME` is
-unset.
+### 2.4 Changes by component
 
-| Field | Value |
+| Component | Change |
 | --- | --- |
-| `host` | `claude` or `codex` |
-| `session` | The session's ID: the UUID the console passed to Claude Code, or Codex's `thread_id` |
-| `cwd` | The checkout |
-| `name` | The name you gave, or absent |
-| `prompt` | The first 200 characters of the prompt, for the `starting` row |
-| `started_at` | When the console ran the command, in seconds |
-| `pid` | The host command's process ID |
-| `log` | The path of the file that holds the command's output |
-| `state` | `starting`, `live`, or `failed` |
-| `error` | The last line of the log, when `state` is `failed` |
+| `src/projector/console.py` and new console entry module | Launch form, conversation composer, stream display, lifecycle controls, native handoff, and capability-driven external rows |
+| New runtime and worker modules under `src/projector/` | Durable execution records, single-owner lifecycle, Claude SDK adapter, and Codex app-server adapter |
+| `src/projector/watch.py` and `src/projector/codex_watch.py` | Worker discovery and managed delivery; exclude competing native delivery without changing external behavior |
+| `src/projector/agents.py`, `src/projector/inbox.py`, and `src/projector/conversation.py` | Extend existing identity, delivery, and transcript abstractions; preserve public message and inbox semantics |
+| `pyproject.toml`, `install.sh`, and upgrade paths | Install `projector` beside `project`; offer a versioned optional agent environment without runtime dependencies in the core CLI |
+| `src/projector/permissions.py` and host packaging | Give the new human entry point the console's permission protection; verify Projector actions load in SDK sessions without requiring a UI hook engine |
+| Runtime integration tests and existing console, watch, inbox, agent, and packaging tests | Exercise failures and compatibility with fake runtimes; record separate real-runtime probes |
+| `docs/cli.md` and installation documentation | Describe the new command, optional dependencies, supported runtime versions, auth, recovery, and native handoff when those features land |
 
-The console labels a launched session with the record's `name` until the
-session registers a name of its own with `project agent register`. It
-deletes a `live` record once the session is no longer live, and keeps a
-`failed` one until you remove it.
+### 2.5 One communication and delivery path
 
-### 2.4 Changes by file
+Reuse `agents.py`, `inbox.py`, and the watch event queue. Conversation input
+uses the existing person-to-session message path. A managed delivery adapter
+adds runtime submission and acknowledgment to that path. It also consumes
+existing review and agent-message events, preserving their identifiers,
+thread references, ordering rules, and trust labels.
 
-| File | Change |
-| --- | --- |
-| `src/projector/launch.py` | New. Builds each host's argument list, starts the process, reads Codex's `thread_id`, and reads and writes launch records |
-| `src/projector/console.py` | Adds the New session form, the `starting` and `failed` rows, `x`, and `c` |
-| `tests/test_launch.py` | New, with fake `claude`, `codex`, and `tmux` executables that record their arguments, working directory, and standard input |
-| `docs/cli.md` | "Use the console" describes launching and opening a chat |
+The worker serializes input for its session. Persist a command ID and its
+source event or inbox claim before submission, then record native acceptance
+and the eventual outcome. Repeated observations of the same accepted command
+do not create another turn. Renew inbox claims while delivery is pending;
+settle them only on confirmed acceptance. Delivery acceptance and turn
+success are separate records. Never use delivery failure settlement to
+erase input whose acceptance is uncertain.
+
+A runtime ownership record selects exactly one deliverer. While a managed
+worker owns a session, neither the Claude panel nor `codex queue` delivers
+its events. Watcher upgrades, stale leases, and concurrent consoles cannot
+start a second worker or controller. Native takeover changes that ownership
+explicitly. Keep the existing delivery adapters for external sessions.
+
+On restart, reconcile commands against runtime state and persisted native
+history. Retry commands known not to have been accepted. If acceptance
+cannot be established, show **Needs recovery** and retain the command for
+your decision. Do not automatically replay work that may have changed files
+or called external tools. Worker crashes are visible terminal failures;
+automatic task reruns and a team scheduler are outside the first version.
+
+### 2.6 Any process that uses Projector
+
+Discover sessions through Projector registration and supported delivery
+capabilities, rather than a hard-coded list of two hosts. An external
+process can register, exchange agent messages, and post inbox items without
+becoming a managed agent. Show whether it has a working answer-delivery
+route. Registration alone does not grant chat, interrupt, stop, or resume.
+
+The console renders supported controls from capabilities. Existing Claude
+and Codex sessions keep their current delivery and transcript readers.
+Generic processes keep their inbox and messaging features even without an
+agent transcript. The console never infers control from a PID or kills a
+process it did not launch. Peer messages retain their existing lack of user
+authority; a message cannot grant a native permission or answer as you.
 
 ## 3. Why this design
 
-- **The console launches; no `project` subcommand does.** An agent cannot
-  drive the console: it refuses to start without a terminal, and the
-  permission rules ask before an agent runs it. With no subcommand, an
-  agent cannot start a session that uses your credentials and runs your
-  prompt.
-- **The host's own CLI does the launching.** `claude --bg` and
-  `codex exec` already start a session that loads Projector's hooks. The
-  console calls them rather than talking to either host's app server, so it
-  depends on no protocol that either host could change.
-- **Claude Code gets the ID up front.** `--session-id` lets the console
-  know the session's ID before the session starts, so the `starting` row
-  and the live session are the same row from the start.
-- **No shell, and `--` before the prompt.** A prompt can hold quotes, `$`,
-  and newlines, and it can start with `-`. An argument list passes it
-  through exactly, and `--` keeps either CLI from reading it as an option:
-  without it, `codex exec` prints its help for the prompt `--help` and
-  exits 0, and `claude` reads `-v` as `--version`. Both CLIs honor `--`, as
-  § 7.3 records. `codex exec -` could read the prompt from standard input
-  instead, but `claude --bg` documents no such form, and one rule for both
-  hosts keeps the launch code and its tests simple.
-- **The chat opens beside the console when it can.** In tmux, a split
-  keeps the home list in view. Without tmux, the console has no portable
-  way to open a new window, so it hands its own terminal to the chat until
-  you leave it.
+- **Python fits the coordinator.** The console, durable state, and daemon
+  already use Python. A small adapter port avoids a second language runtime
+  solely for a wrapper. Claude's dependency stays in an optional worker
+  environment; normal `project` commands require only Python 3.11 or newer.
+- **Workers own execution.** The watcher restarts during upgrades and exits
+  when idle. Keeping SDK clients in workers makes those events independent
+  of agent lifetime and lets several consoles observe one session.
+- **Projector owns communication.** Its inbox already handles questions,
+  requests, discussion, claims, and delivery. Its agent messages already
+  have IDs, reply threads, and local and remote routes. The comparison in
+  [Communication references](communication.md) identifies the smaller gaps.
+- **Structured runtimes expose turns.** A PTY and screen parser add turn
+  detection and permission-screen handling that the SDK protocols provide
+  directly. Trip and Tripping remain references rather than dependencies.
+- **The human command stays separate.** A blanket permission for `project`
+  must not let an agent start agents under your credentials or supply your
+  approval. The new entry point retains the console's terminal requirement
+  and explicit host permission rules.
 
 ## 4. Acceptance criteria
 
-| Do | Expect | Catches |
-| --- | --- | --- |
-| Launch a Claude Code session named `parser` with the prompt `say "hi" $HOME` | The fake `claude` gets `--bg --session-id <uuid> --name parser -- 'say "hi" $HOME'` as separate arguments, in the checkout | A prompt split or expanded by a shell, or a launch in the wrong directory |
-| Launch a Codex session | The fake `codex` gets `exec -C <checkout> --json -- <prompt>`, with standard input closed, in its own process group. The record's `session` is the `thread_id` from the log's first event | A Codex run that waits on the console's input, dies with the console, or records no ID |
-| Launch a session of each host with the prompt `-v hi` | The fake `claude` and the fake `codex` each get `--` and then `-v hi` as their last two arguments | A prompt that the host reads as an option, which prints a version or help and starts no session |
-| Make the session register within 60 seconds | The `starting` row becomes the session's normal row, labelled with the launch's name | A launch that never joins the home list |
-| Make the fake command exit 1 with `error: not logged in` | The row shows `failed` and `error: not logged in` | A failed launch that looks as if it were still starting |
-| Let 60 seconds pass with no registration and the process still running | The row shows `failed` | A launch that waits forever |
-| Press `c` on a Codex session with `TMUX` set | `tmux split-window -h codex resume <thread_id>`, and the console keeps drawing | A chat that takes over the console inside tmux |
-| Press `c` without `TMUX` | The console suspends, runs `codex resume <thread_id>`, and redraws after it exits | A chat that leaves the terminal unusable |
-| Launch a Codex session for real, then answer one of its items from the console | The answer arrives as a new turn in its transcript after `codex exec` has exited | A launched Codex session that cannot take later turns |
+| Do | Expect; failure this catches |
+| --- | --- |
+| Install the core package without agent extras; run both console entry points | Both open the existing console; ordinary `project` commands import no SDK. A missing optional dependency offers setup instructions and leaves no orphan worker |
+| Launch Claude and Codex in a temporary checkout with quotes, newlines, and leading dashes in the prompt | The intended checkout, settings, and exact prompt reach one native session, with one Projector identity; catches shell expansion and duplicate registration |
+| Stream tools and multiple turns, then queue two follow-ups during a turn | Output remains ordered and responsive; each input reaches one turn in order. An interrupted or failed turn is not marked successful |
+| Answer a Projector question, a native approval, and a native question while two consoles are open | The correct pending operation resumes once; stale answers and agent-authored permission grants are refused; both consoles reflect the result |
+| Deliver review events and agent replies while a managed turn runs | The existing event identifiers and trust labels survive; the worker serializes delivery and the native queue or panel does not deliver a duplicate |
+| Close the console, restart or upgrade the watcher, and reopen it | The same worker and native session continue; history and queued input recover. No new prompt or worker appears |
+| Crash at the submission and acknowledgment boundaries, then restart | Proven unaccepted input can retry; uncertain acceptance needs recovery. Previously accepted tools and prompts do not rerun automatically |
+| Kill a worker with queued work and a pending approval | Failure is visible, queued work remains inspectable, and an obsolete approval cannot authorize the resumed runtime |
+| Use native handoff for each backend, add a native turn, then return | The same conversation includes the native turn; queued inbox answers survive and only one controller delivers at a time |
+| Register a generic process and use existing external Claude and Codex sessions | Inbox, replies, review subscriptions, and available transcripts still work; unsupported controls are absent and the process is never terminated by the console |
+| Replay events, include an unknown event kind, or truncate the final log write | Completed results appear once; unknown events do not stop later delivery, and damaged state is reported without discarding unrelated pending work |
+
+Use fake SDK and app-server peers to inject crashes at these boundaries.
+Use temporary repositories for checkout and mutation tests. Run real Claude
+and Codex probes for authentication, plugin loading, approvals, turn events,
+and the native round trip; record runtime versions and observed limitations.
 
 ## 5. Cost
 
-Launches are rare, and each one writes one small record. While a launch is
-`starting`, the console checks its liveness and its process once a second,
-which is a few file reads. Opening a chat costs nothing beyond running the
-host's command.
+The baseline is one lightweight coordinator plus one worker and native runtime
+per managed session. Measure idle CPU, memory per session, and transcript
+storage with ten idle sessions and two streams. Batch deltas and incrementally
+read events; do not scan complete transcripts or rewrite full conversations
+on each redraw. Slow GitHub polling must not block input or output. Choose
+log retention limits from the measurement before shipping, and preserve
+unsettled commands and pending inbox delivery regardless of display retention.
 
 ## 6. Open questions
 
-- **Approvals in a launched session.** A background session cannot show
-  you a permission prompt. Find out what each host does when a launched
-  session needs approval: `claude --bg` before you attach, and a
-  `codex exec` turn and a later turn that `codex queue` resumes. The plan
-  becomes `ready` once that is known, and may need the console to show a
-  session that waits on approval. Owner: whoever takes this project.
-- **Finding a Claude Code session's background ID.** `claude attach` takes
-  the ID that `claude --bg` prints. A session the console launched gets
-  that ID from the command's output. For other background sessions, the
-  console reads `claude agents --json`; check which field holds the
-  session ID it matches on. Owner: whoever takes this project.
-- **Opening a Codex chat while the daemon holds the thread.**
-  `codex resume <thread_id>` opens the thread in a TUI. Check that it
-  attaches to the thread the daemon resumed rather than starting a second
-  copy, or use `codex resume --remote` against the daemon. Owner: whoever
-  takes this project.
-- **A Claude Code prompt that names a subcommand.** After `--`, Claude
-  Code's argument parser still runs a subcommand when the first operand is
-  exactly that subcommand's name, so the one-word prompt `doctor` or
-  `help` would run that subcommand and never start a session (§ 7.3).
-  Codex has no such case. Decide whether the console warns before it
-  launches such a prompt or leaves the launch to show `failed`. Owner:
-  whoever takes this project.
-- **Windows.** Deferred with the console itself, which exits there.
+- **Native round trip and configuration.** The implementer proves saved
+  sessions, native auth, plugins, Projector actions, approvals, and return
+  for both backends before committing to the runtime interface. This blocks
+  readiness. If a backend cannot meet the requirement, bring back evidence
+  and a concrete alternative rather than silently dropping takeover.
+- **Worker installation.** The implementer selects and tests the optional
+  environment's install and upgrade mechanism, dependency pins, and rollback.
+  Existing workers must keep their interpreter and package version while
+  running. This blocks readiness; do not add SDK imports to the core CLI.
+- **Supported versions and authentication.** The implementer records tested
+  minimum runtime versions and checks current provider rules before declaring
+  subscription support. Projector uses local native authentication and
+  handles no provider OAuth tokens. This blocks readiness.
+- **Deferred features.** A team scheduler, typed delegated task/result APIs,
+  autonomous task retries, additional backends, network session hosting, and
+  Windows console support are separate work. The phone project remains
+  separate. Opening a terminal over SSH does not require a network API.
 
 ## 7. Background
 
 ### 7.1 The Codex launch test
 
-On 2026-11-16, with `codex-cli 0.169.0` and Projector 0.9.7's Codex plugins
-installed and enabled:
-
-1. `codex exec --skip-git-repo-check --json "Reply with exactly the word ok and nothing else."`,
-   run from an empty directory, printed
-   `{"type":"thread.started","thread_id":"01a1e7d6-472f-7151-bab3-1a25757f7e9d"}`,
-   answered `ok`, and exited 0. It also printed "Reading additional input
-   from stdin…", which is why § 2.1 closes standard input.
-2. Projector's `SessionStart` hook ran. The watch state held
-   `sessions/01a1e7d6-…/codex.json` with `supported: true`,
-   `enabled: true`, the session's `cwd` and `transcript_path`, and an
-   `unloaded_at` set when the run ended.
-3. `codex queue --thread 01a1e7d6-… --message "Reply with exactly the word queued and nothing else." --resume`
-   exited 0. The thread's transcript then held the queued prompt and the
-   reply `queued`, so the daemon resumed a thread that `codex exec` had
-   started and finished.
-
-The run also reported that Codex failed to parse the `projector` plugin's
-`hooks/hooks.json`, which holds Claude Code's hooks module. That error is
-fixed separately and does not affect launching.
+The earlier CLI probe established that `codex exec` could create a thread and
+`codex queue --resume` could deliver a later turn. It proves an external
+session route, not exclusive ownership or a native app-server round trip.
+Retain that external route while managed sessions use the structured runtime.
 
 ### 7.2 Claude Code's background sessions
 
-`claude --bg` starts a session in the background and prints the ID that
-`claude attach`, `logs`, `stop`, and `rm` take. `--session-id <uuid>` sets
-the conversation's ID, and `--name` sets its display name.
-`claude agents --json` lists active sessions, interactive and background,
-without a terminal. Projector's plugin runs in a background session: a
-background session's `project watch add` prints `events: mod`, so the
-panel's hooks deliver its events.
+Claude's native background sessions are an alternative execution mechanism.
+They do not prove that an SDK-launched session has a terminal to attach to.
+The managed design requires saved-session resume and explicit handoff.
 
 ### 7.3 Ending options before the prompt
 
-On 2026-11-16, with `codex-cli 0.169.0` and Claude Code 2.1.326, these
-checks parsed arguments without starting a session, and the last reads the
-parser itself:
+The CLI probes found prompts that native parsers could mistake for options
+or subcommands. Keep launch input separate from executable arguments. The
+SDK and JSON-RPC paths carry prompts as data; native handoff commands use
+argument lists and saved IDs rather than shell interpolation.
 
-1. `codex exec -C <dir> --json --help` printed `codex exec`'s help, and
-   `codex exec -C <dir> --json -v hi` failed with
-   `error: unexpected argument '-v' found` and the tip
-   `to pass '-v' as a value, use '-- -v'`.
-2. `codex exec -C <dir> --json -- --help extra` failed with
-   `unexpected argument 'extra' found`, so `--help` filled the prompt. The
-   same held for `-- -v hi extra`, which rejected `hi`, and for
-   `-- help extra`, so a prompt after `--` never selects the `help`
-   subcommand.
-3. `claude agents --json --help` printed the subcommand's help, while
-   `claude agents --json -- --help` failed with
-   `too many arguments for 'agents'`, so Claude Code's parser took
-   `--help` as an operand.
-4. The JavaScript bundled in the `claude` executable shows that its `--bg`
-   handling removes `--bg` only before `--`, keeps `--` and the prompt for
-   the background session, and stops looking for `--name` at `--`. Its
-   parser then dispatches a subcommand whenever the first operand is that
-   subcommand's name, which § 6 leaves open.
+### 7.4 SDK and authentication references
+
+The [agent-sdk adapters](https://github.com/ninjudd/agent-sdk/tree/main/src/backends)
+provide a reusable contract for Claude's SDK and Codex's app-server.
+The [Claude Python SDK reference](https://code.claude.com/docs/en/agent-sdk/python)
+describes the long-lived client. Claude documents explicit resume for SDK
+sessions in its [session guide](https://code.claude.com/docs/en/sessions).
+
+As reviewed on 2026-11-25, Anthropic's
+[SDK subscription guidance](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
+says the planned billing change is paused. That billing statement does not
+replace the [rules for third-party authentication](https://code.claude.com/docs/en/legal-and-compliance).
+Check both during the runtime probe; avoid building a Projector login flow.
+
+## 8. Rollout
+
+1. Prove both runtime adapters and native handoff in an isolated prototype.
+   Record results for the blocking questions, then move the plan to `ready`.
+2. Add the optional worker environment, execution records, ownership, and
+   managed delivery. Prove restart and failure behavior before connecting
+   console controls to a real agent.
+3. Add the `projector` entry point and managed conversation controls; verify
+   existing external sessions in the same console throughout the rollout.
+4. Complete real-runtime acceptance checks and installation documentation.
+   Mark this project completed with the final implementation change.
