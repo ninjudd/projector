@@ -152,14 +152,46 @@ export type Given = { question: Question; letter: string }
 const leads = (text: string, words: string) => text.startsWith(words) && /^[ \t]*(\n|$)/.test(text.slice(words.length))
 
 /**
- * The option a question's quote takes: the one the text under the quote
- * starts with, ending its line, so notes can follow on the lines below. When
- * two options lead it, as one that spans lines can lead another, the longer
- * one is what it says.
+ * An option's number at the start of the text under a quote, as `pickOf`
+ * writes it. The space or line end it needs after the colon keeps a time such
+ * as `1:30` from reading as one.
  */
-function optionIn(question: Question, said: string | undefined): string | undefined {
+const NUMBERED = /^([1-9][0-9]*):(?=\s|$)/
+
+/**
+ * What pressing a question's option puts under its quote: the option's
+ * number, as its drawer shows it, then its words. The number says which
+ * option you picked, so you can edit the words and still answer with it.
+ */
+export const pickOf = (index: number, choice: string) => `${index + 1}: ${choice}`
+
+/** The option's number that starts text under a quote, when one does. */
+const numberIn = (said: string) => NUMBERED.exec(said)?.[1]
+
+/**
+ * The index of the option a question's quote takes. An option's number
+ * before the text picks that option, whatever words follow it on its line.
+ * Without a number, the option is the one the text starts with, ending its
+ * line, and when two options lead it, as one that spans lines can lead
+ * another, the longer one is what it says. Either way notes can follow on the
+ * lines below.
+ */
+function optionIn(question: Question, said: string | undefined): number | undefined {
   if (said === undefined) return undefined
-  return question.choices.filter(choice => leads(said, choice)).sort((one, other) => other.length - one.length)[0]
+  const number = numberIn(said)
+  if (number !== undefined) return Number(number) <= question.choices.length ? Number(number) - 1 : undefined
+  const option = question.choices.filter(choice => leads(said, choice)).sort((one, other) => other.length - one.length)[0]
+  return option === undefined ? undefined : question.choices.indexOf(option)
+}
+
+/**
+ * Whether the text under a quote picks what a drawer put there: the same
+ * option's number, whatever words follow it, or, with the number deleted, the
+ * drawer's words, ending their line.
+ */
+function picks(said: string, answer: string): boolean {
+  const number = numberIn(said)
+  return number === undefined ? leads(said, answer.replace(NUMBERED, '').trimStart()) : number === numberIn(answer)
 }
 
 /**
@@ -186,10 +218,10 @@ function outcomeIn(request: Request, said: string | undefined): Omit<Finished, '
 
 /**
  * What an item's drawer put in the prompt: the item's quoted subject as it
- * read then, without the reference before it, and the option or outcome
- * chosen, an empty answer for discuss, or `UNCLEAR_WORDS` for I don't
- * understand, which also keeps the detail you read. `isStale` marks one put
- * there before the item was revised.
+ * read then, without the reference before it, and the question's option as
+ * `pickOf` writes it or the request's outcome, an empty answer for discuss,
+ * or `UNCLEAR_WORDS` for I don't understand, which also keeps the detail you
+ * read. `isStale` marks one put there before the item was revised.
  */
 export type Proposal = { ref: string; quote: string; answer: string; detail?: string; isStale?: boolean }
 
@@ -205,8 +237,10 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
  * question or request. A quoted open question takes an answer only when its
  * quote ends its line and the text after it, up to the next quoted item or
  * the prompt's end, starts with one of its options, whatever blank lines and
- * spaces come before it, and the option ends its line: what pressing an
- * option puts in the prompt, and any notes the person adds below it. A
+ * spaces come before it: the option's number, as `pickOf` writes it, whatever
+ * words follow it on its line, or else the option's words, ending their line.
+ * That is what pressing an option puts in the prompt, with any edits to its
+ * words and any notes the person adds below it. A
  * quoted open request takes an outcome only when its quote ends its line and
  * the first line after it that is not blank is exactly one of its options, a
  * plain `Done`, or a plain `Declined`; the rest is the person's notes. A quote that
@@ -290,8 +324,8 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
   const resolve = (item: Answerable, said: string) => {
     answered.add(item.ref)
     if (item.kind === 'question') {
-      const option = optionIn(item, said)
-      if (option !== undefined) answers.push({ question: item, letter: letterAt(item.choices.indexOf(option)) })
+      const index = optionIn(item, said)
+      if (index !== undefined) answers.push({ question: item, letter: letterAt(index) })
       return
     }
     const outcome = outcomeIn(item, said)
@@ -309,15 +343,15 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
       continue
     }
     // The drawer that put this text in the prompt: the last to put this
-    // quote there with the answer this text starts with, notes or not, or
-    // alone, through discuss, leaving out an item an earlier quote in this
-    // prompt resolved. A request's drawer owns its quote whatever follows
-    // it, since notes follow its outcome.
+    // quote there with the option this text picks, edited, with notes, or
+    // neither, or alone, through discuss, leaving out an item an earlier
+    // quote in this prompt resolved. A request's drawer owns its quote
+    // whatever follows it, since notes follow its outcome.
     const source = proposed.findLast(
       one =>
         one.quote === quote &&
         aims(one) &&
-        (isRequest(one.ref) || (said !== undefined && leads(said, one.answer)) || one.answer === '') &&
+        (isRequest(one.ref) || (said !== undefined && picks(said, one.answer)) || one.answer === '') &&
         !answered.has(one.ref),
     )
     if (source !== undefined) {
@@ -543,7 +577,8 @@ export const ASK_DESCRIPTION = described([
   'Name the pull request the question is about in `pr`, as owner/repo#number.',
   'Keep working on anything the answer does not block. The call returns the question’s number, such as 3.',
   'When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
-  'A pick they send from their prompt arrives as that prompt instead, quoting the question with the option they picked and any notes under it.',
+  'A pick they send from their prompt arrives as that prompt instead, quoting the question with the option they picked after its number, such as `2:` for answer b, and any notes under it.',
+  'They may have edited the option’s words, so act on what they wrote.',
   'When they restore a question after you heard `DISMISSED 3`, `RESTORED 3` arrives, and the question is open again.',
   unclearArrives('question'),
   'When they reply in their own words instead, the reply arrives as their prompt, quoting the question after its number in brackets, such as `[3] "…"`, and the question stays open:',

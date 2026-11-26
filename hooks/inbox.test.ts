@@ -13,6 +13,7 @@ import {
   isSnoozedAt,
   liveAgent,
   needsDelivery,
+  pickOf,
   proposalOf,
   quoteOf,
   quotesIn,
@@ -110,7 +111,7 @@ test('the ask tool tells the agent that a pick arrives by number and a reply as 
     'The call returns the question’s number, such as 3. When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
   )
   expect(ASK_DESCRIPTION).toContain(
-    'A pick they send from their prompt arrives as that prompt instead, quoting the question with the option they picked and any notes under it.',
+    'A pick they send from their prompt arrives as that prompt instead, quoting the question with the option they picked after its number, such as `2:` for answer b, and any notes under it. They may have edited the option’s words, so act on what they wrote.',
   )
   expect(ASK_DESCRIPTION).toContain('the reply arrives as their prompt, quoting the question after its number in brackets, such as `[3] "…"`, and the question stays open')
   expect(ASK_DESCRIPTION).toMatch(/withdraw the question if the reply settles it, revise it if it was unclear/)
@@ -148,7 +149,7 @@ test('letters run from the recommendation to the typed answer', () => {
 test('the prompt carries a question’s reference in brackets, its subject in quotes, and an answer on a line of its own', () => {
   expect(quoteOf(question())).toBe('[1] "Decline the finding?"')
   expect(quoteOf(question({ ref: '137', number: 137 }))).toBe('[137] "Decline the finding?"')
-  expect(proposalOf(question(), 'Add a budget')).toBe('[1] "Decline the finding?"\n\nAdd a budget')
+  expect(proposalOf(question(), pickOf(1, 'Add a budget'))).toBe('[1] "Decline the finding?"\n\n2: Add a budget')
 })
 
 test('a quote’s reference picks its item among those that share its subject, the newer one too', () => {
@@ -295,15 +296,64 @@ test('an option that spans lines answers as itself, not as a shorter option that
   expect(answersIn('"Decline the finding?"\n\nDecline it\nand say so', [asked])).toEqual([{ question: asked, letter: 'a' }])
 })
 
+test('an option’s number answers its question whatever words follow it on its line', () => {
+  const open = [question(), question({ ref: '2', number: 2, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
+  const budget = [{ question: open[0], letter: 'b' }]
+  // What pressing the option fills, the same with its words edited or deleted, and with notes below.
+  expect(answersIn('[1] "Decline the finding?"\n\n2: Add a budget\n', open)).toEqual(budget)
+  expect(answersIn('[1] "Decline the finding?"\n\n2: Add a budget of two per host, but log it', open)).toEqual(budget)
+  expect(answersIn('[1] "Decline the finding?"\n\n2:', open)).toEqual(budget)
+  expect(answersIn('[1] "Decline the finding?"\n\n2: Add two per host\n\nand log each retry', open)).toEqual(budget)
+  // The number decides, even over words that are another option's.
+  expect(answersIn('[1] "Decline the finding?"\n\n1: Add a budget', open)).toEqual([{ question: open[0], letter: 'a' }])
+  // Each question reads the number against its own options.
+  expect(answersIn('"Decline the finding?"\n\n1: Decline, per the cap\n"Rebase first?"\n\n2: Rebase onto main', open)).toEqual([
+    { question: open[0], letter: 'a' },
+    { question: open[1], letter: 'b' },
+  ])
+})
+
+test('an edited pick answers the question whose drawer put its number there when two share a subject', () => {
+  const older = question({ postedAt: NOW - 120_000, subject: 'Merge it?', choices: ['Yes', 'No'] })
+  const newer = question({ ref: '2', number: 2, subject: 'Merge it?', choices: ['Yes', 'No'] })
+  const both = [older, newer]
+  const merge = (ref: string, answer: string, fields: Partial<Proposal> = {}): Proposal => ({ ref, quote: '"Merge it?"', answer, ...fields })
+  const none = { answers: [], outcomes: [], replies: [], unclears: [] }
+  expect(readPrompt('"Merge it?"\n\n2: No, not until CI passes', both, [merge('2', pickOf(1, 'No'))])).toEqual({
+    ...none,
+    answers: [{ question: newer, letter: 'b' }],
+  })
+  // With the number deleted, the drawer's words still name its pick.
+  expect(readPrompt('"Merge it?"\n\nNo\n\nwait for CI', both, [merge('2', pickOf(1, 'No'))])).toEqual({
+    ...none,
+    answers: [{ question: newer, letter: 'b' }],
+  })
+  // Another number than the drawer put there is not its pick, so the oldest question takes it.
+  expect(readPrompt('"Merge it?"\n\n1: Yes, now', both, [merge('2', pickOf(1, 'No'))])).toEqual({
+    ...none,
+    answers: [{ question: older, letter: 'a' }],
+  })
+  // A pick made before its question was revised still only replies, edited or not.
+  expect(readPrompt('"Merge it?"\n\n2: No, not yet', both, [merge('2', pickOf(1, 'No'), { isStale: true })])).toEqual({
+    ...none,
+    replies: [newer],
+  })
+})
+
 test('anything after a quoted question but one of its options replies to it without answering', () => {
   const open = [question(), question({ ref: '2', number: 2, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
   const replies = [
     // Free text, as discuss leaves room for.
     '"Rebase first?"\t\n\nkeep it',
     // An option with more text after it on its own line, or a shorter
-    // option's words leading a longer line.
+    // option's words leading a longer line, without the option's number.
     '"Decline the finding?"\n\nAdd a budget of two per host',
     '"Decline the finding?"\n\nDecline it, but log it',
+    // A number the question has no option for, one that leads a time, or
+    // one below a line of your own.
+    '"Decline the finding?"\n\n3: Ask the reviewer',
+    '"Decline the finding?"\n\n1:30 tomorrow works',
+    '"Decline the finding?"\n\nafter some thought\n2: Add a budget',
     // Notes before the option.
     '"Decline the finding?"\n\nafter some thought\nDecline it',
     // A question back, under the quote or on its line.

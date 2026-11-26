@@ -751,35 +751,45 @@ The first option is always the agent's recommendation. Press an option by
 clicking it, by Enter, or by its digit, and the panel puts the question and
 that answer in your prompt, for you to send as it stands or change first.
 The quote starts with the question's number in brackets, so the panel and
-the agent can tell apart two questions that ask the same thing:
+the agent can tell apart two questions that ask the same thing, and the
+answer starts with the option's number, as the drawer shows it:
 
 ```text
 [3] "Decline the finding about the retry budget?"
 
-Add a budget of two retries per host, and keep the total cap
+2: Add a budget of two retries per host, and keep the total cap
 ```
 
-The drawer stays open until you send. Sending the prompt with the option
-still under the quote answers the question and closes its drawer, so the
-panel shows its list again. You can add notes on the lines below the option,
-and your prompt carries them to the agent with the answer. The panel finds
-each quoted question whose quote ends its line, and reads the text after the
-quote, up to the next quoted item or the end of the prompt. When that text
-starts with one of the question's options, after any blank lines and spaces,
-and the option ends its line, that option answers the question, and the
-lines after it are your notes:
+The drawer stays open until you send. Sending the prompt with the option's
+number still under the quote answers the question with that option and
+closes its drawer, so the panel shows its list again. The number is what
+answers, so you can edit the option's words before you send: the panel
+records the option you numbered, and your prompt carries your words to the
+agent. You can also add notes on the lines below the option, and your prompt
+carries them with the answer:
 
 ```text
 [3] "Decline the finding about the retry budget?"
 
-Add a budget of two retries per host, and keep the total cap
+2: Add a budget of three retries per host, and keep the total cap
 
 Log each retry, so we can tune the budget later.
 ```
 
+The panel finds each quoted question whose quote ends its line, and reads
+the text after the quote, up to the next quoted item or the end of the
+prompt. When that text starts with one of the question's option numbers and
+a colon, after any blank lines and spaces, that option answers the question,
+whatever words follow on its line. The colon needs a space or the end of the
+line after it, so `1:30 tomorrow` reads as a time rather than as option 1.
+When you delete the number, the text answers only when it starts with one of
+the question's options and the option ends its line. Either way, the lines
+after it are your notes.
+
 Anything else you send under a quoted question is a reply, not an answer:
-your own words, an option with more text after it on its own line, notes
-written above the option, or a question back. The panel records nothing and
+your own words, a number the question has no option for, an option with
+more text after it on its own line and no number before it, notes written
+above the option, or a question back. The panel records nothing and
 closes the question's drawer, and the question stays in the list. Your
 prompt carries the reply to the agent, which answers what you asked and then
 settles the question. It withdraws the question if your reply settles it,

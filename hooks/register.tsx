@@ -56,6 +56,7 @@ import {
   mayBeUnclear,
   needsDelivery,
   owesMessage,
+  pickOf,
   proposalOf,
   quoteOf,
   quotesIn,
@@ -2080,9 +2081,10 @@ export const register: Register = on => {
       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
       const recommended = ' (recommended)'
       const marked = <Text color="success"> ✓</Text>
-      const pick = (choice: string) => {
-        propose(question, choice)
-        fill(`${proposalOf(question, choice)}\n`)
+      const pick = (index: number, choice: string) => {
+        const picked = pickOf(index, choice)
+        propose(question, picked)
+        fill(`${proposalOf(question, picked)}\n`)
       }
 
       return [
@@ -2090,7 +2092,7 @@ export const register: Register = on => {
         ...question.choices.map((choice, index) => {
           const letter = letterAt(index)
           return answer === undefined ? (
-            <Button key={`answer:${ref}.${letter}`} plain hotkey={String(index + 1)} onPress={() => pick(choice)}>
+            <Button key={`answer:${ref}.${letter}`} plain hotkey={String(index + 1)} onPress={() => pick(index, choice)}>
               {index === 0 ? `${choice}${recommended}` : choice}
             </Button>
           ) : (
