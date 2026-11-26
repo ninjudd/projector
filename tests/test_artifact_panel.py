@@ -89,6 +89,12 @@ class ArtifactPanelTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), '--local',
                                          '--checkout', str(worktree), '--session', 'publisher']))
+            self.assertEqual(0, cli.main(['artifact', 'dismiss', 'explorer', '--checkout', str(worktree),
+                                         '--session', 'publisher']))
+        self.assertEqual([], self.panel('publisher'))
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(0, cli.main(['artifact', 'restore', 'explorer', '--checkout', str(worktree),
+                                         '--session', 'publisher']))
         self.git('worktree', 'remove', str(worktree))
         rows = self.panel('publisher')
         self.assertEqual(['explorer'], [row['id'] for row in rows])

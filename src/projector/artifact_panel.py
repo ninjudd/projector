@@ -84,15 +84,20 @@ def context(session: str, state: Path | None = None) -> dict[str, dict]:
     return found
 
 
-def attach(root: Path, remote: str, session: str, id: str, *, restore: bool = False,
-           state: Path | None = None) -> None:
-    artifact.identifier(id)
+def context_checkout(root: Path, remote: str) -> Path:
     tree = config.working_tree(root)
     if tree is not None:
         main = config.working_tree(tree.common.parent)
         if (main is not None and main.common == tree.common
                 and artifact.repository(main.top, remote) == artifact.repository(root, remote)):
             root = main.top
+    return root.resolve()
+
+
+def attach(root: Path, remote: str, session: str, id: str, *, restore: bool = False,
+           state: Path | None = None) -> None:
+    artifact.identifier(id)
+    root = context_checkout(root, remote)
     if not any(row['id'] == id for row in catalog(root, remote)):
         raise artifact.ArtifactError(f'{id}: no saved artifact')
     folder = watch.session_folder(state or watch.state_root(), session)
@@ -138,6 +143,7 @@ def discussion(row: dict) -> str:
 
 def dismiss(root: Path, remote: str, session: str, id: str, *, state: Path | None = None) -> None:
     artifact.identifier(id)
+    root = context_checkout(root, remote)
     folder = watch.session_folder(state or watch.state_root(), session)
     name = key(root, remote, id)
     with locked(folder):
