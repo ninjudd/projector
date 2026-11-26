@@ -13,6 +13,7 @@ from tests import __main__ as runner
 
 PROBE = '''
 import subprocess
+import time
 import unittest
 
 
@@ -23,6 +24,9 @@ class Probe(unittest.TestCase):
 
     def test_waits_on_a_child_that_never_ends(self):
         subprocess.Popen(["sleep", "60"]).wait()
+
+    def test_never_ends(self):
+        time.sleep(60)
 '''
 
 
@@ -56,6 +60,19 @@ class RunTests(unittest.TestCase):
         result = runner.run(["runner_probe.Probe.test_waits_on_a_child_that_never_ends"], False, timeout=1)
 
         self.assertLess(time.monotonic() - start, 10, "the child's open pipes must not keep the run waiting")
+        self.assertEqual(1, result.returncode)
+        self.assertIn("The chunk ran past 1 seconds and was stopped.", result.stderr)
+
+    def test_a_chunk_past_its_timeout_fails_where_process_groups_cannot_be_killed(self) -> None:
+        # Windows has no `os.killpg`.
+        killpg = os.killpg
+        del os.killpg
+        self.addCleanup(setattr, os, "killpg", killpg)
+        start = time.monotonic()
+
+        result = runner.run(["runner_probe.Probe.test_never_ends"], False, timeout=1)
+
+        self.assertLess(time.monotonic() - start, 10)
         self.assertEqual(1, result.returncode)
         self.assertIn("The chunk ran past 1 seconds and was stopped.", result.stderr)
 

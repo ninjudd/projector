@@ -71,7 +71,12 @@ def run(ids: list[str], verbose: bool, timeout: float = TIMEOUT) -> subprocess.C
         try:
             out, err = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
+            if hasattr(os, "killpg"):
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                # Windows has no process groups to kill, so only the chunk itself stops, and a process it
+                # started that holds its output open still keeps `communicate` waiting.
+                process.kill()
             out, err = process.communicate()
             err += f"\nThe chunk ran past {timeout:g} seconds and was stopped.\n"
             return subprocess.CompletedProcess(command, 1, out, err)
