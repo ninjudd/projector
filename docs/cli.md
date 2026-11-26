@@ -3415,6 +3415,11 @@ pull request or the session.
 
 ## Use the console
 
+`projector` opens the same console as `project console`. It also launches
+managed Claude and Codex sessions after `projector setup` installs the optional
+agent environment. See [Run agents in the console](agents.md) for launch,
+conversation, inbox, interruption, recovery, and native handoff controls.
+
 `project console` groups live Projector sessions by working directory and
 shows the selected session's panel below the list. In the panel, you answer
 its items and send it messages about its items and pull requests.

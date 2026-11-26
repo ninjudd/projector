@@ -62,6 +62,9 @@ def own_transcript(session: str, value: object) -> Optional[str]:
 
 
 def active(folder: Path, now: float) -> bool:
+    from . import runtime
+    if runtime.managed(folder):
+        return False
     record = registration(folder)
     expires = record.get("expires_at")
     return (record.get("schema_version") == 1 and record.get("enabled") is True
@@ -123,10 +126,12 @@ def claim_of(session: str, ref: str) -> dict:
         return {}
 
 
-def offer(folder: Path) -> None:
+def offer(folder: Path, *, exclude: set[str] | frozenset[str] = frozenset()) -> None:
     """Claim each line the session's inbox owes and queue it, so this adapter is its one deliverer."""
     lines = []
     for item in inbox_items(folder.name):
+        if item["ref"] in exclude:
+            continue
         if not inbox.owes_a_line(item) or inbox.live_claim(item):
             continue
         try:

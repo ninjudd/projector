@@ -123,7 +123,7 @@ ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config s
        "Bash(project inbox decline *)", "Bash(project inbox start *)",
        "Bash(project inbox unclear *)", "Bash(project inbox discuss *)", "Bash(project console)",
        "Bash(project console *)", "Bash(project ios *allow-untrusted*)", "Bash(project review run *)",
-       "Bash(project hosted *)")
+       "Bash(project hosted *)", "Bash(projector)", "Bash(projector *)")
 # The narrower rules Projector wrote before `Bash(project *)` covered them,
 # which `init` removes from `permissions.allow`.
 SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
@@ -134,7 +134,7 @@ RETIRED_ASK = ("Bash(project -*)",)
 
 ASKED = ("`project init`, `project upgrade`, `project config set`, `unset`, and `allow`, `project site` with "
          "`--prepare` or `--allow-prepare`, `project ios build --allow-untrusted`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
-         "`decline`, `start`, `unclear`, and `discuss`, `project console`, `project review run`, and `project hosted`")
+         "`decline`, `start`, `unclear`, and `discuss`, `project console`, `projector`, `project review run`, and `project hosted`")
 COMMANDS = "every `project` command but the few that reach outside Projector's own state"
 
 # Each pattern Codex may run without asking, and outside its sandbox, with the
@@ -197,7 +197,8 @@ CODEX_RULES = (
     "# `project hosted`, which signs in to a hosted service, holds its account token, and subscribes,\n"
     "# `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
     "# `unclear`, and `discuss`, which record the person's choice or words, `project console`, which\n"
-    "# records them from a terminal, and a command line that starts with an option.\n"
+    "# records them from a terminal, `projector`, which launches and controls agents, and a command line\n"
+    "# that starts with an option.\n"
     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
               f'    justification = "{justification}",\n)\n'
               for pattern, justification in CODEX_ALLOW)
