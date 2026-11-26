@@ -351,9 +351,18 @@ second. Repository settings and Pages visibility stay unchanged.
 builds both versions and uploads the site, but GitHub's deployment step
 cannot find its upload. The upload is visible through the API after the
 failure. [One deployment retry](https://github.com/ninjudd/projector/actions/runs/45786488192)
-fails at the same step after uploading successfully. The public manifest
-still contains no artifacts, so hosted browser verification remains blocked
-on deployment. Neither run changes Pages settings or access rules. The
+fails at the same step after uploading successfully. At that point, the
+public manifest contains no artifacts, so hosted browser verification waits
+for deployment. Neither run changes Pages settings or access rules. The
 storage, dispatch failure, existing-workflow selection,
 remote-default-branch, and visibility boundaries also have local regression
 coverage.
+
+A later check on November 26 confirms that the public site serves both
+versions. Browser verification passes against
+[the live artifact](https://ninjudd.io/projector/artifacts/cache-explorer/)
+at 1440 × 900 and 375 × 812, including direct latest and fixed links,
+version selection, browser back, query and live hash state, keyboard
+controls, relative JSON and SVG loads, exact binary bytes, search, and
+full-screen controls. Both screenshots are inspected, with no horizontal
+overflow or failed local requests. The deferred live check is complete.

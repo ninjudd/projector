@@ -478,6 +478,163 @@ test('draws one line per open pull request the session subscribes to', async ($,
   await ui.unmount()
 })
 
+test('lists saved artifacts, opens them, and dismisses a row from this session', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const row = {
+    id: 'cache-explorer', title: 'Cache explorer', description: 'Explore saved data',
+    version: 'a'.repeat(64), key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: false,
+  }
+  let dismissed = false
+  const { commands } = world(on, daemonFiles({ fix: ['o/r#1'] }), argv => {
+    if (argv[1] === 'artifact' && argv[2] === 'panel') return ran(JSON.stringify({ artifacts: dismissed ? [] : [row] }))
+    if (argv[1] === 'artifact' && argv[2] === 'dismiss') dismissed = true
+    return ran('{}')
+  })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: 'Artifacts' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Cache explorer/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: row.description })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /1 artifact/ })).toBeDefined()
+  await ui.press({ key: 'count:artifact' })
+  expect(await ui.find({ key: `open:artifact:${row.key}` })).toBeUndefined()
+  await ui.press({ key: 'count:artifact' })
+  await ui.press({ key: `open:artifact:${row.key}` })
+  expect(await ui.find({ type: 'Text', text: row.description })).toBeDefined()
+  await ui.press({ key: `visit:artifact:${row.key}` })
+  expect(commands).toContainEqual(['project', 'artifact', 'open', row.id, '--checkout', row.checkout, '--remote', 'origin'])
+  await ui.press({ key: `dismiss:artifact:${row.key}` })
+  await clock.settle()
+  expect(commands).toContainEqual(['project', 'artifact', 'dismiss', row.id, '--checkout', row.checkout,
+    '--remote', 'origin', '--session', SESSION])
+  expect(await ui.find({ type: 'Text', text: /Cache explorer/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('artifact Open keeps the printed URL clickable when a browser cannot open', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const row = { id: 'explorer', title: 'Cache explorer', description: '',
+    version: 'a'.repeat(64), key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: true }
+  const url = 'http://127.0.0.1:8123/open-token/index.html'
+  world(on, {}, argv => argv[1] === 'artifact' && argv[2] === 'panel'
+    ? ran(JSON.stringify({ artifacts: [row] }))
+    : ran(`${url}\n`))
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: `open:artifact:${row.key}` })
+  await ui.press({ key: `visit:artifact:${row.key}` })
+  expect((await ui.findAll({ type: 'Link' })).map(link => link.props.href)).toEqual([url])
+  await ui.unmount()
+})
+
+test('a delayed artifact Open keeps other links and a revision hides its previous link', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const first = { id: 'explorer', title: 'Cache explorer', description: '',
+    version: 'a'.repeat(64), key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: true }
+  const second = { ...first, id: 'timeline', title: 'Timeline', key: 'c'.repeat(64) }
+  const firstUrl = 'http://127.0.0.1:8123/first-token/index.html'
+  const secondUrl = 'http://127.0.0.1:8123/second-token/index.html'
+  world(on, {}, argv => {
+    if (argv[1] !== 'artifact') return ran('{}')
+    if (argv[2] === 'panel') return ran(JSON.stringify({ artifacts: [first, second] }))
+    return argv[3] === first.id ? clock.sleep(1_000).then(() => ran(`${firstUrl}\n`)) : ran(`${secondUrl}\n`)
+  })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: `open:artifact:${first.key}` })
+  const opened = ui.press({ key: `visit:artifact:${first.key}` })
+  await clock.settle()
+  await ui.press({ key: `open:artifact:${second.key}` })
+  await ui.press({ key: `visit:artifact:${second.key}` })
+  await clock.advance(1_000)
+  await opened
+  expect((await ui.findAll({ type: 'Link' })).map(link => link.props.href)).toEqual([secondUrl])
+  second.version = 'd'.repeat(64)
+  await clock.advance(35_000)
+  await clock.settle()
+  expect(await ui.findAll({ type: 'Link' })).toEqual([])
+  await ui.unmount()
+})
+
+test('artifact discussion fills the prompt with its saved version and description', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const row = { id: 'explorer', title: 'Cache explorer', description: 'Compare cache policies',
+    version: 'a'.repeat(64), key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: true }
+  const { filled } = world(on, {}, argv => ran(JSON.stringify({ artifacts:
+    argv[1] === 'artifact' && argv[2] === 'panel' ? [row] : [],
+  })))
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: `open:artifact:${row.key}` })
+  await ui.press({ key: `discuss:artifact:${row.key}` })
+  expect(filled).toEqual([
+    `insert:Artifact explorer@${'a'.repeat(64)}: Cache explorer\nDescription: Compare cache policies\nCheckout: /work/repo\nRemote: origin\n\n`,
+  ])
+  await ui.unmount()
+})
+
+test('artifact polling keeps the last rows on a failed read and loads a new version on the next poll', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  let fail = false
+  let title = 'Original explorer'
+  world(on, {}, argv => argv[1] === 'artifact' && argv[2] === 'panel'
+    ? fail ? { ...ran(''), exitCode: 65, stderr: 'unavailable' } : ran(JSON.stringify({ artifacts: [{
+      id: 'explorer', title, description: '', version: 'a'.repeat(64), key: 'b'.repeat(64),
+      checkout: '/work/repo', remote: 'origin', preview: true,
+    }] })) : ran('{}'))
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: /Original explorer.*local preview/ })).toBeDefined()
+  fail = true
+  await clock.advance(35_000)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: /Original explorer/ })).toBeDefined()
+  fail = false
+  title = 'Revised explorer'
+  await clock.advance(30_000)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: /Revised explorer/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Original explorer/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('an artifact can be dismissed while the catalog is being read', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const row = { id: 'explorer', title: 'Cache explorer', description: '', version: 'a'.repeat(64),
+    key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: true }
+  let reads = 0
+  let isDismissed = false
+  world(on, {}, argv => {
+    if (argv[1] === 'artifact' && argv[2] === 'dismiss') isDismissed = true
+    if (argv[1] !== 'artifact' || argv[2] !== 'panel') return ran('{}')
+    reads += 1
+    if (reads === 2) {
+      return clock.sleep(1_000).then(() => ran(JSON.stringify({ artifacts: [row] })))
+    }
+    return ran(JSON.stringify({ artifacts: isDismissed ? [] : [row] }))
+  })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: `open:artifact:${row.key}` })
+  await clock.advance(35_000)
+  expect(reads).toBe(2)
+  const dismissed = ui.press({ key: `dismiss:artifact:${row.key}` })
+  await clock.settle()
+  await clock.advance(1_000)
+  await dismissed
+  await clock.settle()
+  expect(isDismissed).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /Cache explorer/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a row says what holds it back first, then reviewing, clean, draft, or ready, with a draft’s number and word in italic', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -1669,8 +1826,8 @@ test('`/projector` only shows or hides the panel, whatever follows it', async ($
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: ` ${TAGLINE}` })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  // The panel runs nothing but its reload's read of its setting.
-  expect(commands.filter(argv => argv.slice(0, 3).join(' ') !== 'project config get')).toEqual([])
+  // Showing the panel reads its settings and artifact catalog without changing subscriptions.
+  expect(commands.filter(argv => !['project config get', 'project artifact panel'].includes(argv.slice(0, 3).join(' ')))).toEqual([])
   await ui.unmount()
 })
 
@@ -2437,9 +2594,8 @@ test('an idle session with no questions runs no inbox command', async ($, on) =>
   await clock.advance(3 * TICK)
   await clock.settle()
 
-  // Listing the store's directory starts no process; only a reload of the shown panel reads its setting, and the
-  // session's start renews its subscriptions.
-  expect(session.project().filter(command => !/^(config get|watch renew)/.test(command))).toEqual([])
+  // The artifact catalog and settings are separate from inbox delivery.
+  expect(session.project().filter(command => command.startsWith('inbox '))).toEqual([])
   const ui = await $.ui.mount(PANEL)
   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await ui.unmount()

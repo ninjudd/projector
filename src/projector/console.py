@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, TextIO
 
-from . import agents, codex_watch, inbox, repo_inbox, rows, session_titles, watch
+from . import agents, artifact_panel, codex_watch, inbox, repo_inbox, rows, session_titles, summary, watch
 from .core import ProjectorError
 
 INBOX_EVERY = 1.0
@@ -74,6 +74,7 @@ class Session:
     rows: list[rows.Row] = field(default_factory=list)
     # The repository inbox's entries for the repository the session works in.
     entries: list[dict] = field(default_factory=list)
+    artifacts: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -88,6 +89,7 @@ class Field:
     text: str = ""
     cursor: int = 0
     then: Optional[Callable[[Optional[str]], Optional[dict]]] = None
+    context: str = ""
 
     @property
     def inline(self) -> bool:
@@ -133,6 +135,7 @@ class Work:
     rows: bool
     signatures: dict[str, Optional[tuple]]
     items: dict[str, list[dict]] = field(default_factory=dict)
+    directories: dict[str, str] = field(default_factory=dict)
     pull: Optional[rows.Pull] = None
     drawer: Optional[str] = None
 
@@ -144,6 +147,7 @@ class Found:
     live: Optional[dict[str, tuple[str, str, str, Optional[float], tuple, Optional[list[dict]]]]] = None
     rows: dict[str, list[rows.Row]] = field(default_factory=dict)
     entries: dict[str, list[dict]] = field(default_factory=dict)
+    artifacts: dict[str, list[dict]] = field(default_factory=dict)
     drawer: Optional[str] = None
     threads: Optional[list[rows.Thread]] = None
 
@@ -265,6 +269,7 @@ def counts_of(session: Session, now_ms: int) -> list[str]:
     awake = [item for item in session.items if is_shown(item, now_ms) and is_awake(item, now_ms)]
     parts = [counted(sum(1 for row in session.rows if row.section == section), NOUNS[section])
              for section in rows.SECTIONS]
+    parts.append(counted(len(session.artifacts), 'artifact'))
     parts += [counted(sum(1 for item in awake if item["kind"] == kind), NOUNS[kind]) for kind in KINDS]
     return [part for part in parts if part is not None]
 
@@ -350,6 +355,14 @@ def item_key(item: dict) -> str:
     return f"item:{item['ref']}"
 
 
+def read_artifacts(state: Path, session: str, cwd: str) -> Optional[list[dict]]:
+    try:
+        checkout = summary.checkout_root(Path(cwd)) if cwd else None
+        return artifact_panel.listing(checkout, 'origin', session, state) if checkout else []
+    except (ProjectorError, OSError):
+        return None
+
+
 class Console:
     """What the console shows, and what each key does to it."""
 
@@ -412,7 +425,8 @@ class Console:
     def due(self, now: float) -> Optional[Work]:
         work = Work(inbox=now >= self.next_inbox, rows=now >= self.next_rows,
                     signatures={name: session.signature for name, session in self.sessions.items()},
-                    items={name: session.items for name, session in self.sessions.items()})
+                    items={name: session.items for name, session in self.sessions.items()},
+                    directories={name: session.cwd for name, session in self.sessions.items()})
         if work.inbox:
             self.next_inbox = now + INBOX_EVERY
         if work.rows:
@@ -451,6 +465,10 @@ class Console:
         for name in names:
             if work.rows or name not in work.signatures:
                 found.rows[name] = rows.rows_for(self.root, name)
+                cwd = found.live[name][2] if found.live is not None else work.directories.get(name, '')
+                artifacts = read_artifacts(self.root, name, cwd)
+                if artifacts is not None:
+                    found.artifacts[name] = artifacts
         if work.pull is not None:
             found.threads = rows.fetch_threads(work.pull, self.gh)
         return found
@@ -471,6 +489,10 @@ class Console:
         for name, entries in found.entries.items():
             if name in self.sessions:
                 self.sessions[name].entries = entries
+        for name, artifacts in found.artifacts.items():
+            if name in self.sessions:
+                hidden = artifact_panel.dismissals(name, self.root)
+                self.sessions[name].artifacts = [row for row in artifacts if row['key'] not in hidden]
         if found.drawer is not None and found.drawer == self.drawer:
             self.threads = found.threads
         self.settle_view()
@@ -527,6 +549,7 @@ class Console:
             return []
         now = self.now_ms()
         return ([(pull_key(row.pull), row) for row in session.rows]
+                + [(f"artifact:{entry['key']}", entry) for entry in session.artifacts]
                 + [(item_key(item), item) for item in shown_items(session, now)]
                 + [(entry_key(entry), entry) for entry in session.entries if not repo_inbox.is_snoozed(entry, now)])
 
@@ -708,12 +731,36 @@ class Console:
         self.settle_view()
 
     def controls(self) -> list[Control]:
+        if self.drawer and self.drawer.startswith('artifact:'):
+            row = dict(self.entries()).get(self.drawer)
+            if row is not None:
+                return [Control('o', 'Open', lambda: self.open_artifact(row)),
+                        Control('7', 'Discuss', lambda: self.open_field(
+                            'session', None, f"Discuss {row['id']}: ", context=artifact_panel.discussion(row))),
+                        Control('8', 'Dismiss', lambda: self.dismiss_artifact(row))]
         row, item, entry = self.row(self.drawer), self.item(self.drawer), self.entry(self.drawer)
         if row is not None:
             return self.pull_controls(row)
         if entry is not None:
             return self.entry_controls(entry)
         return self.item_controls(item) if item is not None else []
+
+    def open_artifact(self, row: dict) -> None:
+        try:
+            self.visit('o', artifact_panel.open_url(Path(row['checkout']), row['remote'], row['id']))
+        except (ProjectorError, OSError) as error:
+            self.status = str(error)
+
+    def dismiss_artifact(self, row: dict) -> None:
+        try:
+            artifact_panel.dismiss(Path(row['checkout']), row['remote'], self.session, row['id'], state=self.root)
+            session = self.viewed()
+            if session is not None:
+                session.artifacts = [item for item in session.artifacts if item['key'] != row['key']]
+            self.close_drawer()
+            self.settle_view()
+        except ProjectorError as error:
+            self.status = str(error)
 
     def entry_controls(self, entry: dict) -> list[Control]:
         """A repository inbox entry's keys. A peer's question takes its answers, and a request Done or its options
@@ -911,8 +958,8 @@ class Console:
 
     # The text field
 
-    def open_field(self, purpose: str, target: Optional[str], prompt: str) -> None:
-        self.field = Field(purpose, target, prompt)
+    def open_field(self, purpose: str, target: Optional[str], prompt: str, *, context: str = "") -> None:
+        self.field = Field(purpose, target, prompt, context=context)
 
     def field_key(self, name: str) -> None:
         typing = self.field
@@ -959,7 +1006,7 @@ class Console:
             quoted = f'[{target}] "{entry["subject"]}" from {repo_inbox.peer_label(entry)}: ' if entry else ""
             item = self.record(lambda name: inbox.send(name, quoted + said))
         else:
-            item = self.record(lambda name: inbox.send(name, said, pr=target))
+            item = self.record(lambda name: inbox.send(name, typing.context + said, pr=target))
         if item is None:
             return
         self.field = None
@@ -1116,9 +1163,12 @@ class Console:
         state_width = max((len(row.state) for row in session.rows if not row.pull.is_loading), default=0)
         previous = None
         for key, entry in entries:
-            group = entry.section if isinstance(entry, rows.Row) else "repo" if key.startswith("repo:") else "items"
+            group = (entry.section if isinstance(entry, rows.Row) else "artifact" if key.startswith('artifact:')
+                     else "repo" if key.startswith("repo:") else "items")
             if previous is not None and group != previous:
                 lines.append(Line([]))
+            if group == 'artifact' and previous != group:
+                lines.append(Line([('Artifacts', '')]))
             previous = group
             start = len(lines)
             # The row is lit only while the focus is on the row itself, not on one of its drawer's controls.
@@ -1127,6 +1177,15 @@ class Console:
                 lines.append(self.pull_line(entry, label_width, state_width, author_width, lit))
                 if key == self.drawer:
                     lines += self.pull_drawer(entry, width)
+            elif key.startswith('artifact:'):
+                suffix = ' · local preview' if entry['preview'] else ''
+                lines.append(Line([(f"- {entry['title']}{suffix}", '')], lit))
+                if entry['description']:
+                    lines += [Line([(' ' * DRAWER_INDENT + part, 'subtle')])
+                              for part in textwrap.wrap(entry['description'], max(1, width - DRAWER_INDENT))]
+                if key == self.drawer:
+                    lines.append(self.controls_line(self.controls()))
+                    lines += self.link_lines(width)
             elif key.startswith("repo:"):
                 lines.append(self.entry_line(entry, now, lit))
                 if key == self.drawer:
@@ -1176,13 +1235,7 @@ class Console:
             said += [(" · ", "subtle")] if at else []
             said += fact
         lines = [Line(said), self.controls_line(self.controls())]
-        if self.link is not None and self.link[0] == self.drawer:
-            # The whole URL from the first column, a window's width to a line, so a terminal can find it to click.
-            _, _, url, copied = self.link
-            lines += [Line([(url[start:start + width], "")]) for start in range(0, len(url), max(1, width))]
-            if copied:
-                lines.append(Line([(" " * DRAWER_INDENT + "Sent to your clipboard where your terminal allows it",
-                                    "subtle")]))
+        lines += self.link_lines(width)
         if pull.open_threads and self.threads is None:
             lines.append(Line([(f"{indent}loading threads…", "subtle")]))
         for path, threads in rows.threads_by_file(self.threads or []):
@@ -1192,6 +1245,17 @@ class Console:
                 where = f"{thread.line}: " if thread.line is not None else ""
                 said = f"{where}{thread.author or 'someone'}: {thread.excerpt}"
                 lines.append(Line([(f"{indent}  {said}", "subtle" if thread.is_outdated else "")]))
+        return lines
+
+    def link_lines(self, width: int) -> list[Line]:
+        if self.link is None or self.link[0] != self.drawer:
+            return []
+        # The whole URL from the first column, a window's width to a line, so a terminal can find it to click.
+        _, _, url, copied = self.link
+        lines = [Line([(url[start:start + width], "")]) for start in range(0, len(url), max(1, width))]
+        if copied:
+            lines.append(Line([(" " * DRAWER_INDENT + "Sent to your clipboard where your terminal allows it",
+                                "subtle")]))
         return lines
 
     def item_line(self, item: dict, now: int, selected: bool) -> Line:

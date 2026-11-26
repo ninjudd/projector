@@ -363,6 +363,29 @@ def run(arguments) -> int:
     if root is None:
         raise ArtifactError('artifact commands need a Git checkout; pass --checkout')
     command, remote = arguments.artifact_command, arguments.remote
+    if command in ('panel', 'dismiss', 'restore', 'open'):
+        import webbrowser
+        from . import artifact_panel, watch
+
+        if command == 'open':
+            url = artifact_panel.open_url(root, remote, arguments.id)
+            if not arguments.print_url:
+                webbrowser.open(url)
+            print(url)
+        else:
+            session = watch.session_id(arguments.session)
+            if command == 'panel':
+                rows = artifact_panel.listing(root, remote, session)
+                if arguments.json_output:
+                    print(json.dumps({'artifacts': rows}, ensure_ascii=False))
+                else:
+                    for row in rows:
+                        print(f"{row['id']}\t{row['title']}")
+            else:
+                artifact_panel.dismiss(root, remote, session, arguments.id, restore=command == 'restore')
+                verb = 'restored' if command == 'restore' else 'dismissed'
+                print(f"{verb} {arguments.id} in session {session}; saved versions are unchanged")
+        return 0
     if command == 'init' and not arguments.from_published:
         if arguments.version or not arguments.title:
             raise ArtifactError('a new artifact needs --title; --version goes with --from-published')

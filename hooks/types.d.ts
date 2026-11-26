@@ -57,6 +57,17 @@ export type PullRequest = {
 /** One line of the panel: an open pull request and what the session does with it. */
 export type Row = { pr: PullRequest; roles: Role[] }
 
+export type Artifact = {
+  id: string
+  title: string
+  description: string
+  version: string
+  preview: boolean
+  key: string
+  checkout: string
+  remote: string
+}
+
 export type Snapshot = {
   rows: Row[]
   /** The operator's login, as the daemon's `daemon.json` names it; null until it does. */
@@ -221,7 +232,7 @@ export type Answerable = Question | Request
  * requests, the review requests someone else's pull requests make, or a kind
  * of item.
  */
-export type Section = 'pr' | 'review' | Item['kind']
+export type Section = 'pr' | 'review' | 'artifact' | Item['kind']
 
 /**
  * An answer the panel claimed and is delivering: the claim's token, the route
@@ -242,6 +253,8 @@ declare module 'claude-code' {
       /** The pull requests the session subscribed to when the panel last looked, by `keyOf`, so a new one shows the panel. */
       panelSubscribed: string[]
       panelSnapshot: Snapshot
+      panelArtifacts: { rows: Artifact[]; revision: number }
+      panelArtifactLinks: Record<string, { version: string; url: string }>
       panelNow: number
       isPanelShown: boolean
       /** The drawer that is open: a pull request's by `keyOf`, or `item:` and an item's reference. */
