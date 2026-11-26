@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 from unittest import mock
 
-from projector import cli, config, console, inbox, relay, repo_inbox, watch
+from projector import cli, config, console, inbox, relay, repo_inbox, session_titles, watch
 from projector.inbox import read_json, write_json
 
 SOURCE = Path(cli.__file__).resolve().parents[1]
@@ -51,6 +51,8 @@ class ConsoleCase(unittest.TestCase):
         self.home = self.scratch / "home"
         self.home.mkdir()
         environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state"), "HOME": str(self.home),
+                                               "CODEX_HOME": str(self.home / ".codex"),
+                                               "CLAUDE_CONFIG_DIR": str(self.home / ".claude"),
                                                "PROJECTOR_REMOTE": "0", "BROWSER": ""})
         environ.start()
         self.addCleanup(environ.stop)
@@ -196,7 +198,7 @@ class SessionSet(ConsoleCase):
 
         self.console.tick()
 
-        self.assertEqual([("Codex", "codex", str(checkout)), ("fixer", "claude", "")],
+        self.assertEqual([("Unnamed session", "codex", str(checkout)), ("fixer", "claude", "")],
                          sorted((one.label, one.host, one.cwd) for one in self.console.home()))
 
 
@@ -259,9 +261,54 @@ class HomeOrder(ConsoleCase):
 
 
 class SessionColumns(ConsoleCase):
-    def test_agent_names_replace_ids_and_pr_counts_start_in_one_column(self) -> None:
+    def test_a_codex_rename_appears_without_an_inbox_change_and_a_partial_name_waits_for_its_newline(self) -> None:
+        self.codex("s1", cwd="/work/app")
+        self.subscribe("s1", "acme/app review claude operator")
+        index = self.home / ".codex" / "session_index.jsonl"
+        index.parent.mkdir()
+        index.write_text('{"id":"s1","thread_name":"First title"}\n')
+        self.console.tick()
+        self.assertEqual("First title", self.console.viewed().label)
+
+        with index.open("a") as stream:
+            stream.write('not json\n{"id":"s1","thread_name":"Renamed')
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.assertEqual("First title", self.console.viewed().label)
+
+        with index.open("a") as stream:
+            stream.write(' session"}\n')
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.assertEqual("Renamed session", self.console.viewed().label)
+
+        index.write_text('{"id":"s1","thread_name":"New"}\n')
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.assertEqual("New", self.console.viewed().label)
+
+    def test_a_claude_session_uses_its_native_custom_title_after_a_large_non_title_entry(self) -> None:
+        self.claude("s1")
+        self.ask("s1")
+        transcript = self.home / ".claude" / "projects" / "project" / "s1.jsonl"
+        transcript.parent.mkdir(parents=True)
+        transcript.write_text(json.dumps({"type": "tool", "content": "x" * 400}) + "\n"
+                              + json.dumps({"type": "custom-title", "sessionId": "s1", "customTitle": "Ship preview"})
+                              + "\n")
+        with mock.patch.object(session_titles, "READ_BYTES", 128):
+            for _ in range(6):
+                self.console.tick()
+                self.clock.now += console.INBOX_EVERY
+
+        self.assertEqual("Ship preview", self.console.viewed().label)
+        self.assertNotIn("x" * 20, self.screen())
+
+    def test_session_titles_replace_ids_and_pr_counts_start_in_one_column(self) -> None:
         anonymous = "019a2b3c-0000-7000-8000-00000000c0de"
         self.codex(anonymous, cwd="/work/app")
+        index = self.home / ".codex" / "session_index.jsonl"
+        index.parent.mkdir()
+        index.write_text(json.dumps({"id": anonymous, "thread_name": "Build the preview"}) + "\n")
         self.claude("named")
         write_json(self.folder("named") / "agent.json",
                    {"schema_version": 1, "name": "build-fixer", "cwd": "/work/app", "repo": "acme/app"})
@@ -272,10 +319,10 @@ class SessionColumns(ConsoleCase):
 
         self.console.tick()
         lines = [line.text for line in self.console.lines(100)[0]]
-        codex = next(line for line in lines if "Codex" in line)
+        codex = next(line for line in lines if "Build the preview" in line)
         named = next(line for line in lines if "build-fixer" in line)
 
-        self.assertEqual(codex.index("1"), named.index("2"))
+        self.assertEqual(codex.index("1 PR"), named.index("2 PRs"))
         self.assertNotIn("00000000c0de", "\n".join(lines))
         self.assertNotIn("acme/app", "\n".join(lines))
 
@@ -291,6 +338,16 @@ class SessionColumns(ConsoleCase):
         self.assertIn("~", lines)
         self.assertIn("~/app", lines)
         self.assertIn(str(self.home) + "-other/app", lines)
+
+    def test_session_rows_follow_the_directory_without_field_headings(self) -> None:
+        self.codex("s1", cwd="/work/app")
+        self.subscribe("s1", "acme/app review claude operator")
+        self.console.tick()
+        lines = self.console.home_lines(100)[0]
+
+        self.assertEqual("/work/app", lines[1].text)
+        self.assertTrue(lines[2].text.startswith("▸ "))
+        self.assertIn("0 PRs", lines[2].text)
 
     def test_a_newer_notice_does_not_replace_the_latest_open_request(self) -> None:
         self.claude("s1")
@@ -1093,7 +1150,7 @@ class SplitLayout(TerminalCase):
             with self.subTest(width=width):
                 row = next(line.text for line in self.console.lines(width)[0] if line.text.startswith("▸ "))
                 self.assertEqual(width, len(row))
-                self.assertTrue(row.endswith("0s"), row)
+                self.assertTrue(row.endswith("0s "), row)
         row = next(line.text for line in self.console.lines(40)[0] if line.text.startswith("▸ "))
         self.assertIn("…", row)
         self.assertNotIn("release?", row)

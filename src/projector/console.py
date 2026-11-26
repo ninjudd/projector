@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, TextIO
 
-from . import agents, codex_watch, inbox, repo_inbox, rows, watch
+from . import agents, codex_watch, inbox, repo_inbox, rows, session_titles, watch
 from .core import ProjectorError
 
 INBOX_EVERY = 1.0
@@ -163,7 +163,7 @@ def live_sessions(root: Path, now: float) -> dict[str, str]:
 def describe(root: Path, name: str, delivery: str, record: dict) -> tuple[str, str, str, Optional[float]]:
     """The session's display name, host, directory, and registration's last update, in milliseconds."""
     host = HOSTS.get(delivery) or record.get("host") or "other"
-    label = record.get("name") or {"claude": "Claude", "codex": "Codex"}.get(host, "Agent")
+    label = record.get("name") or "Unnamed session"
     cwd = codex_watch.registration(watch.session_folder(root, name)).get("cwd") or record.get("cwd")
     changed = watch.seconds_of(record.get("updated_at"))
     return label, host, cwd if isinstance(cwd, str) else "", changed * 1000 if changed is not None else None
@@ -367,6 +367,7 @@ class Console:
         self.lock = threading.RLock()
         self.refresh_now = threading.Event()
         self.sessions: dict[str, Session] = {}
+        self.titles = session_titles.SessionTitles()
         self.view = "home"
         self.session: Optional[str] = None
         self.selected: Optional[str] = None
@@ -443,6 +444,9 @@ class Console:
                     continue
                 found.live[name] = (*describe(self.root, name, delivery, record), seen, items)
                 found.entries[name] = entries
+            titles = self.titles.read({name: details[1] for name, details in found.live.items()})
+            for name, title in titles.items():
+                found.live[name] = (title, *found.live[name][1:])
             names = list(found.live)
         for name in names:
             if work.rows or name not in work.signatures:
@@ -997,14 +1001,14 @@ class Console:
         first, last = focus
         if room == 1:
             return [lines[last]]
-        if room < 4:
+        if room == 2:
             return [lines[0], lines[last]]
-        space = room - 2
+        space = room - 1
         if last - first + 1 > space:
             self.home_offset = min(max(self.home_offset, last - space + 2), last)
-            return [*lines[:2], lines[first], *lines[self.home_offset:self.home_offset + space - 1]]
+            return [lines[0], lines[first], *lines[self.home_offset:self.home_offset + space - 1]]
         self.home_offset = first + 1
-        return [*lines[:2], *lines[first:first + space]]
+        return [lines[0], *lines[first:first + space]]
 
     def panel_viewport(self, width: int, room: int) -> list[Line]:
         """The body's lines that fit in `room` rows. The offset survives each redraw and moves only as far as it
@@ -1059,11 +1063,12 @@ class Console:
             return lines, (0, 0)
         ages = {session.name: age(now - changed) if (changed := last_update(session)) is not None else "—"
                 for session in listed}
-        count_width = max(3, *(len(str(len(session.rows))) for session in listed))
-        age_width = max(7, *(len(value) for value in ages.values()))
+        counts = {session.name: counted(len(session.rows), "PR") or "0 PRs" for session in listed}
+        count_width = max(len(value) for value in counts.values())
+        age_width = max(len(value) for value in ages.values())
         name_width = min(max(5, *(len(session.label) for session in listed)), max(1, width // 4),
-                         max(1, width - count_width - age_width - 8))
-        request_width = max(0, width - 2 - name_width - count_width - age_width - 6)
+                         max(1, width - count_width - age_width - 9))
+        request_width = max(0, width - 2 - name_width - count_width - age_width - 7)
 
         def columns(label: str, count: str, request: str, changed: str, chosen: bool = False) -> Line:
             if width < 20:
@@ -1071,11 +1076,9 @@ class Console:
                              (fit(label, max(0, width - 2)), "suggestion" if chosen else "")])
             return Line([("▸ " if chosen else "  ", "subtle"),
                          (fit(label, name_width), "suggestion" if chosen else ""),
-                         (f"  {count.rjust(count_width)}  ", ""), (fit(request, request_width), ""),
-                         (f"  {changed.rjust(age_width)}", "subtle")])
+                         (f"  {count.ljust(count_width)}  ", ""), (fit(request, request_width), ""),
+                         (f"  {changed.rjust(age_width)} ", "subtle")])
 
-        heading = columns("Agent", "PRs", "Latest request", "Updated")
-        lines.append(Line([(heading.text, "subtle")]))
         viewed = self.viewed()
         chosen = viewed.name if viewed is not None else None
         focus = (0, 0)
@@ -1088,7 +1091,7 @@ class Console:
                 previous = session.cwd
             start = len(lines)
             request = headline(session, now)
-            lines.append(columns(session.label, str(len(session.rows)), request["subject"] if request else "—",
+            lines.append(columns(session.label, counts[session.name], request["subject"] if request else "—",
                                  ages[session.name], session.name == chosen))
             if session.name == chosen:
                 focus = (group_start, start)

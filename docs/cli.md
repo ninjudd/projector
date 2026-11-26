@@ -3410,15 +3410,18 @@ they share a repository. Paths within your home directory start with `~`.
 Sessions whose records have no directory appear under `Unknown working
 directory`, after the other groups.
 
-The session list has four aligned columns:
+The session list has four aligned fields, without headings:
 
-- **Agent** shows the registered agent name, or `Claude`, `Codex`, or
-  `Agent` when the session has no name. It uses normal text color. The
-  selected agent name has color and a `▸` marker; the row has no highlight.
-- **PRs** counts all open pull requests the session fixes or reviews.
+- **Session** shows the chat title from Codex's session index or Claude
+  Code's `/rename` metadata. It falls back to the registered session name,
+  then `Unnamed session` when neither is available. It uses normal text
+  color. The selected session name has color and a `▸` marker; the row has
+  no highlight.
+- **PRs** counts all open pull requests the session fixes or reviews, as
+  `0 PRs`, `1 PR`, or `5 PRs`.
 - **Latest request** shows the newest open, awake question or request.
   Notices and messages do not replace it. A session with none shows `—`.
-- **Updated** ends at the right edge and shows the age of the most recent
+- **Updated** leaves one space at the right edge and shows the age of the most recent
   Projector activity: the agent registration's update, an inbox file change,
   a pull request's GitHub update, or a repository inbox update. Polls and
   delivery heartbeats do not change it. A session with no recorded time
