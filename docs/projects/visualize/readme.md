@@ -338,9 +338,22 @@ Small publications read 79,000 source bytes; the large one reads its
 all versions and shared site assets. `tests.artifact_benchmark` reproduces
 the workload in a temporary repository and removes it after measurement.
 
-A live Pages publish is deferred until a site runs the merged action, tracked
-in [the implementation pull request](https://github.com/ninjudd/projector/pull/634). No
-repository settings, Pages visibility, or hosted artifact refs were changed
-by verification. The storage, dispatch failure, existing-workflow selection,
-remote-default-branch, and visibility boundaries are exercised without a
-live service.
+The live publication check on November 26, 2026 saves two versions of the
+public cache explorer fixture on `refs/projector/artifacts`.
+[The first version](https://ninjudd.io/projector/artifacts/cache-explorer/b80bb2895a5d15e4023806f3cebb935c30f615b71d1c7df60237c5bc66a5d7fa/)
+uses data value 17, and
+[the latest version](https://ninjudd.io/projector/artifacts/cache-explorer/7b974bb720128a02e88a04036e65ba83c1e8b624ba96b0267411b7ca208ab598/)
+uses 23. Recovery reproduces the first version's content identity and exact
+binary bytes. Republishing it creates no version and leaves latest on the
+second. Repository settings and Pages visibility stay unchanged.
+
+[The first site run](https://github.com/ninjudd/projector/actions/runs/45785861460)
+builds both versions and uploads the site, but GitHub's deployment step
+cannot find its upload. The upload is visible through the API after the
+failure. [One deployment retry](https://github.com/ninjudd/projector/actions/runs/45786488192)
+fails at the same step after uploading successfully. The public manifest
+still contains no artifacts, so hosted browser verification remains blocked
+on deployment. Neither run changes Pages settings or access rules. The
+storage, dispatch failure, existing-workflow selection,
+remote-default-branch, and visibility boundaries also have local regression
+coverage.
