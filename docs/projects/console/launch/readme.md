@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 priority: now
 ---
 
@@ -11,10 +11,10 @@ while keeping the console useful for any process that uses Projector.
 ## 1. Problem
 
 The console lists live sessions, pull requests, and inbox items. You can
-answer or discuss an item, and read the session's transcript, but you need
-the agent's own interface to start work and manage its conversation. The
-console discovers only the Claude panel and Codex delivery hosts, even
-though Projector's agent registry and messages are not specific to them.
+answer or discuss an item, but you need the agent's own interface to start
+work and manage its conversation. Registered external processes already
+participate in the inbox; registration does not give the console control
+of their execution.
 
 The missing piece is control of agent execution. Projector already stores
 questions, requests, answers, messages, and review events. Adding another
@@ -34,9 +34,11 @@ External processes retain their existing inbox and messaging experience.
    compatibility entry point. `project` remains the agent-facing CLI;
    `projector` is the human-facing interface.
 2. Choose **New session**, then Claude or Codex, a checkout, an optional
-   name, a model, and a multiline prompt. Show the effective permission
-   policy before launch. Use the native runtime's configured defaults;
-   launching never implies permission bypass.
+   name, a model, and a multiline prompt. Identify native settings as the
+   source of permission policy before launch, including automatic approvals.
+   Show the effective policy when the runtime reports it. Claude reports
+   its mode when the first turn initializes; it has no preflight policy
+   query in the tested SDK. Launching adds no permission bypass.
 3. The daemon records the launch and starts a detached worker in the
    optional agent environment. The worker opens the runtime, records its
    native resume ID, and registers with Projector. Normalize hook and
@@ -72,8 +74,9 @@ Do not describe this as attaching to a live SDK terminal. Use a tmux pane
 when available, or suspend curses and restore it when the CLI exits.
 
 During handoff, keep new input durable and suspend managed submission.
-An external native host can use its normal Projector delivery after the
-ownership transition. Returning to managed control closes that native
+Keep Projector inbox answers, messages, and review events queued while the
+native terminal owns the session. Fence the native panel and Codex queue
+throughout handoff so they cannot compete with the managed delivery ledger. Returning to managed control closes that native
 controller, reacquires ownership, resumes the same history, and reconciles
 pending deliveries. If exclusive control cannot be established, remain
 handed off rather than starting a second controller.
@@ -124,7 +127,7 @@ normalized event log supplies incremental display and command correlation.
 | `src/projector/console.py` and new console entry module | Launch form, conversation composer, stream display, lifecycle controls, native handoff, and capability-driven external rows |
 | New runtime and worker modules under `src/projector/` | Durable execution records, single-owner lifecycle, Claude SDK adapter, and Codex app-server adapter |
 | `src/projector/watch.py` and `src/projector/codex_watch.py` | Worker discovery and managed delivery; exclude competing native delivery without changing external behavior |
-| `src/projector/agents.py`, `src/projector/inbox.py`, and `src/projector/conversation.py` | Extend existing identity, delivery, and transcript abstractions; preserve public message and inbox semantics |
+| `src/projector/agents.py` and `src/projector/inbox.py` | Reuse existing identity and delivery; preserve public message and inbox semantics |
 | `pyproject.toml`, `install.sh`, and upgrade paths | Install `projector` beside `project`; offer a versioned optional agent environment without runtime dependencies in the core CLI |
 | `src/projector/permissions.py` and host packaging | Give the new human entry point the console's permission protection; verify Projector actions load in SDK sessions without requiring a UI hook engine |
 | Runtime integration tests and existing console, watch, inbox, agent, and packaging tests | Exercise failures and compatibility with fake runtimes; record separate real-runtime probes |
@@ -168,7 +171,7 @@ becoming a managed agent. Show whether it has a working answer-delivery
 route. Registration alone does not grant chat, interrupt, stop, or resume.
 
 The console renders supported controls from capabilities. Existing Claude
-and Codex sessions keep their current delivery and transcript readers.
+and Codex sessions keep their current delivery and inbox controls.
 Generic processes keep their inbox and messaging features even without an
 agent transcript. The console never infers control from a PID or kills a
 process it did not launch. Peer messages retain their existing lack of user
@@ -208,7 +211,7 @@ authority; a message cannot grant a native permission or answer as you.
 | Crash at the submission and acknowledgment boundaries, then restart | Proven unaccepted input can retry; uncertain acceptance needs recovery. Previously accepted tools and prompts do not rerun automatically |
 | Kill a worker with queued work and a pending approval | Failure is visible, queued work remains inspectable, and an obsolete approval cannot authorize the resumed runtime |
 | Use native handoff for each backend, add a native turn, then return | The same conversation includes the native turn; queued inbox answers survive and only one controller delivers at a time |
-| Register a generic process and use existing external Claude and Codex sessions | Inbox, replies, review subscriptions, and available transcripts still work; unsupported controls are absent and the process is never terminated by the console |
+| Register a generic process and use existing external Claude and Codex sessions | Inbox, replies, and review subscriptions still work; unsupported controls are absent and the process is never terminated by the console |
 | Replay events, include an unknown event kind, or truncate the final log write | Completed results appear once; unknown events do not stop later delivery, and damaged state is reported without discarding unrelated pending work |
 
 Use fake SDK and app-server peers to inject crashes at these boundaries.
@@ -228,19 +231,16 @@ unsettled commands and pending inbox delivery regardless of display retention.
 
 ## 6. Open questions
 
-- **Native round trip and configuration.** The implementer proves saved
-  sessions, native auth, plugins, Projector actions, approvals, and return
-  for both backends before committing to the runtime interface. This blocks
-  readiness. If a backend cannot meet the requirement, bring back evidence
-  and a concrete alternative rather than silently dropping takeover.
-- **Worker installation.** The implementer selects and tests the optional
-  environment's install and upgrade mechanism, dependency pins, and rollback.
-  Existing workers must keep their interpreter and package version while
-  running. This blocks readiness; do not add SDK imports to the core CLI.
-- **Supported versions and authentication.** The implementer records tested
-  minimum runtime versions and checks current provider rules before declaring
-  subscription support. Projector uses local native authentication and
-  handles no provider OAuth tokens. This blocks readiness.
+- **Runtime and installation decisions.** Resolved by the probes and
+  implementation recorded in § 9. The tested native versions are the minimum
+  supported versions. Launch rejects older or unrecognized version output.
+  The optional environment pins the SDK and source snapshot; the core CLI
+  retains no runtime dependencies.
+- **Permission preview.** The tested Claude SDK reports its effective mode
+  at first-turn initialization. Preflight display of the fully resolved
+  policy is deliberately deferred. The launch form identifies native
+  settings and configured automatic approvals, and the conversation shows
+  the reported policy. Projector adds no bypass or permission-setting UI.
 - **Deferred features.** A team scheduler, typed delegated task/result APIs,
   autonomous task retries, additional backends, network session hosting, and
   Windows console support are separate work. The phone project remains
@@ -293,3 +293,108 @@ Check both during the runtime probe; avoid building a Projector login flow.
    existing external sessions in the same console throughout the rollout.
 4. Complete real-runtime acceptance checks and installation documentation.
    Mark this project completed with the final implementation change.
+
+## 9. Implementation decisions and verification
+
+The implementation uses Python Claude Agent SDK 0.2.189 with Claude Code
+2.1.332, and the stdio app-server protocol with Codex CLI 0.172.0. Both
+adapters completed multiple turns using native sign-in. Projector handles
+no provider OAuth tokens. The paused Claude SDK billing guidance was checked
+against Anthropic's subscription and authentication documentation.
+
+Native terminal probes resumed each SDK-created session, added a turn in the
+native UI, and resumed that history through the adapter. Codex required
+`--no-daemon`: its default shared daemon retained an active writer after the
+native UI exited. Projector therefore uses foreground native resume and an
+inherited file-descriptor lease. Ctrl-C stays with the native CLI; closing
+or killing a wrapper cannot grant a second controller access to a live child.
+
+Projector communication remains queued throughout native handoff. This
+replaces the planned native-deliverer transition in § 2.2 with a simpler
+single delivery owner. Portable Projector CLI actions work in SDK sessions;
+the bridge requires no UI hook engine or in-process Projector tool server.
+Native runtime settings continue to load repository instructions and native
+configuration. The console follows the session-column layout merged during
+implementation; external sessions use that layout's inbox and message panel.
+
+Native question and permission probes passed for both backends. Claude's
+`AskUserQuestion` and Codex's plan-mode `requestUserInput` resumed their
+waiting tools with the chosen answer and note. Protected-tool probes denied
+the requested operation and left the output file absent. Approval notes deny
+the original operation and preserve the note for the agent. Native requests
+expire on interruption or restart; their IDs, generation, and inbox references
+remain tied to the live callback. Pending native requests offer a typed
+clarification instead of discussion or snoozing that their waiting tool could
+not consume. Ordinary Projector inbox items retain those controls.
+
+The optional environment installed successfully. A separately built core
+wheel installed without SDK dependencies and exposed both entry points.
+A real 120-column terminal check exercised a typed inbox answer, cancelled
+a launch form, and exited cleanly. Automated tests cover immutable source
+snapshots, stopped-session environment retention, old-runtime rejection,
+queued input edits, native delivery fencing, stale requests, uncertain
+acceptance, malformed protocol output, and damaged state preservation.
+A mutation pass makes each new behavior test fail on its named regression.
+
+Ten real workers (two Claude and eight Codex) completed an initial turn.
+After the isolated watcher stopped, two concurrent streams completed in
+10.2 seconds with every worker PID and native session unchanged. All ten
+workers then stopped and resumed without replaying a command. Final
+steady-idle measurements, including configured native child processes,
+were 430 MiB per Claude session and 410 MiB per Codex session; the Python
+workers accounted for 89 MiB and 51 MiB respectively. Each Python worker
+used about 0.9% of one CPU core while idle. These are local measurements,
+not resource requirements for other native configurations.
+
+The cost pass then removed inbox scans and acceptance writes from each
+text-delta event. Input polling is bounded to twice a second and controls
+to five times a second. Continuous output flushes every quarter second or
+16 KiB, including streams with no pause. Console rendering reads cached
+runtime data; incremental reads and bounded display retention remain separate
+from pending command and inbox records. The ten-session and two-stream
+checks passed again after those changes.
+
+### 9.1 Acceptance evidence
+
+| Criterion in § 4 | Evidence |
+| --- | --- |
+| Dependency-free core and both entry points | Isolated wheel installation, callable entry-point packaging checks, core import without the SDK, and the installed console's real terminal check |
+| Exact launch input and one identity | Console launch and worker multiline-input tests; live Claude and Codex worker registrations and native session records |
+| Streaming, tools, queued follow-ups, and outcomes | Two-turn adapter probes, native question and tool probes, queue and interruption tests, continuous-stream flush test, and two-stream measurement |
+| Existing questions and native callbacks | Existing inbox tests; typed-answer console test; live question and denial probes for each runtime; pending-request expiration and callback-generation tests |
+| Review and agent-message delivery | Existing Codex watch queue tests, managed delivery-fencing test, and worker ingestion through that same queue and eligibility checks |
+| Console and watcher independence | Detached-worker smoke probes; ten-session restart measurement; stopped-session and saved-source tests |
+| Ambiguous submission and accepted input | Store recovery, explicit confirmation, stale-generation, and single-terminal-result tests; no-replay check across ten real resumes |
+| Worker failure with queued input or an approval | Restart-withdrawal test, failure-preservation test, interrupted queue test, and damaged-state preservation test |
+| Native handoff and return | Separate Claude and Codex native UI round trips, idle-handoff test, native-lease refusal test, and inherited-lease process test |
+| Generic and external sessions | Existing console/watch suites and generic-process compatibility test; no managed lifecycle controls on external rows |
+| Unknown events, duplicate output, and damaged state | Incremental cursor test, native protocol subprocess tests, duplicate-result test, display-retention test, and invalid or empty database-header cases |
+
+### 9.2 Deliberate limits
+
+Preflight display of Claude's fully resolved permissions remains deferred as
+§ 6 describes. Pending native requests use answer or cancellation rather than
+ordinary discussion, and Projector delivery pauses during native handoff.
+Codex form elicitation is bridged; URL elicitation and Claude MCP elicitation
+are not bridged in this version. Complete those interactive server setup
+steps in the native runtime. Native MCP configuration and tool calls remain
+with their native runtime. A team scheduler, typed delegated task results,
+automatic reruns, additional backends, and Windows console support remain
+outside this project's outcome.
+
+## 10. Outcome
+
+Shipped in the implementation pull request. The console launches and runs
+Claude and Codex through structured native runtimes, retains external
+Projector communication, and supports controlled native handoff. The
+acceptance evidence is in § 9.1; the deliberately deferred behavior is in
+§ 9.2. The first implementation head passed CI's full `check` gate. The final
+head also runs that gate before handover.
+
+An interrupted queue remains paused across worker restarts until explicit
+send. Controls from concurrent consoles cannot overwrite an unacknowledged
+action; stale controls expire on restart. Regression tests cover both cases.
+The core wheel, installed terminal flow, plugin validation, hook tests,
+type checking, project validation, and whitespace checks pass. Each new
+behavior test was checked against a deliberate regression. No source,
+worker, or console integration work is deferred to another project.

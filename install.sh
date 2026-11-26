@@ -135,6 +135,8 @@ install_venv() {
   mkdir -p "$BIN_DIR"
   ln -sf "$VENV_DIR/bin/project" "$BIN_DIR/project"
   printf '%-14s %s\n' "linked" "$BIN_DIR/project -> $VENV_DIR/bin/project"
+  ln -sf "$VENV_DIR/bin/projector" "$BIN_DIR/projector"
+  printf '%-14s %s\n' "linked" "$BIN_DIR/projector -> $VENV_DIR/bin/projector"
   case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
     *) warn_row "not-on-path" "$BIN_DIR is not on PATH -- add it to your shell's PATH to run project" ;;

@@ -2904,9 +2904,10 @@ def run_console() -> int:
     except ImportError as error:
         raise EnvironmentError("project console needs Python's curses module, which this Python lacks; run "
                                "`project inbox list` and `project watch list` instead") from error
-    from . import console
+    from . import agent_console as console
     return console.main(wake=wake_codex_delivery,
-                        ensure=lambda: watch.ensure_daemon(watch.state_root(), distribution_version(), newer_release))
+                        ensure=lambda: watch.ensure_daemon(watch.state_root(), distribution_version(), newer_release,
+                                                           runtime_protocol=1))
 
 
 def listed_entries(session: Optional[str], everything: bool = False) -> tuple[Optional[str], list[dict]]:
@@ -3051,6 +3052,13 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         raise UsageError("--repo scopes an item you post to a peer, so it goes with --to")
     if (ref is not None and inbox.in_repository(ref)) or getattr(arguments, "to", None):
         return run_repo_inbox(arguments, ref, letter)
+    if command in ("claim", "delivered", "reopen", "watch"):
+        from . import runtime
+        session = inbox_session(arguments, command == "watch")
+        if session is None and ref is not None:
+            session = inbox.locate(None, ref).parent.name
+        if session and runtime.managed(watch.session_folder(watch.state_root(), session)):
+            raise UsageError("This session's managed worker owns inbox delivery; use the Projector console")
     if command in ("reply", "close"):
         raise inbox.InboxError(f"`{command}` takes a repository inbox entry, such as r3, not a session's item")
     if command == "reopen" and arguments.claim is None:
