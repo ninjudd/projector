@@ -1,0 +1,2365 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index eed22740..9c8bdf27 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3391,8 +3391,7 @@ pull request or the session.
+ 
+ `project console` groups live Projector sessions by working directory and
+ shows the selected session's panel below the list. In the panel, you answer
+-its items, send it messages about its items and pull requests, and read its
+-conversation.
++its items and send it messages about its items and pull requests.
+ It works the same for Claude Code and Codex sessions, so it is how you answer
+ a Codex session, which has no panel of its own. Run it in a split or a window
+ of its own:
+@@ -3404,25 +3403,43 @@ $ tmux split-window -h project console
+ The console opens with the focus on the session list, one line per session.
+ A session appears only while its deliverer renews it and it has a registered
+ Projector agent, a watch subscription, or a visible inbox item. Delivery
+-hooks alone do not put a session in the list. Claude Code sessions show as
+-`claude`, and Codex sessions as `codex`.
++hooks alone do not put a session in the list.
+ 
+ Directory headings sort by path and keep separate checkouts apart, even when
+-they share a repository. Sessions whose records have no directory appear
+-under `Unknown working directory`, after the other groups. Each session's
+-line shows its name, or its short ID when it has none, its host, repository
+-and branch, counts of pull requests, review requests, and open items, its
+-summary, and its newest open item's subject. Long lines stop at the edge of
+-the terminal. Within each directory, sessions with the most open questions
+-and requests come first. Ties go to the session whose newest item is newest,
++they share a repository. Paths within your home directory start with `~`.
++Sessions whose records have no directory appear under `Unknown working
++directory`, after the other groups. A blank line precedes each group,
++including the first. The screen leaves one space at the left edge.
++
++The session list has four aligned fields, without headings:
++
++- **Session** shows the chat title from Codex's session index or Claude
++  Code's `/rename` metadata. It falls back to the registered session name,
++  then `Unnamed session` when neither is available. It uses normal text
++  color. The selected session name has color and a `▸` marker; the row has
++  no highlight.
++- **PRs** counts all open pull requests the session fixes or reviews, as
++  `0 PRs`, `1 PR`, or `5 PRs`, in orange.
++- **Latest request** shows the newest open, awake question or request.
++  Notices and messages do not replace it. A session with none shows `—`.
++- **Updated** leaves one space at the right edge and shows the age of the most recent
++  Projector activity: the agent registration's update, an inbox file change,
++  a pull request's GitHub update, or a repository inbox update. Polls and
++  delivery heartbeats do not change it. A session with no recorded time
++  shows `—`.
++
++Long names and requests shorten with an ellipsis to keep the other columns
++visible. Within each directory, sessions with the most open questions and
++requests come first. Ties go to the session whose newest item is newest,
+ then to the name.
+ 
+ Up and down select a session and update the bottom panel immediately. Press
+ Enter or Right to move the focus into that panel. The session list stays
+ visible above it, with its own scroll position. The panel lists the pull
+ requests the session subscribes to, as Projector's panel does, then its
+-inbox items, newest first, then its conversation. Each item line shows its
+-subject, its state words (`sending`, `unclear`, and a request's `starting`,
++inbox items, newest first. Pull request statuses occupy a column as wide as
++the longest status, so the authors and titles after them line up. Each item
++line shows its subject, its state words (`sending`, `unclear`, and a request's `starting`,
+ `ready`, or `blocked`), its pull request, and its age. Press Enter on a row
+ to open its drawer:
+ 
+@@ -3466,33 +3483,14 @@ which asks nothing of you, reads `sending` until its line is delivered, and
+ then leaves the list 30 seconds later. A message about an item stays in that
+ item's drawer.
+ 
+-The conversation sits at the bottom of the panel, collapsed to its heading.
+-Press `v`, or Enter on its heading, to show it, and either again to hide it.
+-The console remembers which sessions show it until you quit. It lists what
+-you said and what the agent said, newest last, and leaves out tool calls,
+-tool results, thinking, and the instructions the host adds. What you said
+-includes the prompts you typed and the inbox lines Projector delivered for
+-you, such as `ANSWER 3.a` and `DISCUSS 5`, but not pull request events.
+-Showing it moves the focus to its heading and starts at its newest line,
+-which stays in view as the agent writes, until you scroll back with the page
+-keys. Up moves the focus off it again. Collapsed suits a split whose other
+-half shows the session's own chat; shown suits a session whose chat is not
+-on screen.
+-
+-The console reads the conversation from the transcript the session's host
+-writes: for Claude Code, `projects/<project>/<session>.jsonl` under
+-`CLAUDE_CONFIG_DIR`, or under `~/.claude` when it is unset; for Codex, the
+-rollout that the session's `codex.json` names. It reads the last 2 MiB of the
+-transcript when you show the conversation, then only what was added, each
+-second while it stays shown, and never while it is hidden. A transcript holds
+-whatever the conversation held, including any secret an agent quoted there, so
+-the console shows only what the session's own chat already shows you.
++Read the agent's reply in its own chat. The console panel contains pull
++requests and inbox items.
+ 
+ In a panel, one focus moves through everything you can press. Up and down
+ move it through the rows and, directly under the open drawer's row, the
+-drawer's options and then its actions, and on past them to the next row,
+-ending on the conversation's heading. The open drawer stays open while the
+-focus moves, so you can look at another row first. Enter presses what has the focus: an option, an action
++drawer's options and then its actions, and on past them to the next row. The
++open drawer stays open while the focus moves, so you can look at another row
++first. Enter presses what has the focus: an option, an action
+ such as `7: Discuss` or `9: Snooze`, or a row, which opens that row's drawer
+ in place of the open one, or closes the drawer when it is the open row
+ itself. A drawer without options opens with the focus on its row, so Enter
+@@ -3512,14 +3510,13 @@ leave the session's panel.
+ 
+ | Key | Effect |
+ | --- | --- |
+-| Up and down, or `k` and `j` | In the session list, select a session and update its bottom panel. In the panel, move the focus through the rows, the open drawer's options and actions, and the conversation's heading, and stay put at the first and the last |
+-| Enter, or Right in the session list | Moves the focus into the selected session's panel. In the panel, Enter presses the focused option or action, closes the open drawer when its row has the focus, opens the focused row's drawer in place of the open one, or, on the conversation's heading, shows or hides the conversation |
++| Up and down, or `k` and `j` | In the session list, select a session and update its bottom panel. In the panel, move the focus through the rows, and the open drawer's options and actions, and stay put at the first and the last |
++| Enter, or Right in the session list | Moves the focus into the selected session's panel. In the panel, Enter presses the focused option or action, closes the open drawer when its row has the focus, opens the focused row's drawer in place of the open one |
+ | An option's or action's own key, such as `2` or `8` | Presses it in the open drawer, as Enter on it does |
+ | Left, Esc, or `0` | Closes the open drawer, leaving the focus on its row, or, with no drawer open, returns the focus to the session list |
+ | `7` in a panel with no drawer open | Sends a message about the session |
+-| `v` in a panel | Shows or hides the session's conversation |
+-| Page Down or Space, Page Up or `b` | In the session list, moves a page between sessions. In the panel, scrolls a drawer or the conversation, when taller than its pane, a page down or up |
+-| End or `G`, Home or `g` | In the session list, selects the last or first session. In the panel, scrolls a drawer to its controls or the conversation to its newest line, or either back to its top |
++| Page Down or Space, Page Up or `b` | In the session list, moves a page between sessions. In the panel, scrolls a drawer, when taller than its pane, a page down or up |
++| End or `G`, Home or `g` | In the session list, selects the last or first session. In the panel, scrolls a drawer to its controls or back to its top |
+ | Enter in a text field | Sends the message, or, in a note field, records the option with the note you typed, if any. Esc or Ctrl-C cancels it, or goes back to the options, and Left and Right move the cursor |
+ | Ctrl-C | Quits from the home list. In a panel, the first press shows `Press Ctrl-C again to exit`, and a second within 3 seconds quits |
+ 
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index cefaee9b..a19ce294 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -543,6 +543,20 @@ test('a row says what holds it back first, then reviewing, clean, draft, or read
+   await ui.unmount()
+ })
+ 
++test('reserves the same status width before every pull request title', async ($, on) => {
++  const { clock } = panelWorld(on, { subscriptions: { fix: ['o/r#13', 'o/r#14', 'o/r#16'] } })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++
++  const states = await Promise.all([13, 14, 16].map(number => ui.find({ key: `state:o/r#${number}` })))
++  expect(states.map(state => [state?.text, state?.props.width])).toEqual([
++    ['ready', 9],
++    ['reviewing', 9],
++    ['conflict', 9],
++  ])
++  await ui.unmount()
++})
++
+ test('draws no background and no header on a surface that does not lay text out in columns', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 25c1b560..8fe16a2a 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1831,7 +1831,11 @@ export const register: Register = on => {
+     const label = labeler(shown.rows.map(row => row.pr))
+     const reference = referencer(shown.rows.map(row => row.pr))
+     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
+-    // Another person's line names its author after `draft`, in a column as
++    const stateWidth = Math.max(
++      0,
++      ...shown.rows.filter(row => row.pr.isLoading !== true).map(row => rowState(row.pr).text.length),
++    )
++    // Another person's line names its author after the status, in a column as
+     // wide as the longest of those logins, so their titles start in one
+     // column too.
+     const authorWidth = Math.max(
+@@ -2529,13 +2533,8 @@ export const register: Register = on => {
+       const isLoaded = pr.isLoading !== true
+       return (
+         <Box key={key} flexDirection="column">
+-          {/* Only the title gives way when the line is short; the label column
+-              is as wide as the longest label, so every title starts in one
+-              column, and the title fills the line, so its notes and age end
+-              it as an item's pull request and age do. The label is a plain
+-              Button rather than a link, so it takes a click in fullscreen and
+-              Enter on the main screen, and no terminal ever draws a URL
+-              beside it. */}
++          {/* A plain Button takes Enter on the main screen and clicks in fullscreen,
++              without drawing a URL beside the reference in a terminal. */}
+           <Box flexDirection="row" columnGap={1}>
+             <Box flexShrink={0} width={labelWidth}>
+               <Button
+@@ -2550,13 +2549,13 @@ export const register: Register = on => {
+                 </Text>
+               </Button>
+             </Box>
+-            {isLoaded && (
+-              <Box flexShrink={0}>
++            <Box key={`state:${key}`} flexShrink={0} width={stateWidth}>
++              {isLoaded && (
+                 <Text color={state.color} italic={pr.isDraft}>
+                   {state.text}
+                 </Text>
+-              </Box>
+-            )}
++              )}
++            </Box>
+             {isLoaded && isReviewRequest(pr, shown.viewer) && (
+               <Box key={`author:${key}`} flexShrink={0} width={authorWidth}>
+                 <Text color="subtle">{pr.author ?? ''}</Text>
+diff --git a/hooks/rows.test.ts b/hooks/rows.test.ts
+index 3ca98e88..4b9c4121 100644
+--- a/hooks/rows.test.ts
++++ b/hooks/rows.test.ts
+@@ -49,6 +49,7 @@ const pullOf = (pr: PullRequest) => ({
+   labels: pr.labels.map(label => label.name),
+   summary_url: pr.summaryUrl,
+   is_loading: pr.isLoading === true,
++  updated_at: pr.updatedAt,
+ })
+ 
+ const threadOf = (thread: Thread) => ({
+diff --git a/src/projector/console.py b/src/projector/console.py
+index d388fa76..d36dc466 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -1,9 +1,8 @@
+ """`project console`: live Projector sessions grouped by directory, above the selected session's panel.
+ 
+ Enter moves the focus from the session list into its panel: its pull request rows, as `rows.py` reads them,
+-its inbox items, each with a drawer that answers, discusses, dismisses, or snoozes it, and a collapsible view of
+-its conversation, as `conversation.py`
+-reads it. Every choice and message is recorded with the functions `project inbox` runs, for the session on screen,
++its inbox items, each with a drawer that answers, discusses, dismisses, or snoozes it. Every choice and message
++is recorded with the functions `project inbox` runs, for the session on screen,
+ and the session's own deliverer brings it in: Claude Code's panel, or the watch daemon's Codex adapter. The
+ console never claims, delivers, or settles a line, so it never races a deliverer.
+ 
+@@ -25,13 +24,12 @@
+ from pathlib import Path
+ from typing import Any, Callable, Optional, TextIO
+ 
+-from . import agents, codex_watch, conversation, inbox, repo_inbox, rows, watch
++from . import agents, codex_watch, inbox, repo_inbox, rows, session_titles, watch
+ from .core import ProjectorError
+ 
+ INBOX_EVERY = 1.0
+ ROWS_EVERY = 5.0
+ THREADS_EVERY = 30.0
+-CONVERSATION_EVERY = 1.0
+ # How long a resolved, delivered, or snoozed item stays listed, as in the panel.
+ RESOLVED_MS = 30_000
+ # The host each deliverer `watch.delivery` names belongs to.
+@@ -48,8 +46,6 @@
+ # The variables an SSH server sets in a session's environment. mosh's server starts over SSH, so its shells have
+ # them too.
+ SSH_VARIABLES = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
+-# The key of the panel's last row, the session's conversation.
+-CONVERSATION = "conversation"
+ # How long after a panel's first Ctrl-C a second one quits, in seconds.
+ EXIT_WINDOW = 3.0
+ # What Enter on Snooze or on a pull request's Dismiss puts the focus on, and what leaving that question puts it back on.
+@@ -71,9 +67,8 @@ class Session:
+     name: str
+     host: str
+     label: str
+-    place: str
+-    summary: str
+     cwd: str = ""
++    updated_at: Optional[float] = None
+     signature: Optional[tuple] = None
+     items: list[dict] = field(default_factory=list)
+     rows: list[rows.Row] = field(default_factory=list)
+@@ -140,21 +135,17 @@ class Work:
+     items: dict[str, list[dict]] = field(default_factory=dict)
+     pull: Optional[rows.Pull] = None
+     drawer: Optional[str] = None
+-    conversation: Optional[tuple[str, conversation.Reader]] = None
+ 
+ 
+ @dataclass
+ class Found:
+     """What a refresh read."""
+ 
+-    live: Optional[dict[str, tuple[str, str, str, str, str, tuple, Optional[list[dict]]]]] = None
++    live: Optional[dict[str, tuple[str, str, str, Optional[float], tuple, Optional[list[dict]]]]] = None
+     rows: dict[str, list[rows.Row]] = field(default_factory=dict)
+     entries: dict[str, list[dict]] = field(default_factory=dict)
+     drawer: Optional[str] = None
+     threads: Optional[list[rows.Thread]] = None
+-    # The session whose conversation was read, whether its transcript started over, what was said since, and
+-    # whether a transcript was found.
+-    said: Optional[tuple[str, bool, list[conversation.Said], bool]] = None
+ 
+ 
+ # Reading the sessions
+@@ -169,28 +160,13 @@ def live_sessions(root: Path, now: float) -> dict[str, str]:
+     return found
+ 
+ 
+-def place_of(record: dict, cwd: str, checkouts: dict[str, str]) -> str:
+-    """The repository and branch `agent.json` names, or those of the checkout `codex.json` runs in."""
+-    place = " ".join(part for part in (record.get("repo"), record.get("branch")) if part)
+-    if place or not cwd:
+-        return place
+-    if cwd not in checkouts:
+-        try:
+-            found = agents.checkout(Path(cwd))
+-        except (ProjectorError, OSError):
+-            found = {}
+-        checkouts[cwd] = " ".join(part for part in (found.get("repo"), found.get("branch")) if part) or cwd
+-    return checkouts[cwd]
+-
+-
+-def describe(root: Path, name: str, delivery: str, checkouts: dict[str, str], record: dict
+-             ) -> tuple[str, str, str, str, str]:
+-    """The session's label, host, place, summary, and working directory."""
++def describe(root: Path, name: str, delivery: str, record: dict) -> tuple[str, str, str, Optional[float]]:
++    """The session's display name, host, directory, and registration's last update, in milliseconds."""
+     host = HOSTS.get(delivery) or record.get("host") or "other"
++    label = record.get("name") or "Unnamed session"
+     cwd = codex_watch.registration(watch.session_folder(root, name)).get("cwd") or record.get("cwd")
+-    cwd = cwd if isinstance(cwd, str) else ""
+-    place = place_of(record, cwd, checkouts)
+-    return agents.label(record, name), host, place, record.get("summary") or "", cwd
++    changed = watch.seconds_of(record.get("updated_at"))
++    return label, host, cwd if isinstance(cwd, str) else "", changed * 1000 if changed is not None else None
+ 
+ 
+ def signature(folder: Path) -> tuple:
+@@ -303,8 +279,33 @@ def needs(session: Session, now_ms: int) -> tuple:
+ 
+ 
+ def headline(session: Session, now_ms: int) -> Optional[dict]:
+-    """The item a home entry names: the newest open one."""
+-    return next((item for item in shown_items(session, now_ms) if is_awake(item, now_ms)), None)
++    """The newest open, awake question or request."""
++    return next((item for item in shown_items(session, now_ms)
++                 if item["kind"] in ASKING_KINDS and is_awake(item, now_ms)), None)
++
++
++def directory_label(cwd: str) -> str:
++    if not cwd:
++        return "Unknown working directory"
++    try:
++        relative = Path(cwd).relative_to(Path.home())
++    except ValueError:
++        return cwd
++    return "~" if relative == Path(".") else "~/" + str(relative)
++
++
++def fit(text: str, width: int) -> str:
++    text = printable(text)
++    if len(text) > width:
++        return text[:max(0, width - 1)] + ("…" if width else "")
++    return text.ljust(width)
++
++
++def last_update(session: Session) -> Optional[float]:
++    times = [session.updated_at, *(row.pull.updated_at for row in session.rows)]
++    times += [modified / 1_000_000 for _, _, modified in session.signature or ()]
++    times += [entry.get(key) for entry in session.entries for key in ("sent_at", "updated_at")]
++    return max((changed for changed in times if isinstance(changed, (int, float))), default=None)
+ 
+ 
+ def is_remote(environ: Optional[dict] = None) -> bool:
+@@ -366,7 +367,7 @@ def __init__(self, root: Path, *, clock: Callable[[], float] = time.time,
+         self.lock = threading.RLock()
+         self.refresh_now = threading.Event()
+         self.sessions: dict[str, Session] = {}
+-        self.checkouts: dict[str, str] = {}
++        self.titles = session_titles.SessionTitles()
+         self.view = "home"
+         self.session: Optional[str] = None
+         self.selected: Optional[str] = None
+@@ -393,17 +394,9 @@ def __init__(self, root: Path, *, clock: Callable[[], float] = time.time,
+         self.home_offset = 1
+         self.home_room = 1
+         self.room = 1
+-        # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
+-        # each one's transcript was found.
+-        self.expanded: set[str] = set()
+-        self.readers: dict[str, conversation.Reader] = {}
+-        self.said: dict[str, list[conversation.Said]] = {}
+-        self.transcripts: dict[str, bool] = {}
+-        # Whether the screen keeps the conversation's newest line in view.
+-        self.follow = True
+         self.status = ""
+         self.quit = False
+-        self.next_inbox = self.next_rows = self.next_threads = self.next_conversation = float("-inf")
++        self.next_inbox = self.next_rows = self.next_threads = float("-inf")
+ 
+     # Refreshing
+ 
+@@ -428,15 +421,7 @@ def due(self, now: float) -> Optional[Work]:
+         if row is not None and now >= self.next_threads:
+             self.next_threads = now + THREADS_EVERY
+             work.pull, work.drawer = row.pull, self.drawer
+-        session = self.viewed()
+-        if (session is not None and session.name in self.expanded
+-                and now >= self.next_conversation):
+-            self.next_conversation = now + CONVERSATION_EVERY
+-            reader = self.readers.get(session.name)
+-            if reader is None:
+-                reader = self.readers[session.name] = conversation.reader_for(self.root, session.name, session.host)
+-            work.conversation = (session.name, reader)
+-        return work if work.inbox or work.rows or work.pull or work.conversation else None
++        return work if work.inbox or work.rows or work.pull else None
+ 
+     def load(self, work: Work) -> Found:
+         found = Found(drawer=work.drawer)
+@@ -457,28 +442,26 @@ def load(self, work: Work) -> Found:
+                         or any(is_shown(item, now_ms) for item in current_items)
+                         or any(not repo_inbox.is_snoozed(entry, now_ms) for entry in entries)):
+                     continue
+-                found.live[name] = (*describe(self.root, name, delivery, self.checkouts, record), seen, items)
++                found.live[name] = (*describe(self.root, name, delivery, record), seen, items)
+                 found.entries[name] = entries
++            titles = self.titles.read({name: details[1] for name, details in found.live.items()})
++            for name, title in titles.items():
++                found.live[name] = (title, *found.live[name][1:])
+             names = list(found.live)
+         for name in names:
+             if work.rows or name not in work.signatures:
+                 found.rows[name] = rows.rows_for(self.root, name)
+         if work.pull is not None:
+             found.threads = rows.fetch_threads(work.pull, self.gh)
+-        if work.conversation is not None:
+-            name, reader = work.conversation
+-            restarted, said = reader.read()
+-            found.said = (name, restarted, said, reader.path is not None)
+         return found
+ 
+     def apply(self, found: Found) -> None:
+         if found.live is not None:
+             for name in set(self.sessions) - set(found.live):
+                 del self.sessions[name]
+-            for name, (label, host, place, summary, cwd, seen, items) in found.live.items():
+-                session = self.sessions.setdefault(name, Session(name, host, label, place, summary))
+-                session.host, session.label, session.place, session.summary = host, label, place, summary
+-                session.cwd = cwd
++            for name, (label, host, cwd, changed, seen, items) in found.live.items():
++                session = self.sessions.setdefault(name, Session(name, host, label))
++                session.host, session.label, session.cwd, session.updated_at = host, label, cwd, changed
+                 session.signature = seen
+                 if items is not None:
+                     session.items = items
+@@ -490,14 +473,6 @@ def apply(self, found: Found) -> None:
+                 self.sessions[name].entries = entries
+         if found.drawer is not None and found.drawer == self.drawer:
+             self.threads = found.threads
+-        if found.said is not None:
+-            name, restarted, said, transcript = found.said
+-            kept = self.said.setdefault(name, [])
+-            if restarted:
+-                kept.clear()
+-            kept += said
+-            del kept[:-conversation.KEEP]
+-            self.transcripts[name] = transcript
+         self.settle_view()
+ 
+     def reload(self) -> None:
+@@ -514,7 +489,7 @@ def settle_view(self) -> None:
+         """Leave a panel whose session is gone, close a drawer whose row is gone, and close a note field whose
+         option is gone."""
+         if self.view == "panel" and self.session not in self.sessions:
+-            self.status = f"{self.session} is no longer live"
++            self.status = "The selected session is no longer live"
+             self.go_home()
+             return
+         if self.view != "panel":
+@@ -558,7 +533,7 @@ def entries(self) -> list[tuple[str, object]]:
+     def keys(self) -> list[str]:
+         if self.view == "home":
+             return [session.name for session in self.home()]
+-        return [key for key, _ in self.entries()] + ([CONVERSATION] if self.viewed() is not None else [])
++        return [key for key, _ in self.entries()]
+ 
+     def row(self, key: Optional[str]) -> Optional[rows.Row]:
+         found = dict(self.entries()).get(key) if key and key.startswith("pr:") else None
+@@ -601,7 +576,7 @@ def key(self, name: str) -> None:
+                 self.panel_key(name)
+ 
+     def scroll(self, name: str) -> None:
+-        """Page between sessions in the list, or scroll a panel's drawer or conversation."""
++        """Page between sessions in the list, or scroll a panel's open drawer."""
+         if self.view == "home":
+             keys = self.keys()
+             if keys:
+@@ -612,8 +587,6 @@ def scroll(self, name: str) -> None:
+                     self.move(max(1, self.home_room - 2) * (1 if name in ("pagedown", " ") else -1))
+             return
+         page = max(1, self.room - 1)
+-        # `viewport` follows the conversation's newest line again once the offset reaches it.
+-        self.follow = False
+         if name in ("pagedown", " "):
+             self.offset += page
+         elif name in ("pageup", "b"):
+@@ -650,14 +623,12 @@ def choices(self) -> list[Control]:
+ 
+     def ring(self) -> list[tuple[str, Optional[str]]]:
+         """Every place the panel's focus can be, in order: each row, as its key and None, with the open drawer's
+-        controls, as its key and each control's, directly under its row, and last the conversation's heading."""
++        controls, as its key and each control's, directly under its row."""
+         found: list[tuple[str, Optional[str]]] = []
+         for key, _ in self.entries():
+             found.append((key, None))
+             if key == self.drawer:
+                 found += [(key, one.key) for one in self.controls()]
+-        if self.viewed() is not None:
+-            found.append((CONVERSATION, None))
+         return found
+ 
+     def focus(self) -> tuple[Optional[str], Optional[str]]:
+@@ -666,16 +637,12 @@ def focus(self) -> tuple[Optional[str], Optional[str]]:
+         return key, self.control if key is not None and key == self.drawer else None
+ 
+     def step_focus(self, step: int) -> None:
+-        """Move the focus a place up or down the ring, staying put at either end. The open drawer stays open. Arriving
+-        on the conversation's heading starts at its newest line, as `viewport` shows it."""
++        """Move the focus a place up or down the ring, staying put at either end. The open drawer stays open."""
+         ring = self.ring()
+         if not ring:
+             return
+         at = ring.index(self.focus()) if self.focus() in ring else 0
+-        row = self.selected_key()
+         self.selected, self.control = ring[max(0, min(len(ring) - 1, at + step))]
+-        if self.selected != row:
+-            self.follow = True
+         self.reveal = True
+ 
+     def open_panel(self, name: str) -> None:
+@@ -704,8 +671,6 @@ def panel_key(self, name: str) -> None:
+                 self.close_drawer()
+         elif name == "enter":
+             self.press_focus()
+-        elif name == "v":
+-            self.toggle_conversation()
+         elif self.drawer is not None:
+             control = next((one for one in self.controls() if one.key == name), None)
+             if control is not None:
+@@ -713,28 +678,11 @@ def panel_key(self, name: str) -> None:
+         elif name == "7":
+             self.open_field("session", None, "Message this session: ")
+ 
+-    def toggle_conversation(self) -> None:
+-        """Show or hide the viewed session's conversation, which the console remembers for each session while it
+-        runs. Showing it moves the cursor there, so the page keys scroll it, and starts at its newest line."""
+-        name = self.session or ""
+-        if name in self.expanded:
+-            self.expanded.discard(name)
+-            return
+-        self.expanded.add(name)
+-        self.close_drawer()
+-        self.selected, self.follow = CONVERSATION, True
+-        self.next_conversation = float("-inf")
+-        self.refresh_now.set()
+-
+     def press_focus(self) -> None:
+-        """Enter: press the control the focus is on, close the drawer of the open row, open another row's, or show or
+-        hide the conversation, as `v` does."""
++        """Enter: press the control the focus is on, close the drawer of the open row, open another row's."""
+         key, control = self.focus()
+         if key is None:
+             return
+-        if key == CONVERSATION:
+-            self.toggle_conversation()
+-            return
+         found = next((one for one in self.controls() if one.key == control), None)
+         if found is not None:
+             self.press(found)
+@@ -1025,7 +973,7 @@ def send(self, typing: Field) -> None:
+     def lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+         """Both panes, and the range containing the focused row and its drawer."""
+         with self.lock:
+-            home, home_focus = self.home_lines()
++            home, home_focus = self.home_lines(width)
+             if self.viewed() is None:
+                 return home, home_focus
+             panel, panel_focus = self.panel_lines(width)
+@@ -1036,7 +984,7 @@ def lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+     def viewport(self, width: int, room: int) -> list[Line]:
+         """Keep the session list above the selected session's independently scrolling panel."""
+         with self.lock:
+-            home, focus = self.home_lines()
++            home, focus = self.home_lines(width)
+             if self.viewed() is None:
+                 return home[:room]
+             self.home_room = min(len(home), max(1, room // 2))
+@@ -1055,18 +1003,18 @@ def home_viewport(self, lines: list[Line], focus: tuple[int, int], room: int) ->
+             return [lines[last]]
+         if room == 2:
+             return [lines[0], lines[last]]
+-        space = room - 1
++        prefix = lines[:2] if room > 3 else lines[:1]
++        space = room - len(prefix)
+         if last - first + 1 > space:
+             self.home_offset = min(max(self.home_offset, last - space + 2), last)
+-            return [lines[0], lines[first], *lines[self.home_offset:self.home_offset + space - 1]]
++            return [*prefix, lines[first], *lines[self.home_offset:self.home_offset + space - 1]]
+         self.home_offset = first + 1
+-        return [lines[0], *lines[first:first + space]]
++        return [*prefix, *lines[first:first + space]]
+ 
+     def panel_viewport(self, width: int, room: int) -> list[Line]:
+         """The body's lines that fit in `room` rows. The offset survives each redraw and moves only as far as it
+         must to show the cursor's row and its drawer. A drawer taller than the room shows a room's worth of itself,
+-        starting at its row, and the scroll keys move the offset through the rest. The conversation starts at its
+-        newest line instead, and keeps it in view as lines arrive until a scroll key moves away from it."""
++        starting at its row, and the scroll keys move the offset through the rest."""
+         with self.lock:
+             body, (first, last) = self.panel_lines(width)
+             self.room = room
+@@ -1081,12 +1029,7 @@ def clamped(offset: int) -> int:
+                     offset = min(max(offset, spots[-1] - room + 1), spots[0])
+                 return max(0, min(offset, len(body) - room))
+ 
+-            following = self.view == "panel" and self.selected_key() == CONVERSATION
+-            if following and self.follow:
+-                self.offset = sys.maxsize
+             self.offset = clamped(self.offset)
+-            if following:
+-                self.follow = self.offset == clamped(sys.maxsize)
+             self.reveal = False
+             return body[self.offset:self.offset + room]
+ 
+@@ -1103,17 +1046,14 @@ def footer(self) -> list[Line]:
+                 return [*lines, Line([("Press Ctrl-C again to exit", "warning")])]
+             if self.view == "home":
+                 hint = "↑↓ session · Enter or → focus panel · PgUp PgDn scroll · Ctrl-C quit"
+-            elif self.selected_key() == CONVERSATION and self.session in self.expanded:
+-                hint = ("↑↓ move · v or Enter hide · PgUp PgDn scroll · 7 message this session · ← or Esc back"
+-                        " · Ctrl-C twice quit")
+             elif self.drawer is None:
+-                hint = ("↑↓ move · Enter open · 7 message this session · v conversation · ← or Esc back"
++                hint = ("↑↓ move · Enter open · 7 message this session · ← or Esc back"
+                         " · Ctrl-C twice quit")
+             else:
+                 hint = "↑↓ move · Enter press or open · ← or Esc close · PgUp PgDn scroll · Ctrl-C twice quit"
+             return [*lines, Line([(hint, "subtle")])]
+ 
+-    def home_lines(self) -> tuple[list[Line], tuple[int, int]]:
++    def home_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+         now = self.now_ms()
+         listed = self.home()
+         lines = [Line([("Projector console", "bold"),
+@@ -1121,6 +1061,25 @@ def home_lines(self) -> tuple[list[Line], tuple[int, int]]:
+         if not listed:
+             lines.append(Line([("No live Projector sessions. Sessions appear when they register an agent, watch "
+                                 "pull requests, or have inbox items.", "subtle")]))
++            return lines, (0, 0)
++        ages = {session.name: age(now - changed) if (changed := last_update(session)) is not None else "—"
++                for session in listed}
++        counts = {session.name: counted(len(session.rows), "PR") or "0 PRs" for session in listed}
++        count_width = max(len(value) for value in counts.values())
++        age_width = max(len(value) for value in ages.values())
++        name_width = min(max(5, *(len(session.label) for session in listed)), max(1, width // 4),
++                         max(1, width - count_width - age_width - 9))
++        request_width = max(0, width - 2 - name_width - count_width - age_width - 7)
++
++        def columns(label: str, count: str, request: str, changed: str, chosen: bool = False) -> Line:
++            if width < 20:
++                return Line([("▸ " if chosen else "  ", "subtle"),
++                             (fit(label, max(0, width - 2)), "suggestion" if chosen else "")])
++            return Line([("▸ " if chosen else "  ", "subtle"),
++                         (fit(label, name_width), "suggestion" if chosen else ""),
++                         (f"  {count.ljust(count_width)}  ", "claude"), (fit(request, request_width), ""),
++                         (f"  {changed.rjust(age_width)} ", "subtle")])
++
+         viewed = self.viewed()
+         chosen = viewed.name if viewed is not None else None
+         focus = (0, 0)
+@@ -1128,59 +1087,25 @@ def home_lines(self) -> tuple[list[Line], tuple[int, int]]:
+         group_start = 0
+         for session in listed:
+             if session.cwd != previous:
++                lines.append(Line([]))
+                 group_start = len(lines)
+-                lines.append(Line([(session.cwd or "Unknown working directory", "branch")]))
++                lines.append(Line([(directory_label(session.cwd), "branch")]))
+                 previous = session.cwd
+             start = len(lines)
+-            counts = counts_of(session, now)
+-            named = headline(session, now)
+-            lines.append(Line([(("▸ " if session.name == chosen else "  ") + session.label, "bold"),
+-                               (f"  {session.host}", "subtle"),
+-                               *([(f"  {session.place}", "branch")]
+-                                 if session.place and session.place != session.cwd else []),
+-                               *([(f"  {' · '.join(counts)}", "")] if counts else []),
+-                               *([(f"  {session.summary}", "subtle")] if session.summary else []),
+-                               *([(f"  ‣ {named['subject']}", "")] if named is not None else [])],
+-                              selected=session.name == chosen and self.view == "home"))
++            request = headline(session, now)
++            lines.append(columns(session.label, counts[session.name], request["subject"] if request else "—",
++                                 ages[session.name], session.name == chosen))
+             if session.name == chosen:
+                 focus = (group_start, start)
+         return lines, focus
+ 
+-    def conversation_lines(self, name: str, width: int, selected: bool) -> list[Line]:
+-        """The conversation's heading, and, when it is shown, what the person and the agent said, newest last."""
+-        shown = name in self.expanded
+-        lines = [Line([(f"{'▾' if shown else '▸'} Conversation", "bold"),
+-                       (f"  v {'hides' if shown else 'shows'} what you and the agent said", "subtle")], selected)]
+-        if not shown:
+-            return lines
+-        indent = " " * DRAWER_INDENT
+-        said = self.said.get(name) or []
+-        if not said:
+-            found = self.transcripts.get(name)
+-            note = ("reading…" if found is None else "Nothing said yet." if found
+-                    else "No transcript found for this session.")
+-            return [*lines, Line([(indent + note, "subtle")])]
+-        for one in said:
+-            who = "you: " if one.who == "you" else "agent: "
+-            wrap = max(1, width - DRAWER_INDENT - len(who))
+-            parts = [part for paragraph in one.text.splitlines() for part in textwrap.wrap(paragraph, wrap) or [""]]
+-            lines.append(Line([(indent + who, "subtle"), (parts[0], "accent" if one.who == "you" else "")]))
+-            lines += [Line([(indent + " " * len(who) + part, "accent" if one.who == "you" else "")])
+-                      for part in parts[1:]]
+-        return lines
+-
+     def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+         session = self.viewed()
+         if session is None:
+             return [], (0, 0)
+         now = self.now_ms()
+         counts = counts_of(session, now)
+-        lines = [Line([(session.label, "bold"), (f"  {session.host}", "subtle"),
+-                       *([(f"  {session.place}", "branch")] if session.place else []),
+-                       *([(f"  {' · '.join(counts)}", "subtle")] if counts else [])])]
+-        if session.summary:
+-            lines.append(Line([(session.summary, "subtle")]))
+-        lines.append(Line([]))
++        lines = [Line([(session.label, ""), *([(f"  {' · '.join(counts)}", "subtle")] if counts else [])]), Line([])]
+         entries = self.entries()
+         if not entries:
+             lines.append(Line([("No pull requests or items. Press 7 to send this session a message.", "subtle")]))
+@@ -1188,6 +1113,7 @@ def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+         focus = (0, 0)
+         label_width = max((len(row.label) for row in session.rows), default=0)
+         author_width = max((len(row.pull.author or "") for row in session.rows if row.section == "review"), default=0)
++        state_width = max((len(row.state) for row in session.rows if not row.pull.is_loading), default=0)
+         previous = None
+         for key, entry in entries:
+             group = entry.section if isinstance(entry, rows.Row) else "repo" if key.startswith("repo:") else "items"
+@@ -1198,7 +1124,7 @@ def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+             # The row is lit only while the focus is on the row itself, not on one of its drawer's controls.
+             lit = key == chosen and control is None
+             if isinstance(entry, rows.Row):
+-                lines.append(self.pull_line(entry, label_width, author_width, lit))
++                lines.append(self.pull_line(entry, label_width, state_width, author_width, lit))
+                 if key == self.drawer:
+                     lines += self.pull_drawer(entry, width)
+             elif key.startswith("repo:"):
+@@ -1211,20 +1137,15 @@ def panel_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+                     lines += self.item_drawer(entry, width)
+             if key == chosen:
+                 focus = (start, len(lines) - 1)
+-        lines.append(Line([]))
+-        start = len(lines)
+-        lines += self.conversation_lines(session.name, width, chosen == CONVERSATION)
+-        if chosen == CONVERSATION:
+-            focus = (start, len(lines) - 1)
+         return lines, focus
+ 
+-    def pull_line(self, row: rows.Row, label_width: int, author_width: int, selected: bool) -> Line:
++    def pull_line(self, row: rows.Row, label_width: int, state_width: int, author_width: int, selected: bool) -> Line:
+         pull = row.pull
+-        parts = [(row.label.ljust(label_width), "")]
++        state = "" if pull.is_loading else row.state
++        parts = [(row.label.ljust(label_width), ""), ("  " + state.ljust(state_width), WORD_STYLES.get(state, ""))]
+         if pull.is_loading:
+             parts.append(("  loading…", "subtle"))
+             return Line(parts, selected)
+-        parts.append((f"  {row.state}", WORD_STYLES.get(row.state, "")))
+         if row.section == "review":
+             parts.append((f"  {(pull.author or '').ljust(author_width)}", "subtle"))
+         parts.append((f"  {pull.title}", ""))
+@@ -1510,8 +1431,7 @@ def styles(curses: Any) -> dict[str, int]:
+ 
+ 
+ def printable(text: str) -> str:
+-    """Text as it can be drawn: an agent's subject or its conversation could hold a control character, which would
+-    move the terminal's cursor."""
++    """Replace control characters so a subject or detail cannot move the terminal's cursor."""
+     return "".join(character if character.isprintable() else " " for character in text)
+ 
+ 
+@@ -1527,7 +1447,7 @@ def __init__(self, window: Any, console: Console, curses: Any, out: Optional[Tex
+         self.pending: list[object] = []
+ 
+     def put(self, y: int, line: Line, width: int) -> None:
+-        x = 0
++        x = 1
+         for at, (text, style) in enumerate(line.parts):
+             if x >= width:
+                 break
+@@ -1546,7 +1466,7 @@ def draw(self) -> None:
+         typing = self.console.field
+         below = typing is not None and not typing.inline
+         room = max(1, height - len(footer) - (1 if below else 0))
+-        shown = self.console.viewport(width, room)
++        shown = self.console.viewport(max(0, width - 1), room)
+         self.window.erase()
+         for y, line in enumerate(shown):
+             self.put(y, line, width)
+@@ -1554,12 +1474,12 @@ def draw(self) -> None:
+             self.put(y, line, width)
+         at = None
+         if typing is not None and below:
+-            space = max(1, width - len(typing.prompt) - 1)
++            space = max(1, width - len(typing.prompt) - 2)
+             start = max(0, typing.cursor - space)
+             self.put(height - 1, Line([(typing.prompt, "bold"), (typing.text[start:start + space], "")]), width)
+-            at = (height - 1, min(width - 1, len(typing.prompt) + typing.cursor - start))
++            at = (height - 1, min(width - 1, 1 + len(typing.prompt) + typing.cursor - start))
+         elif typing is not None:
+-            at = next(((y, min(width - 1, line.cursor)) for y, line in enumerate(shown) if line.cursor is not None),
++            at = next(((y, min(width - 1, 1 + line.cursor)) for y, line in enumerate(shown) if line.cursor is not None),
+                       None)
+         if at is not None:
+             self.window.move(*at)
+diff --git a/src/projector/conversation.py b/src/projector/conversation.py
+deleted file mode 100644
+index de553e3a..00000000
+--- a/src/projector/conversation.py
++++ /dev/null
+@@ -1,204 +0,0 @@
+-"""A session's conversation as its own chat shows it: the person's messages and the agent's text replies.
+-
+-Claude Code and Codex each write a session's conversation to a JSON Lines transcript. `Reader` follows one,
+-reading only the bytes added since its last read, and turns each entry into what was said: the person's typed
+-prompts, the inbox lines Projector delivered on their behalf, and the agent's text. Tool calls, tool results,
+-thinking, reasoning, hook context, and instructions are left out, and so is an entry of a kind the reader does not
+-know, so a host that adds one breaks nothing.
+-
+-The transcript holds whatever the conversation held, including any secret an agent quoted there, so the console
+-shows only what the session's own chat already shows, to the person who can already read that chat.
+-"""
+-
+-from __future__ import annotations
+-
+-import json
+-import os
+-import re
+-from dataclasses import dataclass
+-from pathlib import Path
+-from typing import Callable, Optional
+-
+-from . import codex_watch, watch
+-
+-# How much of a transcript the first read takes from its end, so a long session opens at once.
+-TAIL_BYTES = 2 * 1024 * 1024
+-# How many things said a reader keeps, the newest.
+-KEEP = 400
+-# The lines Projector's deliverers send a session on the person's behalf, as `inbox.message` writes them.
+-INBOX_LINE = re.compile(r"^(ANSWER|DISCUSS|STARTED|UNCLEAR|RESTORED|DONE|DECLINED|DISMISSED) \d+\S* ")
+-COMMAND = re.compile(r"<command-name>(.*?)</command-name>(?:.*?<command-args>(.*?)</command-args>)?", re.S)
+-
+-
+-@dataclass(frozen=True)
+-class Said:
+-    """One thing said in the conversation: by `you`, the person, or by the `agent`."""
+-
+-    who: str
+-    text: str
+-
+-
+-def inbox_lines(text: object) -> list[Said]:
+-    """The person's inbox lines in a prompt Projector delivered, leaving out its pull request events."""
+-    if not isinstance(text, str):
+-        return []
+-    return [Said("you", line) for line in text.splitlines() if INBOX_LINE.match(line)]
+-
+-
+-# Claude Code
+-
+-def claude_typed(text: str) -> Optional[str]:
+-    """What the person typed, from a prompt's text: a slash command as `/name args`, and nothing for the output a
+-    command or a shell escape left in the conversation."""
+-    said = text.strip()
+-    if said.startswith("<command-"):
+-        found = COMMAND.search(said)
+-        return " ".join(part.strip() for part in found.groups() if part and part.strip()) if found else None
+-    if not said or said.startswith("<") or said.startswith("[Request interrupted"):
+-        return None
+-    return said
+-
+-
+-def claude_said(entry: dict) -> list[Said]:
+-    """What a Claude Code transcript entry said: an assistant entry's text blocks, the person's typed prompt, or
+-    the inbox lines in a prompt Projector's panel submitted. A subagent's, a meta, or a compaction summary's entry
+-    says nothing in the session's chat."""
+-    if entry.get("isSidechain") or entry.get("isMeta") or entry.get("isCompactSummary"):
+-        return []
+-    message = entry.get("message")
+-    if not isinstance(message, dict):
+-        return []
+-    content = message.get("content")
+-    blocks = [block for block in content if isinstance(block, dict)] if isinstance(content, list) else []
+-    if entry.get("type") == "assistant":
+-        return [Said("agent", block["text"].strip()) for block in blocks
+-                if block.get("type") == "text" and isinstance(block.get("text"), str) and block["text"].strip()]
+-    if entry.get("type") != "user" or entry.get("toolUseResult") is not None:
+-        return []
+-    origin = entry.get("origin") if isinstance(entry.get("origin"), dict) else {}
+-    if origin.get("kind") == "plugin":
+-        prompt = entry.get("pluginPrompt") if isinstance(entry.get("pluginPrompt"), dict) else {}
+-        return inbox_lines(prompt.get("text")) if origin.get("name") == "projector" else []
+-    # An older Claude Code writes no origin, so a prompt without one is taken as typed.
+-    if origin.get("kind") not in (None, "human"):
+-        return []
+-    # A tool's result sits in a `tool_result` block, whose text this never reads.
+-    text = content if isinstance(content, str) else "\n".join(
+-        block["text"] for block in blocks if block.get("type") == "text" and isinstance(block.get("text"), str))
+-    typed = claude_typed(text)
+-    return [Said("you", typed)] if typed else []
+-
+-
+-def claude_transcript(session: str, environ: Optional[dict] = None) -> Optional[Path]:
+-    """The transcript Claude Code writes for `session`, `projects/<project>/<session>.jsonl` under its
+-    configuration directory, the newest when several projects hold one."""
+-    environ = os.environ if environ is None else environ
+-    if not watch.SESSION.fullmatch(session):
+-        return None
+-    roots = [Path(environ["CLAUDE_CONFIG_DIR"]) / "projects"] if environ.get("CLAUDE_CONFIG_DIR") else []
+-    roots.append(Path(environ.get("HOME") or Path.home()) / ".claude" / "projects")
+-    found = []
+-    for root in roots:
+-        try:
+-            found += [path for path in root.glob(f"*/{session}.jsonl") if path.is_file()]
+-        except OSError:
+-            continue
+-    return max(found, key=lambda path: path.stat().st_mtime_ns, default=None)
+-
+-
+-# Codex
+-
+-def codex_said(entry: dict) -> list[Said]:
+-    """What a Codex rollout entry said: an assistant message's text, or a user message's text that the person
+-    gave. Each content block of a user message carries its kind in `content_item_kinds`, where `user.text` is the
+-    person's and the rest are instructions and context Codex adds. A rollout that records no kinds is older, and
+-    there a block that opens with a tag is that context. A batch Projector's Codex adapter queued keeps only its
+-    inbox lines."""
+-    if entry.get("type") != "response_item":
+-        return []
+-    payload = entry.get("payload")
+-    if not isinstance(payload, dict) or payload.get("type") != "message":
+-        return []
+-    blocks = payload.get("content") if isinstance(payload.get("content"), list) else []
+-    texts = [(index, block.get("text")) for index, block in enumerate(blocks)
+-             if isinstance(block, dict) and isinstance(block.get("text"), str) and block["text"].strip()]
+-    if payload.get("role") == "assistant":
+-        return [Said("agent", text.strip()) for _, text in texts]
+-    if payload.get("role") != "user":
+-        return []
+-    passthrough = payload.get("internal_chat_message_metadata_passthrough")
+-    kinds = passthrough.get("content_item_kinds") if isinstance(passthrough, dict) else None
+-    said = []
+-    for index, text in texts:
+-        if isinstance(kinds, list):
+-            if index >= len(kinds) or kinds[index] != "user.text":
+-                continue
+-        elif text.lstrip().startswith("<"):
+-            continue
+-        if codex_watch.MARKER.match(text):
+-            said += inbox_lines(text)
+-        else:
+-            said.append(Said("you", text.strip()))
+-    return said
+-
+-
+-def codex_transcript(root: Path, session: str) -> Optional[Path]:
+-    """The rollout `codex.json` names for the session's own thread."""
+-    path = codex_watch.registration(watch.session_folder(root, session)).get("transcript_path")
+-    return Path(path) if isinstance(path, str) and path and Path(path).is_absolute() else None
+-
+-
+-# Following a transcript
+-
+-class Reader:
+-    """Follows one session's transcript. `read` returns what was said since the last read, and only this reader's
+-    one caller may call it, since it keeps the offset."""
+-
+-    def __init__(self, locate: Callable[[], Optional[Path]], parse: Callable[[dict], list[Said]]) -> None:
+-        self.locate, self.parse = locate, parse
+-        self.path: Optional[Path] = None
+-        self.identity: Optional[tuple[int, int]] = None
+-        self.offset = 0
+-        self.partial = b""
+-
+-    def read(self) -> tuple[bool, list[Said]]:
+-        """Whether the transcript started over, as when it was found, replaced, or cut short, so what was said
+-        before no longer stands, and what was said since. The first read of a transcript takes only its last
+-        `TAIL_BYTES`, from the first whole line in them."""
+-        path = self.path if self.path is not None and self.path.exists() else self.locate()
+-        if path is None:
+-            restarted = self.path is not None
+-            self.path, self.identity = None, None
+-            return restarted, []
+-        try:
+-            stat = path.stat()
+-            restarted = path != self.path or (stat.st_dev, stat.st_ino) != self.identity or stat.st_size < self.offset
+-            if restarted:
+-                self.path, self.identity, self.partial = path, (stat.st_dev, stat.st_ino), b""
+-                # A line the tail starts inside is the end of a JSON object, which is never JSON itself, so it
+-                # is skipped below with any other line that does not parse.
+-                self.offset = max(0, stat.st_size - TAIL_BYTES)
+-            with path.open("rb") as handle:
+-                handle.seek(self.offset)
+-                added = handle.read()
+-        except OSError:
+-            return False, []
+-        self.offset += len(added)
+-        *lines, self.partial = (self.partial + added).split(b"\n")
+-        said = []
+-        for line in lines:
+-            try:
+-                entry = json.loads(line)
+-            except ValueError:
+-                continue
+-            if isinstance(entry, dict):
+-                said += self.parse(entry)
+-        return restarted, said
+-
+-
+-def reader_for(root: Path, session: str, host: str) -> Reader:
+-    """A reader of the session's conversation: Codex's rollout for a Codex session, and otherwise Claude Code's
+-    transcript."""
+-    if host == "codex":
+-        return Reader(lambda: codex_transcript(root, session), codex_said)
+-    return Reader(lambda: claude_transcript(session), claude_said)
+diff --git a/src/projector/rows.py b/src/projector/rows.py
+index f1f7d773..f46c16eb 100644
+--- a/src/projector/rows.py
++++ b/src/projector/rows.py
+@@ -92,6 +92,7 @@ class Pull:
+     labels: list[str]
+     summary_url: Optional[str]
+     is_loading: bool = False
++    updated_at: Optional[float] = None
+ 
+ 
+ @dataclass(frozen=True)
+@@ -312,6 +313,7 @@ def to_pull(repo: str, number: int, node: dict) -> Pull:
+     url = node.get("url")
+     body = node.get("body")
+     found = SUMMARY.search(body) if isinstance(body, str) else None
++    changed = watch.seconds_of(node.get("updatedAt"))
+     return Pull(
+         repo=repo,
+         number=number,
+@@ -334,6 +336,7 @@ def to_pull(repo: str, number: int, node: dict) -> Pull:
+         labels=[label["name"] for label in nodes_of(node.get("labels"))
+                 if isinstance(label, dict) and isinstance(label.get("name"), str)],
+         summary_url=found.group(1) if found else None,
++        updated_at=changed * 1000 if changed is not None else None,
+     )
+ 
+ 
+diff --git a/src/projector/session_titles.py b/src/projector/session_titles.py
+new file mode 100644
+index 00000000..bb011980
+--- /dev/null
++++ b/src/projector/session_titles.py
+@@ -0,0 +1,101 @@
++"""Read native session titles without loading conversations into the console."""
++
++from __future__ import annotations
++
++import json
++import os
++from dataclasses import dataclass, field
++from pathlib import Path
++
++from . import watch
++
++READ_BYTES = 256 * 1024
++
++
++@dataclass
++class TitleFile:
++    signature: tuple | None = None
++    offset: int = 0
++    partial: bool = False
++    skipping: bool = False
++    titles: dict[str, str] = field(default_factory=dict)
++
++    def read(self, path: Path, identifier: str, title_key: str) -> dict[str, str]:
++        try:
++            stat = path.stat()
++            signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
++            if signature == self.signature and (self.offset >= stat.st_size or self.partial):
++                return self.titles
++            if self.signature is not None and signature != self.signature and (
++                    signature[:2] != self.signature[:2] or stat.st_size <= self.signature[2]):
++                self.offset = 0
++                self.skipping = False
++                self.titles.clear()
++            with path.open("rb") as stream:
++                stream.seek(self.offset)
++                chunk = stream.read(READ_BYTES)
++        except OSError:
++            return self.titles
++        self.signature = signature
++        complete = chunk.rfind(b"\n") + 1
++        self.partial = len(chunk) < READ_BYTES and complete < len(chunk)
++        if not complete:
++            if len(chunk) == READ_BYTES:
++                self.offset += len(chunk)
++                self.skipping = True
++            return self.titles
++        self.offset += complete
++        lines = chunk[:complete].splitlines()
++        if self.skipping:
++            lines = lines[1:]
++            self.skipping = False
++        marker = ('"' + title_key + '"').encode()
++        for line in lines:
++            if marker not in line:
++                continue
++            try:
++                record = json.loads(line)
++            except (ValueError, UnicodeError):
++                continue
++            if not isinstance(record, dict):
++                continue
++            name, title = record.get(identifier), record.get(title_key)
++            if isinstance(name, str) and isinstance(title, str) and title.strip():
++                self.titles[name] = title.strip()
++        return self.titles
++
++
++class SessionTitles:
++    def __init__(self) -> None:
++        self.files: dict[Path, TitleFile] = {}
++        self.claude_paths: dict[str, Path] = {}
++
++    def read(self, sessions: dict[str, str]) -> dict[str, str]:
++        found: dict[str, str] = {}
++        active_paths: set[Path] = set()
++        if "codex" in sessions.values():
++            home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
++            path = home / "session_index.jsonl"
++            active_paths.add(path)
++            titles = self.files.setdefault(path, TitleFile()).read(path, "id", "thread_name")
++            found.update({name: title for name, title in titles.items() if sessions.get(name) == "codex"})
++        root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
++        for name, host in sessions.items():
++            if host != "claude" or not watch.SESSION.fullmatch(name):
++                continue
++            path = self.claude_paths.get(name)
++            if path is None or not path.is_file():
++                try:
++                    path = max(root.glob(f"*/{name}.jsonl"), key=lambda one: one.stat().st_mtime_ns, default=None)
++                except OSError:
++                    path = None
++                if path is None:
++                    continue
++                self.claude_paths[name] = path
++            active_paths.add(path)
++            titles = self.files.setdefault(path, TitleFile()).read(path, "sessionId", "customTitle")
++            if name in titles:
++                found[name] = titles[name]
++        self.files = {path: data for path, data in self.files.items() if path in active_paths}
++        self.claude_paths = {name: path for name, path in self.claude_paths.items() if name in sessions}
++        return found
+diff --git a/tests/fixtures/conversation/claude.jsonl b/tests/fixtures/conversation/claude.jsonl
+deleted file mode 100644
+index 1ce5d44b..00000000
+--- a/tests/fixtures/conversation/claude.jsonl
++++ /dev/null
+@@ -1,19 +0,0 @@
+-{"type":"permission-mode","permissionMode":"auto","sessionId":"11111111-2222-4333-8444-555555555555"}
+-{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"Rename the greeting to hello."},"uuid":"u1","timestamp":"2026-01-02T03:04:05.000Z","origin":{"kind":"human"},"promptSource":"typed","sessionId":"11111111-2222-4333-8444-555555555555"}
+-{"parentUuid":"u1","isSidechain":false,"type":"attachment","attachment":{"type":"environment"},"uuid":"a1"}
+-{"parentUuid":"u1","isSidechain":false,"type":"user","message":{"role":"user","content":"<system-reminder>Made-up reminder.</system-reminder>"},"isMeta":true,"uuid":"m1"}
+-{"parentUuid":"u1","isSidechain":false,"message":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"Made-up thinking.","signature":"sig"}]},"type":"assistant","uuid":"t1"}
+-{"parentUuid":"t1","isSidechain":false,"message":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"I'll rename it in greet.py."}]},"type":"assistant","uuid":"t2"}
+-{"parentUuid":"t2","isSidechain":false,"message":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"sed -n 1p greet.py"}}]},"type":"assistant","uuid":"t3"}
+-{"parentUuid":"t3","isSidechain":false,"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"def greet(): made-up tool output","is_error":false}]},"toolUseResult":{"stdout":"def greet(): made-up tool output"},"uuid":"r1"}
+-{"parentUuid":"r1","isSidechain":false,"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_2","type":"tool_result","content":[{"type":"text","text":"Made-up tool output with no toolUseResult."}]}]},"uuid":"r2"}
+-{"parentUuid":"r2","isSidechain":false,"type":"user","message":{"role":"user","content":"Made-up tool output recorded as text."},"toolUseResult":{"stdout":"Made-up tool output recorded as text."},"uuid":"r3"}
+-{"parentUuid":"r1","isSidechain":true,"message":{"id":"msg_s","type":"message","role":"assistant","content":[{"type":"text","text":"A subagent's made-up text."}]},"type":"assistant","uuid":"s1"}
+-{"parentUuid":"r1","isSidechain":false,"type":"user","message":{"role":"user","content":"The projector plugin sent a message:\nDISCUSS 5 About this session → please keep the old name as an alias\n\nThis is how Claude Code surfaces a prompt a plugin submits between turns."},"uuid":"p1","origin":{"kind":"plugin","name":"projector"},"promptSource":"system","pluginPrompt":{"name":"projector","text":"DISCUSS 5 About this session → please keep the old name as an alias"}}
+-{"parentUuid":"p1","isSidechain":false,"type":"user","message":{"role":"user","content":"The projector plugin sent a message:\nFINDING acme/app#12 made-up finding — run fix-pr\n"},"uuid":"p2","origin":{"kind":"plugin","name":"projector"},"promptSource":"system","pluginPrompt":{"name":"projector","text":"FINDING acme/app#12 made-up finding — run fix-pr on acme/app#12"}}
+-{"parentUuid":"p2","isSidechain":false,"type":"user","message":{"role":"user","content":"Another session sent a made-up peer message."},"uuid":"q1","isMeta":true,"origin":{"kind":"peer"}}
+-{"parentUuid":"q1","isSidechain":false,"type":"user","message":{"role":"user","content":"<command-message>fix-pr</command-message>\n<command-name>/projector:fix-pr</command-name>\n<command-args>acme/app#12</command-args>"},"uuid":"c1","origin":{"kind":"human"}}
+-{"parentUuid":"c1","isSidechain":false,"type":"user","message":{"role":"user","content":"<local-command-stdout>Made-up command output</local-command-stdout>"},"uuid":"c2"}
+-{"type":"a-kind-this-reader-does-not-know","made":"up"}
+-not json at all
+-{"parentUuid":"c2","isSidechain":false,"message":{"id":"msg_2","type":"message","role":"assistant","content":[{"type":"text","text":"Done: greet.py says hello, and greet stays as an alias."}]},"type":"assistant","uuid":"t4"}
+diff --git a/tests/fixtures/conversation/codex.jsonl b/tests/fixtures/conversation/codex.jsonl
+deleted file mode 100644
+index 27cc296b..00000000
+--- a/tests/fixtures/conversation/codex.jsonl
++++ /dev/null
+@@ -1,15 +0,0 @@
+-{"timestamp":"2026-01-02T03:04:05.000Z","ordinal":1,"type":"session_meta","payload":{"id":"01a1e773-0000-7000-8000-00000000c0de","cwd":"/tmp/made-up","source":"cli"}}
+-{"timestamp":"2026-01-02T03:04:05.100Z","ordinal":2,"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"Made-up developer instructions."}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["model.base_instructions"]}}}
+-{"timestamp":"2026-01-02T03:04:05.200Z","ordinal":3,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# Made-up AGENTS.md"},{"type":"input_text","text":"<environment_context>made-up</environment_context>"}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["agents_md.instructions","environments.environment_context"]}}}
+-{"timestamp":"2026-01-02T03:04:06.000Z","ordinal":4,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Add a farewell function."}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"],"content_item_metadata":[{"provenance":{"type":"user"}}]}}}
+-{"timestamp":"2026-01-02T03:04:06.100Z","ordinal":5,"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+-{"timestamp":"2026-01-02T03:04:06.200Z","ordinal":6,"type":"response_item","payload":{"type":"reasoning","summary":[],"content":null,"encrypted_content":"made-up"}}
+-{"timestamp":"2026-01-02T03:04:06.300Z","ordinal":7,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I'll add it beside greet.","annotations":[]}],"phase":"commentary"}}
+-{"timestamp":"2026-01-02T03:04:06.400Z","ordinal":8,"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat greet.py\"}","call_id":"call_1"}}
+-{"timestamp":"2026-01-02T03:04:06.500Z","ordinal":9,"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"made-up tool output"}}
+-{"timestamp":"2026-01-02T03:04:06.600Z","ordinal":10,"type":"response_item","payload":{"type":"agent_message","author":"/root/helper","recipient":"/root","content":[{"type":"input_text","text":"A subagent's made-up report."}]}}
+-{"timestamp":"2026-01-02T03:04:06.700Z","ordinal":11,"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"Made-up hook context."}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["hooks.additional_context"]}}}
+-{"timestamp":"2026-01-02T03:04:07.000Z","ordinal":12,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"PROJECTOR WATCH 0f0e0d0c-0b0a-4908-8706-050403020100\nsession=01a1e773-0000-7000-8000-00000000c0de\nRecheck current subscriptions, pull request state, and inbox items before acting.\nFINDING acme/app#12 made-up finding — run fix-pr on acme/app#12\nANSWER 3.a Add the farewell to the README too? → Yes, in the usage section"}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}}}
+-{"type":"a-kind-this-reader-does-not-know","payload":{"made":"up"}}
+-{"timestamp":"2026-01-02T03:04:08.000Z","ordinal":13,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Added farewell, and the README's usage section shows it.","annotations":[]}],"phase":"final_answer"}}
+-{"timestamp":"2026-01-02T03:04:09.000Z","ordinal":14,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>made-up legacy context</user_instructions>"},{"type":"input_text","text":"A message from an older Codex that records no kinds."}]}}
+diff --git a/tests/fixtures/rows/checks.ts b/tests/fixtures/rows/checks.ts
+index d1a5b619..a82ce49e 100644
+--- a/tests/fixtures/rows/checks.ts
++++ b/tests/fixtures/rows/checks.ts
+@@ -299,7 +299,7 @@ export default [
+           "repo": "acme/app", "number": 10, "title": "", "url": "https://github.com/acme/app/pull/10",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -312,7 +312,7 @@ export default [
+           "repo": "acme/app", "number": 9, "title": "", "url": "https://github.com/acme/app/pull/9", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -325,7 +325,7 @@ export default [
+           "repo": "acme/app", "number": 8, "title": "", "url": "https://github.com/acme/app/pull/8", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "cancelled",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -338,7 +338,7 @@ export default [
+           "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "cancelled",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -351,7 +351,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -364,7 +364,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -377,7 +377,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "pending",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -390,7 +390,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "pending",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -403,7 +403,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -416,7 +416,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/facts.ts b/tests/fixtures/rows/facts.ts
+index 226a10fe..1c46aa1f 100644
+--- a/tests/fixtures/rows/facts.ts
++++ b/tests/fixtures/rows/facts.ts
+@@ -11,6 +11,7 @@ export default [
+             "title": "Add the console",
+             "url": "https://github.com/acme/app/pull/12",
+             "state": "OPEN",
++            "updatedAt": "2026-01-01T00:00:00Z",
+             "author": {"login": "ada"},
+             "headRefName": "console/rows",
+             "additions": 120,
+@@ -45,7 +46,7 @@ export default [
+           "author": "ada", "branch": "console/rows", "additions": 120, "deletions": 8, "changed_files": 4,
+           "checks": null, "is_cancelled": false, "labels": ["enhancement"],
+           "summary_url": "https://projector.bot/acme/app/reviews/12",
+-          "is_loading": false
++          "is_loading": false, "updated_at": 1767225600000
+         }
+       },
+       {
+@@ -58,7 +59,7 @@ export default [
+           "repo": "acme/app", "number": 11, "title": "Fix the cache", "url": "https://github.com/acme/app/pull/11",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "bob", "branch": "fix-cache", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/labels.ts b/tests/fixtures/rows/labels.ts
+index 04cf58b0..8b734a81 100644
+--- a/tests/fixtures/rows/labels.ts
++++ b/tests/fixtures/rows/labels.ts
+@@ -14,7 +14,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       },
+       {
+@@ -27,7 +27,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       }
+     ]
+@@ -47,7 +47,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       },
+       {
+@@ -60,7 +60,7 @@ export default [
+           "repo": "acme/web", "number": 5, "title": "", "url": "https://github.com/acme/web/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       }
+     ]
+@@ -80,7 +80,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       },
+       {
+@@ -93,7 +93,7 @@ export default [
+           "repo": "acme/web", "number": 1, "title": "", "url": "https://github.com/acme/web/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       },
+       {
+@@ -106,7 +106,7 @@ export default [
+           "repo": "other/app", "number": 4, "title": "", "url": "https://github.com/other/app/pull/4",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": true
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/loading.ts b/tests/fixtures/rows/loading.ts
+index 7c119ea9..4bb5d11d 100644
+--- a/tests/fixtures/rows/loading.ts
++++ b/tests/fixtures/rows/loading.ts
+@@ -22,7 +22,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       },
+       {
+@@ -35,7 +35,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       },
+       {
+@@ -48,7 +48,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       },
+       {
+@@ -61,7 +61,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/malformed.ts b/tests/fixtures/rows/malformed.ts
+index 7007a4e1..dcbc2cff 100644
+--- a/tests/fixtures/rows/malformed.ts
++++ b/tests/fixtures/rows/malformed.ts
+@@ -55,7 +55,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 1, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 2.5, "checks": "passing",
+-          "is_cancelled": false, "labels": ["CLEAN"], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["CLEAN"], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/notes.ts b/tests/fixtures/rows/notes.ts
+index 6577f293..471a13ff 100644
+--- a/tests/fixtures/rows/notes.ts
++++ b/tests/fixtures/rows/notes.ts
+@@ -62,7 +62,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": true, "review_decision": "APPROVED", "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": ["clean"], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["clean"], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -75,7 +75,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": "APPROVED", "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "passing",
+-          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": true, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/roles.ts b/tests/fixtures/rows/roles.ts
+index 9684fe9d..8680cb9a 100644
+--- a/tests/fixtures/rows/roles.ts
++++ b/tests/fixtures/rows/roles.ts
+@@ -17,7 +17,7 @@ export default [
+           "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       },
+       {
+@@ -30,7 +30,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       },
+       {
+@@ -43,7 +43,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       },
+       {
+@@ -56,7 +56,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       }
+     ]
+@@ -79,7 +79,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": true
++          "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/sections.ts b/tests/fixtures/rows/sections.ts
+index d87ae9d4..38552a13 100644
+--- a/tests/fixtures/rows/sections.ts
++++ b/tests/fixtures/rows/sections.ts
+@@ -26,7 +26,7 @@ export default [
+           "repo": "acme/app_b", "number": 9, "title": "", "url": "https://github.com/acme/app_b/pull/9",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -39,7 +39,7 @@ export default [
+           "repo": "acme/app_b", "number": 3, "title": "", "url": "https://github.com/acme/app_b/pull/3",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": true
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": true, "updated_at": null
+         }
+       },
+       {
+@@ -52,7 +52,7 @@ export default [
+           "repo": "acme/app_b", "number": 2, "title": "", "url": "https://github.com/acme/app_b/pull/2",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -65,7 +65,7 @@ export default [
+           "repo": "acme/app-b", "number": 1, "title": "", "url": "https://github.com/acme/app-b/pull/1",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -78,7 +78,7 @@ export default [
+           "repo": "acme/app1", "number": 4, "title": "", "url": "https://github.com/acme/app1/pull/4",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -91,7 +91,7 @@ export default [
+           "repo": "acme/app_b", "number": 7, "title": "", "url": "https://github.com/acme/app_b/pull/7",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -104,7 +104,7 @@ export default [
+           "repo": "acme/app_b", "number": 10, "title": "", "url": "https://github.com/acme/app_b/pull/10",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "Ada", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -117,7 +117,7 @@ export default [
+           "repo": "acme/app_b", "number": 8, "title": "", "url": "https://github.com/acme/app_b/pull/8",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "bob", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -130,7 +130,7 @@ export default [
+           "repo": "acme/app-b", "number": 6, "title": "", "url": "https://github.com/acme/app-b/pull/6",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "Bob", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -143,7 +143,7 @@ export default [
+           "repo": "acme/app_b", "number": 5, "title": "", "url": "https://github.com/acme/app_b/pull/5",
+           "state": "OPEN", "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0,
+           "author": "carol", "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       }
+     ]
+@@ -168,7 +168,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": "ada",
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -181,7 +181,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": "bob",
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       }
+     ]
+diff --git a/tests/fixtures/rows/states.ts b/tests/fixtures/rows/states.ts
+index c42cd1b3..d7e5c1e5 100644
+--- a/tests/fixtures/rows/states.ts
++++ b/tests/fixtures/rows/states.ts
+@@ -64,7 +64,7 @@ export default [
+           "repo": "acme/app", "number": 8, "title": "", "url": "https://github.com/acme/app/pull/8", "state": "OPEN",
+           "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": true, "open_threads": 1,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -77,7 +77,7 @@ export default [
+           "repo": "acme/app", "number": 7, "title": "", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
+           "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": false, "open_threads": 1,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": "failing",
+-          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -90,7 +90,7 @@ export default [
+           "repo": "acme/app", "number": 6, "title": "", "url": "https://github.com/acme/app/pull/6", "state": "OPEN",
+           "is_draft": true, "review_decision": "CHANGES_REQUESTED", "is_conflicting": false, "open_threads": 1,
+           "author": null, "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null,
+-          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++          "is_cancelled": false, "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -103,7 +103,7 @@ export default [
+           "repo": "acme/app", "number": 5, "title": "", "url": "https://github.com/acme/app/pull/5", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 1, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false
++          "labels": ["reviewing", "clean"], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -116,7 +116,7 @@ export default [
+           "repo": "acme/app", "number": 4, "title": "", "url": "https://github.com/acme/app/pull/4", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": ["Reviewing", "clean"], "summary_url": null, "is_loading": false
++          "labels": ["Reviewing", "clean"], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -129,7 +129,7 @@ export default [
+           "repo": "acme/app", "number": 3, "title": "", "url": "https://github.com/acme/app/pull/3", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": ["clean"], "summary_url": null, "is_loading": false
++          "labels": ["clean"], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -142,7 +142,7 @@ export default [
+           "repo": "acme/app", "number": 2, "title": "", "url": "https://github.com/acme/app/pull/2", "state": "OPEN",
+           "is_draft": true, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       },
+       {
+@@ -155,7 +155,7 @@ export default [
+           "repo": "acme/app", "number": 1, "title": "", "url": "https://github.com/acme/app/pull/1", "state": "OPEN",
+           "is_draft": false, "review_decision": null, "is_conflicting": false, "open_threads": 0, "author": null,
+           "branch": "", "additions": 0, "deletions": 0, "changed_files": 0, "checks": null, "is_cancelled": false,
+-          "labels": [], "summary_url": null, "is_loading": false
++          "labels": [], "summary_url": null, "is_loading": false, "updated_at": null
+         }
+       }
+     ]
+diff --git a/tests/test_console.py b/tests/test_console.py
+index 080d11ee..4a2b17e6 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -9,7 +9,6 @@
+ import io
+ import json
+ import os
+-import shutil
+ import subprocess
+ import sys
+ import tempfile
+@@ -21,7 +20,7 @@
+ from typing import Optional
+ from unittest import mock
+ 
+-from projector import cli, config, console, inbox, relay, repo_inbox, watch
++from projector import cli, config, console, inbox, relay, repo_inbox, session_titles, watch
+ from projector.inbox import read_json, write_json
+ 
+ SOURCE = Path(cli.__file__).resolve().parents[1]
+@@ -52,6 +51,8 @@ def setUp(self) -> None:
+         self.home = self.scratch / "home"
+         self.home.mkdir()
+         environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state"), "HOME": str(self.home),
++                                               "CODEX_HOME": str(self.home / ".codex"),
++                                               "CLAUDE_CONFIG_DIR": str(self.home / ".claude"),
+                                                "PROJECTOR_REMOTE": "0", "BROWSER": ""})
+         environ.start()
+         self.addCleanup(environ.stop)
+@@ -197,8 +198,8 @@ def test_the_home_list_holds_live_claude_and_codex_sessions_and_leaves_out_a_lap
+ 
+         self.console.tick()
+ 
+-        self.assertEqual([("00000000c0de", "codex", "acme/web codex-branch"), ("fixer", "claude", "acme/app main")],
+-                         sorted((one.label, one.host, one.place) for one in self.console.home()))
++        self.assertEqual([("Unnamed session", "codex", str(checkout)), ("fixer", "claude", "")],
++                         sorted((one.label, one.host, one.cwd) for one in self.console.home()))
+ 
+ 
+ class HomeOrder(ConsoleCase):
+@@ -221,23 +222,11 @@ def test_sessions_share_a_directory_heading_without_merging_distinct_checkouts(s
+         self.assertEqual(1, lines.count("/work/app-copy"))
+         self.assertLess(lines.index("/work/app"), lines.index("/work/app-copy"))
+         self.assertIn("Unknown working directory", lines)
++        self.assertTrue(all(lines[lines.index(heading) - 1] == "" for heading in
++                            ("/work/App", "/work/app", "/work/app-copy", "/work/app/nested",
++                             "Unknown working directory")))
+         self.assertNotIn("/work/old", lines)
+ 
+-    def test_a_session_summary_and_newest_item_stay_on_its_single_list_line(self) -> None:
+-        self.claude("s1")
+-        write_json(self.folder("s1") / "agent.json",
+-                   {"schema_version": 1, "name": "fixer", "cwd": "/work/app", "summary": "Fixing the build"})
+-        self.ask("s1", "Retry the build?")
+-
+-        self.console.tick()
+-        lines = [line.text for line in self.console.lines(100)[0]]
+-        summary = next(line for line in lines if "Fixing the build" in line)
+-
+-        self.assertIn("fixer", summary)
+-        self.assertIn("1 question", summary)
+-        self.assertIn("Retry the build?", summary)
+-        self.assertIn("/work/app", lines)
+-
+     def test_a_refresh_keeps_the_initial_selection_when_another_session_moves_first(self) -> None:
+         with mock.patch.object(inbox, "now_ms", return_value=int(self.clock.now * 1000)):
+             for name in ("first", "second"):
+@@ -274,6 +263,140 @@ def test_an_items_drawer_lists_the_messages_you_sent_about_it(self) -> None:
+         self.assertIn("you: Which mirrors?", self.screen())
+ 
+ 
++class SessionColumns(ConsoleCase):
++    def test_a_codex_rename_appears_without_an_inbox_change_and_a_partial_name_waits_for_its_newline(self) -> None:
++        self.codex("s1", cwd="/work/app")
++        self.subscribe("s1", "acme/app review claude operator")
++        index = self.home / ".codex" / "session_index.jsonl"
++        index.parent.mkdir()
++        index.write_text('{"id":"s1","thread_name":"First title"}\n')
++        self.console.tick()
++        self.assertEqual("First title", self.console.viewed().label)
++
++        with index.open("a") as stream:
++            stream.write('not json\n{"id":"s1","thread_name":"Renamed')
++        self.clock.now += console.INBOX_EVERY
++        self.console.tick()
++        self.assertEqual("First title", self.console.viewed().label)
++
++        with index.open("a") as stream:
++            stream.write(' session"}\n')
++        self.clock.now += console.INBOX_EVERY
++        self.console.tick()
++        self.assertEqual("Renamed session", self.console.viewed().label)
++
++        index.write_text('{"id":"s1","thread_name":"New"}\n')
++        self.clock.now += console.INBOX_EVERY
++        self.console.tick()
++        self.assertEqual("New", self.console.viewed().label)
++
++    def test_a_claude_session_uses_its_native_custom_title_after_a_large_non_title_entry(self) -> None:
++        self.claude("s1")
++        self.ask("s1")
++        transcript = self.home / ".claude" / "projects" / "project" / "s1.jsonl"
++        transcript.parent.mkdir(parents=True)
++        transcript.write_text(json.dumps({"type": "tool", "content": "x" * 400}) + "\n"
++                              + json.dumps({"type": "custom-title", "sessionId": "s1", "customTitle": "Ship preview"})
++                              + "\n")
++        with mock.patch.object(session_titles, "READ_BYTES", 128):
++            for _ in range(6):
++                self.console.tick()
++                self.clock.now += console.INBOX_EVERY
++
++        self.assertEqual("Ship preview", self.console.viewed().label)
++        self.assertNotIn("x" * 20, self.screen())
++
++    def test_session_titles_replace_ids_and_pr_counts_start_in_one_column(self) -> None:
++        anonymous = "019a2b3c-0000-7000-8000-00000000c0de"
++        self.codex(anonymous, cwd="/work/app")
++        index = self.home / ".codex" / "session_index.jsonl"
++        index.parent.mkdir()
++        index.write_text(json.dumps({"id": anonymous, "thread_name": "Build the preview"}) + "\n")
++        self.claude("named")
++        write_json(self.folder("named") / "agent.json",
++                   {"schema_version": 1, "name": "build-fixer", "cwd": "/work/app", "repo": "acme/app"})
++        self.subscribe(anonymous, "acme/app#12 fix")
++        self.subscribe("named", "acme/app#12 fix", "acme/app#13 fix")
++        self.cache("acme/app", 12)
++        self.cache("acme/app", 13)
++
++        self.console.tick()
++        lines = [line.text for line in self.console.lines(100)[0]]
++        codex = next(line for line in lines if "Build the preview" in line)
++        named = next(line for line in lines if "build-fixer" in line)
++
++        self.assertEqual(codex.index("1 PR"), named.index("2 PRs"))
++        self.assertNotIn("00000000c0de", "\n".join(lines))
++        self.assertNotIn("acme/app", "\n".join(lines))
++
++    def test_directory_headings_shorten_only_paths_within_the_home_directory(self) -> None:
++        for name, cwd in (("home", str(self.home)), ("child", str(self.home / "app")),
++                          ("sibling", str(self.home) + "-other/app")):
++            self.codex(name, cwd=cwd)
++            self.subscribe(name, "acme/app review claude operator")
++
++        self.console.tick()
++        lines = [line.text for line in self.console.lines(100)[0]]
++
++        self.assertIn("~", lines)
++        self.assertIn("~/app", lines)
++        self.assertIn(str(self.home) + "-other/app", lines)
++
++    def test_session_rows_follow_the_directory_without_field_headings(self) -> None:
++        self.codex("s1", cwd="/work/app")
++        self.subscribe("s1", "acme/app review claude operator")
++        self.console.tick()
++        lines = self.console.home_lines(100)[0]
++
++        self.assertEqual("", lines[1].text)
++        self.assertEqual("/work/app", lines[2].text)
++        self.assertTrue(lines[3].text.startswith("▸ "))
++        self.assertIn("0 PRs", lines[3].text)
++
++    def test_a_newer_notice_does_not_replace_the_latest_open_request(self) -> None:
++        self.claude("s1")
++        with mock.patch.object(inbox, "now_ms", return_value=int(self.clock.now * 1000) - 3000):
++            self.ask("s1", "Check the build?")
++        with mock.patch.object(inbox, "now_ms", return_value=int(self.clock.now * 1000) - 2000):
++            inbox.request("s1", "Test the preview")
++        inbox.tell("s1", "Uploaded the build")
++
++        self.console.tick()
++        row = next(line.text for line in self.console.lines(100)[0] if line.text.startswith("▸ "))
++
++        self.assertIn("Test the preview", row)
++        self.assertNotIn("Uploaded the build", row)
++        self.assertNotIn("Check the build?", row)
++
++        inbox.done("s1", "2")
++        self.clock.now += console.INBOX_EVERY
++        self.console.tick()
++        row = next(line.text for line in self.console.lines(100)[0] if line.text.startswith("▸ "))
++        self.assertIn("Check the build?", row)
++        self.assertNotIn("Test the preview", row)
++
++    def test_the_right_edge_uses_the_pull_update_time_instead_of_polling_or_heartbeat_time(self) -> None:
++        self.codex("s1", cwd="/work/app")
++        self.subscribe("s1", "acme/app#12 fix")
++        self.cache("acme/app", 12, updatedAt=watch.stamp(self.clock.now - 120))
++        self.console.tick()
++
++        initial = next(line.text for line in self.console.lines(100)[0] if line.text.startswith("▸ "))
++        self.clock.now += 30
++        self.codex("s1", cwd="/work/app")
++        self.cache("acme/app", 12, updatedAt=watch.stamp(self.clock.now - 150))
++        self.console.tick()
++        polled = next(line.text for line in self.console.lines(100)[0] if line.text.startswith("▸ "))
++        self.cache("acme/app", 12, updatedAt=watch.stamp(self.clock.now - 10))
++        self.clock.now += console.ROWS_EVERY
++        self.console.tick()
++        changed = next(line.text for line in self.console.lines(100)[0] if line.text.startswith("▸ "))
++
++        self.assertEqual((100, "2m", "2m", "15s"),
++                         (len(initial), initial.rstrip().split()[-1], polled.rstrip().split()[-1],
++                          changed.rstrip().split()[-1]))
++
++
+ class Recording(ConsoleCase):
+     def test_an_option_answers_the_item_of_the_viewed_session_when_another_session_has_the_same_number(self) -> None:
+         for session in ("first", "second"):
+@@ -840,8 +963,7 @@ def setUp(self) -> None:
+         self.ask("s1")
+ 
+     def test_the_arrows_move_one_focus_through_the_rows_and_the_open_drawers_options_and_actions(self) -> None:
+-        # Catches arrows that stop at an open question's last option, skip its actions or the conversation's
+-        # heading, wrap past either end, or close the drawer when the focus leaves it.
++        # Catches arrows that stop at an open question's last option, skip its actions, wrap past either end, or close the drawer when the focus leaves it.
+         self.open_entry("s1", "item:1")
+         seen = [self.focused()]
+         for name in ("up", "up", "up", *["down"] * 9):
+@@ -851,7 +973,7 @@ def test_the_arrows_move_one_focus_through_the_rows_and_the_open_drawers_options
+         self.assertEqual([["1: Decline it (recommended)"], ["- Decline the finding?"], ["#12"], ["#12"],
+                           ["- Decline the finding?"], ["1: Decline it (recommended)"], ["2: Fix it"],
+                           ["6: I don't understand"], ["7: Discuss"], ["8: Dismiss"],
+-                          ["9: Snooze"], ["▸ Conversation"], ["▸ Conversation"]], seen)
++                          ["9: Snooze"], ["9: Snooze"], ["9: Snooze"]], seen)
+         self.assertEqual("item:1", self.console.drawer)
+ 
+     def test_a_pull_request_drawers_actions_follow_its_row_and_come_before_the_next_row(self) -> None:
+@@ -1004,16 +1126,80 @@ def press_terminal(self, *pressed: object) -> None:
+ 
+ 
+ class SplitLayout(TerminalCase):
++    def test_only_the_selected_agent_name_has_color_and_neither_session_row_is_reversed(self) -> None:
++        for name in ("first", "second"):
++            self.codex(name, cwd="/work/app")
++            write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
++        self.console.tick()
++        self.console.selected = "first"
++        lines = self.console.home_lines(100)[0]
++        rows = [line for line in lines if line.text.startswith(("▸ first", "  second"))]
++        window = FakeWindow(2, 100)
++        with mock.patch.dict(os.environ, {"NO_COLOR": ""}):
++            screen = console.Screen(window, self.console, ColorCurses(256))
++        screen.put(0, rows[0], 100)
++        screen.put(1, rows[1], 100)
++        names = {text.strip(): attributes for text, attributes in window.drawn if text.strip() in ("first", "second")}
++
++        self.assertGreater(names["first"] >> 8, 0)
++        self.assertEqual(0, names["second"])
++        self.assertFalse(any(attributes & FakeCurses.A_REVERSE for _, attributes in window.drawn))
++
++    def test_narrow_rows_shorten_the_request_and_preserve_the_rightmost_update_column(self) -> None:
++        self.codex("s1", cwd="/work/app")
++        self.ask("s1", "Review the new preview before the next release?")
++        self.console.tick()
++
++        for width in (20, 40, 80):
++            with self.subTest(width=width):
++                row = next(line.text for line in self.console.lines(width)[0] if line.text.startswith("▸ "))
++                self.assertEqual(width, len(row))
++                self.assertTrue(row.endswith("0s "), row)
++        row = next(line.text for line in self.console.lines(40)[0] if line.text.startswith("▸ "))
++        self.assertIn("…", row)
++        self.assertNotIn("release?", row)
++
++    def test_the_drawer_ends_after_its_items_without_a_conversation_row(self) -> None:
++        self.claude("s1")
++        self.ask("s1")
++        self.open_entry("s1", "item:1")
++        self.press("v")
++        for _ in range(15):
++            self.press("down")
++
++        self.assertNotIn("Conversation", self.draw())
++        self.assertEqual(["9: Snooze"], self.focused())
++        self.assertNotIn("v conversation", self.console.footer()[-1].text)
++
++    def test_status_width_keeps_pull_request_titles_aligned(self) -> None:
++        self.claude("s1")
++        self.subscribe("s1", "acme/app#12 fix", "acme/app#123 fix", "acme/app#124 fix")
++        self.cache("acme/app", 12, title="Ready title")
++        self.cache("acme/app", 123, title="Reviewed title", labels={"nodes": [{"name": "reviewing"}]})
++        self.cache("acme/app", 124, title="Conflict title", mergeable="CONFLICTING")
++        self.console.tick()
++        self.console.open_panel("s1")
++        lines = [line.text for line in self.console.lines(100)[0]]
++        ready = next(line for line in lines if "Ready title" in line)
++        reviewed = next(line for line in lines if "Reviewed title" in line)
++        conflict = next(line for line in lines if "Conflict title" in line)
++
++        self.assertEqual((ready.index("Ready title"), ready.index("Ready title")),
++                         (reviewed.index("Reviewed title"), conflict.index("Conflict title")))
++
+     def test_the_bottom_panel_tracks_the_selected_session_and_records_only_for_it(self) -> None:
+         with mock.patch.object(inbox, "now_ms", return_value=int(self.clock.now * 1000)):
+             for name in ("first", "second"):
+                 self.codex(name, cwd="/work/app")
+                 self.ask(name, f"Question from {name}?")
+         self.console.tick()
+-        initial = self.draw().split("─" * self.window.width, 1)[1]
++        drawn = self.draw()
++        self.assertTrue(all(line.startswith(" ") for line in drawn.splitlines() if line))
++        self.assertTrue(all(len(line) <= self.window.width for line in drawn.splitlines()))
++        initial = drawn.split("─" * (self.window.width - 1), 1)[1]
+ 
+         self.press_terminal(FakeCurses.KEY_DOWN)
+-        moved = self.draw().split("─" * self.window.width, 1)[1]
++        moved = self.draw().split("─" * (self.window.width - 1), 1)[1]
+         self.press("right", "enter", "1", "enter")
+ 
+         self.assertIn("Question from first?", initial)
+@@ -1028,6 +1214,7 @@ def test_a_long_session_list_keeps_its_group_and_the_bottom_panel_visible(self)
+         for number in range(20):
+             name = f"worker-{number:02}"
+             self.codex(name, cwd="/work/app")
++            write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
+             self.subscribe(name, "acme/app review claude operator")
+         self.console.tick()
+         for _ in range(19):
+@@ -1067,8 +1254,7 @@ def tall_question(self) -> None:
+     def test_page_down_reaches_the_last_message_and_controls_of_a_drawer_taller_than_the_screen(self) -> None:
+         self.tall_question()
+         opened = self.draw()
+-        self.press_terminal(FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE,
+-                            FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE)
++        self.press_terminal(*[FakeCurses.KEY_NPAGE] * 12)
+         scrolled = self.draw()
+         self.console.tick()
+ 
+@@ -1125,151 +1311,7 @@ def test_the_focus_leaves_a_tall_notice_drawer_open_and_scrolls_to_the_next_row(
+         self.assertIn("- Merge it now?", self.draw())
+ 
+ 
+-def claude_entry(who: str, text: str) -> str:
+-    if who == "you":
+-        return json.dumps({"type": "user", "origin": {"kind": "human"},
+-                           "message": {"role": "user", "content": text}}) + "\n"
+-    return json.dumps({"type": "assistant",
+-                       "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}) + "\n"
+-
+-
+-class Conversation(TerminalCase):
+-    """The panel's conversation section, read from a Claude Code transcript under a temporary `CLAUDE_CONFIG_DIR`
+-    and from a Codex rollout that `codex.json` names."""
+-
+-    def setUp(self) -> None:
+-        super().setUp()
+-        environ = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.scratch / "claude")})
+-        environ.start()
+-        self.addCleanup(environ.stop)
+-
+-    def transcript(self, session: str) -> Path:
+-        path = self.scratch / "claude" / "projects" / "-tmp-made-up" / f"{session}.jsonl"
+-        path.parent.mkdir(parents=True, exist_ok=True)
+-        return path
+-
+-    def say(self, path: Path, *said: tuple[str, str]) -> None:
+-        with path.open("a", encoding="utf-8") as handle:
+-            handle.write("".join(claude_entry(who, text) for who, text in said))
+-
+-    def test_the_conversation_is_collapsed_by_default_and_v_shows_it_for_that_session_only(self) -> None:
+-        for session in ("s1", "s2"):
+-            self.claude(session)
+-            self.subscribe(session, "acme/app review claude operator")
+-            self.say(self.transcript(session), ("you", f"Hello from {session}."), ("agent", f"Hi, {session}."))
+-        self.console.tick()
+-        self.console.open_panel("s1")
+-        self.console.tick()
+-        collapsed = self.screen()
+-
+-        self.press("v")
+-        self.console.tick()
+-        shown = self.screen()
+-        self.press("left")
+-        self.console.open_panel("s2")
+-        self.console.tick()
+-        other = self.screen()
+-        self.press("left")
+-        self.console.open_panel("s1")
+-        self.console.tick()
+-
+-        self.assertEqual(("▸ Conversation", False, "▾ Conversation", True, True, "▸ Conversation", False, True),
+-                         (collapsed.splitlines()[-1][:14], "agent: Hi, s1." in collapsed,
+-                          shown.splitlines()[-3][:14], "you: Hello from s1." in shown, "agent: Hi, s1." in shown,
+-                          other.splitlines()[-1][:14], "Hi, s2." in other, "agent: Hi, s1." in self.screen()))
+-
+-    def test_a_collapsed_conversation_is_never_read(self) -> None:
+-        self.claude("s1")
+-        self.subscribe("s1", "acme/app review claude operator")
+-        self.say(self.transcript("s1"), ("you", "Hello."))
+-        self.console.tick()
+-        self.console.open_panel("s1")
+-        for _ in range(3):
+-            self.clock.now += 1
+-            self.console.tick()
+-
+-        self.assertEqual(({}, {}), (self.console.readers, self.console.said))
+-
+-    def test_an_open_conversation_starts_at_its_newest_line_and_follows_it_until_you_scroll_back(self) -> None:
+-        self.claude("s1")
+-        self.ask("s1")
+-        path = self.transcript("s1")
+-        self.say(path, *(("agent", f"Old line {number}.") for number in range(1, 31)))
+-        self.console.tick()
+-        self.console.open_panel("s1")
+-        self.press("v")
+-        self.console.tick()
+-        opened = self.draw()
+-        self.say(path, ("you", "A newer question."), ("agent", "A newer answer."))
+-        self.clock.now += 1
+-        self.console.tick()
+-        followed = self.draw()
+-        self.press_terminal(FakeCurses.KEY_PPAGE)
+-        back = self.draw()
+-        self.say(path, ("agent", "The newest answer."))
+-        self.clock.now += 1
+-        self.console.tick()
+-        stayed = self.draw()
+-        self.press_terminal("G")
+-        self.say(path, ("agent", "One more answer."))
+-        self.clock.now += 1
+-        self.console.tick()
+-
+-        self.assertEqual((True, False, True, True, False, False, True, True),
+-                         ("agent: Old line 30." in opened, "Old line 1." in opened,
+-                          "agent: A newer answer." in followed, "Old line 20." in back,
+-                          "agent: A newer answer." in back, "The newest answer." in stayed, stayed == back,
+-                          "agent: One more answer." in self.draw()))
+-
+-    def test_the_conversation_heading_is_the_rings_last_place_and_enter_on_it_shows_or_hides_it(self) -> None:
+-        # Catches a ring that stops before the heading, Enter there opening nothing or a drawer instead of toggling
+-        # the conversation as `v` does, or a shown conversation that keeps the focus or scrolls away from its newest
+-        # line when the focus comes back to it.
+-        self.claude("s1")
+-        self.ask("s1")
+-        self.say(self.transcript("s1"), *(("agent", f"Old line {number}.") for number in range(1, 31)))
+-        self.open_entry("s1", "item:1")
+-        self.focus_on("▸ Conversation")
+-        reached = (self.console.drawer, self.console.expanded)
+-        self.press("enter")
+-        self.console.tick()
+-        opened = self.draw()
+-        self.press_terminal(FakeCurses.KEY_PPAGE)
+-        back = self.draw()
+-        self.press("up")
+-        left = (self.focused(), self.draw())
+-        self.press("down")
+-        returned = self.draw()
+-        self.press("enter")
+-
+-        self.assertEqual((("item:1", set()), True, None, True, False, ["- Decline the finding?"], True, True,
+-                          set(), "▸ Conversation"),
+-                         (reached, "agent: Old line 30." in opened, self.console.drawer, "Old line 20." in back,
+-                          "Old line 30." in back, left[0], "- Decline the finding?" in left[1],
+-                          "agent: Old line 30." in returned, self.console.expanded,
+-                          self.screen().splitlines()[-1][:14]))
+-
+-    def test_a_codex_sessions_conversation_comes_from_the_rollout_codex_json_names(self) -> None:
+-        rollout = self.scratch / "rollout.jsonl"
+-        shutil.copy(Path(__file__).resolve().parent / "fixtures" / "conversation" / "codex.jsonl", rollout)
+-        self.codex("019a2b3c-0000-7000-8000-00000000c0de", transcript_path=str(rollout))
+-        self.subscribe("019a2b3c-0000-7000-8000-00000000c0de", "acme/app review claude operator")
+-        self.console.tick()
+-        self.console.open_panel("019a2b3c-0000-7000-8000-00000000c0de")
+-        self.press("v")
+-        self.console.tick()
+-
+-        self.assertIn("agent: Added farewell, and the README's usage section shows it.", self.screen())
+-
+-    def test_a_session_with_no_transcript_says_so(self) -> None:
+-        self.claude("s1")
+-        self.subscribe("s1", "acme/app review claude operator")
+-        self.console.tick()
+-        self.console.open_panel("s1")
+-        self.press("v")
+-        self.console.tick()
+ 
+-        self.assertIn("No transcript found for this session.", self.screen())
+ class ColorCurses(FakeCurses):
+     """A terminal with `colors` colors, which keeps the foreground `init_pair` gave each pair."""
+ 
+@@ -1328,6 +1370,9 @@ def test_a_question_line_and_a_conflict_draw_in_the_panels_permission_and_error_
+             with self.subTest(colors=colors, environ=environ):
+                 drawn = self.foregrounds(ColorCurses(colors), environ)
+                 self.assertEqual((question, conflict), (drawn["- Decline the finding?"], drawn["conflict"]))
++                self.assertEqual(None if environ.get("NO_COLOR") else
++                                 ColorCurses.COLOR_RED if colors == 8 else console.xterm_color(dark["claude"]),
++                                 drawn["1 PR"])
+         self.assertEqual((67, 239, 147), (console.xterm_color((95, 135, 175)), console.xterm_color((80, 80, 80)),
+                                           console.xterm_color((177, 185, 249))))
+ 
+diff --git a/tests/test_conversation.py b/tests/test_conversation.py
+deleted file mode 100644
+index 03f1c554..00000000
+--- a/tests/test_conversation.py
++++ /dev/null
+@@ -1,158 +0,0 @@
+-"""`conversation.py`: reading a session's conversation from Claude Code's and Codex's transcripts.
+-
+-The fixtures in `tests/fixtures/conversation/` hold made-up entries in each host's transcript format: what the
+-person typed, what the agent said, and the tool calls, results, thinking, and context the console leaves out.
+-"""
+-
+-from __future__ import annotations
+-
+-import os
+-import shutil
+-import tempfile
+-import unittest
+-from pathlib import Path
+-from unittest import mock
+-
+-from projector import conversation, watch
+-from projector.conversation import Said
+-from projector.inbox import write_json
+-
+-FIXTURES = Path(__file__).resolve().parent / "fixtures" / "conversation"
+-SESSION = "11111111-2222-4333-8444-555555555555"
+-
+-
+-class Case(unittest.TestCase):
+-    def setUp(self) -> None:
+-        scratch = tempfile.TemporaryDirectory()
+-        self.addCleanup(scratch.cleanup)
+-        self.scratch = Path(scratch.name)
+-
+-    def follow(self, fixture: str, parse) -> tuple[Path, conversation.Reader]:
+-        path = self.scratch / fixture
+-        return path, conversation.Reader(lambda: path if path.exists() else None, parse)
+-
+-
+-class Hosts(Case):
+-    def test_a_claude_transcript_gives_the_persons_prompts_and_inbox_lines_and_the_agents_text_only(self) -> None:
+-        _, reader = self.follow("claude.jsonl", conversation.claude_said)
+-        shutil.copy(FIXTURES / "claude.jsonl", self.scratch / "claude.jsonl")
+-
+-        self.assertEqual((True, [
+-            Said("you", "Rename the greeting to hello."),
+-            Said("agent", "I'll rename it in greet.py."),
+-            Said("you", "DISCUSS 5 About this session → please keep the old name as an alias"),
+-            Said("you", "/projector:fix-pr acme/app#12"),
+-            Said("agent", "Done: greet.py says hello, and greet stays as an alias."),
+-        ]), reader.read())
+-
+-    def test_a_codex_rollout_gives_the_persons_text_and_inbox_lines_and_the_agents_text_only(self) -> None:
+-        _, reader = self.follow("codex.jsonl", conversation.codex_said)
+-        shutil.copy(FIXTURES / "codex.jsonl", self.scratch / "codex.jsonl")
+-
+-        self.assertEqual((True, [
+-            Said("you", "Add a farewell function."),
+-            Said("agent", "I'll add it beside greet."),
+-            Said("you", "ANSWER 3.a Add the farewell to the README too? → Yes, in the usage section"),
+-            Said("agent", "Added farewell, and the README's usage section shows it."),
+-            Said("you", "A message from an older Codex that records no kinds."),
+-        ]), reader.read())
+-
+-
+-class Following(Case):
+-    def test_a_later_read_returns_only_what_was_added_and_waits_for_a_line_to_end(self) -> None:
+-        path, reader = self.follow("claude.jsonl", conversation.claude_said)
+-        lines = (FIXTURES / "claude.jsonl").read_bytes().splitlines(keepends=True)
+-        path.write_bytes(b"".join(lines[:6]))
+-        first = reader.read()
+-        last = lines[-1]
+-        with path.open("ab") as handle:
+-            handle.write(b"".join(lines[6:-1]) + last[:20])
+-        middle = reader.read()
+-        with path.open("ab") as handle:
+-            handle.write(last[20:])
+-
+-        self.assertEqual([
+-            (True, [Said("you", "Rename the greeting to hello."), Said("agent", "I'll rename it in greet.py.")]),
+-            (False, [Said("you", "DISCUSS 5 About this session → please keep the old name as an alias"),
+-                     Said("you", "/projector:fix-pr acme/app#12")]),
+-            (False, [Said("agent", "Done: greet.py says hello, and greet stays as an alias.")]),
+-            (False, []),
+-        ], [first, middle, reader.read(), reader.read()])
+-
+-    def test_a_replaced_or_shortened_transcript_is_read_again_from_its_start(self) -> None:
+-        path, reader = self.follow("claude.jsonl", conversation.claude_said)
+-        shutil.copy(FIXTURES / "claude.jsonl", path)
+-        reader.read()
+-        lines = (FIXTURES / "claude.jsonl").read_bytes().splitlines(keepends=True)
+-        path.write_bytes(b"".join(lines[:2]))
+-
+-        self.assertEqual((True, [Said("you", "Rename the greeting to hello.")]), reader.read())
+-
+-    def test_the_first_read_of_a_long_transcript_starts_at_a_whole_line_near_its_end(self) -> None:
+-        path, reader = self.follow("claude.jsonl", conversation.claude_said)
+-        filler = b'{"type":"user","message":{"role":"user","content":"An old made-up prompt."}}\n' * 50
+-        shutil.copy(FIXTURES / "claude.jsonl", self.scratch / "tail.jsonl")
+-        path.write_bytes(filler + (self.scratch / "tail.jsonl").read_bytes())
+-
+-        tail = len((self.scratch / "tail.jsonl").read_bytes())
+-        found = []
+-        # A tail that starts inside the last filler line, and one that starts exactly where the fixture does.
+-        for size in (tail + 10, tail):
+-            with mock.patch.object(conversation, "TAIL_BYTES", size):
+-                restarted, said = conversation.Reader(lambda: path, conversation.claude_said).read()
+-            found.append((restarted, said[0]))
+-
+-        self.assertEqual([(True, Said("you", "Rename the greeting to hello."))] * 2, found)
+-
+-    def test_the_first_read_keeps_a_line_that_starts_exactly_where_the_tail_does(self) -> None:
+-        path, _ = self.follow("claude.jsonl", conversation.claude_said)
+-        first = b'{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"Old."}}\n'
+-        second = b'{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"New."}}\n'
+-        path.write_bytes(first + second)
+-
+-        with mock.patch.object(conversation, "TAIL_BYTES", len(second)):
+-            said = conversation.Reader(lambda: path, conversation.claude_said).read()[1]
+-
+-        self.assertEqual([Said("you", "New.")], said)
+-
+-    def test_a_transcript_that_disappears_starts_over_and_one_never_found_reads_nothing(self) -> None:
+-        path, reader = self.follow("claude.jsonl", conversation.claude_said)
+-        missing = reader.read()
+-        shutil.copy(FIXTURES / "claude.jsonl", path)
+-        reader.read()
+-        path.unlink()
+-
+-        self.assertEqual([(False, []), (True, [])], [missing, reader.read()])
+-
+-
+-class Finding(Case):
+-    def test_a_claude_transcript_is_found_under_claude_config_dir_or_home_and_the_newest_wins(self) -> None:
+-        config, home = self.scratch / "config", self.scratch / "home"
+-        for root, project in ((config, "a"), (home / ".claude", "b"), (home / ".claude", "c")):
+-            (root / "projects" / project).mkdir(parents=True)
+-            (root / "projects" / project / f"{SESSION}.jsonl").write_text("")
+-        os.utime(home / ".claude" / "projects" / "b" / f"{SESSION}.jsonl", (1, 1))
+-        os.utime(config / "projects" / "a" / f"{SESSION}.jsonl", (2, 2))
+-
+-        self.assertEqual(
+-            (home / ".claude" / "projects" / "c" / f"{SESSION}.jsonl",
+-             home / ".claude" / "projects" / "c" / f"{SESSION}.jsonl", None),
+-            (conversation.claude_transcript(SESSION, {"CLAUDE_CONFIG_DIR": str(config), "HOME": str(home)}),
+-             conversation.claude_transcript(SESSION, {"HOME": str(home)}),
+-             conversation.claude_transcript("*", {"HOME": str(home)})))
+-
+-    def test_a_codex_rollout_is_the_one_codex_json_names(self) -> None:
+-        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.scratch / "state"), "HOME": str(self.scratch)}):
+-            root = watch.state_root()
+-            folder = watch.session_folder(root, SESSION)
+-            folder.mkdir(parents=True)
+-            rollout = self.scratch / "rollout.jsonl"
+-            write_json(folder / "codex.json", {"schema_version": 1, "transcript_path": str(rollout)})
+-
+-            self.assertEqual((rollout, None),
+-                             (conversation.codex_transcript(root, SESSION),
+-                              conversation.codex_transcript(root, "another-session")))
+-
+-
+-if __name__ == "__main__":
+-    unittest.main()

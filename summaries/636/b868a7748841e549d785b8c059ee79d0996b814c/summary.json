@@ -1,0 +1,208 @@
+{
+ "version": 1,
+ "name": "Console session scanning",
+ "project": "console",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 636,
+  "title": "Align console session columns and drawer statuses",
+  "head": "b868a7748841e549d785b8c059ee79d0996b814c",
+  "headRef": "console-session-columns",
+  "base": "635699c65f6921a579cc84c48d1f6557cd1e2fba",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector console is a terminal view of live agent sessions. You select a session above and answer its inbox items or inspect its pull requests below. This change makes that list easier to scan: native chat titles replace session IDs, and PR counts, requests, and update ages occupy aligned fields.",
+   "The lower panel contains pull requests and inbox items. The transcript reader and its Conversation row are removed; agent replies remain in the agent’s own chat. Claude Code’s existing panel also reserves a common width for PR statuses."
+  ],
+  "cards": [
+   {
+    "id": "display",
+    "title": "What each session row shows",
+    "html": "<ul class=\"tight\"><li>The native chat title, falling back to a registered name or <code>Unnamed session</code>.</li><li>An orange count of open PRs the session fixes or reviews.</li><li>The newest unanswered, awake question or request.</li><li>The age of the latest registration, inbox, PR, or repository-inbox update.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review and validation",
+    "html": "<p>The exact head <code>b868a77</code> received a clean review with no findings or suggestions. The configured gate passed, including 264 hook tests and required CI. All 78 focused console and row tests passed on Python 3.12.</p><p>Large tests, the hook renderer, and the CLI guide were read through changed sections and affected callers.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "metadata",
+   "title": "Native titles and update timestamps",
+   "kicker": "Read the metadata that identifies a session and dates its activity.",
+   "intro": [
+    "A native title is the name you give the chat in Codex or Claude Code. The new reader follows Codex’s session index and Claude Code’s rename entries without retaining conversation text. Registered Projector names remain the fallback.",
+    "The PR row model also carries GitHub’s update timestamp in milliseconds. The console can display an activity age from that value without treating a cache poll as a new update."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The title reader caches file positions and limits each read to 256 KiB. Long files can take several refreshes to reach their latest rename."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/session_titles.py",
+     "note": "Adds incremental readers for native title records, with replacement detection and per-session caches.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 40,
+       "text": "The focused console tests confirmed that an incomplete Codex rename waits for its newline, a replaced index is reread, and a Claude rename is found after an oversized non-title entry."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/rows.py",
+     "note": "Converts the cached PR update timestamp to milliseconds and leaves missing timestamps unset."
+    },
+    {
+     "path": "hooks/rows.test.ts",
+     "note": "Includes the timestamp in the TypeScript side of the shared Python/TypeScript row contract."
+    },
+    {
+     "path": "tests/fixtures/rows/checks.ts",
+     "collapsed": true
+    },
+    {
+     "path": "tests/fixtures/rows/facts.ts",
+     "collapsed": true,
+     "note": "Adds a real timestamp case and the expected millisecond value shared by both implementations."
+    },
+    {
+     "path": "tests/fixtures/rows/labels.ts",
+     "collapsed": true
+    },
+    {
+     "path": "tests/fixtures/rows/loading.ts",
+     "collapsed": true
+    },
+    {
+     "path": "tests/fixtures/rows/malformed.ts",
+     "collapsed": true
+    },
+    {
+     "path": "tests/fixtures/rows/notes.ts",
+     "collapsed": true
+    },
+    {
+     "path": "tests/fixtures/rows/roles.ts",
+     "collapsed": true
+    },
+    {
+     "path": "tests/fixtures/rows/sections.ts",
+     "collapsed": true
+    },
+    {
+     "path": "tests/fixtures/rows/states.ts",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "console",
+   "title": "Aligned session rows and a focused lower panel",
+   "kicker": "Keep names, requests, and activity visible while removing duplicate chat display.",
+   "intro": [
+    "The session list groups checkouts by directory and shortens paths under your home directory with <code>~</code>. Each group has a blank line above it. Names and requests shorten to fit the terminal while the PR count and age keep their columns.",
+    "The selected name receives color and a marker rather than a full-row highlight. The lower panel keeps its independent scrolling and inbox actions, but its final Conversation row and transcript-reading machinery are deleted."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Combines native names, activity ages, and aligned fields; removes conversation state and shifts drawing one space inward.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1074,
+       "text": "Focused tests confirmed request shortening at widths 20, 40, and 80, preservation of the rightmost age, and color on the selected name without row reversal."
+      },
+      {
+       "kind": "verify",
+       "line": 1095,
+       "text": "The newest open question or request remains the headline when a newer notice arrives; completing that request reveals the older unanswered question."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "Adds rename, age, layout, and selection regressions; updates keyboard and scrolling cases for the shorter panel.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All 78 focused console and row tests passed, including actual pseudo-terminal console tests."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/conversation.py",
+     "note": "Deletes the transcript parser and incremental conversation reader.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "A repository search found no remaining runtime imports or calls to the removed conversation reader."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_conversation.py",
+     "note": "Removes tests for the deleted transcript reader."
+    },
+    {
+     "path": "tests/fixtures/conversation/claude.jsonl",
+     "note": "Removes the deleted reader’s Claude transcript fixture."
+    },
+    {
+     "path": "tests/fixtures/conversation/codex.jsonl",
+     "note": "Removes the deleted reader’s Codex transcript fixture."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "A common status width in Claude Code",
+   "kicker": "Start PR titles and review-request authors in stable columns.",
+   "intro": [
+    "The Claude Code panel displays a status such as <code>ready</code>, <code>conflict</code>, or <code>reviewing</code> before each PR title. It now measures the longest loaded status and reserves that width on every row, including loading rows."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Measures status width once per render and draws a fixed-width status cell.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2552,
+       "text": "The hook test mounted rows with ready, reviewing, and conflict statuses and confirmed the same reserved width. All 264 hook tests passed in the configured gate."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Adds the mounted-panel regression for common status width."
+    }
+   ]
+  },
+  {
+   "id": "guide",
+   "title": "The console guide follows the visible interface",
+   "kicker": "Document the columns and retained keyboard actions.",
+   "intro": [
+    "The CLI guide explains where titles come from, which updates count toward the displayed age, and how long fields shorten. It removes conversation-display instructions and directs you to the agent’s own chat for replies."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describes aligned session fields, directory spacing, and the pull-request/inbox-only lower panel."
+    }
+   ]
+  }
+ ]
+}
