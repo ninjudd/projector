@@ -12,16 +12,19 @@ any chunk fails.
 A chunk reads nothing from the terminal, and one that runs past `--timeout`
 seconds is stopped with every process it started and fails, so a test waiting
 on something that never comes fails its chunk instead of holding up the run.
+Ctrl-C stops every running chunk the same way.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 import unittest
 from collections import defaultdict
@@ -62,24 +65,52 @@ def chunks(names: list[str]) -> list[list[str]]:
     return sorted(jobs, key=len, reverse=True)
 
 
+def stop(process: subprocess.Popen) -> None:
+    """Kill a chunk with every process it started."""
+    if hasattr(os, "killpg"):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+    else:
+        # Windows has no process groups to kill, so only the chunk itself stops, and a process it started
+        # that holds its output open still keeps `communicate` waiting.
+        process.kill()
+
+
+# A chunk runs in a session of its own, so Ctrl-C reaches only the runner, which stops these itself.
+running: set[subprocess.Popen] = set()
+running_lock = threading.Lock()
+interrupted = threading.Event()
+
+
+def interrupt(pool: ThreadPoolExecutor) -> None:
+    """Start no more chunks, and stop every one that is running."""
+    pool.shutdown(wait=False, cancel_futures=True)
+    with running_lock:
+        interrupted.set()
+        for process in running:
+            stop(process)
+
+
 def run(ids: list[str], verbose: bool, timeout: float = TIMEOUT) -> subprocess.CompletedProcess:
     """Run one chunk with no stdin, in a process group of its own, so that past `timeout` the whole group is
     killed: a process a test started that waits on input would otherwise hold the output pipes open."""
     command = [sys.executable, "-m", "unittest", *(["-v"] if verbose else []), *ids]
     with subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
+        with running_lock:
+            running.add(process)
+            if interrupted.is_set():
+                stop(process)
         try:
             out, err = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            if hasattr(os, "killpg"):
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
-                # Windows has no process groups to kill, so only the chunk itself stops, and a process it
-                # started that holds its output open still keeps `communicate` waiting.
-                process.kill()
+            stop(process)
             out, err = process.communicate()
             err += f"\nThe chunk ran past {timeout:g} seconds and was stopped.\n"
             return subprocess.CompletedProcess(command, 1, out, err)
+        finally:
+            with running_lock:
+                running.discard(process)
     return subprocess.CompletedProcess(command, process.returncode, out, err)
 
 
@@ -97,16 +128,20 @@ def main(argv: list[str]) -> int:
     ran = skipped = 0
     failed: list[tuple[list[str], str]] = []
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        for ids, result in zip(jobs, pool.map(lambda ids: run(ids, args.verbose, args.timeout), jobs)):
-            output = result.stderr + result.stdout
-            if args.verbose:
-                print(output, end="", flush=True)
-            ran += sum(int(n) for n in re.findall(r"^Ran (\d+) tests?", output, re.M))
-            skipped += sum(int(n) for n in re.findall(r"skipped=(\d+)", output))
-            if result.returncode != 0:
-                failed.append((ids, output))
-            elif not args.verbose:
-                print(".", end="", flush=True)
+        try:
+            for ids, result in zip(jobs, pool.map(lambda ids: run(ids, args.verbose, args.timeout), jobs)):
+                output = result.stderr + result.stdout
+                if args.verbose:
+                    print(output, end="", flush=True)
+                ran += sum(int(n) for n in re.findall(r"^Ran (\d+) tests?", output, re.M))
+                skipped += sum(int(n) for n in re.findall(r"skipped=(\d+)", output))
+                if result.returncode != 0:
+                    failed.append((ids, output))
+                elif not args.verbose:
+                    print(".", end="", flush=True)
+        except KeyboardInterrupt:
+            interrupt(pool)
+            raise
     print()
     for ids, output in failed:
         print("=" * 70, f"\nFAILED chunk: {ids[0].rsplit('.', 1)[0] if len(ids) > 1 else ids[0]}\n", output, sep="")

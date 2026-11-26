@@ -127,7 +127,8 @@ running `unittest` on a few tests of one class, and prints each failing
 chunk's output before one summary. A chunk runs with no stdin, and one that
 runs past `--timeout` seconds, 300 by default, is stopped with every process
 it started and fails, so a test that waits on something that never comes
-cannot hold up the run. Pass `-j` to set the number of workers, `-v` for
+cannot hold up the run. Ctrl-C stops every running chunk the same way.
+Pass `-j` to set the number of workers, `-v` for
 every test's name, `--timeout` to change that limit, or a module, class, or
 test to run only that, as `unittest` takes it:
 
