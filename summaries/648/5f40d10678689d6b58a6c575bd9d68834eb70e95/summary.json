@@ -1,0 +1,107 @@
+{
+ "version": 1,
+ "name": "Release publication retries",
+ "project": "install-without-git",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 648,
+  "title": "Retry upgrades while a release is publishing",
+  "head": "5f40d10678689d6b58a6c575bd9d68834eb70e95",
+  "headRef": "retry-upgrade-release",
+  "base": "bd5d8fc4b0836a58e68b35fc515c8382acf5893d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project upgrade</code> installs the CLI from a published release and refreshes each selected host plugin from its marketplace. The marketplace follows the default branch, so it can offer a new plugin before the matching release exists. That temporary mismatch currently makes an otherwise successful upgrade fail.",
+   "This change waits and retries when newer plugins are the only mismatch. Each attempt reads the newest release again and repeats the original targets. Explicit <code>PROJECTOR_REF</code> choices, other mismatches, and installer failures keep their immediate-stop behavior."
+  ],
+  "cards": [
+   {
+    "id": "retry-contract",
+    "title": "When upgrade waits",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Result</th><th>Action</th></tr></thead><tbody><tr><td>Only <code>plugin-ahead</code>, with no explicit ref</td><td>Print <code>retrying</code>, wait 30 seconds, then retry; at most five retries</td></tr><tr><td>Explicit ref or another mismatch</td><td>Print the final mismatch rows and exit</td></tr><tr><td>Installer failure</td><td>Return its exit status immediately</td></tr><tr><td>Matching versions</td><td>Print <code>verified</code></td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "retry",
+   "title": "Retry only the publishing race",
+   "kicker": "A bounded wait around the existing installer path",
+   "intro": [
+    "The existing installer path selects a release, runs its installer, and captures a release check: the status rows that describe the installed versions. The CLI now repeats that path only when its mismatch names consist entirely of <code>plugin-ahead</code>, the status for a plugin newer than the chosen release.",
+    "The first attempt runs immediately. Up to five more attempts follow 30-second waits. Calling the installer path again refreshes the release tag each time and preserves the original targets, so the command can catch up when publication finishes. Only the final attempt’s mismatch rows are printed."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Wraps the existing installer call in a narrowly gated retry loop.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 418,
+       "text": "The gate requires a successful install, exactly the plugin-ahead mismatch category, no explicit PROJECTOR_REF, and a remaining attempt. Pinned-ref, mixed-mismatch, and installer-failure regressions all passed."
+      },
+      {
+       "kind": "verify",
+       "line": 416,
+       "text": "Every attempt reuses the original targets and calls run_installer again. Tracing that call reaches a fresh release_installer lookup; the publication-during-wait test fetched both release-tag installer URLs."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "regressions",
+   "title": "Exercise publication and failure boundaries",
+   "kicker": "Fast fake boundaries around the real upgrade and installer logic",
+   "intro": [
+    "The tests use temporary installation records, fake host commands, and a release API backed by local files. Replacing the wait lets a test publish a newer release between attempts without sleeping or changing the machine’s installed plugins.",
+    "The focused run passed all 104 upgrade, release-check, stale-release-warning, and installer tests. The new cases cover a release appearing during the wait, retry exhaustion, an explicit release pin, another mismatch beside newer plugins, and an installer failure on a later attempt."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_projector.py",
+     "collapsed": true,
+     "note": "Adds retry regressions and makes an unexpected wait fail the existing release-check tests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 3180,
+       "text": "The publication-during-wait regression passed: the command printed retrying then verified, selected the new tag’s installer, and left the fake installed CLI at the new version."
+      },
+      {
+       "kind": "verify",
+       "line": 3230,
+       "text": "The later installer-failure regression returned status 7 after one retry instead of continuing or reporting success. Retry exhaustion, pinned refs, and mixed mismatches also passed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "guidance",
+   "title": "Explain the wait to users",
+   "kicker": "Document the retry limit and explicit-ref exception",
+   "intro": [
+    "The CLI reference explains why plugin and release versions can differ during publication, what a retrying row means, and when retries stop. The plugin guide points readers to that contract while keeping direct installer behavior separate from the CLI’s retry policy."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "collapsed": true,
+     "note": "Documents 30-second waits, five retries, fresh release lookup, original targets, and the explicit-ref exception."
+    },
+    {
+     "path": "docs/plugins.md",
+     "collapsed": true,
+     "note": "Connects automatic upgrade retries to the marketplace’s default-branch release timing."
+    }
+   ]
+  }
+ ]
+}

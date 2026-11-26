@@ -1,0 +1,167 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 43ede009..5f05e031 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1369,12 +1369,16 @@ hooks-absent   ⚠️  codex projector-hooks@projector -- run project upgrade co
+ mismatch       ⚠️  what this upgrade installed does not match the v0.9.0 release -- run the command each row above names
+ ```
+ 
+-A `plugin-ahead` row means that a host installed a plugin newer than the
+-release. Each host's marketplace follows the default branch, which carries a
+-new version a few minutes before its release is published, so run
+-`project upgrade` again once the release is out. When `status` has no release
+-version to compare with, `upgrade` prints an `unverified` row instead and
+-exits 0.
++Each host's marketplace follows the default branch, which can carry a new
++version before its release is published. When newer plugins are the only
++mismatch, `upgrade` prints a `retrying` row and tries again after 30 seconds.
++It looks up the newest release and reruns the installer with your original
++targets, up to five more times. It prints the mismatch rows only if the
++retries run out or another problem appears. An explicit `PROJECTOR_REF`
++keeps the release you chose and skips these retries.
++
++When `status` has no release version to compare with, `upgrade` prints an
++`unverified` row instead and exits 0.
+ 
+ Trusting Projector's hooks in Codex's `/hooks` is a step only you can take,
+ so the check does not look at it. A checkout install is not checked, because
+diff --git a/docs/plugins.md b/docs/plugins.md
+index b0399388..1b1d7a02 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -205,8 +205,10 @@ projector.bot serves `install.sh` from the `v0` tag, which every release
+ moves, and caches it for a few minutes, so just after a release it can serve
+ the one before. `project upgrade` avoids that cache: it runs `install.sh` from
+ the newest release's own tag, such as `v0.9.0`, and then checks what it
+-installed against that release (see [the CLI guide](cli.md#upgrade)). Every
+-`project` command also warns on stderr when a newer release is out (see
++installed against that release. If newer plugins are the only mismatch,
++it waits and retries automatically unless you set `PROJECTOR_REF` (see
++[the CLI guide](cli.md#upgrade)). Every `project` command also warns on stderr
++when a newer release is out (see
+ [Know when a release is out](cli.md#know-when-a-release-is-out)).
+ 
+ The installer also installs or moves the `gh-stack` plugin on each host,
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 37dc1f1b..201784dc 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -316,6 +316,8 @@ class ReleaseCheck(NamedTuple):
+ 
+ 
+ MISMATCHED = 1
++UPGRADE_RETRIES = 5
++UPGRADE_RETRY_SECONDS = 30
+ # The rows of `install.sh status` that name something the install left wrong, each with the command that fixes it.
+ MISMATCH_ROWS = {"cli-missing", "cli-stale", "plugin-absent", "plugin-stale", "plugin-ahead", "hooks-absent"}
+ # The rows it prints when it has no release version to compare with.
+@@ -410,7 +412,16 @@ def run_upgrade(targets: list[str]) -> int:
+     # Everything else this process still needs is imported already, so nothing
+     # after it reaches for a file the reinstall is in the middle of replacing.
+     before = init_digests()
+-    code, check = run_installer(record, targets)
++    for attempt in range(UPGRADE_RETRIES + 1):
++        code, check = run_installer(record, targets)
++        mismatches = {name for name, _, _ in check.rows if name in MISMATCH_ROWS} if check else set()
++        if (code != 0 or mismatches != {"plugin-ahead"} or os.environ.get("PROJECTOR_REF")
++                or attempt == UPGRADE_RETRIES):
++            break
++        installer_row("retrying", f"a plugin is newer than the published release -- trying the upgrade again in "
++                      f"{UPGRADE_RETRY_SECONDS}s ({attempt + 1}/{UPGRADE_RETRIES})")
++        sys.stdout.flush()
++        time.sleep(UPGRADE_RETRY_SECONDS)
+     report_init_changes(before, code == 0)
+     if check is None:
+         return code
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 85588f12..ebd2c6e4 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -3076,6 +3076,8 @@ class UpgradeCheckTests(unittest.TestCase):
+ 
+     def setUp(self) -> None:
+         self.setUp_upgrade()
++        self.sleep = self.patch(mock.patch.object(cli, "time", wraps=cli.time)).sleep
++        self.sleep.side_effect = AssertionError("unexpected retry")
+         self.installed_from(UpgradeTests.RELEASE)
+         self.state = self.root / "state"
+         self.state.mkdir()
+@@ -3160,18 +3162,72 @@ def test_a_cli_behind_the_release_fails_the_upgrade_and_names_the_fix(self) -> N
+             "each row above names",
+         ]), (code, rows))
+ 
+-    def test_plugins_ahead_of_the_release_fail_the_upgrade(self) -> None:
+-        # The default branch carries a release's version before its GitHub
+-        # release is published, and both hosts install plugins from it.
++    def test_plugins_ahead_of_the_release_retry_and_install_the_new_release(self) -> None:
+         self.newest_release(gh="v0.8.18")
+         self.left(release="0.8.18", cli_version="0.8.18", plugins="0.9.0")
++        (self.bin / "pipx").write_text(
++            f'#!/bin/sh\nprintf "%s\\n" "${{PROJECTOR_REF#v}}" > "{self.state}/cli"\n'
++        )
++
++        def publish(_seconds: float) -> None:
++            self.newest_release(gh="v0.9.0")
++            (self.state / "release").write_text("0.9.0")
++
++        self.sleep.side_effect = publish
++
++        code, rows = self.upgrade()
++
++        self.assertEqual((0, ["retrying", "verified"]), (code, [row.split()[0] for row in rows]))
++        self.assertEqual("verified       what this upgrade installed matches the v0.9.0 release", rows[-1])
++        self.assertEqual("0.9.0\n", (self.state / "cli").read_text())
++        self.assertEqual([
++            "https://raw.githubusercontent.com/ninjudd/projector/v0.8.18/install.sh",
++            "https://raw.githubusercontent.com/ninjudd/projector/v0.9.0/install.sh",
++        ], [call.args[0] for call in cli.fetch_installer.call_args_list])
++
++    def test_plugins_still_ahead_after_the_retry_limit_fail_the_upgrade(self) -> None:
++        self.newest_release(gh="v0.8.18")
++        self.left(release="0.8.18", cli_version="0.8.18", plugins="0.9.0")
++        self.patch(mock.patch.object(cli, "UPGRADE_RETRIES", 2))
++        self.sleep.side_effect = [None, None]
+ 
+         code, rows = self.upgrade("all")
+ 
+         self.assertEqual(1, code)
+-        self.assertEqual(["plugin-ahead", "plugin-ahead", "mismatch"], [row.split()[0] for row in rows])
+-        self.assertIn("claude installed 0.9.0, release 0.8.18", rows[0])
+-        self.assertIn("run project upgrade all again in a few minutes", rows[0])
++        self.assertEqual(["retrying", "retrying", "plugin-ahead", "plugin-ahead", "mismatch"],
++                         [row.split()[0] for row in rows])
++        self.assertIn("claude installed 0.9.0, release 0.8.18", rows[-3])
++
++    def test_an_explicit_ref_does_not_retry_plugins_ahead_of_that_ref(self) -> None:
++        os.environ["PROJECTOR_REF"] = "v0.8.18"
++        self.left(release="0.8.18", cli_version="0.8.18", plugins="0.9.0")
++
++        code, rows = self.upgrade("claude")
++
++        self.assertEqual((1, ["plugin-ahead", "mismatch"]), (code, [row.split()[0] for row in rows]))
++        self.assertNotIn("releases/latest", self.gh_log.read_text())
++
++    def test_a_stale_cli_with_newer_plugins_fails_without_a_retry(self) -> None:
++        self.newest_release(gh="v0.8.18")
++        self.left(release="0.8.18", cli_version="0.8.17", plugins="0.9.0")
++
++        code, rows = self.upgrade("all")
++
++        self.assertEqual((1, ["cli-stale", "plugin-ahead", "plugin-ahead", "mismatch"]),
++                         (code, [row.split()[0] for row in rows]))
++
++    def test_an_installer_failure_on_a_retry_returns_its_status(self) -> None:
++        self.newest_release(gh="v0.8.18")
++        self.left(release="0.8.18", cli_version="0.8.18", plugins="0.9.0")
++
++        def fail_install(_seconds: float) -> None:
++            (self.bin / "pipx").write_text("#!/bin/sh\nexit 7\n")
++
++        self.sleep.side_effect = fail_install
++
++        code, rows = self.upgrade("all")
++
++        self.assertEqual((7, ["retrying"]), (code, [row.split()[0] for row in rows]))
+ 
+     def test_codex_without_its_hooks_plugin_fails_the_upgrade(self) -> None:
+         # The bug: an installer that never added projector-hooks left Codex
