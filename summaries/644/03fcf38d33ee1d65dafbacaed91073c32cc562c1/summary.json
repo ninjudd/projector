@@ -1,0 +1,166 @@
+{
+ "version": 1,
+ "name": "Session artifact membership",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 644,
+  "title": "Scope artifact panels to their sessions",
+  "head": "03fcf38d33ee1d65dafbacaed91073c32cc562c1",
+  "headRef": "session-artifacts",
+  "base": "41018ea5b4d87a4a2cb9ec5dac649f845bc0b2aa",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The artifact drawer gives a conversation access to pages saved on its repository’s Projector site. It previously discovered every saved artifact in the current checkout, which mixed unrelated conversations and publishing fixtures into the same panel.",
+   "This change records the artifacts each session publishes or explicitly attaches. Both consoles read that session’s recorded list across directory changes; unassigned repository artifacts remain available through the repository-wide listing.",
+   "The earlier dormant-session finding is fixed at <code>03fcf38</code>: artifact context lives outside expiring watch delivery state. Worktree dismissal is also fixed. One P2 remains in upgrade handling: a legacy dismissal made from a linked worktree is copied under its old key, so publication can make that dismissed row reappear."
+  ],
+  "cards": [
+   {
+    "id": "membership",
+    "title": "What adds a row",
+    "html": "<ul class=\"tight\"><li>Publish with <code>--session SESSION</code>, or with the supported session environment variables.</li><li>Explicitly attach an existing artifact with <code>project artifact attach ID --session SESSION</code>.</li><li>Publish without a session to save content without adding a row to any conversation.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Review evidence",
+    "html": "<ul class=\"tight\"><li>The configured gate passed at <code>03fcf38</code>, including 270 hook tests and the required CI check.</li><li>All 125 focused artifact, console, managed-console, and packaging tests passed on Python 3.12.</li><li>The real watch-cleanup regression preserves artifact rows and dismissals after delivery state expires.</li><li>A disposable migration reproduction using the base’s dismissal code confirms the remaining linked-worktree legacy-key failure.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "commands",
+   "title": "Choose which session receives an artifact",
+   "kicker": "Publication and explicit attachment establish membership.",
+   "intro": [
+    "An artifact’s saved versions remain repository content. The new session argument determines which conversation gets a drawer row; it does not change the artifact’s public URL or saved history. Standalone commands can still save content without choosing a session.",
+    "The panel command reads the selected session directly, so it works even after the conversation changes its working directory. Publication records membership after content is saved and before deployment is requested."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Add publication --session and the attach command while preserving the existing artifact commands."
+    },
+    {
+     "path": "src/projector/artifact.py",
+     "note": "Read panels from session context and register successful publication before deployment dispatch.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused CLI regression confirms that an unrelated session stays empty until explicit attachment; the dispatch-failure regression confirms that saved content retains its session row even when deployment cannot start."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "context",
+   "title": "Store and read each session’s artifact list",
+   "kicker": "Local membership selects rows from cached repository metadata.",
+   "intro": [
+    "The session context is a local list of artifact IDs with their checkout and remote. Membership and dismissals live in durable artifact state beside the watch directory, so expiring delivery records cannot erase them. The reader falls back to legacy dismissal files, and publication copies those records into durable storage.",
+    "A linked publishing worktree is normalized to its main checkout when they share the same repository and remote. The artifact can then survive removal of that temporary worktree. The later push applies that same normalization to dismissal."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/artifact_panel.py",
+     "note": "Keep membership and dismissals outside expiring delivery state, normalize worktree identities, and select only the session’s rows.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The linked-worktree regression publishes, dismisses, restores, removes the temporary worktree, and still finds the artifact through the session panel."
+      },
+      {
+       "kind": "verify",
+       "text": "The real seven-day watch-cleanup regression removes the delivery folder while preserving the session’s visible artifact and keeping its dismissed artifact hidden."
+      },
+      {
+       "kind": "flag",
+       "line": 116,
+       "text": "P2: legacy dismissals made from a linked worktree retain the old worktree hash, but the attached row uses the normalized main-checkout hash. A reproduction using the base’s dismissal code shows that publication after upgrade makes the dismissed artifact reappear. Translate the original worktree’s dismissal into the normalized association key."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "consoles",
+   "title": "Drive both consoles from session ownership",
+   "kicker": "The current working directory stops selecting artifact rows.",
+   "intro": [
+    "The terminal console and its managed-agent variant now load artifacts by session ID. Changing the conversation’s directory does not replace its list with another checkout’s artifacts.",
+    "An otherwise quiet live session remains visible when it has artifact context. The console still applies current dismissal state before replacing rows, which prevents a stale refresh from restoring a dismissed item."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Read artifact context by session and retain sessions whose only visible work is an artifact.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused console regression keeps the artifact-owning session visible and excludes its unrelated neighbor."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/agent_console.py",
+     "note": "Use the same session-only lookup for stopped and active managed agents."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Exercise the ownership and publication boundaries",
+   "kicker": "Temporary repositories cover session isolation and worktree removal.",
+   "intro": [
+    "The focused tests use disposable Git repositories, session state, and local preview servers. They cover explicit attachment, unassigned repository artifacts, dismissal through revision, and session rows that survive a failed deployment request.",
+    "All 125 focused tests passed at the reviewed head. The new tests cover real dormant-session cleanup and copying a legacy dismissal from the main checkout. A separate review reproduction uses an old dismissal from a linked worktree and confirms the remaining migration gap."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_artifact_panel.py",
+     "note": "Cover session ownership, worktree removal, real watch cleanup, dismissal migration, and artifact-only session visibility.",
+     "collapsed": true
+    },
+    {
+     "path": "tests/test_artifact.py",
+     "note": "Isolate session state and confirm that dispatch failure preserves the publication association.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "guidance",
+   "title": "Explain ownership and avoid accidental demo publication",
+   "kicker": "The user’s request determines the artifact’s subject and audience.",
+   "intro": [
+    "The documentation now distinguishes the session drawer from the repository’s complete artifact directory. It explains explicit attachment and the optional publication session argument.",
+    "The authoring skill tells agents to publish for the conversation’s session, including delegated work. Publishing fixtures stay in disposable repositories, and a live demo requires the user’s request."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/artifact/SKILL.md",
+     "note": "Require conversation ownership at publication and keep unrequested publishing fixtures out of live repositories."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Describe session membership, durable storage, explicit attachment, and dismissal behavior.",
+     "collapsed": true
+    },
+    {
+     "path": "docs/site.md",
+     "note": "Show publication with a session and explain standalone publication and attachment.",
+     "collapsed": true
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,622 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index b950015b..b0399388 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -637,9 +637,25 @@ shows within 30 seconds, without a restart.
+ 
+ ### Use saved artifacts in the session panel
+ 
+-The session panel has an **Artifacts** section for the saved artifacts in
+-its checkout. It includes local versions and the remote versions already
+-fetched by `project artifact list` or `project site serve`. Each row shows
++The session panel has an **Artifacts** section for artifacts published or
++explicitly attached in that session. Publishing with `--session SESSION`
++adds the saved artifact to that session's context. Other sessions in the
++same checkout keep their own lists. Existing repository artifacts are
++available through `project artifact list`; add one to a session with:
++
++```sh
++project artifact attach cache-explorer --session SESSION
++```
++
++Attach existing artifacts you want in the session; saved versions without
++a session association stay in the repository's artifact directory.
++
++The session keeps its list and dismissals across restarts, working-directory
++changes, and watch delivery cleanup after an inactive week. Artifact context
++lives in durable session state under `$XDG_STATE_HOME/projector/artifacts/`
++(or `~/.local/state/projector/artifacts/` when `XDG_STATE_HOME` is unset).
++The panel reads local and already fetched remote versions for those
++artifacts, without fetching during a refresh. Each row shows
+ its name and any brief description saved in `artifact.json` with that
+ version in Git. The description stays visible when the row's drawer is
+ closed. Expand a row to open, discuss, or dismiss it. The section refreshes
+@@ -661,7 +677,8 @@ to send it with that context to the selected session. The saved version
+ stays attached if the artifact changes while you type.
+ 
+ **Dismiss** hides the artifact from this session's panel. Its saved versions
+-and published links stay available, and another session still lists it.
++and published links stay available. Other sessions that have attached it
++keep their own rows.
+ Revising the artifact does not undo the dismissal. Restore it from the
+ checkout with:
+ 
+diff --git a/docs/site.md b/docs/site.md
+index 72fa9887..e2206e67 100644
+--- a/docs/site.md
++++ b/docs/site.md
+@@ -255,7 +255,7 @@ Preview without saving, then publish:
+ 
+ ```sh
+ project site serve --artifacts /tmp/cache-explorer --no-fetch
+-project artifact publish --dir /tmp/cache-explorer
++project artifact publish --dir /tmp/cache-explorer --session SESSION
+ ```
+ 
+ Open `artifacts/cache-explorer/` under the preview address. Stop the preview
+@@ -284,8 +284,13 @@ project artifact list --id cache-explorer --json
+ project artifact init cache-explorer --dir /tmp/cache-revision --from-published
+ ```
+ 
+-Saved artifacts also appear in the [session panel](plugins.md#use-saved-artifacts-in-the-session-panel)
+-with their saved descriptions. Open a row to view or discuss its artifact,
++Publication with `--session SESSION` adds the artifact to that session's
++[panel](plugins.md#use-saved-artifacts-in-the-session-panel)
++with its saved description. The CLI also uses `PROJECTOR_SESSION` or
++`CLAUDE_CODE_SESSION_ID` when available. Without a session, publication saves
++the artifact without adding it to any session's panel. Use
++`project artifact attach cache-explorer --session SESSION` to add a saved
++artifact explicitly. Open a row to view or discuss its artifact,
+ or dismiss it from that session without deleting any version.
+ `project artifact open cache-explorer` opens the saved
+ artifact directly; add `--print-url` to print the address without launching
+diff --git a/skills/artifact/SKILL.md b/skills/artifact/SKILL.md
+index 65aad34d..23bd39ac 100644
+--- a/skills/artifact/SKILL.md
++++ b/skills/artifact/SKILL.md
+@@ -8,6 +8,9 @@ description: Create or revise a static interactive page, visual explanation, cha
+ Build a finished interactive page for the user's question and publish it on
+ the repository's Projector site. Artifacts live on a hidden Git ref, with a
+ stable latest link, permanent version links, and a directory on the site.
++Choose the artifact's subject and ID from the user's request. Verify
++publishing with fixtures in disposable repositories. Publish a test demo
++only when the user asks for one.
+ Use the `project` CLI shipped with Projector. If it rejects an artifact
+ command as an invalid choice, run `project upgrade` and retry.
+ 
+@@ -80,10 +83,13 @@ default. A request for local preview stays local. Run publication directly,
+ as a tool call of its own, with no `cd`, wrapper, or chained command:
+ 
+ ```sh
+-project artifact publish --dir WORKDIR
++project artifact publish --dir WORKDIR --session SESSION
+ ```
+ 
+-Add `--checkout CHECKOUT` when needed. Use `--local` when the user wants a
++Use the conversation's session ID for `SESSION`, including when a subagent
++publishes for that conversation. The CLI also reads `PROJECTOR_SESSION` or
++`CLAUDE_CODE_SESSION_ID` when no explicit ID is given. Add
++`--checkout CHECKOUT` when needed. Use `--local` when the user wants a
+ local saved version. The CLI validates the bundle before writing anything.
+ Where hosting is absent, cannot be checked, or would expose private content,
+ it saves locally and pushes nothing. Tell the user the preview route and
+@@ -103,8 +109,11 @@ Artifacts directory and version picker expose the saved history. GitHub
+ repository write permissions control publishing, and GitHub Pages controls
+ who can read all versions. A hidden ref is not a separate privacy boundary.
+ 
+-Saved artifacts appear in the session panel, with Open, Discuss, and Dismiss
+-actions. Discuss brings the saved version and description into the session's
++Publication adds the artifact to that session's panel, with Open, Discuss,
++and Dismiss actions. The panel lists only artifacts published or explicitly
++attached in that session. Use `project artifact attach ID --session SESSION`
++when the user asks to bring an existing artifact into the conversation.
++Discuss brings the saved version and description into the session's
+ conversation so the user can ask about it.
+ Dismiss hides the row from that session without deleting saved versions or
+ published links. Use `project artifact restore ID --session SESSION` when
+diff --git a/src/projector/agent_console.py b/src/projector/agent_console.py
+index 4a2cd2ad..50c4f6c6 100644
+--- a/src/projector/agent_console.py
++++ b/src/projector/agent_console.py
+@@ -64,7 +64,7 @@ def load(self, work):
+                 if name not in work.signatures:
+                     found.rows[name] = rows.rows_for(self.root, name)
+                 if (work.rows or name not in work.signatures) and name not in found.artifacts:
+-                    artifacts = console.read_artifacts(self.root, name, cwd)
++                    artifacts = console.read_artifacts(self.root, name)
+                     if artifacts is not None:
+                         found.artifacts[name] = artifacts
+                 if name not in found.entries:
+diff --git a/src/projector/artifact.py b/src/projector/artifact.py
+index fce797ff..17b76c34 100644
+--- a/src/projector/artifact.py
++++ b/src/projector/artifact.py
+@@ -359,13 +359,23 @@ def repository(root: Path, remote: str) -> str:
+ 
+ 
+ def run(arguments) -> int:
++    from . import artifact_panel, watch
++
++    command, remote = arguments.artifact_command, arguments.remote
++    if command == 'panel':
++        session = watch.session_id(arguments.session)
++        rows = artifact_panel.listing(session)
++        if arguments.json_output:
++            print(json.dumps({'artifacts': rows}, ensure_ascii=False))
++        else:
++            for row in rows:
++                print(f"{row['id']}\t{row['title']}")
++        return 0
+     root = summary.checkout_root(arguments.checkout)
+     if root is None:
+         raise ArtifactError('artifact commands need a Git checkout; pass --checkout')
+-    command, remote = arguments.artifact_command, arguments.remote
+-    if command in ('panel', 'dismiss', 'restore', 'open'):
++    if command in ('attach', 'dismiss', 'restore', 'open'):
+         import webbrowser
+-        from . import artifact_panel, watch
+ 
+         if command == 'open':
+             url = artifact_panel.open_url(root, remote, arguments.id)
+@@ -374,17 +384,12 @@ def run(arguments) -> int:
+             print(url)
+         else:
+             session = watch.session_id(arguments.session)
+-            if command == 'panel':
+-                rows = artifact_panel.listing(root, remote, session)
+-                if arguments.json_output:
+-                    print(json.dumps({'artifacts': rows}, ensure_ascii=False))
+-                else:
+-                    for row in rows:
+-                        print(f"{row['id']}\t{row['title']}")
++            if command in ('attach', 'restore'):
++                artifact_panel.attach(root, remote, session, arguments.id, restore=True)
+             else:
+-                artifact_panel.dismiss(root, remote, session, arguments.id, restore=command == 'restore')
+-                verb = 'restored' if command == 'restore' else 'dismissed'
+-                print(f"{verb} {arguments.id} in session {session}; saved versions are unchanged")
++                artifact_panel.dismiss(root, remote, session, arguments.id)
++            verb = {'attach': 'attached', 'restore': 'restored', 'dismiss': 'dismissed'}[command]
++            print(f"{verb} {arguments.id} in session {session}; saved versions are unchanged")
+         return 0
+     if command == 'init' and not arguments.from_published:
+         if arguments.version or not arguments.title:
+@@ -426,6 +431,7 @@ def run(arguments) -> int:
+                               f"{row['latest']}\t{len(row['versions'])} versions"
+                               f"{' (local preview)' if row['preview'] else ''}")
+         return 0
++    session = watch.session_id(arguments.session, required=False)
+     source = snapshot(arguments.dir)
+     url, reason = None, ''
+     repo = ''
+@@ -436,6 +442,8 @@ def run(arguments) -> int:
+         else:
+             reason = f'{remote} is not a GitHub repository'
+     saved = publish(source, root, remote, push=url is not None)
++    if session is not None:
++        artifact_panel.attach(root, remote, session, saved.id)
+     if url is None:
+         if reason:
+             print(f'nothing pushed: {reason}')
+diff --git a/src/projector/artifact_panel.py b/src/projector/artifact_panel.py
+index 87a38aef..4a886b88 100644
+--- a/src/projector/artifact_panel.py
++++ b/src/projector/artifact_panel.py
+@@ -17,7 +17,7 @@
+ from pathlib import Path
+ from urllib.parse import urlsplit
+ 
+-from . import artifact, refs, summary, watch
++from . import artifact, config, refs, summary, watch
+ from .inbox import locked, read_json, write_json
+ 
+ PREVIEW_IDLE = 900
+@@ -62,16 +62,82 @@ def catalog(root: Path, remote: str = 'origin') -> list[dict]:
+         return rows
+ 
+ 
++def context_folder(session: str, state: Path | None = None) -> Path:
++    return watch.session_folder((state or watch.state_root()).parent / 'artifacts', session)
++
++
+ def dismissals(session: str, state: Path | None = None) -> set[str]:
+-    folder = watch.session_folder(state or watch.state_root(), session)
+-    hidden = (read_json(folder / 'artifact-dismissals.json') or {}).get('keys', [])
++    saved = read_json(context_folder(session, state) / 'artifact-dismissals.json')
++    if saved is None:
++        legacy = watch.session_folder(state or watch.state_root(), session)
++        saved = read_json(legacy / 'artifact-dismissals.json')
++    hidden = (saved or {}).get('keys', [])
+     return {key for key in hidden if isinstance(key, str)} if isinstance(hidden, list) else set()
+ 
+ 
+-def listing(root: Path, remote: str, session: str, state: Path | None = None) -> list[dict]:
++def context(session: str, state: Path | None = None) -> dict[str, dict]:
++    folder = context_folder(session, state)
++    entries = (read_json(folder / 'artifacts.json') or {}).get('artifacts', [])
++    found = {}
++    if not isinstance(entries, list):
++        return found
++    for entry in entries:
++        if (not isinstance(entry, dict)
++                or not all(isinstance(entry.get(name), str) and entry[name] for name in ('checkout', 'remote', 'id'))
++                or not Path(entry['checkout']).is_absolute() or not artifact.ID.fullmatch(entry['id'])):
++            continue
++        found[key(Path(entry['checkout']), entry['remote'], entry['id'])] = {
++            name: entry[name] for name in ('checkout', 'remote', 'id')}
++    return found
++
++
++def context_checkout(root: Path, remote: str) -> Path:
++    tree = config.working_tree(root)
++    if tree is not None:
++        main = config.working_tree(tree.common.parent)
++        if (main is not None and main.common == tree.common
++                and artifact.repository(main.top, remote) == artifact.repository(root, remote)):
++            root = main.top
++    return root.resolve()
++
++
++def attach(root: Path, remote: str, session: str, id: str, *, restore: bool = False,
++           state: Path | None = None) -> None:
++    artifact.identifier(id)
++    root = context_checkout(root, remote)
++    if not any(row['id'] == id for row in catalog(root, remote)):
++        raise artifact.ArtifactError(f'{id}: no saved artifact')
++    folder = context_folder(session, state)
++    name = key(root, remote, id)
++    with locked(folder):
++        entries = context(session, state)
++        entries[name] = {'checkout': str(root.resolve()), 'remote': remote, 'id': id}
++        write_json(folder / 'artifacts.json', {'artifacts': list(entries.values())})
++        hidden = dismissals(session, state)
++        if restore:
++            hidden.discard(name)
++        write_json(folder / 'artifact-dismissals.json', {'keys': sorted(hidden)})
++
++
++def listing(session: str, state: Path | None = None) -> list[dict]:
+     hidden = dismissals(session, state)
+-    return [{**row, 'key': key(root, remote, row['id']), 'checkout': str(root), 'remote': remote}
+-            for row in catalog(root, remote) if key(root, remote, row['id']) not in hidden]
++    catalogs = {}
++    found = []
++    for name, entry in context(session, state).items():
++        if name in hidden:
++            continue
++        root, remote = Path(entry['checkout']), entry['remote']
++        location = (root, remote)
++        if location not in catalogs:
++            try:
++                catalogs[location] = {row['id']: row for row in catalog(root, remote)}
++            except (artifact.ArtifactError, refs.RefError, OSError) as error:
++                artifact.diagnostic(f'{root}: could not read session artifacts: {error}')
++                catalogs[location] = {}
++        row = catalogs[location].get(entry['id'])
++        if row is not None:
++            found.append({**row, **entry, 'key': name})
++    return sorted(found, key=lambda row: (row['title'].casefold(), row['id'], row['key']))
+ 
+ 
+ def discussion(row: dict) -> str:
+@@ -82,15 +148,15 @@ def discussion(row: dict) -> str:
+     return '; '.join(' '.join(line.splitlines()) for line in lines) + '. '
+ 
+ 
+-def dismiss(root: Path, remote: str, session: str, id: str, *, restore: bool = False,
+-            state: Path | None = None) -> None:
++def dismiss(root: Path, remote: str, session: str, id: str, *, state: Path | None = None) -> None:
+     artifact.identifier(id)
+-    folder = watch.session_folder(state or watch.state_root(), session)
++    root = context_checkout(root, remote)
++    folder = context_folder(session, state)
+     name = key(root, remote, id)
+     with locked(folder):
+         path = folder / 'artifact-dismissals.json'
+         hidden = dismissals(session, state)
+-        hidden.discard(name) if restore else hidden.add(name)
++        hidden.add(name)
+         write_json(path, {'keys': sorted(hidden)})
+ 
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 131e2bb4..37dc1f1b 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1084,19 +1084,23 @@ def parser() -> argparse.ArgumentParser:
+     artifact_publish.add_argument("--dir", type=Path, required=True)
+     artifact_publish.add_argument("--local", action="store_true")
+     artifact_publish.add_argument("--no-dispatch", action="store_true")
++    artifact_publish.add_argument("--session", help="add the saved artifact to this session's panel")
+     artifact_panel = artifact_commands.add_parser("panel", help="list this session's visible artifacts")
+     artifact_panel.add_argument("--session")
+     add_output(artifact_panel)
+     artifact_open = artifact_commands.add_parser("open", help="open an artifact, using a local preview when needed")
+     artifact_open.add_argument("id")
+     artifact_open.add_argument("--print-url", action="store_true")
++    artifact_attach = artifact_commands.add_parser("attach", help="add a saved artifact to this session's panel")
++    artifact_attach.add_argument("id")
++    artifact_attach.add_argument("--session")
+     artifact_dismiss = artifact_commands.add_parser("dismiss", help="hide an artifact from one session's panel")
+     artifact_dismiss.add_argument("id")
+     artifact_dismiss.add_argument("--session")
+     artifact_restore = artifact_commands.add_parser("restore", help="bring a dismissed artifact back to the panel")
+     artifact_restore.add_argument("id")
+     artifact_restore.add_argument("--session")
+-    for command in (artifact_init, artifact_list, artifact_publish, artifact_panel, artifact_open,
++    for command in (artifact_init, artifact_list, artifact_publish, artifact_panel, artifact_open, artifact_attach,
+                     artifact_dismiss, artifact_restore):
+         command.add_argument("--checkout", type=Path)
+         command.add_argument("--remote", default="origin")
+diff --git a/src/projector/console.py b/src/projector/console.py
+index 5396e319..b3be4284 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -24,7 +24,7 @@
+ from pathlib import Path
+ from typing import Any, Callable, Optional, TextIO
+ 
+-from . import agents, artifact_panel, codex_watch, inbox, repo_inbox, rows, session_titles, summary, watch
++from . import agents, artifact_panel, codex_watch, inbox, repo_inbox, rows, session_titles, watch
+ from .core import ProjectorError
+ 
+ INBOX_EVERY = 1.0
+@@ -135,7 +135,6 @@ class Work:
+     rows: bool
+     signatures: dict[str, Optional[tuple]]
+     items: dict[str, list[dict]] = field(default_factory=dict)
+-    directories: dict[str, str] = field(default_factory=dict)
+     pull: Optional[rows.Pull] = None
+     drawer: Optional[str] = None
+ 
+@@ -355,10 +354,9 @@ def item_key(item: dict) -> str:
+     return f"item:{item['ref']}"
+ 
+ 
+-def read_artifacts(state: Path, session: str, cwd: str) -> Optional[list[dict]]:
++def read_artifacts(state: Path, session: str) -> Optional[list[dict]]:
+     try:
+-        checkout = summary.checkout_root(Path(cwd)) if cwd else None
+-        return artifact_panel.listing(checkout, 'origin', session, state) if checkout else []
++        return artifact_panel.listing(session, state)
+     except (ProjectorError, OSError):
+         return None
+ 
+@@ -425,8 +423,7 @@ def tick(self) -> None:
+     def due(self, now: float) -> Optional[Work]:
+         work = Work(inbox=now >= self.next_inbox, rows=now >= self.next_rows,
+                     signatures={name: session.signature for name, session in self.sessions.items()},
+-                    items={name: session.items for name, session in self.sessions.items()},
+-                    directories={name: session.cwd for name, session in self.sessions.items()})
++                    items={name: session.items for name, session in self.sessions.items()})
+         if work.inbox:
+             self.next_inbox = now + INBOX_EVERY
+         if work.rows:
+@@ -454,7 +451,8 @@ def load(self, work: Work) -> Found:
+                 if not (record or any(not line.excluded for line in watch.subscriptions(
+                         watch.session_folder(self.root, name)))
+                         or any(is_shown(item, now_ms) for item in current_items)
+-                        or any(not repo_inbox.is_snoozed(entry, now_ms) for entry in entries)):
++                        or any(not repo_inbox.is_snoozed(entry, now_ms) for entry in entries)
++                        or artifact_panel.context(name, self.root)):
+                     continue
+                 found.live[name] = (*describe(self.root, name, delivery, record), seen, items)
+                 found.entries[name] = entries
+@@ -465,8 +463,7 @@ def load(self, work: Work) -> Found:
+         for name in names:
+             if work.rows or name not in work.signatures:
+                 found.rows[name] = rows.rows_for(self.root, name)
+-                cwd = found.live[name][2] if found.live is not None else work.directories.get(name, '')
+-                artifacts = read_artifacts(self.root, name, cwd)
++                artifacts = read_artifacts(self.root, name)
+                 if artifacts is not None:
+                     found.artifacts[name] = artifacts
+         if work.pull is not None:
+diff --git a/tests/test_artifact.py b/tests/test_artifact.py
+index 9c34c18b..2211661d 100644
+--- a/tests/test_artifact.py
++++ b/tests/test_artifact.py
+@@ -25,6 +25,10 @@ def setUp(self):
+         self.temp = tempfile.TemporaryDirectory()
+         self.addCleanup(self.temp.cleanup)
+         self.root = Path(self.temp.name)
++        self.env = mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root / 'state'),
++                                                'PROJECTOR_SESSION': '', 'CLAUDE_CODE_SESSION_ID': ''})
++        self.env.start()
++        self.addCleanup(self.env.stop)
+         self.repo = self.root / 'repo'
+         self.repo.mkdir()
+         git(self.repo, 'init', '-q', '-b', 'trunk')
+@@ -313,7 +317,7 @@ def test_the_cli_keeps_unhosted_publication_local_and_recovers_its_source(self):
+     def test_a_dispatch_failure_reports_saved_content_and_a_workflow_retry(self):
+         import contextlib
+         import io
+-        from projector import cli, summary
++        from projector import artifact_panel, cli, summary
+         output = io.StringIO()
+         with mock.patch.object(artifact, 'repository', return_value='owner/repo'), \
+              mock.patch.object(summary, 'push_decision', return_value=('https://example.test/demo/', '')), \
+@@ -321,9 +325,11 @@ def test_a_dispatch_failure_reports_saved_content_and_a_workflow_retry(self):
+              mock.patch.object(summary, 'site_workflow', return_value=summary.WORKFLOW_PATH), \
+              mock.patch.object(summary, 'gh', side_effect=summary.SummaryError('permission denied')), \
+              contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+-            status = cli.main(['artifact', 'publish', '--dir', str(self.source), '--checkout', str(self.repo)])
++            status = cli.main(['artifact', 'publish', '--dir', str(self.source), '--checkout', str(self.repo),
++                               '--session', 'publisher'])
+         self.assertEqual(65, status)
+         self.assertTrue(refs.ref_tip(self.remote, artifact.REF))
++        self.assertEqual(['explorer'], [row['id'] for row in artifact_panel.listing('publisher')])
+         self.assertIn('content is saved, but deployment did not start', output.getvalue())
+         self.assertIn('gh workflow run projector-site.yml --repo owner/repo --ref trunk', output.getvalue())
+ 
+diff --git a/tests/test_artifact_panel.py b/tests/test_artifact_panel.py
+index 977ec80d..946ab7d4 100644
+--- a/tests/test_artifact_panel.py
++++ b/tests/test_artifact_panel.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import io
+ import json
+ import os
+ import signal
+@@ -10,6 +11,7 @@
+ import urllib.error
+ import urllib.request
+ from pathlib import Path
++from contextlib import redirect_stdout
+ from unittest import mock
+ 
+ from projector import artifact, artifact_panel, cli, console, inbox, refs
+@@ -32,6 +34,7 @@ def setUp(self):
+         self.source = self.root / 'source'
+         artifact.init('explorer', self.source, 'Cache explorer', 'Explore saved data')
+         self.save()
++        artifact_panel.attach(self.repo, 'origin', 'one', 'explorer')
+ 
+     def git(self, *args):
+         return subprocess.run(['git', '-C', str(self.repo), *args], check=True,
+@@ -41,14 +44,64 @@ def save(self):
+         return artifact.publish(artifact.snapshot(self.source), self.repo, 'origin', push=False)
+ 
+     def listed(self, session='one'):
+-        return artifact_panel.listing(self.repo, 'origin', session)
++        return artifact_panel.listing(session)
+ 
+     def clean_up_preview(self):
+         registry = next((artifact_panel.watch.state_root() / 'artifact-previews').glob('*/preview.json'))
+         pid = json.loads(registry.read_text())['pid']
+         self.addCleanup(lambda: os.kill(pid, signal.SIGTERM))
+ 
+-    def test_existing_artifacts_appear_and_dismissal_survives_a_revision_only_in_its_session(self):
++    def panel(self, session, checkout=None):
++        output = io.StringIO()
++        with redirect_stdout(output):
++            code = cli.main(['artifact', 'panel', '--session', session, '--json',
++                             '--checkout', str(checkout or self.repo)])
++        self.assertEqual(0, code)
++        return json.loads(output.getvalue())['artifacts']
++
++    def test_sessions_only_list_artifacts_they_publish_or_explicitly_attach(self):
++        self.assertEqual([], self.panel('unrelated'))
++        tip = refs.ref_tip(self.repo, artifact.REF)
++        with redirect_stdout(io.StringIO()):
++            self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), '--local',
++                                         '--checkout', str(self.repo), '--session', 'publisher']))
++        self.assertEqual(tip, refs.ref_tip(self.repo, artifact.REF))
++        self.assertEqual(['explorer'], [row['id'] for row in self.panel('publisher')])
++        self.assertEqual([], self.panel('unrelated'))
++        with redirect_stdout(io.StringIO()):
++            self.assertEqual(0, cli.main(['artifact', 'attach', 'explorer', '--checkout', str(self.repo),
++                                         '--session', 'unrelated']))
++        self.assertEqual(['explorer'], [row['id'] for row in self.panel('unrelated')])
++        self.assertEqual(['explorer'], [row['id'] for row in self.panel('publisher', self.root)])
++        with redirect_stdout(io.StringIO()):
++            self.assertEqual(0, cli.main(['artifact', 'dismiss', 'explorer', '--checkout', str(self.repo),
++                                         '--session', 'publisher']))
++            self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), '--local',
++                                         '--checkout', str(self.repo), '--session', 'publisher']))
++        self.assertEqual([], self.panel('publisher'))
++        self.assertEqual(['explorer'], [row['id'] for row in self.panel('unrelated')])
++
++    def test_a_session_keeps_its_artifact_after_the_publishing_worktree_is_removed(self):
++        self.git('switch', '--orphan', 'fixture')
++        self.git('commit', '--allow-empty', '-qm', 'Start fixture')
++        worktree = self.root / 'publishing-worktree'
++        self.git('worktree', 'add', '--detach', str(worktree), 'HEAD')
++        with redirect_stdout(io.StringIO()):
++            self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), '--local',
++                                         '--checkout', str(worktree), '--session', 'publisher']))
++            self.assertEqual(0, cli.main(['artifact', 'dismiss', 'explorer', '--checkout', str(worktree),
++                                         '--session', 'publisher']))
++        self.assertEqual([], self.panel('publisher'))
++        with redirect_stdout(io.StringIO()):
++            self.assertEqual(0, cli.main(['artifact', 'restore', 'explorer', '--checkout', str(worktree),
++                                         '--session', 'publisher']))
++        self.git('worktree', 'remove', str(worktree))
++        rows = self.panel('publisher')
++        self.assertEqual(['explorer'], [row['id'] for row in rows])
++        self.assertEqual(str(self.repo.resolve()), rows[0]['checkout'])
++
++    def test_attached_artifacts_keep_dismissals_through_revisions_only_in_their_session(self):
++        artifact_panel.attach(self.repo, 'origin', 'two', 'explorer')
+         first = self.listed()[0]
+         tip = refs.ref_tip(self.repo, artifact.REF)
+         artifact_panel.dismiss(self.repo, 'origin', 'one', 'explorer')
+@@ -61,11 +114,42 @@ def test_existing_artifacts_appear_and_dismissal_survives_a_revision_only_in_its
+         self.save()
+         self.assertEqual([], self.listed())
+         self.assertEqual('Revised explorer', self.listed('two')[0]['title'])
+-        artifact_panel.dismiss(self.repo, 'origin', 'one', 'explorer', restore=True)
++        artifact_panel.attach(self.repo, 'origin', 'one', 'explorer', restore=True)
+         self.assertEqual(first['key'], self.listed()[0]['key'])
+         self.assertEqual('Revised explorer', self.listed()[0]['title'])
+ 
++    def test_a_dormant_session_keeps_its_artifacts_and_dismissals_after_watch_cleanup(self):
++        source = self.root / 'dismissed-source'
++        artifact.init('dismissed', source, 'Dismissed example', 'A saved artifact set aside')
++        artifact.publish(artifact.snapshot(source), self.repo, 'origin', push=False)
++        artifact_panel.attach(self.repo, 'origin', 'one', 'dismissed')
++        artifact_panel.dismiss(self.repo, 'origin', 'one', 'dismissed')
++        state = artifact_panel.watch.state_root()
++        artifact_panel.watch.renew(state, 'one', 'mod', 1)
++        delivery = artifact_panel.watch.session_folder(state, 'one')
++        for path in delivery.iterdir():
++            os.utime(path, (1, 1))
++        daemon = artifact_panel.watch.Daemon(state, settings=artifact_panel.watch.Settings())
++        daemon.forget_sessions(artifact_panel.watch.FORGET + 2)
++        self.assertFalse(delivery.exists())
++        self.assertEqual(['explorer'], [row['id'] for row in self.listed()])
++        self.assertEqual([], self.listed('unrelated'))
++
++    def test_publication_preserves_a_dismissal_written_with_watch_delivery_state(self):
++        delivery = artifact_panel.watch.session_folder(artifact_panel.watch.state_root(), 'legacy')
++        delivery.mkdir(parents=True)
++        path = delivery / 'artifact-dismissals.json'
++        inbox.write_json(path, {'keys': [artifact_panel.key(self.repo, 'origin', 'explorer')]})
++        with redirect_stdout(io.StringIO()):
++            self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), '--local',
++                                         '--checkout', str(self.repo), '--session', 'legacy']))
++        self.assertEqual([], self.listed('legacy'))
++        path.unlink()
++        self.assertEqual([], self.listed('legacy'))
++
+     def test_cached_metadata_does_not_load_payloads_and_invalid_latest_keeps_valid_neighbors(self):
++        (self.source / 'index.html').write_text('<h1>Revised explorer</h1>')
++        self.save()
+         read = artifact.GitReader.read
+         paths = []
+ 
+@@ -181,7 +265,7 @@ def test_console_discusses_the_saved_version_with_its_description(self):
+         app.key('enter')
+         self.assertEqual([
+             f'Artifact explorer@{version}: Cache explorer; Description: Explore saved data; '
+-            f'Checkout: {self.repo}; Remote: origin. Make the controls clearer',
++            f'Checkout: {self.repo.resolve()}; Remote: origin. Make the controls clearer',
+         ], [item['messages'][0]['text'] for item in inbox.load_items(inbox.session_dir('one'))])
+ 
+     def test_an_idle_preview_stops_and_removes_its_extracted_files(self):
+@@ -207,8 +291,7 @@ def test_a_fetched_published_artifact_opens_its_configured_site_without_a_previe
+         self.assertFalse((artifact_panel.watch.state_root() / 'artifact-previews').exists())
+ 
+     def test_cli_dismiss_and_restore_change_only_the_selected_session(self):
+-        from contextlib import redirect_stdout
+-        import io
++        artifact_panel.attach(self.repo, 'origin', 'two', 'explorer')
+         arguments = ['--checkout', str(self.repo), '--session', 'one']
+         with redirect_stdout(io.StringIO()):
+             self.assertEqual(0, cli.main(['artifact', 'dismiss', 'explorer', *arguments]))
+@@ -245,3 +328,13 @@ def test_a_stopped_managed_session_lists_opens_and_discusses_its_artifacts(self)
+             f'Artifact explorer@{version}: Cache explorer; Description: Explore saved data; '
+             f'Checkout: {self.repo.resolve()}; Remote: origin. Explain this view',
+         ], [item['messages'][0]['text'] for item in inbox.load_items(inbox.session_dir('one'))])
++
++    def test_an_artifact_keeps_its_session_visible_without_leaking_to_a_neighbor(self):
++        app = console.Console(artifact_panel.watch.state_root())
++        with mock.patch.object(console, 'live_sessions', return_value={'one': 'codex', 'two': 'codex'}):
++            with mock.patch.object(console.agents, 'record', return_value={}):
++                with mock.patch.object(app.titles, 'read', return_value={}):
++                    found = app.load(console.Work(inbox=True, rows=True, signatures={}))
++        app.apply(found)
++        self.assertEqual(['one'], list(app.sessions))
++        self.assertEqual(['explorer'], [row['id'] for row in app.sessions['one'].artifacts])
