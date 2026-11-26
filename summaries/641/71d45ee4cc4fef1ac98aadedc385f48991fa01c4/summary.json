@@ -1,0 +1,264 @@
+{
+ "version": 1,
+ "name": "Managed console agents",
+ "project": "console/launch",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 641,
+  "title": "Run Claude and Codex from the Projector console",
+  "head": "71d45ee4cc4fef1ac98aadedc385f48991fa01c4",
+  "headRef": "managed-console-agents",
+  "base": "02386ac04a8071852571cee4afc7e7073bbbde7a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector console already lists sessions, pull requests, and inbox items. This change lets you start Claude and Codex there, read their output, send follow-ups, answer native questions, and open the same saved session in its native terminal.",
+   "A detached Python worker owns each native connection. The watch daemon coordinates launches and routes existing events, while SQLite records input acceptance separately from turn success. Closing the console or replacing the daemon leaves the worker running.",
+   "The review is clean at <code>71d45ee</code>. The earlier typed-approval finding is fixed: a typed condition denies the original action, reaches Claude’s denial message, and queues a follow-up for either backend. The exact-head gate and all 432 focused tests pass, along with a real console typed-answer reproduction in temporary state."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used in the change",
+    "html": "<ul class=\"tight\"><li><b>Worker:</b> the detached Python process holding one agent connection.</li><li><b>Command:</b> one durable input, with an ID, source, acceptance state, and eventual outcome.</li><li><b>Inbox claim:</b> a token reserving one answer or message for delivery.</li><li><b>Native handoff:</b> releasing the managed connection so the original CLI can resume that conversation.</li><li><b>Lease:</b> a process lock or heartbeat that prevents competing controllers.</li><li><b>Optional environment:</b> a separate Python installation containing the pinned Claude SDK and a source snapshot.</li></ul>"
+   },
+   {
+    "id": "input-states",
+    "title": "Input and recovery states",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>State</th><th>Meaning</th></tr></thead><tbody><tr><td><code>queued</code></td><td>Not submitted; you can edit or remove an ordinary follow-up.</td></tr><tr><td><code>submitting</code></td><td>The worker has persisted the input and started native submission.</td></tr><tr><td><code>accepted</code></td><td>The native runtime accepted it; success is still unknown.</td></tr><tr><td><code>finished</code></td><td>A terminal outcome is recorded separately.</td></tr><tr><td><code>uncertain</code></td><td>A restart cannot prove whether it arrived. Later input pauses until you inspect native history and explicitly retry or confirm.</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "limits",
+    "title": "Limits to keep in view",
+    "html": "<ul class=\"tight\"><li>Managed sessions require Claude Code 2.1.332 or Codex CLI 0.172.0 or newer; setup pins Claude Agent SDK 0.2.189.</li><li>Native permission and sandbox settings remain authoritative, including configured automatic approvals.</li><li>Projector input waits during native handoff. Returning requires closing the native terminal and explicitly releasing the paused queue.</li><li>Windows console support, Codex URL elicitation, and Claude MCP elicitation are deferred.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "records",
+   "title": "Keep input distinct from outcomes",
+   "kicker": "The durable command and display-event contract",
+   "intro": [
+    "The command store is a SQLite ledger beside the session’s watch state. It gives each input a stable ID and preserves its source claim, worker generation, native turn ID when available, and terminal result. A generation identifies one worker incarnation, so an obsolete callback cannot finish input owned by a replacement.",
+    "Display events have increasing cursors and bounded retention. Removing old display output leaves pending commands intact. Recovery marks potentially submitted input uncertain rather than automatically replaying an action."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/runtime_store.py",
+     "note": "SQLite command transitions, idempotent enqueueing, control serialization, and incremental display retention.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 105,
+       "text": "The focused store tests passed for duplicate delivery, ambiguous recovery, stale-generation callbacks, one terminal result, damaged databases, and bounded display retention."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_runtime_store.py"
+    }
+   ]
+  },
+  {
+   "id": "adapters",
+   "title": "Use the native agent protocols",
+   "kicker": "Claude SDK and Codex app-server connections",
+   "intro": [
+    "An adapter translates native runtime messages into accepted input, text, tool activity, usage, and turn outcomes. Claude uses a long-lived SDK client; Codex uses JSON-RPC over a private app-server process’s standard streams.",
+    "Native requests return through an asynchronous callback, so a permission request can finish while its parent RPC waits. Session and turn IDs keep unrelated notifications out, and closing an adapter cancels pending requests and releases its child process."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/runtime_backends.py",
+     "note": "Native startup, resume, streaming, request callbacks, and cleanup.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 110,
+       "text": "The fake Codex subprocess tests passed for a nested server request, literal multiline prompts, duplicate-text suppression, native RPC errors, malformed output, and child cleanup."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_runtime_backends.py"
+    }
+   ]
+  },
+  {
+   "id": "delivery",
+   "title": "Let detached workers own delivery",
+   "kicker": "One input queue and one controller per managed session",
+   "intro": [
+    "The worker turns existing inbox and watch events into durable commands before submission. It renews claims while work waits, settles them on native acceptance, and keeps a failed or interrupted turn separate from success. A restart expires dead native callbacks and pauses uncertain input.",
+    "Native questions and approvals become existing Projector inbox items tied to the live callback. Ordinary events wait in order behind the current turn. The watch daemon discovers launch requests but never owns the native SDK connection, and competing native delivery is fenced while the session is managed.",
+    "Approval conditions remain conditions: typed text and an optional note deny the pending action and become a queued follow-up. Claude also receives that text in its denial response. Choosing Allow once without a condition remains the only approving response."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/runtime_worker.py",
+     "note": "Worker lifecycle, claim ingestion, acceptance, control handling, and native inbox callbacks.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 140,
+       "text": "Focused worker tests passed for claim acceptance, interrupt-and-pause, old-turn rejection, native request expiry, restart recovery, and continuous text flushing."
+      },
+      {
+       "kind": "verify",
+       "line": 350,
+       "text": "The earlier P2 is fixed. A console typed-answer reproduction denied the action, preserved the condition in Claude’s denial, and queued one follow-up. The new regression also passed for Codex command and permission requests and for a condition with an added note."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/codex_watch.py",
+     "note": "Exclude managed sessions from native queue delivery and let the worker skip its own pending request items."
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Discover detached launch workers, route managed events, and negotiate daemon runtime support."
+    },
+    {
+     "path": "tests/test_runtime_worker.py",
+     "note": "Worker delivery, interruption, recovery, callback lifetime, and typed approval conditions for Claude and Codex."
+    }
+   ]
+  },
+  {
+   "id": "lifecycle",
+   "title": "Preserve sessions through stop and handoff",
+   "kicker": "Versioned launch environments and exclusive native control",
+   "intro": [
+    "A launch record keeps the requested backend, checkout, model, first prompt, native executable, and optional environment. Setup copies a source snapshot into a versioned environment, so upgrading the installed CLI does not change a running or stopped session’s worker code.",
+    "Native handoff closes the managed connection before opening the saved conversation in the original CLI. An inherited process lock stays held by the native child even if its wrapper exits. Returning refuses a live native terminal and leaves queued Projector input paused until you explicitly send it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/runtime.py",
+     "note": "Optional dependency setup, launch validation, worker coordination, session discovery, controls, and saved native commands.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 212,
+       "text": "The runtime tests passed for immutable source snapshots, stopped-session environment retention, old-runtime rejection, invalid launch input, concurrent ownership, and refusal to return while the native lease is held."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/native_handoff.py",
+     "note": "Foreground native resume keeps the controller lease across Ctrl-C and wrapper failure.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 36,
+       "text": "The subprocess lease test passed: Ctrl-C leaves the wrapper alive, terminating it does not free the child’s lease, and native child exit finally frees it."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_runtime.py"
+    },
+    {
+     "path": "tests/test_native_handoff.py"
+    }
+   ]
+  },
+  {
+   "id": "console",
+   "title": "Launch and converse in the terminal",
+   "kicker": "Managed controls extend the existing session panel",
+   "intro": [
+    "The managed console extends the current inbox and pull-request panel with a launch form, conversation display, and execution controls. Follow-up input uses the same person-to-session inbox route rather than a second message store. Externally started sessions retain their existing communication controls.",
+    "The display reads new events after a cursor and redraws cached state. Queued messages can be edited or removed. Retrying uncertain input requires an explicit confirmation, and native request drawers offer answers or cancellation rather than discussion that the waiting callback cannot consume."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/agent_console.py",
+     "note": "Launch and chat fields, incremental conversations, queue recovery, native callback drawers, and terminal handoff.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 288,
+       "text": "Focused console tests passed for multiline launch input, generic-session compatibility, stopped-session visibility, streaming failure display, explicit retry confirmation, typed question answers, and redraws without database access."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_agent_console.py"
+    }
+   ]
+  },
+  {
+   "id": "interface",
+   "title": "Ship the human entry point and its boundaries",
+   "kicker": "Packaging, permissions, and the operator guide",
+   "intro": [
+    "The new <code>projector</code> command opens the console, while <code>projector setup</code> prepares optional agent support. <code>project</code> retains its agent-facing CLI, and <code>project console</code> remains compatible. Both entry points ship with the core package without requiring an SDK import.",
+    "Host permission rules protect the human interface, which can launch agents and record a person’s answers. Managed inbox delivery also rejects a competing CLI deliverer. The guide explains native permissions, recovery, and handoff; the plan records the measured runtime probes and deliberately unsupported behavior."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/human.py",
+     "note": "Human-facing console and optional setup command."
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Route the compatibility console to managed controls and refuse competing managed inbox delivery."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Keep the human entry point outside broad agent command permissions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 126,
+       "text": "The permission regressions passed for both the bare human entry point and its setup subcommand; the broad agent command allowance does not authorize them."
+      }
+     ]
+    },
+    {
+     "path": "pyproject.toml",
+     "note": "Install the human console entry point beside the existing agent CLI."
+    },
+    {
+     "path": "install.sh",
+     "note": "Link both installed commands."
+    },
+    {
+     "path": "tests/test_permissions.py"
+    },
+    {
+     "path": "tests/test_packaging.py"
+    },
+    {
+     "path": "README.md"
+    },
+    {
+     "path": "docs/agents.md",
+     "note": "Operating guide for setup, native callbacks, uncertain input, and native handoff."
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/projects/console/launch/readme.md",
+     "note": "Mark the console launch project completed and record runtime decisions, costs, acceptance evidence, and deliberate limits.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The plan records live native-agent probes separately from the automated regressions rerun in this review. The earlier typed-approval clarification finding is verified fixed at the current head."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
