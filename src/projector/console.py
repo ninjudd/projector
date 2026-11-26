@@ -1,8 +1,8 @@
-"""`project console`: every live session in one terminal, and each session's panel.
+"""`project console`: live Projector sessions grouped by directory, above the selected session's panel.
 
-The console opens on the home list, one entry per live session, sorted by what needs the person. Enter opens a
-session's panel: its pull request rows, as `rows.py` reads them, its inbox items, each with a drawer that
-answers, discusses, dismisses, or snoozes it, and a collapsible view of its conversation, as `conversation.py`
+Enter moves the focus from the session list into its panel: its pull request rows, as `rows.py` reads them,
+its inbox items, each with a drawer that answers, discusses, dismisses, or snoozes it, and a collapsible view of
+its conversation, as `conversation.py`
 reads it. Every choice and message is recorded with the functions `project inbox` runs, for the session on screen,
 and the session's own deliverer brings it in: Claude Code's panel, or the watch daemon's Codex adapter. The
 console never claims, delivers, or settles a line, so it never races a deliverer.
@@ -73,6 +73,7 @@ class Session:
     label: str
     place: str
     summary: str
+    cwd: str = ""
     signature: Optional[tuple] = None
     items: list[dict] = field(default_factory=list)
     rows: list[rows.Row] = field(default_factory=list)
@@ -136,6 +137,7 @@ class Work:
     inbox: bool
     rows: bool
     signatures: dict[str, Optional[tuple]]
+    items: dict[str, list[dict]] = field(default_factory=dict)
     pull: Optional[rows.Pull] = None
     drawer: Optional[str] = None
     conversation: Optional[tuple[str, conversation.Reader]] = None
@@ -145,7 +147,7 @@ class Work:
 class Found:
     """What a refresh read."""
 
-    live: Optional[dict[str, tuple[str, str, str, str, tuple, Optional[list[dict]]]]] = None
+    live: Optional[dict[str, tuple[str, str, str, str, str, tuple, Optional[list[dict]]]]] = None
     rows: dict[str, list[rows.Row]] = field(default_factory=dict)
     entries: dict[str, list[dict]] = field(default_factory=dict)
     drawer: Optional[str] = None
@@ -167,11 +169,10 @@ def live_sessions(root: Path, now: float) -> dict[str, str]:
     return found
 
 
-def place_of(record: dict, folder: Path, checkouts: dict[str, str]) -> str:
+def place_of(record: dict, cwd: str, checkouts: dict[str, str]) -> str:
     """The repository and branch `agent.json` names, or those of the checkout `codex.json` runs in."""
     place = " ".join(part for part in (record.get("repo"), record.get("branch")) if part)
-    cwd = codex_watch.registration(folder).get("cwd")
-    if place or not isinstance(cwd, str) or not cwd:
+    if place or not cwd:
         return place
     if cwd not in checkouts:
         try:
@@ -182,12 +183,14 @@ def place_of(record: dict, folder: Path, checkouts: dict[str, str]) -> str:
     return checkouts[cwd]
 
 
-def describe(root: Path, name: str, delivery: str, checkouts: dict[str, str]) -> tuple[str, str, str, str]:
-    """The session's label, host, place, and summary, as `project agent list` shows them."""
-    record = agents.record(root, name) or {}
+def describe(root: Path, name: str, delivery: str, checkouts: dict[str, str], record: dict
+             ) -> tuple[str, str, str, str, str]:
+    """The session's label, host, place, summary, and working directory."""
     host = HOSTS.get(delivery) or record.get("host") or "other"
-    place = place_of(record, watch.session_folder(root, name), checkouts)
-    return agents.label(record, name), host, place, record.get("summary") or ""
+    cwd = codex_watch.registration(watch.session_folder(root, name)).get("cwd") or record.get("cwd")
+    cwd = cwd if isinstance(cwd, str) else ""
+    place = place_of(record, cwd, checkouts)
+    return agents.label(record, name), host, place, record.get("summary") or "", cwd
 
 
 def signature(folder: Path) -> tuple:
@@ -387,6 +390,8 @@ class Console:
         self.refusal: Optional[ProjectorError] = None
         self.kept_note: Optional[tuple[str, str, str]] = None
         self.offset = 0
+        self.home_offset = 1
+        self.home_room = 1
         self.room = 1
         # The sessions whose conversation is shown, each reader of a conversation, what each said, and whether
         # each one's transcript was found.
@@ -413,7 +418,8 @@ class Console:
 
     def due(self, now: float) -> Optional[Work]:
         work = Work(inbox=now >= self.next_inbox, rows=now >= self.next_rows,
-                    signatures={name: session.signature for name, session in self.sessions.items()})
+                    signatures={name: session.signature for name, session in self.sessions.items()},
+                    items={name: session.items for name, session in self.sessions.items()})
         if work.inbox:
             self.next_inbox = now + INBOX_EVERY
         if work.rows:
@@ -423,7 +429,7 @@ class Console:
             self.next_threads = now + THREADS_EVERY
             work.pull, work.drawer = row.pull, self.drawer
         session = self.viewed()
-        if (self.view == "panel" and session is not None and session.name in self.expanded
+        if (session is not None and session.name in self.expanded
                 and now >= self.next_conversation):
             self.next_conversation = now + CONVERSATION_EVERY
             reader = self.readers.get(session.name)
@@ -442,8 +448,17 @@ class Console:
                 folder = inbox.store_root() / name
                 seen = signature(folder)
                 items = None if name in work.signatures and seen == work.signatures[name] else inbox.load_items(folder)
-                found.live[name] = (*describe(self.root, name, delivery, self.checkouts), seen, items)
-                found.entries[name] = repo_inbox.repo_items(self.root, name, everything=True)
+                record = agents.record(self.root, name) or {}
+                entries = repo_inbox.repo_items(self.root, name, everything=True)
+                current_items = work.items[name] if items is None else items
+                now_ms = int(now * 1000)
+                if not (record or any(not line.excluded for line in watch.subscriptions(
+                        watch.session_folder(self.root, name)))
+                        or any(is_shown(item, now_ms) for item in current_items)
+                        or any(not repo_inbox.is_snoozed(entry, now_ms) for entry in entries)):
+                    continue
+                found.live[name] = (*describe(self.root, name, delivery, self.checkouts, record), seen, items)
+                found.entries[name] = entries
             names = list(found.live)
         for name in names:
             if work.rows or name not in work.signatures:
@@ -460,9 +475,10 @@ class Console:
         if found.live is not None:
             for name in set(self.sessions) - set(found.live):
                 del self.sessions[name]
-            for name, (label, host, place, summary, seen, items) in found.live.items():
+            for name, (label, host, place, summary, cwd, seen, items) in found.live.items():
                 session = self.sessions.setdefault(name, Session(name, host, label, place, summary))
                 session.host, session.label, session.place, session.summary = host, label, place, summary
+                session.cwd = cwd
                 session.signature = seen
                 if items is not None:
                     session.items = items
@@ -502,6 +518,7 @@ class Console:
             self.go_home()
             return
         if self.view != "panel":
+            self.selected = self.selected_key()
             return
         keys = [key for key, _ in self.entries()]
         if self.drawer is not None and self.drawer not in keys:
@@ -518,10 +535,14 @@ class Console:
 
     def home(self) -> list[Session]:
         now = self.now_ms()
-        return sorted(self.sessions.values(), key=lambda session: needs(session, now))
+        return sorted(self.sessions.values(), key=lambda session: (not bool(session.cwd), session.cwd,
+                                                                  needs(session, now)))
 
     def viewed(self) -> Optional[Session]:
-        return self.sessions.get(self.session or "")
+        name = self.selected if self.view == "home" else self.session
+        if self.view == "home" and name not in self.sessions:
+            return next(iter(self.home()), None)
+        return self.sessions.get(name or "")
 
     def entries(self) -> list[tuple[str, object]]:
         """The viewed panel's rows: its pull requests, then its items, then its repository inbox's entries, each under
@@ -574,14 +595,22 @@ class Console:
             elif name in SCROLL_KEYS:
                 self.scroll(name)
             elif self.view == "home":
-                if name == "enter" and self.selected_key() is not None:
+                if name in ("enter", "right") and self.selected_key() is not None:
                     self.open_panel(self.selected_key())
             else:
                 self.panel_key(name)
 
     def scroll(self, name: str) -> None:
-        """Move the viewport a page, or to an end. `viewport` keeps it on the cursor's row and its drawer, so these
-        keys move it only through a drawer taller than the screen."""
+        """Page between sessions in the list, or scroll a panel's drawer or conversation."""
+        if self.view == "home":
+            keys = self.keys()
+            if keys:
+                if name in ("end", "G", "home", "g"):
+                    self.selected = keys[-1] if name in ("end", "G") else keys[0]
+                    self.offset = 0
+                else:
+                    self.move(max(1, self.home_room - 2) * (1 if name in ("pagedown", " ") else -1))
+            return
         page = max(1, self.room - 1)
         # `viewport` follows the conversation's newest line again once the offset reaches it.
         self.follow = False
@@ -613,6 +642,7 @@ class Console:
             return
         at = keys.index(self.selected) if self.selected in keys else 0
         self.selected = keys[max(0, min(len(keys) - 1, at + step))]
+        self.offset = 0
 
     def choices(self) -> list[Control]:
         """The open drawer's choices, which the note field opens under."""
@@ -650,12 +680,14 @@ class Console:
 
     def open_panel(self, name: str) -> None:
         self.view, self.session, self.selected = "panel", name, None
+        self.offset = 0
         self.close_drawer()
 
     def go_home(self) -> None:
         self.close_drawer()
         self.field = self.kept_note = None
         self.view, self.selected, self.session = "home", self.session, None
+        self.offset = 0
 
     def close_drawer(self) -> None:
         """Close the open drawer. A focus on one of its controls goes to its row, where `selected` already is."""
@@ -991,17 +1023,52 @@ class Console:
     # Laying out the screen
 
     def lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
-        """The screen's body, and the first and last of its lines that show the cursor's row and its drawer."""
+        """Both panes, and the range containing the focused row and its drawer."""
         with self.lock:
-            return self.home_lines() if self.view == "home" else self.panel_lines(width)
+            home, home_focus = self.home_lines()
+            if self.viewed() is None:
+                return home, home_focus
+            panel, panel_focus = self.panel_lines(width)
+            start = len(home) + 1
+            focus = home_focus if self.view == "home" else tuple(start + at for at in panel_focus)
+            return [*home, Line([("─" * max(0, width), "subtle")]), *panel], focus
 
     def viewport(self, width: int, room: int) -> list[Line]:
+        """Keep the session list above the selected session's independently scrolling panel."""
+        with self.lock:
+            home, focus = self.home_lines()
+            if self.viewed() is None:
+                return home[:room]
+            self.home_room = min(len(home), max(1, room // 2))
+            listed = self.home_viewport(home, focus, self.home_room)
+            if room < 3:
+                return listed[:room]
+            panel = self.panel_viewport(width, room - len(listed) - 1)
+            return [*listed, Line([("─" * max(0, width), "subtle")]), *panel]
+
+    def home_viewport(self, lines: list[Line], focus: tuple[int, int], room: int) -> list[Line]:
+        """Keep the selected session and its directory heading visible as the list scrolls."""
+        if len(lines) <= room:
+            return lines
+        first, last = focus
+        if room == 1:
+            return [lines[last]]
+        if room == 2:
+            return [lines[0], lines[last]]
+        space = room - 1
+        if last - first + 1 > space:
+            self.home_offset = min(max(self.home_offset, last - space + 2), last)
+            return [lines[0], lines[first], *lines[self.home_offset:self.home_offset + space - 1]]
+        self.home_offset = first + 1
+        return [lines[0], *lines[first:first + space]]
+
+    def panel_viewport(self, width: int, room: int) -> list[Line]:
         """The body's lines that fit in `room` rows. The offset survives each redraw and moves only as far as it
         must to show the cursor's row and its drawer. A drawer taller than the room shows a room's worth of itself,
         starting at its row, and the scroll keys move the offset through the rest. The conversation starts at its
         newest line instead, and keeps it in view as lines arrive until a scroll key moves away from it."""
         with self.lock:
-            body, (first, last) = self.lines(width)
+            body, (first, last) = self.panel_lines(width)
             self.room = room
             spots = [index for index, line in enumerate(body) if line.spot]
 
@@ -1035,7 +1102,7 @@ class Console:
             if self.exit_at is not None and self.clock() - self.exit_at < EXIT_WINDOW:
                 return [*lines, Line([("Press Ctrl-C again to exit", "warning")])]
             if self.view == "home":
-                hint = "↑↓ move · Enter open · Ctrl-C quit"
+                hint = "↑↓ session · Enter or → focus panel · PgUp PgDn scroll · Ctrl-C quit"
             elif self.selected_key() == CONVERSATION and self.session in self.expanded:
                 hint = ("↑↓ move · v or Enter hide · PgUp PgDn scroll · 7 message this session · ← or Esc back"
                         " · Ctrl-C twice quit")
@@ -1050,25 +1117,33 @@ class Console:
         now = self.now_ms()
         listed = self.home()
         lines = [Line([("Projector console", "bold"),
-                       (f"  {counted(len(listed), 'live session') or 'no live sessions'}", "subtle")]), Line([])]
+                       (f"  {counted(len(listed), 'live session') or 'no live sessions'}", "subtle")])]
         if not listed:
-            lines.append(Line([("No session is live. A session shows here while Claude Code's panel or the watch "
-                                "daemon's Codex adapter delivers to it.", "subtle")]))
-        chosen = self.selected_key()
+            lines.append(Line([("No live Projector sessions. Sessions appear when they register an agent, watch "
+                                "pull requests, or have inbox items.", "subtle")]))
+        viewed = self.viewed()
+        chosen = viewed.name if viewed is not None else None
         focus = (0, 0)
+        previous: Optional[str] = None
+        group_start = 0
         for session in listed:
+            if session.cwd != previous:
+                group_start = len(lines)
+                lines.append(Line([(session.cwd or "Unknown working directory", "branch")]))
+                previous = session.cwd
             start = len(lines)
-            lines.append(Line([(session.label, "bold"), (f"  {session.host}", "subtle"),
-                               *([(f"  {session.place}", "branch")] if session.place else []),
-                               *([(f"  {' · '.join(counts_of(session, now))}", "")] if counts_of(session, now) else [])],
-                              selected=session.name == chosen))
-            if session.summary:
-                lines.append(Line([(f"  {session.summary}", "subtle")]))
+            counts = counts_of(session, now)
             named = headline(session, now)
-            if named is not None:
-                lines.append(Line([(f"  ‣ {named['subject']}", "")]))
+            lines.append(Line([(("▸ " if session.name == chosen else "  ") + session.label, "bold"),
+                               (f"  {session.host}", "subtle"),
+                               *([(f"  {session.place}", "branch")]
+                                 if session.place and session.place != session.cwd else []),
+                               *([(f"  {' · '.join(counts)}", "")] if counts else []),
+                               *([(f"  {session.summary}", "subtle")] if session.summary else []),
+                               *([(f"  ‣ {named['subject']}", "")] if named is not None else [])],
+                              selected=session.name == chosen and self.view == "home"))
             if session.name == chosen:
-                focus = (start, len(lines) - 1)
+                focus = (group_start, start)
         return lines, focus
 
     def conversation_lines(self, name: str, width: int, selected: bool) -> list[Line]:
@@ -1109,7 +1184,7 @@ class Console:
         entries = self.entries()
         if not entries:
             lines.append(Line([("No pull requests or items. Press 7 to send this session a message.", "subtle")]))
-        chosen, control = self.focus()
+        chosen, control = self.focus() if self.view == "panel" else (None, None)
         focus = (0, 0)
         label_width = max((len(row.label) for row in session.rows), default=0)
         author_width = max((len(row.pull.author or "") for row in session.rows if row.section == "review"), default=0)

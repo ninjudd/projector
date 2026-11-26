@@ -148,6 +148,40 @@ class Isolation(ConsoleCase):
 
 
 class SessionSet(ConsoleCase):
+    def test_delivery_hooks_alone_do_not_make_a_projector_session(self) -> None:
+        for name in ("bare-claude", "registered", "subscribed", "inbox", "old-inbox", "lapsed"):
+            self.claude(name, renewed_ago=600 if name == "lapsed" else 0)
+        self.codex("bare-codex", cwd=str(self.scratch))
+        write_json(self.folder("registered") / "agent.json", {"schema_version": 1, "name": "worker"})
+        self.subscribe("subscribed", "acme/app review claude operator")
+        self.ask("inbox")
+        self.ask("lapsed")
+        old = self.ask("old-inbox")
+        old.update(answer={"letter": "a"}, deliveredAt=int(self.clock.now * 1000) - console.RESOLVED_MS)
+        write_json(inbox.session_dir("old-inbox") / "1.json", old)
+
+        self.console.tick()
+
+        self.assertEqual({"registered", "subscribed", "inbox"}, set(self.home_names()))
+
+    def test_an_inbox_only_session_leaves_when_its_last_delivered_item_ages_out(self) -> None:
+        self.claude("s1")
+        self.ask("s1")
+        self.console.tick()
+        self.assertEqual(["s1"], self.home_names())
+        inbox.answer("s1", "1", "a")
+        token = inbox.claim("s1", "1")["claim"]["token"]
+        inbox.settle("s1", "1", token, True)
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.assertEqual(["s1"], self.home_names())
+
+        self.clock.now += console.RESOLVED_MS / 1000
+        self.console.tick()
+
+        self.assertEqual([], self.home_names())
+        self.assertIsNone(self.console.viewed())
+
     def test_the_home_list_holds_live_claude_and_codex_sessions_and_leaves_out_a_lapsed_one(self) -> None:
         self.claude("claude-session")
         write_json(self.folder("claude-session") / "agent.json",
@@ -157,6 +191,7 @@ class SessionSet(ConsoleCase):
         subprocess.run(["git", "init", "-q", "-b", "codex-branch"], cwd=checkout, check=True)
         subprocess.run(["git", "remote", "add", "origin", "https://github.com/acme/web.git"], cwd=checkout, check=True)
         self.codex("019a2b3c-0000-7000-8000-00000000c0de", cwd=str(checkout))
+        self.subscribe("019a2b3c-0000-7000-8000-00000000c0de", "acme/web#12 fix")
         self.claude("lapsed-session", renewed_ago=600)
         self.ask("lapsed-session")
 
@@ -167,6 +202,57 @@ class SessionSet(ConsoleCase):
 
 
 class HomeOrder(ConsoleCase):
+    def test_sessions_share_a_directory_heading_without_merging_distinct_checkouts(self) -> None:
+        for name, cwd in (("first", "/work/app"), ("other", "/work/app-copy"), ("second", "/work/app"),
+                          ("upper", "/work/App"), ("nested", "/work/app/nested")):
+            self.codex(name, cwd=cwd)
+            self.ask(name)
+        write_json(self.folder("first") / "agent.json",
+                   {"schema_version": 1, "name": "first", "cwd": "/work/old", "repo": "acme/app"})
+        self.claude("unknown")
+        self.ask("unknown")
+        self.ask("second")
+
+        self.console.tick()
+        lines = [line.text for line in self.console.lines(100)[0]]
+
+        self.assertEqual(["upper", "second", "first", "other", "nested", "unknown"], self.home_names())
+        self.assertEqual(1, lines.count("/work/app"))
+        self.assertEqual(1, lines.count("/work/app-copy"))
+        self.assertLess(lines.index("/work/app"), lines.index("/work/app-copy"))
+        self.assertIn("Unknown working directory", lines)
+        self.assertNotIn("/work/old", lines)
+
+    def test_a_session_summary_and_newest_item_stay_on_its_single_list_line(self) -> None:
+        self.claude("s1")
+        write_json(self.folder("s1") / "agent.json",
+                   {"schema_version": 1, "name": "fixer", "cwd": "/work/app", "summary": "Fixing the build"})
+        self.ask("s1", "Retry the build?")
+
+        self.console.tick()
+        lines = [line.text for line in self.console.lines(100)[0]]
+        summary = next(line for line in lines if "Fixing the build" in line)
+
+        self.assertIn("fixer", summary)
+        self.assertIn("1 question", summary)
+        self.assertIn("Retry the build?", summary)
+        self.assertIn("/work/app", lines)
+
+    def test_a_refresh_keeps_the_initial_selection_when_another_session_moves_first(self) -> None:
+        with mock.patch.object(inbox, "now_ms", return_value=int(self.clock.now * 1000)):
+            for name in ("first", "second"):
+                self.claude(name)
+                self.ask(name)
+        self.console.tick()
+        self.assertEqual("first", self.console.viewed().name)
+        self.ask("second")
+        self.clock.now += console.INBOX_EVERY
+
+        self.console.tick()
+
+        self.assertEqual(["second", "first"], self.home_names())
+        self.assertEqual("first", self.console.viewed().name)
+
     def test_a_session_with_more_open_questions_lists_first(self) -> None:
         for session in ("one", "two"):
             self.claude(session)
@@ -299,6 +385,7 @@ class RepositoryInbox(ConsoleCase):
 class Messages(ConsoleCase):
     def test_seven_with_no_drawer_open_sends_a_message_about_an_empty_session(self) -> None:
         self.claude("idle")
+        self.subscribe("idle", "acme/app review claude operator")
         self.console.tick()
         self.console.open_panel("idle")
 
@@ -312,6 +399,7 @@ class Messages(ConsoleCase):
 
     def test_a_message_reads_sending_like_a_notice_offers_no_unclear_and_leaves_once_delivered(self) -> None:
         self.claude("s1")
+        self.subscribe("s1", "acme/app review claude operator")
         self.console.tick()
         self.console.open_panel("s1")
         self.press("7")
@@ -915,6 +1003,59 @@ class TerminalCase(ConsoleCase):
             self.terminal.draw()
 
 
+class SplitLayout(TerminalCase):
+    def test_the_bottom_panel_tracks_the_selected_session_and_records_only_for_it(self) -> None:
+        with mock.patch.object(inbox, "now_ms", return_value=int(self.clock.now * 1000)):
+            for name in ("first", "second"):
+                self.codex(name, cwd="/work/app")
+                self.ask(name, f"Question from {name}?")
+        self.console.tick()
+        initial = self.draw().split("─" * self.window.width, 1)[1]
+
+        self.press_terminal(FakeCurses.KEY_DOWN)
+        moved = self.draw().split("─" * self.window.width, 1)[1]
+        self.press("right", "enter", "1", "enter")
+
+        self.assertIn("Question from first?", initial)
+        self.assertNotIn("Question from second?", initial)
+        self.assertIn("Question from second?", moved)
+        self.assertNotIn("Question from first?", moved)
+        self.assertIn("/work/app", self.draw())
+        answers = [inbox.read_item(inbox.session_dir(name), "1").get("answer") for name in ("first", "second")]
+        self.assertEqual([None, "a"], [answer and answer["letter"] for answer in answers])
+
+    def test_a_long_session_list_keeps_its_group_and_the_bottom_panel_visible(self) -> None:
+        for number in range(20):
+            name = f"worker-{number:02}"
+            self.codex(name, cwd="/work/app")
+            self.subscribe(name, "acme/app review claude operator")
+        self.console.tick()
+        for _ in range(19):
+            self.press_terminal(FakeCurses.KEY_DOWN)
+
+        drawn = self.draw()
+        self.assertIn("/work/app", drawn)
+        self.assertIn("worker-19", drawn)
+        self.assertIn("No pull requests or items", drawn)
+        self.assertEqual("worker-19", self.console.viewed().name)
+
+    def test_a_disappearing_session_closes_its_field_and_previews_the_remaining_session(self) -> None:
+        for name in ("first", "second"):
+            self.codex(name, cwd="/work/app")
+            self.ask(name, f"Question from {name}?")
+        self.open_entry("first", "item:1")
+        self.press("1")
+        self.type("unfinished note")
+        (self.folder("first") / "codex.json").unlink()
+        self.clock.now += console.INBOX_EVERY
+
+        self.console.tick()
+
+        self.assertEqual(("home", None, None, "second"),
+                         (self.console.view, self.console.field, self.console.drawer, self.console.viewed().name))
+        self.assertIn("Question from second?", self.draw())
+
+
 class Scrolling(TerminalCase):
     def tall_question(self) -> None:
         self.claude("s1")
@@ -927,7 +1068,7 @@ class Scrolling(TerminalCase):
         self.tall_question()
         opened = self.draw()
         self.press_terminal(FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE,
-                            FakeCurses.KEY_NPAGE)
+                            FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE, FakeCurses.KEY_NPAGE)
         scrolled = self.draw()
         self.console.tick()
 
@@ -1014,6 +1155,7 @@ class Conversation(TerminalCase):
     def test_the_conversation_is_collapsed_by_default_and_v_shows_it_for_that_session_only(self) -> None:
         for session in ("s1", "s2"):
             self.claude(session)
+            self.subscribe(session, "acme/app review claude operator")
             self.say(self.transcript(session), ("you", f"Hello from {session}."), ("agent", f"Hi, {session}."))
         self.console.tick()
         self.console.open_panel("s1")
@@ -1038,6 +1180,7 @@ class Conversation(TerminalCase):
 
     def test_a_collapsed_conversation_is_never_read(self) -> None:
         self.claude("s1")
+        self.subscribe("s1", "acme/app review claude operator")
         self.say(self.transcript("s1"), ("you", "Hello."))
         self.console.tick()
         self.console.open_panel("s1")
@@ -1110,6 +1253,7 @@ class Conversation(TerminalCase):
         rollout = self.scratch / "rollout.jsonl"
         shutil.copy(Path(__file__).resolve().parent / "fixtures" / "conversation" / "codex.jsonl", rollout)
         self.codex("019a2b3c-0000-7000-8000-00000000c0de", transcript_path=str(rollout))
+        self.subscribe("019a2b3c-0000-7000-8000-00000000c0de", "acme/app review claude operator")
         self.console.tick()
         self.console.open_panel("019a2b3c-0000-7000-8000-00000000c0de")
         self.press("v")
@@ -1119,6 +1263,7 @@ class Conversation(TerminalCase):
 
     def test_a_session_with_no_transcript_says_so(self) -> None:
         self.claude("s1")
+        self.subscribe("s1", "acme/app review claude operator")
         self.console.tick()
         self.console.open_panel("s1")
         self.press("v")
