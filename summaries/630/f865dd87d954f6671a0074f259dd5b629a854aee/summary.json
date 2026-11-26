@@ -1,0 +1,71 @@
+{
+ "version": 1,
+ "name": "Test runner chunk timeout",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 630,
+  "title": "Stop a test chunk that hangs instead of waiting on it forever",
+  "head": "f865dd87d954f6671a0074f259dd5b629a854aee",
+  "headRef": "test-runner-timeout",
+  "base": "7ed76b1252f831016dcb76faed4ccb37bcf51d3e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>python3 -m tests</code> is Projector's test runner. It splits the suite into <em>chunks</em>, lists of at most eight tests from one class, and runs each chunk as its own <code>python3 -m unittest</code> process, several at a time.",
+   "Before this change, each chunk inherited the runner's stdin, and the runner waited on each chunk with no time limit. Started from a background shell, whose stdin never closes, one test's fake <code>claude</code> script piped its input through <code>cat</code>, and <code>cat</code> waited forever, so the whole run did too. At a terminal or in CI, stdin closes or is empty, so the hang never showed there.",
+   "The change fixes both halves:",
+   "<ul class=\"tight\"><li><b>No stdin.</b> Each chunk starts with stdin connected to <code>/dev/null</code>, so a test that reads stdin reads nothing and goes on.</li><li><b>A time limit.</b> Each chunk runs in a process group of its own. Past <code>--timeout</code> seconds, 300 by default, the runner kills the whole group and fails the chunk with <code>The chunk ran past 300 seconds and was stopped.</code></li></ul>",
+   "The runner kills the group rather than the chunk's process alone because a process a test started, such as that <code>cat</code>, holds the chunk's output pipes open, and the runner would keep waiting to read them."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "runner",
+   "title": "The runner stops a chunk that hangs",
+   "kicker": "No stdin for a chunk, and a timeout that kills its whole process group",
+   "intro": [
+    "<code>run</code> starts one chunk. It replaces <code>subprocess.run</code> with a <code>Popen</code> so that on a timeout it can kill the chunk's process group before reading the rest of the output. A <em>process group</em> is the set of processes the chunk and everything it starts belong to; <code>start_new_session=True</code> gives the chunk a group of its own, so <code>os.killpg</code> reaches its children without touching the runner.",
+    "The tests in <code>tests/test_runner.py</code> drive <code>run</code> directly with a small probe module written to a temporary directory: one probe test pipes stdin through <code>cat</code>, and another waits on a <code>sleep 60</code> child."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The new tests and the pull request's reproduction pass at this head: <code>tests.test_runner</code> printed <code>OK</code> in about 1 second, and <code>tests.test_ci.ActionTests</code> with a stdin held open by <code>sleep 120</code> printed <code>OK</code> in about 1 second. The <code>check</code> CI job passed too."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/__main__.py",
+     "note": "The runner: <code>run</code> starts each chunk with no stdin and a timeout, and <code>--timeout</code> sets the limit.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>communicate</code> raised <code>TimeoutExpired</code> before it reaped the chunk, so the group still exists when <code>killpg</code> runs, and the second <code>communicate</code> returns once every process holding the pipes is dead.",
+       "line": 74
+      },
+      {
+       "kind": "context",
+       "text": "<code>os.killpg</code> exists only on POSIX. On Windows a chunk that times out raises <code>AttributeError</code> here, and the <code>with</code> block then waits on the hung chunk, which is how the runner behaved before this change. The review suggests falling back to <code>process.kill()</code>.",
+       "line": 74
+      }
+     ]
+    },
+    {
+     "path": "tests/test_runner.py",
+     "note": "Two tests of <code>run</code>: a chunk ignores a stdin that never closes, and a chunk past its timeout fails along with its children.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "The comment above the stdin test tells the hang's history in the past tense (\"waited on <code>cat</code> for hours\") rather than the reason in the present tense, which <code>guidelines.md</code> § 1 and <code>writing.md</code> § 12 ask for. The review keeps this open as a P2 finding.",
+       "line": 40
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
