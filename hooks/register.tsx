@@ -364,7 +364,7 @@ const SNOOZES = [
 
 const subscribed = atom({ plugin: 'projector', key: 'panelSubscribed' } as const, [])
 const snapshot = atom({ plugin: 'projector', key: 'panelSnapshot' } as const, EMPTY)
-const artifacts = atom({ plugin: 'projector', key: 'panelArtifacts' } as const, [])
+const artifacts = atom({ plugin: 'projector', key: 'panelArtifacts' } as const, { rows: [], revision: 0 })
 const now = atom({ plugin: 'projector', key: 'panelNow' } as const, 0)
 const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, false)
 const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
@@ -408,7 +408,6 @@ let attemptedAt = 0
 let artifactsAttemptedAt: number | undefined
 let artifactsInFlight: Promise<void> | undefined
 let artifactsSession: string | undefined
-let artifactsRevision = 0
 /**
  * Which session id the daemon last heard renew, by this copy of the module,
  * and when. The engine moves the session to a new id on `/clear`, and that id
@@ -644,20 +643,20 @@ function checkArtifacts($: Engine): Promise<void> {
     if (session === undefined) return
     const changed = artifactsSession !== session
     if (!changed && artifactsAttemptedAt !== undefined && time - artifactsAttemptedAt < POLL_MS) return
-    if (changed && artifactsSession !== undefined) await update($, artifacts, () => [])
+    if (changed && artifactsSession !== undefined) await update($, artifacts, before => ({ rows: [], revision: before.revision + 1 }))
     artifactsSession = session
     artifactsAttemptedAt = time
     try {
-      const revision = artifactsRevision
+      const revision = (await read($, artifacts)).revision
       const result = await project($, ['artifact', 'panel', '--session', session, '--json'])
-      if (revision !== artifactsRevision || (await sessionOf($)) !== session) return
+      if ((await sessionOf($)) !== session) return
       const found = result.exitCode === 0 ? parseArtifacts(result.stdout) : null
       if (found !== null) {
         let added = false
         await update($, artifacts, before => {
-          if (revision !== artifactsRevision) return before
-          added = found.some(row => !before.some(old => old.key === row.key))
-          return found
+          if (revision !== before.revision) return before
+          added = found.some(row => !before.rows.some(old => old.key === row.key))
+          return { rows: found, revision }
         })
         if (added && !(await read($, isShown))) show($)
       }
@@ -774,7 +773,7 @@ async function closeLeftDrawer($: Engine, time: number): Promise<void> {
   const isListed = opened.startsWith('item:')
     ? (await read($, items)).some(item => `item:${item.ref}` === opened && isShownAt(item, time))
     : opened.startsWith('artifact:')
-      ? (await read($, artifacts)).some(row => `artifact:${row.key}` === opened)
+      ? (await read($, artifacts)).rows.some(row => `artifact:${row.key}` === opened)
     : opened.startsWith('entry:')
       ? (await read($, entries)).some(entry => `entry:${entry.ref}` === opened && !isEntrySnoozedAt(entry, time))
       : current(await read($, snapshot)).rows.some(row => keyOf(row.pr) === opened)
@@ -1088,8 +1087,9 @@ async function artifactAction($: Engine, row: Artifact, action: 'open' | 'dismis
     const ran = await project($, args)
     if (ran.exitCode !== 0) throw new Error(errorOf(ran))
     if (action === 'dismiss') {
-      artifactsRevision += 1
-      await update($, artifacts, rows => rows.filter(one => one.key !== row.key))
+      await update($, artifacts, before => ({
+        rows: before.rows.filter(one => one.key !== row.key), revision: before.revision + 1,
+      }))
       await closeDrawer($, key)
       await refresh($)
     }
@@ -1861,7 +1861,7 @@ export const register: Register = on => {
 
     const { Box, Button, Link, Markdown, Text } = $.ui.resolve(e)
     const shown = current(await read($, snapshot))
-    const shownArtifacts = await read($, artifacts)
+    const shownArtifacts = (await read($, artifacts)).rows
     const time = await read($, now)
     const opened = await read($, drawer)
     const shownThreads = await read($, drawerThreads)
@@ -2133,7 +2133,7 @@ export const register: Register = on => {
     // action as an option's digit presses it, and an action without one takes
     // a click or Enter. What a drawer asks in its actions' place draws the
     // same way.
-    type Line = { name: string; label: string; hotkey: string | undefined; onPress: () => void }
+    type Line = { name: string; label: string; hotkey: string | undefined; onPress: () => void | Promise<unknown> }
     const drawLines = (id: string, lines: readonly Line[]) =>
       lines.map(({ name, label, hotkey, onPress }) => (
         <Button key={`${name}:${id}`} plain hotkey={hotkey} onPress={onPress}>
@@ -2771,8 +2771,8 @@ export const register: Register = on => {
               <Text color="subtle">{`${row.id} · ${row.version.slice(0, 12)}`}</Text>
               {row.description !== '' && <Text>{row.description}</Text>}
               {drawActions(key, [
-                { name: 'visit', label: 'Open', hotkey: 'o', onPress: () => { void artifactAction($, row, 'open') } },
-                { name: 'dismiss', label: 'Dismiss', hotkey: '8', onPress: () => { void artifactAction($, row, 'dismiss') } },
+                { name: 'visit', label: 'Open', hotkey: 'o', onPress: () => artifactAction($, row, 'open') },
+                { name: 'dismiss', label: 'Dismiss', hotkey: '8', onPress: () => artifactAction($, row, 'dismiss') },
               ])}
             </Box>
           )}

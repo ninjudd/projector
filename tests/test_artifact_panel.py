@@ -158,3 +158,23 @@ class ArtifactPanelTests(unittest.TestCase):
             self.assertEqual(1, len(self.listed('two')))
             self.assertEqual(0, cli.main(['artifact', 'restore', 'explorer', *arguments]))
         self.assertEqual(1, len(self.listed()))
+
+    def test_a_stopped_managed_session_still_lists_and_opens_its_artifacts(self):
+        from projector import agent_console
+        state = artifact_panel.watch.state_root()
+        app = agent_console.Console(state)
+        managed = {'one': {'cwd': str(self.repo), 'backend': 'codex', 'state': 'stopped'}}
+        with mock.patch.object(console, 'live_sessions', return_value={}):
+            with mock.patch.object(agent_console.runtime, 'sessions', return_value=managed):
+                with mock.patch.object(agent_console.runtime, 'launches', return_value=[]):
+                    found = app.load(console.Work(inbox=True, rows=True, signatures={}))
+        app.apply(found)
+        self.assertEqual('explorer', app.sessions['one'].artifacts[0]['id'])
+        app.open_panel('one')
+        app.key('enter')
+        with mock.patch.object(artifact_panel, 'open_url', return_value='https://example.com/artifacts/explorer/'):
+            with mock.patch.object(app, 'open_url') as opened:
+                with mock.patch.object(agent_console.runtime, 'control') as control:
+                    app.key('o')
+                    opened.assert_called_once_with('https://example.com/artifacts/explorer/')
+                    control.assert_not_called()

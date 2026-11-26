@@ -253,7 +253,7 @@ declare module 'claude-code' {
       /** The pull requests the session subscribed to when the panel last looked, by `keyOf`, so a new one shows the panel. */
       panelSubscribed: string[]
       panelSnapshot: Snapshot
-      panelArtifacts: Artifact[]
+      panelArtifacts: { rows: Artifact[]; revision: number }
       panelNow: number
       isPanelShown: boolean
       /** The drawer that is open: a pull request's by `keyOf`, or `item:` and an item's reference. */

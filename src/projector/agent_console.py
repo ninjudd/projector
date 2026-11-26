@@ -63,6 +63,10 @@ class Console(console.Console):
                 found.live[name] = (label, host, cwd, changed, signature, items)
                 if name not in work.signatures:
                     found.rows[name] = rows.rows_for(self.root, name)
+                if (work.rows or name not in work.signatures) and name not in found.artifacts:
+                    artifacts = console.read_artifacts(self.root, name, cwd)
+                    if artifacts is not None:
+                        found.artifacts[name] = artifacts
                 if name not in found.entries:
                     found.entries[name] = console.repo_inbox.repo_items(self.root, name, everything=True)
             for launch in runtime.launches(self.root):

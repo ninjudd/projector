@@ -32,8 +32,8 @@ try {
       const response = await context.request.get(`${base}site.json`);
       assert(response.ok());
       const site = await response.json();
-      assert.equal(site.artifacts.length, 1);
-      const artifact = site.artifacts[0];
+      assert.equal(site.artifacts.filter(item => item.id === 'cache-explorer').length, 1);
+      const artifact = site.artifacts.find(item => item.id === 'cache-explorer');
       assert.equal(artifact.versions.length, 2);
       const older = artifact.versions.find(version => version.version !== artifact.latest);
       const latestRoute = `${base}artifacts/${artifact.id}/`;

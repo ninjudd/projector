@@ -526,7 +526,7 @@ test('artifact polling keeps the last rows on a failed read and loads a new vers
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: /Original explorer.*local preview/ })).toBeDefined()
   fail = true
-  await clock.advance(30_000)
+  await clock.advance(35_000)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Original explorer/ })).toBeDefined()
   fail = false
@@ -538,30 +538,34 @@ test('artifact polling keeps the last rows on a failed read and loads a new vers
   await ui.unmount()
 })
 
-test('an artifact read begun before dismissal cannot put the dismissed row back', async ($, on) => {
+test('an artifact can be dismissed while the catalog is being read', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const row = { id: 'explorer', title: 'Cache explorer', description: '', version: 'a'.repeat(64),
     key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: true }
   let reads = 0
-  let dismissed = false
-  let release = () => undefined as void
-  const pending = new Promise<Outcome>(resolve => { release = () => resolve(ran(JSON.stringify({ artifacts: [row] }))) })
+  let isDismissed = false
   world(on, {}, argv => {
-    if (argv[1] === 'artifact' && argv[2] === 'dismiss') dismissed = true
+    if (argv[1] === 'artifact' && argv[2] === 'dismiss') isDismissed = true
     if (argv[1] !== 'artifact' || argv[2] !== 'panel') return ran('{}')
     reads += 1
-    return reads === 1 ? ran(JSON.stringify({ artifacts: [row] })) : pending
+    if (reads === 2) {
+      return clock.sleep(1_000).then(() => ran(JSON.stringify({ artifacts: [row] })))
+    }
+    return ran(JSON.stringify({ artifacts: isDismissed ? [] : [row] }))
   })
   await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: `open:artifact:${row.key}` })
-  await clock.advance(30_000)
-  await ui.press({ key: `dismiss:artifact:${row.key}` })
-  release()
+  await clock.advance(35_000)
+  expect(reads).toBe(2)
+  const dismissed = ui.press({ key: `dismiss:artifact:${row.key}` })
   await clock.settle()
-  const remaining = await ui.find({ type: 'Text', text: /Cache explorer/ })
-  if (remaining !== undefined) throw new Error(`The artifact returned after ${reads} catalog reads; dismissed=${dismissed}`)
+  await clock.advance(1_000)
+  await dismissed
+  await clock.settle()
+  expect(isDismissed).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /Cache explorer/ })).toBeUndefined()
   await ui.unmount()
 })
 

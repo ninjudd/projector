@@ -354,6 +354,14 @@ def item_key(item: dict) -> str:
     return f"item:{item['ref']}"
 
 
+def read_artifacts(state: Path, session: str, cwd: str) -> Optional[list[dict]]:
+    try:
+        checkout = summary.checkout_root(Path(cwd)) if cwd else None
+        return artifact_panel.listing(checkout, 'origin', session, state) if checkout else []
+    except (ProjectorError, OSError):
+        return None
+
+
 class Console:
     """What the console shows, and what each key does to it."""
 
@@ -457,11 +465,9 @@ class Console:
             if work.rows or name not in work.signatures:
                 found.rows[name] = rows.rows_for(self.root, name)
                 cwd = found.live[name][2] if found.live is not None else work.directories.get(name, '')
-                try:
-                    checkout = summary.checkout_root(Path(cwd)) if cwd else None
-                    found.artifacts[name] = artifact_panel.listing(checkout, 'origin', name, self.root) if checkout else []
-                except (ProjectorError, OSError):
-                    pass
+                artifacts = read_artifacts(self.root, name, cwd)
+                if artifacts is not None:
+                    found.artifacts[name] = artifacts
         if work.pull is not None:
             found.threads = rows.fetch_threads(work.pull, self.gh)
         return found
