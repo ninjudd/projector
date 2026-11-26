@@ -1,0 +1,108 @@
+{
+ "version": 1,
+ "name": "Console agent runtime plan",
+ "project": "console/launch",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 632,
+  "title": "Plan managed agents in the Projector console",
+  "head": "623708b191786b39daddbf3e10ef5a16afaaaf33",
+  "headRef": "plan-console-agent-runtime",
+  "base": "7ed76b1252f831016dcb76faed4ccb37bcf51d3e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector console shows sessions, pull requests, and inbox items. Starting work and managing the conversation still require the agent’s own interface. This draft expands the launch plan so the console can run Claude and Codex through detached Python workers while reusing Projector’s inbox, agent messages, and watch delivery.",
+   "The proposal adds a human-facing <code>projector</code> command, streamed conversation controls, queued input, native approval handling, and controlled handoff to the native CLI. This pull request changes two plan documents; it adds no runtime implementation.",
+   "<ul><li><b>Status:</b> <code>draft</code>, priority <code>now</code>. Native handoff, worker installation, supported versions, and authentication need prototype evidence before the plan becomes <code>ready</code>.</li><li><b>Review:</b> clean at <code>623708b</code>, with no findings or suggestions. The configured gate passed, including 263 hook tests and the required CI check. SDK sessions and native handoff were not exercised.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used in this plan",
+    "html": "<ul class=\"tight\"><li><b>Worker:</b> a detached process that owns one connection to Claude or Codex.</li><li><b>Managed session:</b> a session whose execution and delivery Projector controls.</li><li><b>Turn:</b> one native runtime exchange, distinct from completion of a larger task.</li><li><b>Native handoff:</b> an ownership transfer from the worker to the agent’s own CLI using the saved session ID.</li></ul>"
+   },
+   {
+    "id": "scope",
+    "title": "What stays outside this proposal",
+    "html": "<p>Existing external processes keep their inbox and messaging behavior. Team scheduling, a public delegated-task API, autonomous task retries, additional backends, network session hosting, and Windows console support remain separate work.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "runtime-plan",
+   "title": "Plan controlled agent execution",
+   "kicker": "One worker owns each managed native session",
+   "intro": [
+    "A managed session is one whose execution Projector controls. Its detached worker keeps the native connection alive independently of both the console and the watch daemon. The draft replaces a CLI-only launch design with structured Claude SDK and Codex app-server adapters.",
+    "Read the user flow before the execution records. Input is durable before submission, accepted delivery is separate from successful completion, and uncertain acceptance requires recovery instead of an automatic replay. Native handoff transfers ownership so the worker and the native CLI cannot both deliver to the same conversation."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/console/launch/readme.md",
+     "note": "Expands the launch plan into managed conversations, ownership, recovery, compatibility, acceptance criteria, and prototype gates.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2,
+       "text": "The project remains draft. I checked its frontmatter and project metadata; the open prototype questions therefore make no implementation-readiness claim."
+      },
+      {
+       "kind": "context",
+       "line": 68,
+       "text": "A native handoff resumes a saved conversation after releasing managed control. It does not attach to a live SDK terminal; both backends must prove the complete round trip."
+      },
+      {
+       "kind": "context",
+       "line": 146,
+       "text": "A delivery acknowledgment means the runtime accepted input. It does not prove that a turn or the larger task succeeded; unknown acceptance must not trigger an automatic replay."
+      },
+      {
+       "kind": "context",
+       "line": 231,
+       "text": "Section 6 keeps native configuration, worker installation, runtime versions, and authentication as explicit readiness blockers. The rollout requires evidence before moving the plan to ready."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "communication-contract",
+   "title": "Reuse communication and separate execution results",
+   "kicker": "The reference message bus informs recovery without replacing Projector delivery",
+   "intro": [
+    "Projector already has message identities, reply correlation, human inbox items, and delivery claims. The supplemental comparison uses Tripping’s file-based message bus to identify the smaller execution gaps rather than introduce another mailbox.",
+    "A message can be accepted while its turn is still running, and a turn can finish while a delegated task remains incomplete. The proposed command records preserve those distinctions and retain failed or uncertain work for inspection."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/console/launch/communication.md",
+     "note": "Compares existing delivery guarantees with the reference bus and records the recovery and provenance constraints to preserve.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 14,
+       "text": "I checked the linked mailbox implementation: send stages and renames the message before closing a matching task, while reads claim tasks and archive non-task messages."
+      },
+      {
+       "kind": "verify",
+       "line": 32,
+       "text": "I traced Projector’s message IDs and reply threads, inbox claims, and Codex batch acknowledgment and transcript recovery. These existing boundaries support the plan’s reuse comparison; no managed worker runtime exists in this change."
+      },
+      {
+       "kind": "context",
+       "line": 56,
+       "text": "A thread ID alone cannot prove runtime completion. The plan also requires the expected session, worker generation, and native operation so an unrelated reply cannot finish a command."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
