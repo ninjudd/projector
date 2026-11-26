@@ -109,6 +109,13 @@ class Control:
     choice: bool = False
 
 
+@dataclass(frozen=True)
+class Target:
+    session: str
+    entry: Optional[str] = None
+    control: Optional[Control] = None
+
+
 @dataclass
 class Line:
     """One line of the screen: its parts, each text with a style name, and whether the focus is on it: on the whole
@@ -121,6 +128,7 @@ class Line:
     spot: bool = False
     cursor: Optional[int] = None
     lit: Optional[int] = None
+    targets: list[tuple[int, int, Target]] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -568,6 +576,33 @@ class Console:
         return found if isinstance(found, dict) else None
 
     # Keys
+
+    def click(self, target: Target) -> None:
+        with self.lock:
+            if self.field is not None or target.session not in self.sessions:
+                return
+            self.status = ""
+            self.link = None
+            self.exit_at = None
+            if target.entry is None:
+                if self.view == "panel":
+                    self.go_home()
+                self.selected = target.session
+                self.offset = 0
+            else:
+                viewed = self.viewed()
+                if viewed is None or viewed.name != target.session or target.entry not in dict(self.entries()):
+                    return
+                if target.control is not None and self.drawer != target.entry:
+                    return
+                if self.view == "home":
+                    self.open_panel(target.session)
+                if target.control is not None:
+                    self.press(target.control)
+                else:
+                    self.selected, self.control = target.entry, None
+                    self.press_focus()
+            self.reveal = True
 
     def key(self, name: str) -> None:
         """Do what the key named `name` does: a character, or `up`, `down`, `left`, `right`, `enter`, `esc`,
@@ -1089,9 +1124,9 @@ class Console:
             if self.exit_at is not None and self.clock() - self.exit_at < EXIT_WINDOW:
                 return [*lines, Line([("Press Ctrl-C again to exit", "warning")])]
             if self.view == "home":
-                hint = "↑↓ session · Enter or → focus panel · PgUp PgDn scroll · Ctrl-C quit"
+                hint = "↑↓ or click session · Enter or → focus panel · PgUp PgDn scroll · Ctrl-C quit"
             elif self.drawer is None:
-                hint = ("↑↓ move · Enter open · 7 message this session · ← or Esc back"
+                hint = ("↑↓ move · Enter or click open · 7 message this session · ← or Esc back"
                         " · Ctrl-C twice quit")
             else:
                 hint = "↑↓ move · Enter press or open · ← or Esc close · PgUp PgDn scroll · Ctrl-C twice quit"
@@ -1139,6 +1174,7 @@ class Console:
             request = headline(session, now)
             lines.append(columns(session.label, counts[session.name], request["subject"] if request else "—",
                                  ages[session.name], session.name == chosen))
+            lines[-1].targets = [(0, width, Target(session.name))]
             if session.name == chosen:
                 focus = (group_start, start)
         return lines, focus
@@ -1191,6 +1227,7 @@ class Console:
                 lines.append(self.item_line(entry, now, lit))
                 if key == self.drawer:
                     lines += self.item_drawer(entry, width)
+            lines[start].targets = [(0, width, Target(session.name, key))]
             if key == chosen:
                 focus = (start, len(lines) - 1)
         return lines, focus
@@ -1294,10 +1331,9 @@ class Console:
         if options:
             lines.append(Line([]))
         for one in options:
+            lines.append(self.option_line(one))
             if one.key != focused:
-                lines.append(Line([(f"{indent}{one.key}: {one.label}", "")]))
                 continue
-            lines.append(Line([(f"{indent[:-2]}› {one.key}: {one.label}", "")], selected=True, spot=True))
             if self.field is not None and self.field.inline and self.field.target == item["ref"]:
                 lines.append(self.note_line(self.field, indent + " " * (len(one.key) + 2), width))
         rest = [one for one in controls if not one.option]
@@ -1336,15 +1372,11 @@ class Console:
                 lines.append(Line([]))
             lines += [Line([(indent + part, "")]) for found in replies for part in textwrap.wrap(found["line"], wrap)]
         controls = self.controls()
-        _, focused = self.focus()
         options = [one for one in controls if one.option]
         if options:
             lines.append(Line([]))
         for one in options:
-            if one.key == focused:
-                lines.append(Line([(f"{indent[:-2]}› {one.key}: {one.label}", "")], selected=True, spot=True))
-            else:
-                lines.append(Line([(f"{indent}{one.key}: {one.label}", "")]))
+            lines.append(self.option_line(one))
         rest = [one for one in controls if not one.option]
         if rest:
             lines += [Line([]), self.controls_line(rest)]
@@ -1383,21 +1415,31 @@ class Console:
                       for part in textwrap.wrap(f"note: {answered['note']}", wrap)]
         return lines
 
+    def option_line(self, control: Control) -> Line:
+        selected = control.key == self.focus()[1]
+        indent = " " * DRAWER_INDENT
+        text = f"{indent[:-2] + '› ' if selected else indent}{control.key}: {control.label}"
+        return Line([(text, "")], selected=selected, spot=selected,
+                    targets=[(DRAWER_INDENT, len(text), Target(self.session, self.drawer, control))])
+
     def controls_line(self, controls: list[Control]) -> Line:
         """The drawer's actions on one line, the focused one after a `›` in the gap before it."""
         _, focused = self.focus()
         parts: list[tuple[str, str]] = []
+        targets = []
         lit = None
         for at, one in enumerate(controls):
             gap = " " * DRAWER_INDENT if at == 0 else "   "
             label = f"{one.key}: {one.label}"
+            start = sum(len(text) for text, _ in parts) + len(gap)
             if one.key == focused:
                 parts.append((f"{gap[:-2]}› ", ""))
                 lit = len(parts)
                 parts.append((label, ""))
             else:
                 parts.append((gap + label, ""))
-        return Line(parts, spot=lit is not None, lit=lit)
+            targets.append((start, start + len(label), Target(self.session, self.drawer, one)))
+        return Line(parts, spot=lit is not None, lit=lit, targets=targets)
 
 
 # The terminal
@@ -1497,7 +1539,7 @@ def printable(text: str) -> str:
 
 
 class Screen:
-    """Draws a `Console` with curses and feeds it keys."""
+    """Draws a `Console` with curses and feeds it keys and mouse clicks."""
 
     def __init__(self, window: Any, console: Console, curses: Any, out: Optional[TextIO] = None) -> None:
         self.window, self.console, self.curses = window, console, curses
@@ -1506,6 +1548,8 @@ class Screen:
         self.styles = styles(curses)
         # What `read_key` read past the end of an escape sequence, to hand over next.
         self.pending: list[object] = []
+        self.targets: list[tuple[int, int, int, Target]] = []
+        self.size: Optional[tuple[int, int]] = None
 
     def put(self, y: int, line: Line, width: int) -> None:
         x = 1
@@ -1528,6 +1572,10 @@ class Screen:
         below = typing is not None and not typing.inline
         room = max(1, height - len(footer) - (1 if below else 0))
         shown = self.console.viewport(max(0, width - 1), room)
+        self.targets = [(y, start + 1, min(width, end + 1), target)
+                        for y, line in enumerate(shown[:height]) for start, end, target in line.targets
+                        if start + 1 < min(width, end + 1)]
+        self.size = (height, width)
         self.window.erase()
         for y, line in enumerate(shown):
             self.put(y, line, width)
@@ -1559,6 +1607,9 @@ class Screen:
         """The next key's name, or None for one the console does not use. An escape sequence curses did not name
         is read to its last byte and named by `ESCAPES`. Raises `curses.error` when no key came in time."""
         pressed = self.pending.pop(0) if self.pending else self.window.get_wch()
+        if pressed == getattr(self.curses, "KEY_MOUSE", None):
+            self.mouse()
+            return None
         if pressed != "\x1b":
             return key_name(pressed, self.curses)
         follow = self.follow()
@@ -1577,6 +1628,19 @@ class Screen:
         final = body[-1:]
         return ESCAPES.get(body[:-1].split(";")[0] + final if final == "~" else final)
 
+    def mouse(self) -> None:
+        try:
+            _, x, y, _, buttons = self.curses.getmouse()
+        except self.curses.error:
+            return
+        if not buttons & (self.curses.BUTTON1_CLICKED | self.curses.BUTTON1_RELEASED):
+            return
+        if self.size != self.window.getmaxyx():
+            return
+        target = next((target for row, start, end, target in self.targets if row == y and start <= x < end), None)
+        if target is not None:
+            self.console.click(target)
+
     def follow(self) -> object:
         """The key after an Esc, when one comes within `ESCAPE_WAIT` milliseconds, or None."""
         self.window.timeout(ESCAPE_WAIT)
@@ -1592,6 +1656,12 @@ class Screen:
         sets a flag here, so it is a key like any other and never stops the console between two of its steps."""
         self.window.keypad(True)
         self.window.timeout(REDRAW_WAIT)
+        mouse_mask = mouse_interval = None
+        try:
+            _, mouse_mask = self.curses.mousemask(self.curses.BUTTON1_CLICKED | self.curses.BUTTON1_RELEASED)
+            mouse_interval = self.curses.mouseinterval(0)
+        except (AttributeError, self.curses.error):
+            pass
         interrupted = threading.Event()
         previous = signal.signal(signal.SIGINT, lambda number, frame: interrupted.set())
         stop = threading.Event()
@@ -1624,6 +1694,13 @@ class Screen:
             signal.signal(signal.SIGINT, previous)
             stop.set()
             self.console.refresh_now.set()
+            try:
+                if mouse_mask is not None:
+                    self.curses.mousemask(mouse_mask)
+                if mouse_interval is not None:
+                    self.curses.mouseinterval(mouse_interval)
+            except self.curses.error:
+                pass
         return 0
 
 
