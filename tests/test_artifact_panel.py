@@ -118,6 +118,35 @@ class ArtifactPanelTests(unittest.TestCase):
         self.assertEqual(first['key'], self.listed()[0]['key'])
         self.assertEqual('Revised explorer', self.listed()[0]['title'])
 
+    def test_a_dormant_session_keeps_its_artifacts_and_dismissals_after_watch_cleanup(self):
+        source = self.root / 'dismissed-source'
+        artifact.init('dismissed', source, 'Dismissed example', 'A saved artifact set aside')
+        artifact.publish(artifact.snapshot(source), self.repo, 'origin', push=False)
+        artifact_panel.attach(self.repo, 'origin', 'one', 'dismissed')
+        artifact_panel.dismiss(self.repo, 'origin', 'one', 'dismissed')
+        state = artifact_panel.watch.state_root()
+        artifact_panel.watch.renew(state, 'one', 'mod', 1)
+        delivery = artifact_panel.watch.session_folder(state, 'one')
+        for path in delivery.iterdir():
+            os.utime(path, (1, 1))
+        daemon = artifact_panel.watch.Daemon(state, settings=artifact_panel.watch.Settings())
+        daemon.forget_sessions(artifact_panel.watch.FORGET + 2)
+        self.assertFalse(delivery.exists())
+        self.assertEqual(['explorer'], [row['id'] for row in self.listed()])
+        self.assertEqual([], self.listed('unrelated'))
+
+    def test_publication_preserves_a_dismissal_written_with_watch_delivery_state(self):
+        delivery = artifact_panel.watch.session_folder(artifact_panel.watch.state_root(), 'legacy')
+        delivery.mkdir(parents=True)
+        path = delivery / 'artifact-dismissals.json'
+        inbox.write_json(path, {'keys': [artifact_panel.key(self.repo, 'origin', 'explorer')]})
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), '--local',
+                                         '--checkout', str(self.repo), '--session', 'legacy']))
+        self.assertEqual([], self.listed('legacy'))
+        path.unlink()
+        self.assertEqual([], self.listed('legacy'))
+
     def test_cached_metadata_does_not_load_payloads_and_invalid_latest_keeps_valid_neighbors(self):
         (self.source / 'index.html').write_text('<h1>Revised explorer</h1>')
         self.save()

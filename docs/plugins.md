@@ -650,7 +650,10 @@ project artifact attach cache-explorer --session SESSION
 Attach existing artifacts you want in the session; saved versions without
 a session association stay in the repository's artifact directory.
 
-The session keeps its list across restarts and working-directory changes.
+The session keeps its list and dismissals across restarts, working-directory
+changes, and watch delivery cleanup after an inactive week. Artifact context
+lives in durable session state under `$XDG_STATE_HOME/projector/artifacts/`
+(or `~/.local/state/projector/artifacts/` when `XDG_STATE_HOME` is unset).
 The panel reads local and already fetched remote versions for those
 artifacts, without fetching during a refresh. Each row shows
 its name and any brief description saved in `artifact.json` with that

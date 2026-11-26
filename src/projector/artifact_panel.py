@@ -62,14 +62,21 @@ def catalog(root: Path, remote: str = 'origin') -> list[dict]:
         return rows
 
 
+def context_folder(session: str, state: Path | None = None) -> Path:
+    return watch.session_folder((state or watch.state_root()).parent / 'artifacts', session)
+
+
 def dismissals(session: str, state: Path | None = None) -> set[str]:
-    folder = watch.session_folder(state or watch.state_root(), session)
-    hidden = (read_json(folder / 'artifact-dismissals.json') or {}).get('keys', [])
+    saved = read_json(context_folder(session, state) / 'artifact-dismissals.json')
+    if saved is None:
+        legacy = watch.session_folder(state or watch.state_root(), session)
+        saved = read_json(legacy / 'artifact-dismissals.json')
+    hidden = (saved or {}).get('keys', [])
     return {key for key in hidden if isinstance(key, str)} if isinstance(hidden, list) else set()
 
 
 def context(session: str, state: Path | None = None) -> dict[str, dict]:
-    folder = watch.session_folder(state or watch.state_root(), session)
+    folder = context_folder(session, state)
     entries = (read_json(folder / 'artifacts.json') or {}).get('artifacts', [])
     found = {}
     if not isinstance(entries, list):
@@ -100,16 +107,16 @@ def attach(root: Path, remote: str, session: str, id: str, *, restore: bool = Fa
     root = context_checkout(root, remote)
     if not any(row['id'] == id for row in catalog(root, remote)):
         raise artifact.ArtifactError(f'{id}: no saved artifact')
-    folder = watch.session_folder(state or watch.state_root(), session)
+    folder = context_folder(session, state)
     name = key(root, remote, id)
     with locked(folder):
         entries = context(session, state)
         entries[name] = {'checkout': str(root.resolve()), 'remote': remote, 'id': id}
         write_json(folder / 'artifacts.json', {'artifacts': list(entries.values())})
+        hidden = dismissals(session, state)
         if restore:
-            hidden = dismissals(session, state)
             hidden.discard(name)
-            write_json(folder / 'artifact-dismissals.json', {'keys': sorted(hidden)})
+        write_json(folder / 'artifact-dismissals.json', {'keys': sorted(hidden)})
 
 
 def listing(session: str, state: Path | None = None) -> list[dict]:
@@ -144,7 +151,7 @@ def discussion(row: dict) -> str:
 def dismiss(root: Path, remote: str, session: str, id: str, *, state: Path | None = None) -> None:
     artifact.identifier(id)
     root = context_checkout(root, remote)
-    folder = watch.session_folder(state or watch.state_root(), session)
+    folder = context_folder(session, state)
     name = key(root, remote, id)
     with locked(folder):
         path = folder / 'artifact-dismissals.json'
