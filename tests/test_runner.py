@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import tempfile
 import time
@@ -75,6 +77,15 @@ class RunTests(unittest.TestCase):
         self.assertLess(time.monotonic() - start, 10)
         self.assertEqual(1, result.returncode)
         self.assertIn("The chunk ran past 1 seconds and was stopped.", result.stderr)
+
+
+class MainTests(unittest.TestCase):
+    def test_help_names_the_timeout_in_seconds_as_the_usage_line_does(self) -> None:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            runner.main(["--help"])
+
+        self.assertIn("--timeout SECONDS", out.getvalue())
 
 
 if __name__ == "__main__":

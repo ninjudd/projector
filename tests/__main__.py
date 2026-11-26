@@ -87,7 +87,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m tests", description=__doc__.split("\n\n")[0])
     parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1, help="worker processes (default: one per CPU)")
     parser.add_argument("-v", "--verbose", action="store_true", help="print every chunk's unittest output")
-    parser.add_argument("--timeout", type=float, default=TIMEOUT,
+    parser.add_argument("--timeout", type=float, default=TIMEOUT, metavar="SECONDS",
                         help=f"seconds a chunk may run before it is stopped and fails (default: {TIMEOUT})")
     parser.add_argument("names", nargs="*", help="modules, classes, or tests to run (default: the whole suite)")
     args = parser.parse_args(argv)
