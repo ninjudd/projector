@@ -126,6 +126,21 @@ class ArtifactPanelTests(unittest.TestCase):
         app.apply(console.Found(artifacts={'one': previous}))
         self.assertEqual([], app.sessions['one'].artifacts)
 
+    def test_console_keeps_the_artifact_url_visible_when_no_browser_opens(self):
+        url = 'https://example.com/artifacts/explorer/'
+        for remote in ('0', '1'):
+            with self.subTest(remote=remote), mock.patch.dict(os.environ, {'PROJECTOR_REMOTE': remote, 'BROWSER': ''}):
+                app = console.Console(artifact_panel.watch.state_root(), open_url=lambda url: False)
+                app.sessions['one'] = console.Session('one', 'codex', 'One', artifacts=self.listed())
+                app.open_panel('one')
+                app.key('enter')
+                with mock.patch.object(artifact_panel, 'open_url', return_value=url):
+                    app.key('o')
+                lines = [line.text for line in app.panel_lines(100)[0]]
+                self.assertIn(url, lines)
+                self.assertEqual(remote == '1', any('Sent to your clipboard' in line for line in lines))
+                self.assertEqual(url if remote == '1' else None, app.take_clipboard())
+
     def test_an_idle_preview_stops_and_removes_its_extracted_files(self):
         work = self.root / 'preview'
         artifact.write_source(artifact.snapshot(self.source), work / 'files')

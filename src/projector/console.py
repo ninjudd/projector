@@ -1180,6 +1180,7 @@ class Console:
                 if key == self.drawer:
                     lines.append(Line([(' ' * DRAWER_INDENT + entry['description'], 'subtle')]))
                     lines.append(self.controls_line(self.controls()))
+                    lines += self.link_lines(width)
             elif key.startswith("repo:"):
                 lines.append(self.entry_line(entry, now, lit))
                 if key == self.drawer:
@@ -1229,13 +1230,7 @@ class Console:
             said += [(" · ", "subtle")] if at else []
             said += fact
         lines = [Line(said), self.controls_line(self.controls())]
-        if self.link is not None and self.link[0] == self.drawer:
-            # The whole URL from the first column, a window's width to a line, so a terminal can find it to click.
-            _, _, url, copied = self.link
-            lines += [Line([(url[start:start + width], "")]) for start in range(0, len(url), max(1, width))]
-            if copied:
-                lines.append(Line([(" " * DRAWER_INDENT + "Sent to your clipboard where your terminal allows it",
-                                    "subtle")]))
+        lines += self.link_lines(width)
         if pull.open_threads and self.threads is None:
             lines.append(Line([(f"{indent}loading threads…", "subtle")]))
         for path, threads in rows.threads_by_file(self.threads or []):
@@ -1245,6 +1240,17 @@ class Console:
                 where = f"{thread.line}: " if thread.line is not None else ""
                 said = f"{where}{thread.author or 'someone'}: {thread.excerpt}"
                 lines.append(Line([(f"{indent}  {said}", "subtle" if thread.is_outdated else "")]))
+        return lines
+
+    def link_lines(self, width: int) -> list[Line]:
+        if self.link is None or self.link[0] != self.drawer:
+            return []
+        # The whole URL from the first column, a window's width to a line, so a terminal can find it to click.
+        _, _, url, copied = self.link
+        lines = [Line([(url[start:start + width], "")]) for start in range(0, len(url), max(1, width))]
+        if copied:
+            lines.append(Line([(" " * DRAWER_INDENT + "Sent to your clipboard where your terminal allows it",
+                                "subtle")]))
         return lines
 
     def item_line(self, item: dict, now: int, selected: bool) -> Line:
