@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from projector import artifact, artifact_panel, cli, console, refs
+from projector import artifact, artifact_panel, cli, console, inbox, refs
 
 
 class ArtifactPanelTests(unittest.TestCase):
@@ -159,6 +159,31 @@ class ArtifactPanelTests(unittest.TestCase):
                 self.assertEqual(remote == '1', any('Sent to your clipboard' in line for line in lines))
                 self.assertEqual(url if remote == '1' else None, app.take_clipboard())
 
+    def test_console_discusses_the_saved_version_with_its_description(self):
+        state = artifact_panel.watch.state_root()
+        app = console.Console(state)
+        manifest = self.source / 'artifact.json'
+        meta = json.loads(manifest.read_text())
+        meta.update(title='Cache\nexplorer', description='Explore\nsaved data')
+        manifest.write_text(json.dumps(meta))
+        self.save()
+        (self.source / 'artifact.json').unlink()
+        listed = self.listed()
+        version = listed[0]['version']
+        app.sessions['one'] = console.Session('one', 'claude', 'One', artifacts=listed)
+        app.open_panel('one')
+        self.assertIn('Explore saved data', [line.text.strip() for line in app.panel_lines(100)[0]])
+        app.key('enter')
+        app.key('7')
+        listed[0]['version'] = 'f' * 64
+        for letter in 'Make the controls clearer':
+            app.key(letter)
+        app.key('enter')
+        self.assertEqual([
+            f'Artifact explorer@{version}: Cache explorer; Description: Explore saved data; '
+            f'Checkout: {self.repo}; Remote: origin. Make the controls clearer',
+        ], [item['messages'][0]['text'] for item in inbox.load_items(inbox.session_dir('one'))])
+
     def test_an_idle_preview_stops_and_removes_its_extracted_files(self):
         work = self.root / 'preview'
         artifact.write_source(artifact.snapshot(self.source), work / 'files')
@@ -192,7 +217,7 @@ class ArtifactPanelTests(unittest.TestCase):
             self.assertEqual(0, cli.main(['artifact', 'restore', 'explorer', *arguments]))
         self.assertEqual(1, len(self.listed()))
 
-    def test_a_stopped_managed_session_still_lists_and_opens_its_artifacts(self):
+    def test_a_stopped_managed_session_lists_opens_and_discusses_its_artifacts(self):
         from projector import agent_console
         state = artifact_panel.watch.state_root()
         app = agent_console.Console(state)
@@ -211,3 +236,12 @@ class ArtifactPanelTests(unittest.TestCase):
                     app.key('o')
                     opened.assert_called_once_with('https://example.com/artifacts/explorer/')
                     control.assert_not_called()
+        version = app.sessions['one'].artifacts[0]['version']
+        app.key('7')
+        for letter in 'Explain this view':
+            app.key(letter)
+        app.key('enter')
+        self.assertEqual([
+            f'Artifact explorer@{version}: Cache explorer; Description: Explore saved data; '
+            f'Checkout: {self.repo.resolve()}; Remote: origin. Explain this view',
+        ], [item['messages'][0]['text'] for item in inbox.load_items(inbox.session_dir('one'))])

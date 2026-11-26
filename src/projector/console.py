@@ -89,6 +89,7 @@ class Field:
     text: str = ""
     cursor: int = 0
     then: Optional[Callable[[Optional[str]], Optional[dict]]] = None
+    context: str = ""
 
     @property
     def inline(self) -> bool:
@@ -734,6 +735,8 @@ class Console:
             row = dict(self.entries()).get(self.drawer)
             if row is not None:
                 return [Control('o', 'Open', lambda: self.open_artifact(row)),
+                        Control('7', 'Discuss', lambda: self.open_field(
+                            'session', None, f"Discuss {row['id']}: ", context=artifact_panel.discussion(row))),
                         Control('8', 'Dismiss', lambda: self.dismiss_artifact(row))]
         row, item, entry = self.row(self.drawer), self.item(self.drawer), self.entry(self.drawer)
         if row is not None:
@@ -955,8 +958,8 @@ class Console:
 
     # The text field
 
-    def open_field(self, purpose: str, target: Optional[str], prompt: str) -> None:
-        self.field = Field(purpose, target, prompt)
+    def open_field(self, purpose: str, target: Optional[str], prompt: str, *, context: str = "") -> None:
+        self.field = Field(purpose, target, prompt, context=context)
 
     def field_key(self, name: str) -> None:
         typing = self.field
@@ -1003,7 +1006,7 @@ class Console:
             quoted = f'[{target}] "{entry["subject"]}" from {repo_inbox.peer_label(entry)}: ' if entry else ""
             item = self.record(lambda name: inbox.send(name, quoted + said))
         else:
-            item = self.record(lambda name: inbox.send(name, said, pr=target))
+            item = self.record(lambda name: inbox.send(name, typing.context + said, pr=target))
         if item is None:
             return
         self.field = None
@@ -1177,8 +1180,10 @@ class Console:
             elif key.startswith('artifact:'):
                 suffix = ' · local preview' if entry['preview'] else ''
                 lines.append(Line([(f"- {entry['title']}{suffix}", '')], lit))
+                if entry['description']:
+                    lines += [Line([(' ' * DRAWER_INDENT + part, 'subtle')])
+                              for part in textwrap.wrap(entry['description'], max(1, width - DRAWER_INDENT))]
                 if key == self.drawer:
-                    lines.append(Line([(' ' * DRAWER_INDENT + entry['description'], 'subtle')]))
                     lines.append(self.controls_line(self.controls()))
                     lines += self.link_lines(width)
             elif key.startswith("repo:"):

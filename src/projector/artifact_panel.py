@@ -74,6 +74,14 @@ def listing(root: Path, remote: str, session: str, state: Path | None = None) ->
             for row in catalog(root, remote) if key(root, remote, row['id']) not in hidden]
 
 
+def discussion(row: dict) -> str:
+    lines = [f"Artifact {row['id']}@{row['version']}: {row['title']}"]
+    if row['description']:
+        lines.append(f"Description: {row['description']}")
+    lines += [f"Checkout: {row['checkout']}", f"Remote: {row['remote']}"]
+    return '; '.join(' '.join(line.splitlines()) for line in lines) + '. '
+
+
 def dismiss(root: Path, remote: str, session: str, id: str, *, restore: bool = False,
             state: Path | None = None) -> None:
     artifact.identifier(id)

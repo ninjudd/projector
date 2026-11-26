@@ -495,6 +495,7 @@ test('lists saved artifacts, opens them, and dismisses a row from this session',
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'Artifacts' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Cache explorer/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: row.description })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /1 artifact/ })).toBeDefined()
   await ui.press({ key: 'count:artifact' })
   expect(await ui.find({ key: `open:artifact:${row.key}` })).toBeUndefined()
@@ -509,6 +510,24 @@ test('lists saved artifacts, opens them, and dismisses a row from this session',
     '--remote', 'origin', '--session', SESSION])
   expect(await ui.find({ type: 'Text', text: /Cache explorer/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('artifact discussion fills the prompt with its saved version and description', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const row = { id: 'explorer', title: 'Cache explorer', description: 'Compare cache policies',
+    version: 'a'.repeat(64), key: 'b'.repeat(64), checkout: '/work/repo', remote: 'origin', preview: true }
+  const { filled } = world(on, {}, argv => ran(JSON.stringify({ artifacts:
+    argv[1] === 'artifact' && argv[2] === 'panel' ? [row] : [],
+  })))
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: `open:artifact:${row.key}` })
+  await ui.press({ key: `discuss:artifact:${row.key}` })
+  expect(filled).toEqual([
+    `insert:Artifact explorer@${'a'.repeat(64)}: Cache explorer\nDescription: Compare cache policies\nCheckout: /work/repo\nRemote: origin\n\n`,
+  ])
   await ui.unmount()
 })
 

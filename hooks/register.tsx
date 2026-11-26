@@ -19,7 +19,7 @@ import type {
   Thread,
 } from './types'
 import { buildThreadsQuery, loadingOf, parseCache, parseThreads } from './github'
-import { parseArtifacts } from './artifacts'
+import { discussionOf, parseArtifacts } from './artifacts'
 import {
   cachePathOf,
   isPushCommand,
@@ -2766,12 +2766,15 @@ export const register: Register = on => {
           <Button key={`open:${key}`} plain onPress={() => toggle(key, `open:${key}`, isOpen ? undefined : `visit:${key}`)}>
             <Text>{`- ${row.title}${row.preview ? ' · local preview' : ''}`}</Text>
           </Button>
+          {row.description !== '' && (
+            <Box marginLeft={DRAWER_INDENT}><Text color="subtle">{row.description}</Text></Box>
+          )}
           {isOpen && (
             <Box key={`drawer:${key}`} flexDirection="column" marginLeft={DRAWER_INDENT}>
               <Text color="subtle">{`${row.id} · ${row.version.slice(0, 12)}`}</Text>
-              {row.description !== '' && <Text>{row.description}</Text>}
               {drawActions(key, [
                 { name: 'visit', label: 'Open', hotkey: 'o', onPress: () => artifactAction($, row, 'open') },
+                { name: 'discuss', label: 'Discuss', hotkey: '7', onPress: () => fill(discussionOf(row)) },
                 { name: 'dismiss', label: 'Dismiss', hotkey: '8', onPress: () => artifactAction($, row, 'dismiss') },
               ])}
             </Box>

@@ -27,7 +27,8 @@ Keep source in a dedicated working directory you can reach again. Create a
 new bundle, or recover the published source before revising an existing one:
 
 ```sh
-project artifact init cache-explorer --dir WORKDIR --title 'Cache explorer'
+project artifact init cache-explorer --dir WORKDIR --title 'Cache explorer' \
+  --description 'Compare cache policies with adjustable inputs.'
 project artifact init cache-explorer --dir WORKDIR --from-published
 ```
 
@@ -50,6 +51,10 @@ bundle directory. List every file the page needs, including local data and
 binary assets; omit `artifact.json` itself. Use relative URLs. Compile any
 framework source before publishing and list the editable source too when
 future edits need it. The host runs no build commands or server code.
+
+Write a brief description of what the artifact shows or helps you do. It is
+saved in `artifact.json` with each version on the Git ref, and appears
+beneath the artifact's name in the session panel.
 
 The bundle accepts at most 1,000 regular files, 25 MiB per file, and 50 MiB
 total. Hidden files, symlinks, traversal, and case-colliding paths are refused.
@@ -98,7 +103,9 @@ Artifacts directory and version picker expose the saved history. GitHub
 repository write permissions control publishing, and GitHub Pages controls
 who can read all versions. A hidden ref is not a separate privacy boundary.
 
-Saved artifacts appear in the session panel, with Open and Dismiss actions.
+Saved artifacts appear in the session panel, with Open, Discuss, and Dismiss
+actions. Discuss brings the saved version and description into the session's
+conversation so the user can ask about it.
 Dismiss hides the row from that session without deleting saved versions or
 published links. Use `project artifact restore ID --session SESSION` when
 the user asks to bring a dismissed row back. `project artifact open ID`
