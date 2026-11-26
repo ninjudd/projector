@@ -1,0 +1,105 @@
+{
+ "version": 1,
+ "name": "Console session layout",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 633,
+  "title": "Group console sessions by directory and keep their panel visible",
+  "head": "376f6c9b69de4d2bcadb46b58469db648a023cfb",
+  "headRef": "console-directory-layout",
+  "base": "7ed76b1252f831016dcb76faed4ccb37bcf51d3e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project console</code> is a terminal interface for finding agent sessions, answering their questions, and reading their conversations. A delivery registration alone previously added a session to the list, and opening a panel replaced that list. Busy consoles therefore showed empty sessions and made switching harder.",
+   "The console now groups sessions by working directory, fits each session on one line, and keeps the selected session’s panel underneath. A session must be live and have an agent registration, a watch subscription, or a visible inbox item. Selecting another session changes the preview immediately; entering the panel enables its controls."
+  ],
+  "cards": [
+   {
+    "id": "navigation",
+    "title": "Move between the two panes",
+    "html": "<ul class=\"tight\"><li><b>Session list:</b> Up and Down select a session; Page Up and Page Down move a page; Home and End choose the first or last session.</li><li><b>Panel:</b> Enter or Right focuses its rows and controls. Left or Esc closes a drawer, then returns focus to the list.</li><li><b>Scrolling:</b> The session list and lower panel keep separate scroll offsets, so a long drawer does not hide the list.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review evidence",
+    "html": "<p><a href=\"https://github.com/ninjudd/projector/pull/633#pullrequestreview-6069705108\">Clean review at 376f6c9</a>, with no findings or suggestions. The configured gate passed, including 263 hook tests and the required CI check. All 83 focused console, row, and conversation tests passed on Python 3.12.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "console",
+   "title": "Keep the selected session visible",
+   "kicker": "Directory groups above a persistent session panel",
+   "intro": [
+    "A session represents one agent conversation. Its deliverer, the host integration that brings it events and answers, establishes whether it is live. The refresh now also requires Projector work before listing that session: an agent registration, a pull-request watch subscription, or an inbox item that is still visible.",
+    "The session list groups exact directory paths and retains the selected session as other sessions change order. The panel is always drawn for that selection. Enter or Right moves keyboard focus into the panel; leaving it returns to the same session in the list. If the session disappears, its open controls close before the console previews a remaining session."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Filters and groups live sessions, tracks the selected session, and lays out independently scrolling list and panel panes.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 453,
+       "text": "An inbox-only session leaves after its last delivered item ages out even when its files do not change. The passing expiry test exercises the cached-item path as the injected clock advances."
+      },
+      {
+       "kind": "context",
+       "line": 1042,
+       "text": "The session list uses at most half the available body rows. The remaining rows, after one divider, belong to the selected panel; very short terminals show only the selected list row."
+      },
+      {
+       "kind": "verify",
+       "line": 1139,
+       "text": "Directory grouping retains exact path casing and distinguishes nested and adjacent checkouts. The passing HomeOrder test also checks that a current Codex directory takes precedence over an older agent registration."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "regressions",
+   "title": "Exercise session switching and document the controls",
+   "kicker": "Behavioral regressions and the updated CLI reference",
+   "intro": [
+    "The tests drive the real console model against temporary session and inbox files. A small fake terminal checks what remains visible while switching sessions or scrolling; existing pseudo-terminal tests still exercise the process’s arrow keys and Ctrl-C handling.",
+    "The CLI reference describes the grouped session list and explains how focus moves into the persistent lower panel. It also updates the page and end keys for whichever pane has focus."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_console.py",
+     "note": "Adds filtering, grouping, stable-selection, split-pane, and disappearing-session regressions; adapts existing tests to the narrower panel.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1017,
+       "text": "After Down changes the preview, Right and Enter focus the selected panel and answer its question. The passing SplitLayout test confirms the other session’s question remains unanswered."
+      },
+      {
+       "kind": "verify",
+       "line": 1054,
+       "text": "When the selected session disappears during note entry, the field and drawer close and the remaining session is previewed. The regression passed as part of the 83 focused tests."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents visible-session filtering, directory ordering, persistent panels, focus changes, and pane-specific page keys.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Checked the documented Enter/Right, Left/Esc, arrow, page, Home/End, and Ctrl-C behavior against the console’s key routing and viewport code."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
