@@ -1,0 +1,173 @@
+diff --git a/tests/__main__.py b/tests/__main__.py
+index 01f118dc..c9c411b3 100644
+--- a/tests/__main__.py
++++ b/tests/__main__.py
+@@ -1,6 +1,6 @@
+ """Run the test suite across worker processes.
+ 
+-    PYTHONPATH=src python3 -m tests [-j JOBS] [-v] [NAME ...]
++    PYTHONPATH=src python3 -m tests [-j JOBS] [-v] [--timeout SECONDS] [NAME ...]
+ 
+ Each worker runs `python3 -m unittest` on a chunk of one test class, so a
+ worker shares nothing with another but the machine. Chunks start largest
+@@ -8,6 +8,10 @@
+ end. A NAME narrows the run to a module, class, or test, as unittest takes it.
+ The run prints each failing chunk's output, then one summary, and exits 1 when
+ any chunk fails.
++
++A chunk reads nothing from the terminal, and one that runs past `--timeout`
++seconds is stopped with every process it started and fails, so a test waiting
++on something that never comes fails its chunk instead of holding up the run.
+ """
+ 
+ from __future__ import annotations
+@@ -15,6 +19,7 @@
+ import argparse
+ import os
+ import re
++import signal
+ import subprocess
+ import sys
+ import time
+@@ -25,6 +30,8 @@
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ CHUNK = 8
++# The slowest chunk takes under a minute, so one that runs five is waiting on something that never comes.
++TIMEOUT = 300
+ 
+ 
+ def tests_in(suite: unittest.TestSuite):
+@@ -55,15 +62,33 @@ def chunks(names: list[str]) -> list[list[str]]:
+     return sorted(jobs, key=len, reverse=True)
+ 
+ 
+-def run(ids: list[str], verbose: bool) -> subprocess.CompletedProcess:
+-    return subprocess.run([sys.executable, "-m", "unittest", *(["-v"] if verbose else []), *ids],
+-                          cwd=ROOT, capture_output=True, text=True)
++def run(ids: list[str], verbose: bool, timeout: float = TIMEOUT) -> subprocess.CompletedProcess:
++    """Run one chunk with no stdin, in a process group of its own, so that past `timeout` the whole group is
++    killed: a process a test started that waits on input would otherwise hold the output pipes open."""
++    command = [sys.executable, "-m", "unittest", *(["-v"] if verbose else []), *ids]
++    with subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
++                          stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
++        try:
++            out, err = process.communicate(timeout=timeout)
++        except subprocess.TimeoutExpired:
++            if hasattr(os, "killpg"):
++                os.killpg(process.pid, signal.SIGKILL)
++            else:
++                # Windows has no process groups to kill, so only the chunk itself stops, and a process it
++                # started that holds its output open still keeps `communicate` waiting.
++                process.kill()
++            out, err = process.communicate()
++            err += f"\nThe chunk ran past {timeout:g} seconds and was stopped.\n"
++            return subprocess.CompletedProcess(command, 1, out, err)
++    return subprocess.CompletedProcess(command, process.returncode, out, err)
+ 
+ 
+ def main(argv: list[str]) -> int:
+     parser = argparse.ArgumentParser(prog="python3 -m tests", description=__doc__.split("\n\n")[0])
+     parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1, help="worker processes (default: one per CPU)")
+     parser.add_argument("-v", "--verbose", action="store_true", help="print every chunk's unittest output")
++    parser.add_argument("--timeout", type=float, default=TIMEOUT,
++                        help=f"seconds a chunk may run before it is stopped and fails (default: {TIMEOUT})")
+     parser.add_argument("names", nargs="*", help="modules, classes, or tests to run (default: the whole suite)")
+     args = parser.parse_args(argv)
+ 
+@@ -72,7 +97,7 @@ def main(argv: list[str]) -> int:
+     ran = skipped = 0
+     failed: list[tuple[list[str], str]] = []
+     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+-        for ids, result in zip(jobs, pool.map(lambda ids: run(ids, args.verbose), jobs)):
++        for ids, result in zip(jobs, pool.map(lambda ids: run(ids, args.verbose, args.timeout), jobs)):
+             output = result.stderr + result.stdout
+             if args.verbose:
+                 print(output, end="", flush=True)
+diff --git a/tests/test_runner.py b/tests/test_runner.py
+new file mode 100644
+index 00000000..0b453496
+--- /dev/null
++++ b/tests/test_runner.py
+@@ -0,0 +1,81 @@
++"""The test runner in `tests/__main__.py`: no chunk can hold the run up."""
++
++from __future__ import annotations
++
++import os
++import tempfile
++import time
++import unittest
++from pathlib import Path
++from unittest import mock
++
++from tests import __main__ as runner
++
++PROBE = '''
++import subprocess
++import time
++import unittest
++
++
++class Probe(unittest.TestCase):
++    def test_reads_stdin_to_its_end(self):
++        # As a fake CLI that pipes its input through `cat` does.
++        self.assertEqual("", subprocess.run(["cat"], stdout=subprocess.PIPE, text=True).stdout)
++
++    def test_waits_on_a_child_that_never_ends(self):
++        subprocess.Popen(["sleep", "60"]).wait()
++
++    def test_never_ends(self):
++        time.sleep(60)
++'''
++
++
++class RunTests(unittest.TestCase):
++    def setUp(self) -> None:
++        folder = Path(tempfile.mkdtemp())
++        (folder / "runner_probe.py").write_text(PROBE)
++        path = os.pathsep.join(filter(None, [str(folder), os.environ.get("PYTHONPATH")]))
++        patcher = mock.patch.dict(os.environ, {"PYTHONPATH": path})
++        patcher.start()
++        self.addCleanup(patcher.stop)
++
++    def test_a_chunk_reads_no_stdin_even_when_the_runner_has_one_that_stays_open(self) -> None:
++        # A runner started in the background can hold a stdin that never closes, and a chunk that inherits it
++        # waits forever on a test that reads stdin.
++        read, write = os.pipe()
++        saved = os.dup(0)
++        os.dup2(read, 0)
++        self.addCleanup(os.close, write)
++        self.addCleanup(os.close, read)
++        self.addCleanup(os.close, saved)
++        self.addCleanup(os.dup2, saved, 0)
++
++        result = runner.run(["runner_probe.Probe.test_reads_stdin_to_its_end"], False, timeout=30)
++
++        self.assertEqual(0, result.returncode, result.stderr)
++
++    def test_a_chunk_past_its_timeout_is_stopped_with_its_children_and_fails(self) -> None:
++        start = time.monotonic()
++
++        result = runner.run(["runner_probe.Probe.test_waits_on_a_child_that_never_ends"], False, timeout=1)
++
++        self.assertLess(time.monotonic() - start, 10, "the child's open pipes must not keep the run waiting")
++        self.assertEqual(1, result.returncode)
++        self.assertIn("The chunk ran past 1 seconds and was stopped.", result.stderr)
++
++    def test_a_chunk_past_its_timeout_fails_where_process_groups_cannot_be_killed(self) -> None:
++        # Windows has no `os.killpg`.
++        killpg = os.killpg
++        del os.killpg
++        self.addCleanup(setattr, os, "killpg", killpg)
++        start = time.monotonic()
++
++        result = runner.run(["runner_probe.Probe.test_never_ends"], False, timeout=1)
++
++        self.assertLess(time.monotonic() - start, 10)
++        self.assertEqual(1, result.returncode)
++        self.assertIn("The chunk ran past 1 seconds and was stopped.", result.stderr)
++
++
++if __name__ == "__main__":
++    unittest.main()

@@ -1,0 +1,70 @@
+{
+ "version": 1,
+ "name": "Test runner chunk timeout",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 630,
+  "title": "Stop a test chunk that hangs instead of waiting on it forever",
+  "head": "ec602c54f72cc9ed4195fcd17d731da39d811b2b",
+  "headRef": "test-runner-timeout",
+  "base": "7ed76b1252f831016dcb76faed4ccb37bcf51d3e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>python3 -m tests</code> is Projector's test runner. It splits the suite into <em>chunks</em>, lists of at most eight tests from one class, and runs each chunk as its own <code>python3 -m unittest</code> process, several at a time.",
+   "Before this change, each chunk inherited the runner's stdin, and the runner waited on each chunk with no time limit. Started from a background shell, whose stdin never closes, one test's fake <code>claude</code> script piped its input through <code>cat</code>, and <code>cat</code> waited forever, so the whole run did too. At a terminal or in CI, stdin closes or is empty, so the hang never showed there.",
+   "The change fixes both halves:",
+   "<ul class=\"tight\"><li><b>No stdin.</b> Each chunk starts with stdin connected to <code>/dev/null</code>, so a test that reads stdin reads nothing and goes on.</li><li><b>A time limit.</b> Each chunk runs in a process group of its own. Past <code>--timeout</code> seconds, 300 by default, the runner kills the whole group, or only the chunk's own process where <code>os.killpg</code> does not exist, as on Windows, and fails the chunk with <code>The chunk ran past 300 seconds and was stopped.</code></li></ul>",
+   "The runner kills the group rather than the chunk's process alone because a process a test started, such as that <code>cat</code>, holds the chunk's output pipes open, and the runner would keep waiting to read them."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "runner",
+   "title": "The runner stops a chunk that hangs",
+   "kicker": "No stdin for a chunk, and a timeout that kills its whole process group",
+   "intro": [
+    "<code>run</code> starts one chunk. It replaces <code>subprocess.run</code> with a <code>Popen</code> so that on a timeout it can kill the chunk's process group before reading the rest of the output. A <em>process group</em> is the set of processes the chunk and everything it starts belong to; <code>start_new_session=True</code> gives the chunk a group of its own, so <code>os.killpg</code> reaches its children without touching the runner.",
+    "The tests in <code>tests/test_runner.py</code> drive <code>run</code> directly with a small probe module written to a temporary directory: one probe test pipes stdin through <code>cat</code>, one waits on a <code>sleep 60</code> child, and one sleeps for 60 seconds itself, for the test that removes <code>os.killpg</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The gate passed at this head: <code>claude plugin validate</code>, <code>claude plugin test</code>, <code>git diff --check</code>, and the <code>check</code> CI job. <code>tests.test_runner</code> printed <code>OK</code> for 3 tests in about 2 seconds."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/__main__.py",
+     "note": "The runner: <code>run</code> starts each chunk with no stdin and a timeout, and <code>--timeout</code> sets the limit.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>communicate</code> raised <code>TimeoutExpired</code> before it reaped the chunk, so the group still exists when <code>killpg</code> runs, and the second <code>communicate</code> returns once every process holding the pipes is dead.",
+       "line": 75
+      },
+      {
+       "kind": "context",
+       "text": "Where <code>os.killpg</code> does not exist, as on Windows, the runner kills only the chunk's own process. The chunk still fails, but a process the chunk started that holds its output open keeps the second <code>communicate</code> waiting, as the comment says.",
+       "line": 79
+      },
+      {
+       "kind": "flag",
+       "text": "<code>docs/develop.md</code> lists the runner's options as <code>-j</code>, <code>-v</code>, and a name to run, and does not yet name <code>--timeout</code> or say that a chunk past it fails. The review keeps this open as a P2 finding.",
+       "line": 90
+      }
+     ]
+    },
+    {
+     "path": "tests/test_runner.py",
+     "note": "Three tests of <code>run</code>: a chunk ignores a stdin that never closes, a chunk past its timeout fails along with its children, and a chunk past its timeout still fails where <code>os.killpg</code> does not exist.",
+     "checks": []
+    }
+   ]
+  }
+ ]
+}
