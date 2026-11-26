@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Agent console patterns · Projector</title>
+  <link rel="stylesheet" href="patterns.css">
+  <script src="patterns.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#stage">Skip to the example</a>
+  <header class="masthead">
+    <a class="brand" href="#sessions"><span class="brand-mark" aria-hidden="true">›_</span>Projector<span class="slash">/</span><span class="brand-detail">Pattern library</span></a>
+    <span class="work-state"><span class="dot"></span>Implementation in progress</span>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="page-title">
+      <div><p class="eyebrow">AGENT CONSOLE · INTERACTIVE WALKTHROUGH</p><h1 id="page-title">Agents, from one terminal.</h1><p class="lede">Explore the interaction and runtime patterns behind the console. Pick a pattern, then try its controls.</p></div>
+      <div class="intro-side"><strong>14 patterns</strong><span>Claude · Codex · external processes</span><a href="https://github.com/ninjudd/projector/blob/main/docs/projects/console/launch/readme.md" target="_blank" rel="noreferrer">Read the project plan <span aria-hidden="true">↗</span></a></div>
+    </section>
+    <div class="demo-note"><span class="note-icon" aria-hidden="true">◌</span><p>Browser examples with synthetic data. Screens illustrate the working design; the evidence notes distinguish live probes from automated checks.</p></div>
+    <div class="workspace">
+      <aside class="navigation" aria-label="Pattern navigation">
+        <label class="search-label" for="search">Find a pattern</label><input id="search" type="search" placeholder="Search names or behavior…" autocomplete="off">
+        <div class="filters" role="group" aria-label="Pattern category"><button data-group="All" aria-pressed="true">All</button><button data-group="Operate" aria-pressed="false">Operate</button><button data-group="Respond" aria-pressed="false">Respond</button><button data-group="Recover" aria-pressed="false">Recover</button><button data-group="System" aria-pressed="false">System</button></div>
+        <label class="mobile-label" for="mobile-nav">Choose a pattern</label><select id="mobile-nav"></select>
+        <nav id="pattern-list" aria-label="Patterns"></nav>
+        <p class="navigation-foot">Use ↑ and ↓ while a pattern is focused.<br>Examples also work with Tab and Enter.</p>
+      </aside>
+      <section class="example" aria-labelledby="pattern-title">
+        <div class="pattern-heading"><div><p id="category" class="eyebrow"></p><h2 id="pattern-title"></h2></div><span id="position" class="position"></span></div>
+        <p id="pattern-summary" class="pattern-summary"></p>
+        <div class="stage-header"><span><i></i>PROJECTOR <span class="stage-suffix">/ synthetic session</span></span><button id="reset" class="reset">↺ Reset example</button></div>
+        <div id="stage" class="stage" tabindex="-1" aria-label="Interactive example"></div>
+        <div class="live-status" role="status" aria-live="polite" id="live-status">Ready to explore.</div>
+        <div class="inspector"><article><p class="eyebrow">THE PATTERN</p><h3 id="principle-title"></h3><p id="principle"></p></article><article><p class="eyebrow">EVIDENCE</p><span id="evidence" class="evidence"></span><p id="evidence-detail"></p><p class="source" id="source"></p></article></div>
+        <div class="page-controls"><button id="previous">← Previous</button><span id="category-count"></span><button id="next">Next →</button></div>
+      </section>
+    </div>
+    <footer class="page-footer"><span>Projector · Agent console patterns</span><span>Working design · November 26, 2026</span></footer>
+  </main>
+</body>
+</html>
