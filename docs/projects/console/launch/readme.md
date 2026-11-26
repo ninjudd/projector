@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -381,3 +381,20 @@ steps in the native runtime. Native MCP configuration and tool calls remain
 with their native runtime. A team scheduler, typed delegated task results,
 automatic reruns, additional backends, and Windows console support remain
 outside this project's outcome.
+
+## 10. Outcome
+
+Shipped in the implementation pull request. The console launches and runs
+Claude and Codex through structured native runtimes, retains external
+Projector communication, and supports controlled native handoff. The
+acceptance evidence is in § 9.1; the deliberately deferred behavior is in
+§ 9.2. The first implementation head passed CI's full `check` gate. The final
+head also runs that gate before handover.
+
+An interrupted queue remains paused across worker restarts until explicit
+send. Controls from concurrent consoles cannot overwrite an unacknowledged
+action; stale controls expire on restart. Regression tests cover both cases.
+The core wheel, installed terminal flow, plugin validation, hook tests,
+type checking, project validation, and whitespace checks pass. Each new
+behavior test was checked against a deliberate regression. No source,
+worker, or console integration work is deferred to another project.

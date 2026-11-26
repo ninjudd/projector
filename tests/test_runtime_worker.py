@@ -196,3 +196,17 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('uncertain', self.worker.store.command('possibly-accepted')['state'])
         self.assertTrue(self.worker.paused)
         self.assertEqual([], self.worker.backend.submitted)
+
+    async def test_restart_keeps_an_interrupted_queue_paused_and_expires_old_controls(self):
+        self.worker.paused = True
+        self.worker.snapshot()
+        self.worker.store.enqueue('later', 'Wait for explicit send', [])
+        self.worker.store.request_control('old-stop', 'stop')
+        self.worker.stopping = True
+        self.worker.paused = False
+        with patch.object(agents, 'register', return_value=({}, '')):
+            await self.worker.run_owned()
+        self.assertTrue(self.worker.paused)
+        self.assertEqual('queued', self.worker.store.command('later')['state'])
+        self.assertEqual('old-stop', self.worker.store.value('control_result')['id'])
+        self.worker.store.request_control('new-send', 'send')

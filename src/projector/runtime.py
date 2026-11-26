@@ -212,7 +212,7 @@ def control(root: Path, session: str, action: str) -> None:
         raise UsageError("This session is not managed by Projector")
     with worker_lock(folder) as available:
         if available is None:
-            Store(folder).set(control={"id": str(uuid.uuid4()), "action": action})
+            Store(folder).request_control(str(uuid.uuid4()), action)
             return
         if action == "handoff":
             with locked(folder):

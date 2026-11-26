@@ -84,3 +84,13 @@ class RuntimeStoreTests(unittest.TestCase):
         self.assertLessEqual(sum(event['size'] for event in events), 8388608)
         self.assertEqual('5999', events[-1]['payload']['item']['id'])
         self.assertEqual('queued', self.store.command('pending')['state'])
+
+    def test_concurrent_console_controls_cannot_silently_replace_a_pending_action(self):
+        self.store.request_control('first', 'interrupt')
+        second = Store(self.folder)
+        with self.assertRaisesRegex(EnvironmentError, 'control is pending'):
+            second.request_control('second', 'stop')
+        self.assertEqual('interrupt', self.store.value('control')['action'])
+        self.store.set(control_result={'id': 'first', 'error': ''})
+        second.request_control('second', 'stop')
+        self.assertEqual('stop', self.store.value('control')['action'])

@@ -79,14 +79,19 @@ class Worker:
     async def run_owned(self) -> None:
         try:
             self.store = Store(self.folder)
-            self.control_seen = self.store.value("control_seen")
+            pending_control = self.store.value("control", {})
+            self.control_seen = pending_control.get("id")
+            if pending_control and self.store.value("control_result", {}).get("id") != self.control_seen:
+                self.store.set(control_seen=self.control_seen, control_result={"id": self.control_seen,
+                    "error": "Control expired during worker restart; submit it again"})
             self.store.recover()
             for ref in self.store.value("requests", []):
                 with contextlib.suppress(ProjectorError):
                     inbox.dismiss(self.session, ref, withdrawn=True)
             self.store.set(requests=[], pending_requests={})
-            self.paused = bool(self.store.commands(("uncertain",)))
-            self.state = "recovering" if self.paused else "ready"
+            uncertain = bool(self.store.commands(("uncertain",)))
+            self.paused = uncertain or bool(runtime.record(self.folder).get("paused"))
+            self.state = "recovering" if uncertain else "ready"
             with codex_watch.submission(self.folder) as held:
                 if not held:
                     raise EnvironmentError("Native event delivery is still submitting; try resume again")

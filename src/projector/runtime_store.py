@@ -57,6 +57,17 @@ class Store:
             db.executemany("INSERT INTO state VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                            [(key, json.dumps(value)) for key, value in values.items()])
 
+    def request_control(self, ident: str, action: str) -> None:
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            values = {row["key"]: json.loads(row["value"]) for row in db.execute(
+                "SELECT key,value FROM state WHERE key IN ('control','control_result')")}
+            pending, result = values.get("control", {}), values.get("control_result", {})
+            if pending and pending["id"] != result.get("id"):
+                raise EnvironmentError("Another runtime control is pending; wait for its result")
+            db.execute("INSERT INTO state VALUES ('control',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                       (json.dumps({"id": ident, "action": action}),))
+
     def enqueue(self, ident: str, text: str, source: list) -> None:
         with self.connection() as db:
             db.execute("INSERT OR IGNORE INTO commands(id,text,source) VALUES (?,?,?)",
