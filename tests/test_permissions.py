@@ -58,6 +58,8 @@ DECISIONS = (
     ("project inbox discuss 3 --text 'Why decline it?' --session s1", "ask", "none"),
     ("project inbox discuss --pr acme/app#12 --text hello --session s1", "ask", "none"),
     ("project console", "ask", "none"),
+    ("projector", "ask", "none"),
+    ("projector setup", "ask", "none"),
     ("project review run 12 --model claude-opus-5-5 --agent codex", "ask", "none"),
     ("project inbox reply r3 --text 'Half done' --as agent", "allow", "allow"),
     ("project inbox close r3", "allow", "allow"),
@@ -110,7 +112,7 @@ DECISIONS = (
     ("XDG_STATE_HOME=/tmp/state project site build --out site", "none", "none"),
     ("LANG=C project list", "allow", "none"),
     ("HOME=/tmp project init --publish-rule", "ask", "none"),
-    ("projector list", "none", "none"),
+    ("projector list", "ask", "none"),
     # A path to a program named `project` matches no rule: Claude Code matches
     # the command text, and Codex resolves the path to its basename only for
     # a path a `host_executable` entry lists, and the rules list none.
@@ -250,6 +252,10 @@ class PermissionRulesTests(unittest.TestCase):
                 words = shlex.split(command)
                 while re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0], re.DOTALL):
                     words.pop(0)
+                if words[0] == "projector":
+                    from projector import human
+                    human.parser().parse_args(words[1:])
+                    continue
                 if not words[1].startswith("-"):
                     parser.parse_args(words[1:])
                     continue

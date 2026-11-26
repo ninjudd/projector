@@ -442,8 +442,11 @@ def drop(root: Path, session: str, repo: str, number: int, role: str, model: Opt
 # Delivery
 
 def renew(root: Path, session: str, deliverer: str, now: float) -> None:
+    from . import runtime
     folder = session_folder(root, session)
     with locked(folder):
+        if runtime.managed(folder):
+            raise UsageError("this session has a managed worker; use Projector's session controls")
         if codex_watch.active(folder, now):
             raise UsageError("this session uses Codex delivery; disconnect it before starting mod or stream")
         write_json(folder / "session.json", {"deliverer": deliverer, "renewed_at": stamp(now)})
@@ -453,6 +456,9 @@ def take(root: Path, session: str, now: float) -> list[str]:
     """Empty the session's events and renew it, keeping its deliverer, and answer the lines taken."""
     folder = session_folder(root, session)
     with locked(folder):
+        from . import runtime
+        if runtime.managed(folder):
+            raise UsageError("this session has a managed worker; it owns event delivery")
         if codex_watch.active(folder, now):
             raise UsageError("this session uses Codex delivery; disconnect it before taking its events")
         if codex_watch.registration(folder):
@@ -473,6 +479,9 @@ def take(root: Path, session: str, now: float) -> list[str]:
 def delivery(root: Path, session: str, now: float) -> str:
     """How the session's events arrive: `mod` or `stream` while that deliverer renews it, or `none`."""
     folder = session_folder(root, session)
+    from . import runtime
+    if runtime.managed(folder):
+        return "managed" if runtime.live(folder, now) else "none"
     if codex_watch.active(folder, now):
         return "codex"
     record = read_json(folder / "session.json") or {}
@@ -484,7 +493,8 @@ def delivery(root: Path, session: str, now: float) -> str:
 
 def append_events(folder: Path, lines: list[str]) -> None:
     with locked(folder):
-        if codex_watch.registration(folder).get("enabled"):
+        from . import runtime
+        if runtime.managed(folder) or codex_watch.registration(folder).get("enabled"):
             codex_watch.append(folder, lines)
             return
         with (folder / "events").open("a", encoding="utf-8") as stream:
@@ -1009,7 +1019,8 @@ class Daemon:
 
     def write_daemon(self) -> None:
         write_json(self.root / "daemon.json", {"pid": self.pid, "version": self.version,
-                                               "started_at": stamp(self.started_at), "operator": self.operator})
+                                               "started_at": stamp(self.started_at), "operator": self.operator,
+                                               "runtime_protocol": 1})
 
     def read_operator(self, now: float) -> None:
         """Read the login `gh` is signed in as at the start and on each full pass, and drop every ETag when it
@@ -1055,6 +1066,8 @@ class Daemon:
             if self.stop_requested():
                 self.log("stopping: the stop file names this daemon")
                 return False
+            from . import runtime
+            runtime.coordinate(self.root)
             self.scan(now)
             self.take_refreshes(now)
             if self.live:
@@ -2391,7 +2404,7 @@ def wait_for_release(root: Path, sleep: Callable[[float], None], mono: Callable[
 
 def ensure_daemon(root: Path, version: str, newer: Callable[[str, str], bool], *,
                   spawn: Optional[Callable[[Path], object]] = None, sleep: Callable[[float], None] = time.sleep,
-                  mono: Callable[[], float] = time.monotonic) -> str:
+                  mono: Callable[[], float] = time.monotonic, runtime_protocol: int = 0) -> str:
     """Start the daemon when none runs, and replace one whose version is strictly older than `version`.
 
     Answers `started`, `replaced`, or `running`. `newer` compares only versions of dotted numbers, so a
@@ -2401,7 +2414,11 @@ def ensure_daemon(root: Path, version: str, newer: Callable[[str, str], bool], *
         spawn(root)
         return "started"
     running = read_json(root / "daemon.json") or {}
-    if not newer(version, str(running.get("version") or "")) or not isinstance(running.get("pid"), int):
+    running_version = str(running.get("version") or "")
+    lacks_runtime = running.get("runtime_protocol", 0) < runtime_protocol
+    if lacks_runtime and newer(running_version, version):
+        raise ProjectorError("The newer watch daemon lacks agent support; upgrade Projector before launching agents")
+    if not (newer(version, running_version) or lacks_runtime) or not isinstance(running.get("pid"), int):
         return "running"
     write_text(root / "stop", f"{running['pid']}\n")
     if not wait_for_release(root, sleep, mono):

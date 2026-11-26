@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import contextlib
+import io
 import json
 import re
 import shutil
@@ -201,11 +203,20 @@ class PackagingTests(unittest.TestCase):
                 self.assertFalse(path.name.endswith((".test.ts", ".test.tsx")), path)
         self.assertTrue((ROOT / "services" / "push" / "src" / "lib.ts").is_file())
 
-    def test_the_installed_command_is_project(self) -> None:
+    def test_both_installed_commands_load_and_describe_their_own_interface(self) -> None:
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
-
-        self.assertEqual({"project": "projector.cli:main"}, project["scripts"])
-        self.assertEqual("projector-cli", project["name"])
+        self.assertEqual({"project", "projector"}, set(project["scripts"]))
+        for name, target in project["scripts"].items():
+            module, function = target.split(":")
+            entry = getattr(importlib.import_module(module), function)
+            output = io.StringIO()
+            with self.subTest(command=name), contextlib.redirect_stdout(output):
+                try:
+                    result = entry(["help"] if name == "project" else ["--help"])
+                except SystemExit as error:
+                    result = error.code
+                self.assertEqual(0, result)
+                self.assertIn("usage: " + name, output.getvalue())
 
     def test_every_citation_of_the_stack_section_names_a_heading_implement_has(self) -> None:
         implement = (ROOT / "skills" / "implement" / "SKILL.md").read_text()
