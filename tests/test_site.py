@@ -4536,7 +4536,8 @@ const site = { artifacts: [{ id: 'explorer', latest: 'new', preview: false, vers
 const options = [];
 let changed, address, shown;
 const picker = { value: '', appendChild(o) { options.push(o); }, addEventListener(type, fn) { changed = fn; } };
-const toolbar = { querySelector(q) { return q === 'select' ? picker : null; } };
+const latest = {};
+const toolbar = { querySelector(q) { return q === 'select' ? picker : latest; } };
 const document = { createElement(name) { return name === 'div' ? toolbar : {}; } };
 const history = { pushState(state, title, url) { address = url; } };
 function route() {}

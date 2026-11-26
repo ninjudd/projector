@@ -23,9 +23,10 @@ def main() -> int:
         source = root / 'source'
         artifact.init('cache-explorer', source, 'Cache explorer', 'Explore versioned cache data')
         (source / 'index.html').write_bytes((Path(__file__).parent / 'fixtures/artifact/index.html').read_bytes())
+        (source / 'cache.svg').write_bytes((Path(__file__).parent / 'fixtures/artifact/cache.svg').read_bytes())
         (source / 'bytes.bin').write_bytes(b'\x00\xff\x00\r\n')
         meta = json.loads((source / 'artifact.json').read_text())
-        meta['files'] += ['cases.json', 'bytes.bin']
+        meta['files'] += ['cases.json', 'bytes.bin', 'cache.svg']
         (source / 'artifact.json').write_text(json.dumps(meta))
         for value in (17, 23):
             (source / 'cases.json').write_text(json.dumps({'value': value}))

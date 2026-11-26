@@ -263,7 +263,7 @@
   // loads by relative path resolve beside it. The address's hash passes into the
   // frame and follows it back out, so a deep link into a hash-routed page works.
   function showHtml(active: Section, path: string, title: string, before: Node | null, side: string | null,
-    nav?: string, query = ''): void {
+    nav?: string, query = '', onHashChange?: () => void): void {
     const main = frame(active, title, '', side, true, undefined, nav);
     if (before !== null) {
       main.appendChild(before);
@@ -285,6 +285,7 @@
         if (inner.document.title !== '') document.title = `${inner.document.title} · ${site.repo}`;
         inner.addEventListener('hashchange', function () {
           history.replaceState(null, '', location.pathname + location.search + inner.location.hash);
+          onHashChange?.();
         });
       } catch { /* a page that navigated elsewhere is no longer ours to read */ }
     });
@@ -772,9 +773,10 @@
     toolbar.innerHTML = `<a href="${esc(`${base}artifacts/`)}">Artifacts</a><strong>${esc(item.title)}</strong>` +
       (artifact.preview ? '<span class="note">Local preview</span>' : '') +
       '<label>Version <select aria-label="Artifact version"></select></label>' +
-      `<a href="${esc(`${base}artifacts/${id}/${location.search}${location.hash}`)}">Latest</a>`;
+      `<a class="artifactlatest" href="${esc(`${base}artifacts/${id}/${location.search}${location.hash}`)}">Latest</a>`;
     const picker = toolbar.querySelector('select');
-    if (picker === null) throw new Error('The artifact toolbar lost its version picker');
+    const latest = toolbar.querySelector<HTMLAnchorElement>('.artifactlatest');
+    if (picker === null || latest === null) throw new Error('The artifact toolbar lost its version controls');
     artifact.versions.forEach(function (v) {
       const option = document.createElement('option');
       option.value = v.version;
@@ -787,7 +789,9 @@
       history.pushState(null, '', `${base}artifacts/${id}/${picker.value}/${location.search}${location.hash}`);
       route();
     });
-    showHtml('artifacts', item.entry, item.title, toolbar, null, undefined, location.search);
+    showHtml('artifacts', item.entry, item.title, toolbar, null, undefined, location.search, function () {
+      latest.href = `${base}artifacts/${id}/${location.search}${location.hash}`;
+    });
   }
 
   function route(): void {

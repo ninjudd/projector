@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -302,7 +302,7 @@ No blocking question remains. These defaults are reviewed with the plan;
 
 ## 9. Implementation and verification
 
-The implementation provides the shared `artifact` skill, all commands and
+This change ships the shared `artifact` skill, all commands and
 routes in section 2, immutable content-based versions, source recovery,
 concurrent local and remote publication, and the site's directory, search,
 and version picker. Git publication mechanics live in `projector.refs` and
@@ -311,23 +311,26 @@ from the fetched artifact ref instead of checking out an extracted bundle;
 this avoids applying Git filters or materializing invalid paths before
 validation.
 
-The project remains `in-progress` while the browser check waits. The browser
-access host was unavailable during implementation. HTTP checks passed for
-latest and both fixed routes under `/demo/`, with different JSON values and
-exact NUL-containing binary bytes. JavaScript tests prove version selection
-keeps query and hash state, loads the selected entry, and filters and escapes
-latest metadata. The disposable `tests.artifact_preview` site supplies two
-versions for the remaining visual and interaction check. Run `project done
-visualize` in this implementation pull request once that check is settled.
+Browser verification passes at `/` and `/demo/`, at 1440 × 900 and
+375 × 812. `tests.artifact_ui.mjs` exercises directory filtering, direct
+latest and fixed routes, version selection, browser back, query and live
+hash state, keyboard controls, relative JSON and SVG loads, exact binary
+bytes, search, and full-screen controls. The Latest link follows hash
+changes inside the page. The browser regression failed on that navigation
+before the fix and passes after it. The desktop and phone screenshots were
+inspected, with no horizontal overflow or failed local requests.
 
-Local validation passed 563 focused Python tests and 263 hook tests, both
-plugin validations, the hooks type check, and the site's type check, lint,
-and build. Each of the 18 new regression tests was observed failing under
-its corresponding temporary mutation, and the original source was restored.
-The focused tests include the extracted helpers' summary and relay callers.
+A running-server regression verifies local publication, fetched remote
+publication, and offline updates without a restart, while keeping review
+summaries visible. Disabling the artifact ref watcher makes this regression
+fail. Storage and shared-ref regressions cover the remaining boundaries,
+including summary and relay callers. The original 18 regression tests were
+also observed failing under their corresponding temporary mutations; the
+source was restored after every check. Reproduction commands for the browser
+check are in `docs/site.md`.
 
 The cost fixture uses 100 artifacts with five versions each, then one
-52,427,922-byte bundle. In the final local benchmark, the 500
+52,427,922-byte bundle. In a representative local benchmark, the 500
 small publications took 88.561 seconds, the large publication took 0.676
 seconds, and reading the saved history and building took 8.074 seconds.
 Small publications read 79,000 source bytes; the large one reads its
@@ -335,7 +338,8 @@ Small publications read 79,000 source bytes; the large one reads its
 all versions and shared site assets. `tests.artifact_benchmark` reproduces
 the workload in a temporary repository and removes it after measurement.
 
-A live Pages publish is deferred until a site runs the merged action. No
+A live Pages publish is deferred until a site runs the merged action, tracked
+in [the implementation pull request](https://github.com/ninjudd/projector/pull/634). No
 repository settings, Pages visibility, or hosted artifact refs were changed
 by verification. The storage, dispatch failure, existing-workflow selection,
 remote-default-branch, and visibility boundaries are exercised without a

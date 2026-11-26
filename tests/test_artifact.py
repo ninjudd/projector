@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import queue
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -189,6 +195,86 @@ class ArtifactTests(unittest.TestCase):
                          (saved.latest, saved.preview, set(saved.versions)))
         remote_tree = artifact.GitReader(self.remote, artifact.REF)
         self.assertNotIn(f'explorer/{local.version}/artifact.json', remote_tree.entries)
+
+    def test_a_running_server_watches_local_and_fetched_artifacts_and_keeps_reviews_offline(self):
+        from tests.test_site import PLAN_DIFF, served_summary
+        from projector import summary
+
+        run = lambda *args, **kwargs: refs.git(*args, root=self.repo, **kwargs)
+        folder = f'summaries/9/{"c" * 40}'
+        tree = refs.write_tree('', {f'{folder}/summary.json': json.dumps(served_summary(9, 'c' * 40)),
+                                    f'{folder}/diff.patch': PLAN_DIFF}, run=run)
+        run('update-ref', summary.PAGES_REF, run('commit-tree', tree, '-m', 'Save a review fixture'))
+        code = '''
+from projector import cli, summary
+from projector.site import serve
+def offline(*args, **kwargs):
+    raise summary.SummaryError('offline fixture')
+summary.gh = offline
+summary.gh_lookup = lambda *args, **kwargs: None
+serve.FETCH_INTERVAL = 0.05
+raise SystemExit(cli.main())
+'''
+        env = {**os.environ, 'PYTHONPATH': str(Path(artifact.__file__).resolve().parents[1])}
+        process = subprocess.Popen([sys.executable, '-u', '-c', code, 'site', 'serve', '--repo-root', str(self.repo),
+                                    '--port', '0', '--no-prepare'], stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, env=env)
+        lines = queue.Queue()
+
+        def read_lines():
+            for line in process.stdout:
+                lines.put(line)
+
+        reader = threading.Thread(target=read_lines, daemon=True)
+        reader.start()
+        output = []
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                try:
+                    line = lines.get(timeout=max(0.01, deadline - time.monotonic()))
+                except queue.Empty:
+                    self.fail('the preview did not start: ' + ''.join(output))
+                output.append(line)
+                if line.startswith('serving http://'):
+                    url = line.split(';')[0].split(' ', 1)[1] + 'site.json'
+                    break
+            else:
+                self.fail('the preview did not start: ' + ''.join(output))
+
+            def until(predicate):
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    with urllib.request.urlopen(url, timeout=2) as response:
+                        manifest = json.load(response)
+                    if predicate(manifest):
+                        return manifest
+                    time.sleep(0.05)
+                self.fail(f'the running preview did not update: {manifest}')
+
+            until(lambda data: len(data['reviews']) == 1 and not data['artifacts'])
+            local = self.publish()
+            until(lambda data: any(item['latest'] == local.version and item['preview'] for item in data['artifacts']))
+            other = self.root / 'other'
+            git(self.root, 'clone', '-q', str(self.repo), str(other))
+            git(other, 'remote', 'set-url', 'origin', str(self.remote))
+            for key, value in [('user.name', 'Other'), ('user.email', 'other@example.com'), ('commit.gpgsign', 'false')]:
+                git(other, 'config', key, value)
+            source = self.root / 'remote-bundle'
+            artifact.init('remote-explorer', source, 'Remote explorer')
+            remote = artifact.publish(artifact.snapshot(source), other, 'origin', push=True)
+            until(lambda data: {item['latest'] for item in data['artifacts']} == {local.version, remote.version})
+            git(self.repo, 'remote', 'set-url', 'origin', str(self.root / 'missing.git'))
+            (self.source / 'cases.json').write_text('{"value":47}\n')
+            changed = self.publish()
+            manifest = until(lambda data: {item['latest'] for item in data['artifacts']} == {changed.version, remote.version})
+            self.assertEqual([9], [row['number'] for row in manifest['reviews']])
+            self.assertIsNone(process.poll(), 'the same server stays running through local, remote, and offline updates')
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+            reader.join(timeout=1)
+            process.stdout.close()
 
     def test_a_local_compare_and_swap_race_keeps_both_publishers(self):
         theirs = artifact.snapshot(self.source)

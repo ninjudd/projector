@@ -312,3 +312,38 @@ directory instead, pass `--artifacts DIR`, where `DIR` contains
 pointer leaves that artifact out of the directory while keeping valid fixed
 links. The build reports total artifact bytes across retained versions, which
 grow with history.
+
+## Verify artifact pages
+
+You can check the artifact UI with disposable Git repositories and a fresh
+browser profile. From the repository root, with Node.js and Chrome installed:
+
+1. Start the preview under a project-site prefix:
+
+   ```sh
+   PYTHONPATH=src python3 -m tests.artifact_preview --port 8765 --base /demo/
+   ```
+
+2. In another terminal, start a preview at the site root:
+
+   ```sh
+   PYTHONPATH=src python3 -m tests.artifact_preview --port 8766 --base /
+   ```
+
+3. In a third terminal, install the browser test dependency outside the
+   checkout and run the check:
+
+   ```sh
+   npm install --prefix /tmp/projector-artifact-ui --no-package-lock --no-audit --no-fund playwright
+   PROJECTOR_PLAYWRIGHT_DIR=/tmp/projector-artifact-ui PROJECTOR_BROWSER_CHANNEL=chrome node tests/artifact_ui.mjs http://127.0.0.1:8765/demo/ http://127.0.0.1:8766/
+   ```
+
+The check prints `passed: true` for both addresses and saves desktop and
+phone screenshots in the temporary directory it prints. It exercises the
+directory filter, both versions, relative JSON, SVG and binary assets,
+keyboard controls, live hash changes, navigation, search, and full-screen
+controls. An assertion, timeout, page error, or failed local request fails
+the command. Stop both servers with Ctrl-C to remove their temporary
+repositories and builds. The dependency directory and screenshots remain
+available for inspection. To use Playwright's installed Chromium instead,
+omit `PROJECTOR_BROWSER_CHANNEL`.
