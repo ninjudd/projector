@@ -15,13 +15,18 @@
   "summary": [
    "Projector's review skill reads a pull request and lists what it finds. Until now it had three kinds of output: P1 and P2 <b>findings</b>, which open review threads and block the pull request, and P3 <b>suggestions</b>, which the review body lists and the <code>fix-pr</code> skill implements or defers on the open pull request. A real problem that was not the change's own, such as a bug already present at the base, could only be a suggestion, so <code>fix-pr</code> ended up weighing work that was not part of the pull request's argument.",
    "This change adds a fourth kind, the <b>follow-up</b>. A reviewer gives it as a threads-file entry with <code>\"priority\": \"follow-up\"</code>. <code>project review publish</code> lists it under a <code>### Follow-ups</code> heading after the suggestions. It opens no thread and never holds a head back from clean. <code>fix-pr</code> leaves it alone while the pull request is open, and takes it into a follow-up pull request once the pull request merges.",
-   "<ul><li><b>A follow-up stays owed across heads.</b> Suggestions count only on the newest head, but a follow-up names code outside the change, so the new <code>project review follow-ups</code> lists the follow-ups of every review, de-duplicated by file, line, and text.</li><li><b>The watch daemon counts them on merge.</b> The fixer's <code>MERGED</code> line now names both counts, such as <code>the 2 suggestions its merged head lists and the follow-up its reviews list</code>. A review that lists only follow-ups raises no <code>REVIEW</code> line.</li><li><b>The review marker is unchanged.</b> The count goes on a line of its own, so earlier releases still read every verdict.</li></ul>"
+   "<ul><li><b>A follow-up stays owed across heads.</b> Suggestions stand with the current head's selected reviews, including a full review an incremental verdict builds on. The new <code>project review follow-ups</code> reads follow-ups across all heads and removes repeats with the same file, line, and text.</li><li><b>The watch daemon counts them on merge.</b> The fixer's <code>MERGED</code> line names both counts, such as <code>the 2 suggestions its merged head lists and the follow-up its reviews list</code>. A review that lists only follow-ups raises no <code>REVIEW</code> line.</li><li><b>The review marker is unchanged.</b> Each section's count goes on a line of its own, so earlier releases still read the verdict.</li></ul>"
   ],
   "cards": [
    {
     "id": "terms",
     "title": "Terms",
-    "html": "<ul class=\"tight\"><li><b>Threads file</b>: the JSON list of findings a reviewer hands to <code>publish</code>.</li><li><b>Listing</b>: a kind of item a review lists in its body rather than posting as a thread. There are two: suggestions (P3) and follow-ups.</li><li><b>Count line</b>: the <code>&lt;!-- projector-…-ups v=1 count=n --&gt;</code> comment <code>publish</code> writes before a section's label, which the daemon and <code>status</code> read.</li><li><b>Owed</b>: what a merged pull request still owes its fixer.</li></ul>"
+    "html": "<ul class=\"tight\"><li><b>Threads file</b>: the JSON list of findings and listed items a reviewer hands to <code>publish</code>.</li><li><b>Listing</b>: a kind of item a review lists in its body rather than posting as a thread. There are two: suggestions (P3) and follow-ups.</li><li><b>Count line</b>: the <code>projector-suggestions</code> or <code>projector-follow-ups</code> comment before a section's label, recording the number of items.</li><li><b>Owed</b>: what a merged pull request still owes its fixer.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review and validation",
+    "html": "<ul class=\"tight\"><li><b>Verdict:</b> <a href=\"https://github.com/ninjudd/projector/pull/629#pullrequestreview-6069547851\">Clean review of <code>7791813</code></a>, with no finding threads or suggestions.</li><li><b>Gate:</b> Plugin validation, 263 hook tests, typecheck, the diff check, and the CI <code>check</code> job passed.</li><li><b>Focused tests:</b> 21 tests passed for publishing, parsing, cross-head listing, and merged-event handling with a supported Python interpreter.</li><li><b>Scope:</b> Large existing modules were inspected through changed sections and affected callers rather than read in full.</li></ul>"
    }
   ]
  },
@@ -149,6 +154,12 @@
     },
     {
      "path": "tests/test_watch.py"
+    }
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran the publishing, listing, parser, and three follow-up watcher regressions: 21 tests passed. The configured gate also passed, including 263 hook tests and CI."
     }
    ]
   }
