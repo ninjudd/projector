@@ -1,0 +1,281 @@
+{
+ "version": 1,
+ "name": "Versioned interactive artifacts",
+ "project": "visualize",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 634,
+  "title": "Publish versioned artifacts on the Projector site",
+  "head": "063cd57a22f1cd3cc4f2598297a1fc87c4f2afe0",
+  "headRef": "artifact-publishing",
+  "base": "8e572567c9d66aaf097af589a6e4eace68bd5602",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s repository site already publishes plans, documentation, and guided pull request reviews. This change adds artifacts: editable static HTML pages and small interactive tools that can be revised without an ordinary source commit and pull request for every revision.",
+   "Each artifact has a stable ID, a list of immutable versions, and a latest link. A manifest lists the exact files to save, and a content digest identifies each version from its metadata and bytes. Publication stores those files on a separate Git reference; the existing site action copies validated versions into the static site.",
+   "Repository write access controls publication, and the existing GitHub Pages audience controls reading. Local saves and fetched remote versions remain separate, with local versions marked as previews. The review is clean at <code>063cd57</code>; a live Pages artifact publish remains a rollout check after the merged action is available."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms in this change",
+    "html": "<ul class=\"tight\"><li><b>Bundle:</b> an <code>artifact.json</code> manifest and the exact files it lists.</li><li><b>Version:</b> a full SHA-256 digest of normalized metadata and file hashes.</li><li><b>Hidden ref:</b> a Git reference outside ordinary branches, here <code>refs/projector/artifacts</code>. Repository readers can still read it.</li><li><b>Latest:</b> an explicit pointer to one saved version. Republishing old content leaves it unchanged.</li></ul>"
+   },
+   {
+    "id": "checks",
+    "title": "Review evidence and limits",
+    "html": "<ul class=\"tight\"><li>The configured gate passed, including 263 hook tests and the required CI check.</li><li>All 433 focused artifact, summary, site, and packaging tests passed, with one environment-dependent skip.</li><li>Browser checks passed at the root and a project-site prefix, on desktop and phone layouts.</li><li>The review read changed sections and affected callers in large existing modules. Generated JavaScript was checked through compilation evidence and browser execution.</li><li>No live artifact ref was published and no Pages settings were changed during verification.</li></ul>"
+   },
+   {
+    "id": "retention",
+    "title": "Size and retention",
+    "html": "<ul class=\"tight\"><li>A bundle allows 1,000 regular files, 25 MiB per file, and 50 MiB in total.</li><li>Every saved version remains available. Deployment size grows with retained history.</li><li>The benchmark fixture reproduces the workload documented in the completed plan; its published measurements are the implementation author’s evidence, not a benchmark rerun by this review.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "bundle",
+   "title": "Define and save a complete bundle",
+   "kicker": "One content identity covers metadata and exact file bytes.",
+   "intro": [
+    "An artifact bundle explicitly lists its files in <code>artifact.json</code>. The validator rejects unsafe paths, symlinks, missing files, case collisions, unsupported schemas, and size-limit violations before it writes a reference. Binary files stay byte-for-byte intact rather than passing through text conversion.",
+    "The artifact module snapshots the source once, computes sorted file hashes and a normalized content digest, and stores the manifest, revision record, and files under that digest. Reading saved versions validates their hashes again. A corrupt version is skipped with a diagnostic, while valid neighbors remain available; an invalid latest pointer does not cause the reader to guess a replacement."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/artifact.py",
+     "note": "Owns bundle validation, version identity, recovery, saved records, publication, and public metadata.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The artifact regressions passed for exact binary recovery, unchanged-content idempotence, unsafe input refusal, corrupt versions, local preview precedence, and concurrent local and remote publication."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_artifact.py",
+     "note": "Exercises publication and recovery in temporary Git repositories, plus the running server and dispatch failures."
+    },
+    {
+     "path": "tests/artifact_benchmark.py",
+     "note": "Measures 500 small revisions and a near-limit bundle without retaining repositories.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The plan records representative timings. The per-bundle limits do not bound the total history copied by each deployment."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "refs",
+   "title": "Share Git publication mechanics",
+   "kicker": "Artifacts and review summaries retain separate formats on a common publisher.",
+   "intro": [
+    "A hidden reference is a Git history that does not appear as an ordinary branch. The new ref module builds commits with a temporary index, preserving the user’s branch, index, and dirty files. Competing publications fetch the new tip and rebuild their commit, with at most five attempts.",
+    "Review summaries move onto this publisher while retaining their own schema, legacy-ref seeding, and dispatch behavior. The relay also takes its remote tracking-reference name from the shared helper. Sharing these mechanics keeps artifact writes from creating a second implementation of the concurrency rules."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/refs.py",
+     "note": "Provides binary-safe Git commands, temporary-index tree writes, tracking references, and compare-and-swap publication.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The artifact race tests preserved both complete versions and the original dirty checkout and index. Summary publication and race regressions also passed."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/summary.py",
+     "note": "Reuses the ref publisher and strengthens public-site visibility checks for private and internal repositories.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused summary suite passed after the extraction, including legacy publication and bounded retry behavior."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/relay.py",
+     "note": "Uses the shared tracking-reference helper without changing relay reference formats."
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "Keeps the bounded-retry checks tied to the extracted publisher."
+    }
+   ]
+  },
+  {
+   "id": "serving",
+   "title": "Connect publication to the site",
+   "kicker": "The CLI, local server, and Pages action load the same saved versions.",
+   "intro": [
+    "The command line adds create, recover, list, and publish operations. Hosted publication uses the existing site’s access checks; unavailable or unsafe hosting keeps the bundle local. After a successful remote save, workflow dispatch targets the existing site workflow on the remote default branch, and a failure reports that the content is saved with a usable deploy retry command.",
+    "The site builder emits real latest and fixed-version routes and copies each version’s complete assets. The local server combines fetched versions with marked local previews, watches artifact-reference changes independently of summaries, and can overlay an unsaved source bundle. The Pages action fetches artifact history independently and lets the builder validate Git blobs before writing them to the output."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Registers artifact commands and joins artifact sources, preview overlays, ref watching, and background fetches to site building.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The running-server regression observed local, fetched remote, and offline updates without a restart while retaining review summaries. CLI tests passed for local fallback and workflow dispatch selection."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Adds artifact metadata, asset copying, latest-only search entries, and direct-load shell routes.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The build regressions preserved exact binary bytes and valid fixed routes, excluded obsolete and script-only search text, and honored a project-site base."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/site/serve.py",
+     "note": "Uses shared tracking-reference naming while retaining the server’s existing build lifetime behavior."
+    },
+    {
+     "path": "actions/site/action.yml",
+     "note": "Fetches the artifact ref separately before the normal visibility-checked site build.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The live Pages artifact rollout remains deferred until a site runs the merged action. This review exercised local output and dispatch boundaries without publishing an artifact remotely."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "browser",
+   "title": "Browse artifacts and their versions",
+   "kicker": "Directory, search, and version controls preserve the page’s navigation state.",
+   "intro": [
+    "The Artifacts directory filters the latest title, description, and ID and orders entries by publication time. An artifact page reuses the existing HTML frame and full-screen controls. Its picker selects a fixed version, while Latest returns to the current version.",
+    "The wrapper forwards query and hash state to the HTML page, carries them across version selection and browser back, and updates the Latest link when a page changes its hash. Each version loads assets relative to its own saved directory. Metadata is rendered as text, and older site manifests without an artifact list remain readable."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "site/src/site.ts",
+     "note": "Adds artifact directory rendering and routes, picker navigation, metadata escaping, and live hash propagation.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The browser regression passed at / and /demo/ in 1440×900 and 375×812 views, covering filtering, both routes, browser back, keyboard input, query/hash state, relative assets, search, and full-screen controls."
+      }
+     ]
+    },
+    {
+     "path": "site/src/globals.d.ts",
+     "note": "Types artifact versions and allows older site manifests to omit the artifact list."
+    },
+    {
+     "path": "site/assets/site.css",
+     "note": "Lays out artifact rows and a wrapping toolbar at phone widths.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Browser overflow assertions passed, and the desktop and phone screenshots showed the controls and content inside the viewport."
+      }
+     ]
+    },
+    {
+     "path": "site/assets/site.js",
+     "note": "Commits the compiled browser implementation.",
+     "collapsed": true
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Checks version selection state and directory filtering/escaping through the JavaScript functions."
+    },
+    {
+     "path": "tests/artifact_ui.mjs",
+     "note": "Runs the interactive browser regression with a fresh profile and saves screenshots."
+    },
+    {
+     "path": "tests/artifact_preview.py",
+     "note": "Builds two disposable versions for browser checks at either site base."
+    },
+    {
+     "path": "tests/fixtures/artifact/index.html",
+     "note": "Provides a keyboard-accessible slider and relative JSON, SVG, and binary requests."
+    },
+    {
+     "path": "tests/fixtures/artifact/cache.svg",
+     "note": "Supplies a small relative image for the browser asset check."
+    }
+   ]
+  },
+  {
+   "id": "workflow",
+   "title": "Document and package the authoring flow",
+   "kicker": "A shared artifact skill guides source recovery, preview, and publication.",
+   "intro": [
+    "The new shared skill creates or recovers editable source, builds a finished static page, exercises its actual controls, and returns the latest and fixed-version links. It uses configured hosting by default for an artifact request, preserves local-only requests, and does not enable Pages or change its audience.",
+    "The documentation explains commands, size limits, publication and reading permissions, immutable history, preview behavior, and site action upgrades. The implementation marks the visualize project completed while recording the live Pages rollout check that still follows the merge. Permission-rule and packaging tests include the new command and shared skill."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/artifact/SKILL.md",
+     "note": "Guides authoring, source recovery, actual UI preview, publication, and the handover links."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds artifact commands to the generated Codex allow rules."
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Checks the artifact publication command against host permission rules."
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "Uses literal older-rule fixtures to verify summary-publication reporting."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Requires the artifact skill in both hosts’ exact published skill set."
+    },
+    {
+     "path": "README.md",
+     "note": "Introduces the artifact skill and the site’s additional content section."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Shows the updated generated command allowance."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Lists the shared artifact skill in the packaged plugin."
+    },
+    {
+     "path": "docs/site.md",
+     "note": "Documents artifact authoring, preview, versions, recovery, access, builds, and reproducible browser checks."
+    },
+    {
+     "path": "docs/projects/visualize/readme.md",
+     "note": "Records the completed implementation, browser evidence, cost measurements, and deferred live rollout.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Section 9 records a live Pages publish as a post-merge rollout check. The storage and local browser evidence establish the current merge criteria."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

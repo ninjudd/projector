@@ -1,0 +1,2727 @@
+diff --git a/README.md b/README.md
+index dd9ef471..203379fe 100644
+--- a/README.md
++++ b/README.md
+@@ -71,7 +71,8 @@ it; `review-repo` to review every pull request of yours in a repository the
+ same way; `fix-pr` to fix a pull request's findings and merge conflicts,
+ which the session that pushed a pull request runs again whenever a review
+ finds something; `summarize-pr`, which summarizes a pull request's changes
+-as a guided review page; `write`, which writes any prose so that it follows
++as a guided review page; `artifact`, which creates and versions interactive
++pages on the repository's site; `write`, which writes any prose so that it follows
+ Projector's writing guide; `rewrite`, which revises existing text by
+ that guide and writes it back where it lives; `message`, which lets a
+ session find and talk to your other agent sessions; `cleanup`, which
+@@ -105,7 +106,7 @@ carries none of your authority. See
+ ## Publish a site
+ 
+ Every repository can serve a site on GitHub Pages with its projects, its pull
+-request summaries, and its docs. `project init` sets it up, and
++request summaries, its artifacts, and its docs. `project init` sets it up, and
+ `project site serve` shows it locally without Pages. See
+ [Set up the Projector site](docs/site.md).
+ 
+diff --git a/actions/site/action.yml b/actions/site/action.yml
+index 0beb9f29..f3e79d04 100644
+--- a/actions/site/action.yml
++++ b/actions/site/action.yml
+@@ -1,5 +1,5 @@
+ name: Projector site
+-description: Build the Projector site from the content Projector keeps in the repository, its README, docs and project plans and the summaries under refs/projector/summaries, and deploy it to GitHub Pages.
++description: Build the repository's Projector site with projects, docs, review summaries, and versioned artifacts, and deploy it to GitHub Pages.
+ inputs:
+   ref:
+     description: The hidden ref holding <root>/<number>/<head>/summary.json files.
+@@ -40,6 +40,12 @@ runs:
+           git worktree add --detach "$RUNNER_TEMP/summaries-ref" "$REF"
+           echo "SUMMARIES=$RUNNER_TEMP/summaries-ref/$ROOT" >> "$GITHUB_ENV"
+         fi
++    - name: Fetch the artifacts
++      shell: bash
++      run: |
++        if git ls-remote --exit-code origin refs/projector/artifacts >/dev/null; then
++          git fetch --no-tags origin "+refs/projector/artifacts:refs/projector/remotes/origin/artifacts"
++        fi
+     - id: pages
+       uses: actions/configure-pages@v5
+     - name: Build the Projector site
+diff --git a/docs/cli.md b/docs/cli.md
+index 0ed8c48d..28d1380d 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -231,7 +231,7 @@ what it did to each:
+ 
+   ```text
+   prefix_rule(
+-      pattern = ["project", ["check", "done", "help", "list", "owner", "preview", "priority", "search", "show", "status", "summary", "version", "watch", "worktree"]],
++      pattern = ["project", ["check", "done", "help", "list", "owner", "preview", "priority", "search", "show", "status", "artifact", "summary", "version", "watch", "worktree"]],
+       decision = "allow",
+   )
+   prefix_rule(
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 51cde398..8e112ec2 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -13,7 +13,7 @@ instructions and supporting scripts without a generated copy or host-specific
+ fork.
+ 
+ The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
+-`review-repo`, `summarize-pr`, `write`, `rewrite`, `cleanup`,
++`review-repo`, `summarize-pr`, `artifact`, `write`, `rewrite`, `cleanup`,
+ `write-tests`, and `work`.
+ `summarize-pr` summarizes a pull request's changes as a guided review page.
+ Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
+diff --git a/docs/projects/visualize/readme.md b/docs/projects/visualize/readme.md
+index c6b7b188..1569dfd4 100644
+--- a/docs/projects/visualize/readme.md
++++ b/docs/projects/visualize/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: completed
+ priority: now
+ ---
+ 
+@@ -202,7 +202,7 @@ host needs an artifact API or MCP server.
+ | `src/projector/summary.py` and a shared ref module | Extract hidden-ref fetch, temporary-index commits, and bounded push retries. Move summary callers without changing their schema, legacy migration, or publication behavior. |
+ | `src/projector/cli.py` | Register commands and preview/build inputs. Reuse checkout, repository, hosting, and visibility helpers, extending visibility handling for internal repositories if needed. |
+ | `src/projector/site/__init__.py` and `serve.py` | Read bundles, combine previews, copy files, emit routes and search data, and watch both ref families. |
+-| `actions/site/action.yml` | Fetch and read the artifact ref alongside summaries; pass the directory to build. |
++| `actions/site/action.yml` | Fetch the artifact ref alongside summaries; let the build read validated Git objects directly. |
+ | `site/src/site.ts`, `site/src/globals.d.ts`, and `site/assets/site.css` | Add directory, routes, menu, version picker, and types. Reuse HTML layout and search; commit rebuilt JavaScript. |
+ | `tests/test_artifact.py`, `tests/test_site.py`, `tests/test_summary.py`, `tests/test_packaging.py` | Cover the boundaries below; add `artifact` to the exact published skill set. |
+ | `README.md` and `docs/site.md` | Document commands, links, preview, access, limits, and action-pin upgrades. Leave completed plans unchanged. |
+@@ -298,3 +298,49 @@ No blocking question remains. These defaults are reviewed with the plan;
+ - **Workflow dispatch.** The workflow must exist on the default branch.
+   Generated Projector workflows already have the manual trigger. See
+   [GitHub's workflow dispatch reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch).
++
++
++## 9. Implementation and verification
++
++This change ships the shared `artifact` skill, all commands and
++routes in section 2, immutable content-based versions, source recovery,
++concurrent local and remote publication, and the site's directory, search,
++and version picker. Git publication mechanics live in `projector.refs` and
++are shared with summaries. The site action reads validated blobs directly
++from the fetched artifact ref instead of checking out an extracted bundle;
++this avoids applying Git filters or materializing invalid paths before
++validation.
++
++Browser verification passes at `/` and `/demo/`, at 1440 × 900 and
++375 × 812. `tests.artifact_ui.mjs` exercises directory filtering, direct
++latest and fixed routes, version selection, browser back, query and live
++hash state, keyboard controls, relative JSON and SVG loads, exact binary
++bytes, search, and full-screen controls. The Latest link follows hash
++changes inside the page. The browser regression failed on that navigation
++before the fix and passes after it. The desktop and phone screenshots were
++inspected, with no horizontal overflow or failed local requests.
++
++A running-server regression verifies local publication, fetched remote
++publication, and offline updates without a restart, while keeping review
++summaries visible. Disabling the artifact ref watcher makes this regression
++fail. Storage and shared-ref regressions cover the remaining boundaries,
++including summary and relay callers. The original 18 regression tests were
++also observed failing under their corresponding temporary mutations; the
++source was restored after every check. Reproduction commands for the browser
++check are in `docs/site.md`.
++
++The cost fixture uses 100 artifacts with five versions each, then one
++52,427,922-byte bundle. In a representative local benchmark, the 500
++small publications took 88.561 seconds, the large publication took 0.676
++seconds, and reading the saved history and building took 8.074 seconds.
++Small publications read 79,000 source bytes; the large one reads its
++52,427,922 payload bytes once. The output contains 53,612,930 bytes, including
++all versions and shared site assets. `tests.artifact_benchmark` reproduces
++the workload in a temporary repository and removes it after measurement.
++
++A live Pages publish is deferred until a site runs the merged action, tracked
++in [the implementation pull request](https://github.com/ninjudd/projector/pull/634). No
++repository settings, Pages visibility, or hosted artifact refs were changed
++by verification. The storage, dispatch failure, existing-workflow selection,
++remote-default-branch, and visibility boundaries are exercised without a
++live service.
+diff --git a/docs/site.md b/docs/site.md
+index f79a5499..1edef655 100644
+--- a/docs/site.md
++++ b/docs/site.md
+@@ -1,12 +1,12 @@
+ # Set up the Projector site
+ 
+ Projector can host a site for a repository on GitHub Pages, built from content
+-Projector keeps in the repository itself. Its menu has three sections:
++Projector keeps in the repository itself. Its menu has four sections:
+ **Projects**, the home page, lists the projects under `docs/projects` with
+ each one's priority, and its owner when any plan names one, beside the plans
+ that open pull requests propose, each marked **Proposed**;
+ **Reviews** lists the pull request summaries the `summarize-pr` skill
+-publishes; and **Docs** renders `README.md` beside a sidebar of every other
++publishes; **Artifacts** lists versioned interactive pages; and **Docs** renders `README.md` beside a sidebar of every other
+ document under `docs/`. A document is Markdown, which the site renders, or an
+ HTML page, which it shows as it is inside the site, with the files beside it,
+ so an interactive explorer or a WebAssembly playground works there as it does
+@@ -216,3 +216,134 @@ Once `refs/projector/summaries` exists, delete the old ref:
+ ```sh
+ git push origin :refs/projector/walkthroughs
+ ```
++
++## Create and version artifacts
++
++Ask the `artifact` skill to make an interactive explanation, chart, diagram,
++or small tool. In Claude Code, use `/projector:artifact`; in Codex, use
++`$artifact`. The skill builds a static HTML bundle, previews its controls,
++and publishes to the repository's configured site. The Artifacts section
++lists each artifact and offers its saved versions.
++
++To author a bundle yourself, create a new working directory:
++
++```sh
++project artifact init cache-explorer --dir /tmp/cache-explorer --title 'Cache explorer'
++```
++
++Edit `index.html` and add every supporting file to `artifact.json`:
++
++```json
++{
++  "schema": 1,
++  "id": "cache-explorer",
++  "title": "Cache explorer",
++  "description": "Compare cache policies with adjustable inputs.",
++  "entry": "index.html",
++  "files": ["index.html", "cases.json"]
++}
++```
++
++Use relative URLs for scripts, styles, data, images, and WebAssembly. Compile
++framework source before publication and list any editable source needed for
++later revisions. Pages serves finished files and runs no server or build.
++The explicit file list excludes unrelated working files. Each bundle holds
++at most 1,000 files, 25 MiB per file, and 50 MiB total. Files must be regular,
++with no hidden components, symlinks, traversal, or case collisions.
++
++Preview without saving, then publish:
++
++```sh
++project site serve --artifacts /tmp/cache-explorer --no-fetch
++project artifact publish --dir /tmp/cache-explorer
++```
++
++Open `artifacts/cache-explorer/` under the preview address. Stop the preview
++server before running the next command in the same terminal. Publication
++saves source and exact asset bytes on `refs/projector/artifacts`, without
++changing branches, your index, or checkout files. It prints a latest link at
++`artifacts/cache-explorer/` and a fixed link at
++`artifacts/cache-explorer/<version>/`. The full content digest identifies a
++version. Changes to metadata or bytes create new versions; republishing saved
++content adds no version and leaves latest unchanged. Every saved version
++remains reachable after later edits.
++
++Publication requests the existing site workflow on its default branch. The
++page updates when that workflow succeeds. `--no-dispatch` saves remotely
++without requesting a deploy. If dispatch fails, content remains saved and
++the command prints a workflow retry command. Repositories pinned to an exact
++site action release or commit need an action version that supports artifacts;
++update that pin through a pull request first. The compatible `@v0` action
++picks up artifact support with its release.
++
++List artifacts and recover source for an edit:
++
++```sh
++project artifact list --json
++project artifact list --id cache-explorer --json
++project artifact init cache-explorer --dir /tmp/cache-revision --from-published
++```
++
++The recovery directory must not exist. Add `--version FULL_DIGEST` to recover
++a fixed version, or `--no-fetch` to use cached data. Add `--checkout CHECKOUT`
++or `--remote REMOTE` to select the repository or remote explicitly.
++
++Without safe configured hosting, publication saves only in the checkout's
++local ref. `--local` does this even when hosting exists. Normal
++`project site serve` combines local and fetched remote versions and marks
++local latest versions as previews. It notices subsequent ref changes without
++a restart. The Artifacts directory and site search index the latest version;
++older versions stay available through the picker and fixed links.
++
++Artifacts use the site's existing audience. GitHub write access controls
++publication; GitHub Pages controls reading, with no per-artifact sharing.
++Private and internal repositories require confirmed private Pages. Hidden
++refs are visible to repository readers. Published HTML and its scripts have
++the same origin and trust as the site's other HTML pages. Credentials do not
++belong in a bundle. A deploy repeats the site's visibility check for all
++versions and assets.
++
++`project site build` reads artifacts directly from the checkout's local and
++fetched refs. The site action fetches the artifact ref separately from review
++summaries, without checking out or running the bundle. To build from a saved
++directory instead, pass `--artifacts DIR`, where `DIR` contains
++`<id>/<version>/artifact.json`, `revision.json`, `files/`, and each ID's
++`latest.json`. Invalid versions are reported and skipped; an invalid latest
++pointer leaves that artifact out of the directory while keeping valid fixed
++links. The build reports total artifact bytes across retained versions, which
++grow with history.
++
++## Verify artifact pages
++
++You can check the artifact UI with disposable Git repositories and a fresh
++browser profile. From the repository root, with Node.js and Chrome installed:
++
++1. Start the preview under a project-site prefix:
++
++   ```sh
++   PYTHONPATH=src python3 -m tests.artifact_preview --port 8765 --base /demo/
++   ```
++
++2. In another terminal, start a preview at the site root:
++
++   ```sh
++   PYTHONPATH=src python3 -m tests.artifact_preview --port 8766 --base /
++   ```
++
++3. In a third terminal, install the browser test dependency outside the
++   checkout and run the check:
++
++   ```sh
++   npm install --prefix /tmp/projector-artifact-ui --no-package-lock --no-audit --no-fund playwright
++   PROJECTOR_PLAYWRIGHT_DIR=/tmp/projector-artifact-ui PROJECTOR_BROWSER_CHANNEL=chrome node tests/artifact_ui.mjs http://127.0.0.1:8765/demo/ http://127.0.0.1:8766/
++   ```
++
++The check prints `passed: true` for both addresses and saves desktop and
++phone screenshots in the temporary directory it prints. It exercises the
++directory filter, both versions, relative JSON, SVG and binary assets,
++keyboard controls, live hash changes, navigation, search, and full-screen
++controls. An assertion, timeout, page error, or failed local request fails
++the command. Stop both servers with Ctrl-C to remove their temporary
++repositories and builds. The dependency directory and screenshots remain
++available for inspection. To use Playwright's installed Chromium instead,
++omit `PROJECTOR_BROWSER_CHANNEL`.
+diff --git a/site/assets/site.css b/site/assets/site.css
+index 11bc5d88..e8af7319 100644
+--- a/site/assets/site.css
++++ b/site/assets/site.css
+@@ -255,3 +255,14 @@ ol.results li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+ ol.results li a { font-weight: 500; text-decoration: none; }
+ .snippet { margin-top: 4px; font-size: 14px; color: var(--muted); }
+ .snippet mark { background: var(--warn-bg); color: var(--text); border-radius: 2px; padding: 0 1px; }
++
++.artifactrows { list-style: none; padding: 0; }
++.artifactrows li { padding: 18px 0; border-bottom: 1px solid var(--border); }
++.artifactrows p { margin: 6px 0; }
++.artifactbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 20px; }
++.artifactbar label { margin-left: auto; }
++.artifactbar select { max-width: 100%; font: inherit; color: inherit; background: var(--bg); }
++@media (max-width: 600px) {
++  .artifactbar { padding: 10px; }
++  .artifactbar label { margin-left: 0; }
++}
+diff --git a/site/assets/site.js b/site/assets/site.js
+index 89bb5d59..6fb61764 100644
+--- a/site/assets/site.js
++++ b/site/assets/site.js
+@@ -1,12 +1,6 @@
+ "use strict";
+-// Projector site: three sections, drawn from site.json. Projects lists the projects
+-// and renders each one's files in a summary page's layout, beside a summary's
+-// sidebar of its stacks, sections, and pages; Reviews lists the pull request
+-// summaries; Docs renders the README and everything else under docs/ beside a
+-// sidebar of that tree. A page is Markdown, rendered here, or HTML, shown as it is in a frame.
+-// Every view has a real path under the site's base; links between views update
+-// the address without a page load. Every page loads summary.js first, for the
+-// helpers a summary page draws with too.
++// GitHub Pages needs real paths. The shared shell handles links between views
++// without a page load, and summary.js supplies the layout and text helpers.
+ (function () {
+     const STATUS_ORDER = ['in-progress', 'ready', 'draft', 'completed'];
+     const PRIORITY_ORDER = ['now', 'next', 'later'];
+@@ -146,6 +140,8 @@
+             items.push([base, 'Projects', 'projects']);
+         if (site.reviews.length > 0)
+             items.push([`${base}reviews/`, 'Reviews', 'reviews']);
++        if ((site.artifacts ?? []).some(function (a) { return a.latest !== null; }))
++            items.push([`${base}artifacts/`, 'Artifacts', 'artifacts']);
+         if (site.readme !== null || site.docs.length > 0)
+             items.push([`${base}docs/`, 'Docs', 'docs']);
+         return items.map(function (item) {
+@@ -262,7 +258,7 @@
+     // An HTML page as it is, in a frame of its copy under content/, so the files it
+     // loads by relative path resolve beside it. The address's hash passes into the
+     // frame and follows it back out, so a deep link into a hash-routed page works.
+-    function showHtml(active, path, title, before, side, nav) {
++    function showHtml(active, path, title, before, side, nav, query = '', onHashChange) {
+         const main = frame(active, title, '', side, true, undefined, nav);
+         if (before !== null) {
+             main.appendChild(before);
+@@ -271,7 +267,7 @@
+         const page = document.createElement('iframe');
+         page.className = 'htmlpage';
+         page.title = title;
+-        page.src = contentUrl(path) + location.hash;
++        page.src = contentUrl(path) + query + location.hash;
+         main.appendChild(page);
+         fitFrame = function () {
+             page.style.height = `${String(Math.max(240, window.innerHeight - page.getBoundingClientRect().top))}px`;
+@@ -286,6 +282,7 @@
+                     document.title = `${inner.document.title} · ${site.repo}`;
+                 inner.addEventListener('hashchange', function () {
+                     history.replaceState(null, '', location.pathname + location.search + inner.location.hash);
++                    onHashChange?.();
+                 });
+             }
+             catch { /* a page that navigated elsewhere is no longer ours to read */ }
+@@ -692,7 +689,7 @@
+         });
+     }
+     function showSearch(query) {
+-        const main = frame('search', query !== '' ? `Search: ${query}` : 'Search', '<h1>Search</h1><input class="filter" type="search" aria-label="Search the site" placeholder="Search the projects and docs">' +
++        const main = frame('search', query !== '' ? `Search: ${query}` : 'Search', '<h1>Search</h1><input class="filter" type="search" aria-label="Search the site" placeholder="Search the site">' +
+             '<ol class="results"></ol>');
+         const input = main.querySelector('.filter');
+         const list = main.querySelector('.results');
+@@ -721,6 +718,73 @@
+             list.innerHTML = `<p class="note">Could not load the search index: ${esc(errorMessage(error))}</p>`;
+         });
+     }
++    function showArtifacts() {
++        const main = frame('artifacts', 'Artifacts', '<h1>Artifacts</h1>' +
++            '<input type="search" class="filter" aria-label="Filter artifacts" placeholder="Filter artifacts">' +
++            '<div class="artifactlist"></div>');
++        const input = main.querySelector('.filter');
++        const list = main.querySelector('.artifactlist');
++        if (input === null || list === null)
++            throw new Error('The artifacts view lost its filter or list');
++        const rows = (site.artifacts ?? []).flatMap(function (artifact) {
++            const latest = artifact.versions.find(function (v) { return v.version === artifact.latest; });
++            return latest !== undefined ? [{ artifact, latest }] : [];
++        }).sort(function (a, b) {
++            return b.latest.publishedAt.localeCompare(a.latest.publishedAt) || a.artifact.id.localeCompare(b.artifact.id);
++        });
++        input.value = new URLSearchParams(location.search).get('q') ?? '';
++        function draw() {
++            if (input === null || list === null)
++                return;
++            const q = input.value.trim().toLowerCase();
++            history.replaceState(null, '', `${base}artifacts/${q !== '' ? `?q=${encodeURIComponent(input.value.trim())}` : ''}`);
++            const shown = rows.filter(function (row) {
++                return `${row.artifact.id} ${row.latest.title} ${row.latest.description}`.toLowerCase().includes(q);
++            });
++            list.innerHTML = shown.length > 0 ? '<ul class="artifactrows">' + shown.map(function (row) {
++                return `<li><a href="${esc(`${base}artifacts/${row.artifact.id}/`)}">${esc(row.latest.title)}</a>` +
++                    (row.artifact.preview ? ' <span class="note">Local preview</span>' : '') +
++                    `<p>${esc(row.latest.description)}</p><span class="note">${esc(row.latest.publishedAt.slice(0, 10))} · ` +
++                    `${String(row.artifact.versions.length)} versions</span></li>`;
++            }).join('') + '</ul>' : '<p class="note">No artifacts match.</p>';
++        }
++        input.addEventListener('input', draw);
++        draw();
++    }
++    function showArtifact(id, version) {
++        const artifact = (site.artifacts ?? []).find(function (a) { return a.id === id; });
++        const selected = version ?? artifact?.latest;
++        const item = artifact?.versions.find(function (v) { return v.version === selected; });
++        if (artifact === undefined || item === undefined) {
++            frame('artifacts', 'Artifact not found', '<h1>Artifact not found</h1>');
++            return;
++        }
++        const toolbar = document.createElement('div');
++        toolbar.className = 'artifactbar';
++        toolbar.innerHTML = `<a href="${esc(`${base}artifacts/`)}">Artifacts</a><strong>${esc(item.title)}</strong>` +
++            (artifact.preview ? '<span class="note">Local preview</span>' : '') +
++            '<label>Version <select aria-label="Artifact version"></select></label>' +
++            `<a class="artifactlatest" href="${esc(`${base}artifacts/${id}/${location.search}${location.hash}`)}">Latest</a>`;
++        const picker = toolbar.querySelector('select');
++        const latest = toolbar.querySelector('.artifactlatest');
++        if (picker === null || latest === null)
++            throw new Error('The artifact toolbar lost its version controls');
++        artifact.versions.forEach(function (v) {
++            const option = document.createElement('option');
++            option.value = v.version;
++            option.textContent = `${v.publishedAt.slice(0, 10)} · ${v.version.slice(0, 12)}` + (v.version === artifact.latest ? ' (latest)' : '');
++            option.title = v.version;
++            option.selected = v.version === item.version;
++            picker.appendChild(option);
++        });
++        picker.addEventListener('change', function () {
++            history.pushState(null, '', `${base}artifacts/${id}/${picker.value}/${location.search}${location.hash}`);
++            route();
++        });
++        showHtml('artifacts', item.entry, item.title, toolbar, null, undefined, location.search, function () {
++            latest.href = `${base}artifacts/${id}/${location.search}${location.hash}`;
++        });
++    }
+     function route() {
+         const path = location.pathname;
+         let rel = path.startsWith(base) ? path.slice(base.length) : path.replace(/^\//, '');
+@@ -731,6 +795,8 @@
+                 // A repository with no projects opens on its docs instead.
+                 if (site.projects.length > 0)
+                     showProjects();
++                else if (site.readme === null && site.docs.length === 0 && (site.artifacts ?? []).length > 0)
++                    showArtifacts();
+                 else
+                     showDocs(site.readme);
+                 return;
+@@ -740,6 +806,9 @@
+             case 'reviews':
+                 showReviews();
+                 return;
++            case 'artifacts':
++                showArtifacts();
++                return;
+             case 'docs':
+                 showDocs(site.readme);
+                 return;
+@@ -747,6 +816,11 @@
+                 showSearch(new URLSearchParams(location.search).get('q') ?? '');
+                 return;
+         }
++        const artifactRoute = /^artifacts\/([^/]+)(?:\/([^/]+))?$/.exec(rel);
++        if (artifactRoute !== null) {
++            showArtifact(artifactRoute[1] ?? '', artifactRoute[2]);
++            return;
++        }
+         const file = routes[`${rel}/`];
+         if (file !== undefined) {
+             if (inProjects(file))
+@@ -824,7 +898,7 @@
+         return response.json();
+     })
+         .then(function (data) {
+-        site = data;
++        site = { ...data, artifacts: data.artifacts ?? [] };
+         if (root === null) {
+             host.outerHTML = header('reviews', 'scrolls');
+             return;
+diff --git a/site/src/globals.d.ts b/site/src/globals.d.ts
+index 0425e046..29b6133b 100644
+--- a/site/src/globals.d.ts
++++ b/site/src/globals.d.ts
+@@ -229,6 +229,21 @@ interface SiteReview {
+   updated: string;
+ }
+ 
++interface ArtifactVersion {
++  version: string;
++  title: string;
++  description: string;
++  publishedAt: string;
++  entry: string;
++}
++
++interface SiteArtifact {
++  id: string;
++  latest: string | null;
++  versions: ArtifactVersion[];
++  preview: boolean;
++}
++
+ /** site.json: everything the build describes, from which the page draws every view. */
+ interface SiteData {
+   repo: string;
+@@ -242,6 +257,7 @@ interface SiteData {
+   projectsReadme: string | null;
+   files: string[];
+   reviews: SiteReview[];
++  artifacts?: SiteArtifact[];
+ }
+ 
+ /** One entry of search.json; `proposed` is the pull request that proposes the page's project, if one does. */
+diff --git a/site/src/site.ts b/site/src/site.ts
+index 65c9c6b5..9ffc258f 100644
+--- a/site/src/site.ts
++++ b/site/src/site.ts
+@@ -1,13 +1,7 @@
+-// Projector site: three sections, drawn from site.json. Projects lists the projects
+-// and renders each one's files in a summary page's layout, beside a summary's
+-// sidebar of its stacks, sections, and pages; Reviews lists the pull request
+-// summaries; Docs renders the README and everything else under docs/ beside a
+-// sidebar of that tree. A page is Markdown, rendered here, or HTML, shown as it is in a frame.
+-// Every view has a real path under the site's base; links between views update
+-// the address without a page load. Every page loads summary.js first, for the
+-// helpers a summary page draws with too.
++// GitHub Pages needs real paths. The shared shell handles links between views
++// without a page load, and summary.js supplies the layout and text helpers.
+ (function (): void {
+-  type Section = 'projects' | 'reviews' | 'docs' | 'search' | '';
++  type Section = 'projects' | 'reviews' | 'artifacts' | 'docs' | 'search' | '';
+   type Body = string | Node;
+   /** A page's sidebar, drawn once the page's sections are known. */
+   type SideNavOf = (sections: PageSection[]) => string;
+@@ -155,6 +149,7 @@
+     const items: [string, string, Section][] = [];
+     if (site.projects.length > 0) items.push([base, 'Projects', 'projects']);
+     if (site.reviews.length > 0) items.push([`${base}reviews/`, 'Reviews', 'reviews']);
++    if ((site.artifacts ?? []).some(function (a) { return a.latest !== null; })) items.push([`${base}artifacts/`, 'Artifacts', 'artifacts']);
+     if (site.readme !== null || site.docs.length > 0) items.push([`${base}docs/`, 'Docs', 'docs']);
+     return items.map(function (item) {
+       return `<a href="${esc(item[0])}"${item[2] === active ? ' class="active" aria-current="page"' : ''}>${esc(item[1])}</a>`;
+@@ -268,7 +263,7 @@
+   // loads by relative path resolve beside it. The address's hash passes into the
+   // frame and follows it back out, so a deep link into a hash-routed page works.
+   function showHtml(active: Section, path: string, title: string, before: Node | null, side: string | null,
+-    nav?: string): void {
++    nav?: string, query = '', onHashChange?: () => void): void {
+     const main = frame(active, title, '', side, true, undefined, nav);
+     if (before !== null) {
+       main.appendChild(before);
+@@ -277,7 +272,7 @@
+     const page = document.createElement('iframe');
+     page.className = 'htmlpage';
+     page.title = title;
+-    page.src = contentUrl(path) + location.hash;
++    page.src = contentUrl(path) + query + location.hash;
+     main.appendChild(page);
+     fitFrame = function (): void {
+       page.style.height = `${String(Math.max(240, window.innerHeight - page.getBoundingClientRect().top))}px`;
+@@ -290,6 +285,7 @@
+         if (inner.document.title !== '') document.title = `${inner.document.title} · ${site.repo}`;
+         inner.addEventListener('hashchange', function () {
+           history.replaceState(null, '', location.pathname + location.search + inner.location.hash);
++          onHashChange?.();
+         });
+       } catch { /* a page that navigated elsewhere is no longer ours to read */ }
+     });
+@@ -704,7 +700,7 @@
+ 
+   function showSearch(query: string): void {
+     const main = frame('search', query !== '' ? `Search: ${query}` : 'Search',
+-      '<h1>Search</h1><input class="filter" type="search" aria-label="Search the site" placeholder="Search the projects and docs">' +
++      '<h1>Search</h1><input class="filter" type="search" aria-label="Search the site" placeholder="Search the site">' +
+       '<ol class="results"></ol>');
+     const input = main.querySelector<HTMLInputElement>('.filter');
+     const list = main.querySelector<HTMLElement>('.results');
+@@ -732,6 +728,72 @@
+     });
+   }
+ 
++  function showArtifacts(): void {
++    const main = frame('artifacts', 'Artifacts', '<h1>Artifacts</h1>' +
++      '<input type="search" class="filter" aria-label="Filter artifacts" placeholder="Filter artifacts">' +
++      '<div class="artifactlist"></div>');
++    const input = main.querySelector<HTMLInputElement>('.filter');
++    const list = main.querySelector<HTMLElement>('.artifactlist');
++    if (input === null || list === null) throw new Error('The artifacts view lost its filter or list');
++    const rows = (site.artifacts ?? []).flatMap(function (artifact) {
++      const latest = artifact.versions.find(function (v) { return v.version === artifact.latest; });
++      return latest !== undefined ? [{ artifact, latest }] : [];
++    }).sort(function (a, b) {
++      return b.latest.publishedAt.localeCompare(a.latest.publishedAt) || a.artifact.id.localeCompare(b.artifact.id);
++    });
++    input.value = new URLSearchParams(location.search).get('q') ?? '';
++    function draw(): void {
++      if (input === null || list === null) return;
++      const q = input.value.trim().toLowerCase();
++      history.replaceState(null, '', `${base}artifacts/${q !== '' ? `?q=${encodeURIComponent(input.value.trim())}` : ''}`);
++      const shown = rows.filter(function (row) {
++        return `${row.artifact.id} ${row.latest.title} ${row.latest.description}`.toLowerCase().includes(q);
++      });
++      list.innerHTML = shown.length > 0 ? '<ul class="artifactrows">' + shown.map(function (row) {
++        return `<li><a href="${esc(`${base}artifacts/${row.artifact.id}/`)}">${esc(row.latest.title)}</a>` +
++          (row.artifact.preview ? ' <span class="note">Local preview</span>' : '') +
++          `<p>${esc(row.latest.description)}</p><span class="note">${esc(row.latest.publishedAt.slice(0, 10))} · ` +
++          `${String(row.artifact.versions.length)} versions</span></li>`;
++      }).join('') + '</ul>' : '<p class="note">No artifacts match.</p>';
++    }
++    input.addEventListener('input', draw);
++    draw();
++  }
++
++  function showArtifact(id: string, version?: string): void {
++    const artifact = (site.artifacts ?? []).find(function (a) { return a.id === id; });
++    const selected = version ?? artifact?.latest;
++    const item = artifact?.versions.find(function (v) { return v.version === selected; });
++    if (artifact === undefined || item === undefined) {
++      frame('artifacts', 'Artifact not found', '<h1>Artifact not found</h1>');
++      return;
++    }
++    const toolbar = document.createElement('div');
++    toolbar.className = 'artifactbar';
++    toolbar.innerHTML = `<a href="${esc(`${base}artifacts/`)}">Artifacts</a><strong>${esc(item.title)}</strong>` +
++      (artifact.preview ? '<span class="note">Local preview</span>' : '') +
++      '<label>Version <select aria-label="Artifact version"></select></label>' +
++      `<a class="artifactlatest" href="${esc(`${base}artifacts/${id}/${location.search}${location.hash}`)}">Latest</a>`;
++    const picker = toolbar.querySelector('select');
++    const latest = toolbar.querySelector<HTMLAnchorElement>('.artifactlatest');
++    if (picker === null || latest === null) throw new Error('The artifact toolbar lost its version controls');
++    artifact.versions.forEach(function (v) {
++      const option = document.createElement('option');
++      option.value = v.version;
++      option.textContent = `${v.publishedAt.slice(0, 10)} · ${v.version.slice(0, 12)}` + (v.version === artifact.latest ? ' (latest)' : '');
++      option.title = v.version;
++      option.selected = v.version === item.version;
++      picker.appendChild(option);
++    });
++    picker.addEventListener('change', function () {
++      history.pushState(null, '', `${base}artifacts/${id}/${picker.value}/${location.search}${location.hash}`);
++      route();
++    });
++    showHtml('artifacts', item.entry, item.title, toolbar, null, undefined, location.search, function () {
++      latest.href = `${base}artifacts/${id}/${location.search}${location.hash}`;
++    });
++  }
++
+   function route(): void {
+     const path = location.pathname;
+     let rel = path.startsWith(base) ? path.slice(base.length) : path.replace(/^\//, '');
+@@ -741,13 +803,20 @@
+       case '':
+         // A repository with no projects opens on its docs instead.
+         if (site.projects.length > 0) showProjects();
++        else if (site.readme === null && site.docs.length === 0 && (site.artifacts ?? []).length > 0) showArtifacts();
+         else showDocs(site.readme);
+         return;
+       case 'projects': showProjects(); return;
+       case 'reviews': showReviews(); return;
++      case 'artifacts': showArtifacts(); return;
+       case 'docs': showDocs(site.readme); return;
+       case 'search': showSearch(new URLSearchParams(location.search).get('q') ?? ''); return;
+     }
++    const artifactRoute = /^artifacts\/([^/]+)(?:\/([^/]+))?$/.exec(rel);
++    if (artifactRoute !== null) {
++      showArtifact(artifactRoute[1] ?? '', artifactRoute[2]);
++      return;
++    }
+     const file = routes[`${rel}/`];
+     if (file !== undefined) {
+       if (inProjects(file)) showProjectFile(file);
+@@ -816,7 +885,7 @@
+       return response.json() as Promise<SiteData>;
+     })
+     .then(function (data) {
+-      site = data;
++      site = { ...data, artifacts: data.artifacts ?? [] };
+       if (root === null) {
+         host.outerHTML = header('reviews', 'scrolls');
+         return;
+diff --git a/skills/artifact/SKILL.md b/skills/artifact/SKILL.md
+new file mode 100644
+index 00000000..39f2b2dc
+--- /dev/null
++++ b/skills/artifact/SKILL.md
+@@ -0,0 +1,104 @@
++---
++name: artifact
++description: Create or revise a static interactive page, visual explanation, chart, diagram, or small tool, with saved versions on the repository's Projector site. Use when the user asks to make an artifact or edit a published one. Do not use for backend applications or ordinary source-code changes.
++---
++
++# Make an artifact
++
++Build a finished interactive page for the user's question and publish it on
++the repository's Projector site. Artifacts live on a hidden Git ref, with a
++stable latest link, permanent version links, and a directory on the site.
++Use the `project` CLI shipped with Projector. If it rejects an artifact
++command as an invalid choice, run `project upgrade` and retry.
++
++## Create or recover the source
++
++Resolve the repository from the request or the checkout, and read its
++publication instructions. Use a short, stable lowercase ID such as
++`cache-explorer`. A later revision keeps the same ID. List existing artifacts
++when the user refers to one without giving its ID:
++
++```sh
++project artifact list --json
++project artifact list --id cache-explorer --json
++```
++
++Keep source in a dedicated working directory you can reach again. Create a
++new bundle, or recover the published source before revising an existing one:
++
++```sh
++project artifact init cache-explorer --dir WORKDIR --title 'Cache explorer'
++project artifact init cache-explorer --dir WORKDIR --from-published
++```
++
++Choose one of those commands. The output directory must not exist. To recover
++an older version, add `--version FULL_VERSION_ID`. Recovery and listing fetch
++first; `--no-fetch` reads cached versions offline. Add `--checkout CHECKOUT`
++when your shell is outside the target repository.
++
++## Build and preview
++
++Author `index.html` and its supporting files. Use the representation and
++controls that help answer the question: a diagram, a chart with adjustable
++inputs, an explorer, or a small tool. Label controls, support keyboard use,
++provide readable contrast, and make the layout work on a phone. Explain the
++meaning of inputs and results inside the page.
++
++`artifact.json` records `schema: 1`, the `id`, a `title`, a `description`,
++`entry: "index.html"`, and `files`, an explicit list of paths relative to the
++bundle directory. List every file the page needs, including local data and
++binary assets; omit `artifact.json` itself. Use relative URLs. Compile any
++framework source before publishing and list the editable source too when
++future edits need it. The host runs no build commands or server code.
++
++The bundle accepts at most 1,000 regular files, 25 MiB per file, and 50 MiB
++total. Hidden files, symlinks, traversal, and case-colliding paths are refused.
++Keep credentials and source material outside the intended audience out of
++the bundle. Reading a pull request does not authorize publishing its code.
++
++Preview in the repository's site, without writing a ref:
++
++```sh
++project site serve --artifacts WORKDIR --no-fetch
++```
++
++Open `artifacts/ID/` under the printed address. Exercise the actual controls,
++relative data fetches, keyboard interaction, phone layout, and any deep-link
++state. Fix console errors and failed requests before publication. Do not add
++or allow a `site.prepare` command merely to preview the bundle. Stop a server
++you started when it is no longer needed.
++
++## Save and hand over
++
++An artifact request publishes to an already configured Projector site by
++default. A request for local preview stays local. Run publication directly,
++as a tool call of its own, with no `cd`, wrapper, or chained command:
++
++```sh
++project artifact publish --dir WORKDIR
++```
++
++Add `--checkout CHECKOUT` when needed. Use `--local` when the user wants a
++local saved version. The CLI validates the bundle before writing anything.
++Where hosting is absent, cannot be checked, or would expose private content,
++it saves locally and pushes nothing. Tell the user the preview route and
++point them to Projector's site setup instructions. Do not enable Pages or
++change its audience unless asked.
++
++Give the user the latest link and the saved version's link, or the local
++preview route. A hosted publish requests a deploy; the page is available
++after that workflow succeeds. Check its result before calling it deployed.
++If dispatch fails, the CLI distinguishes saved content from deployment and
++prints the workflow retry command. Report that state; do not manufacture a
++new version to retry a deploy.
++
++Every changed bundle saves a new content-based version. Republishing existing
++content adds no version and does not move latest backwards. The site's
++Artifacts directory and version picker expose the saved history. GitHub
++repository write permissions control publishing, and GitHub Pages controls
++who can read all versions. A hidden ref is not a separate privacy boundary.
++
++Follow `../writing.md` for prose in the artifact and its hand-over. For the
++file format, commands, and site access details, read the repository's
++`docs/site.md` when working in Projector itself, or the installed Projector
++site documentation otherwise.
+diff --git a/src/projector/artifact.py b/src/projector/artifact.py
+new file mode 100644
+index 00000000..7c741c6a
+--- /dev/null
++++ b/src/projector/artifact.py
+@@ -0,0 +1,439 @@
++from __future__ import annotations
++
++import datetime
++import hashlib
++import html
++import json
++import re
++import stat
++import sys
++import tempfile
++from dataclasses import dataclass, field
++from functools import partial
++from pathlib import Path, PurePosixPath, PureWindowsPath
++from typing import Callable
++
++from . import refs, summary
++from .core import ProjectorError
++
++REF = 'refs/projector/artifacts'
++FOLDER = 'artifacts'
++MAX_FILE = 25 * 1024 * 1024
++MAX_BUNDLE = 50 * 1024 * 1024
++MAX_FILES = 1000
++MAX_JSON = 1024 * 1024
++ID = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*\Z')
++VERSION = re.compile(r'[0-9a-f]{64}\Z')
++
++
++class ArtifactError(ProjectorError):
++    pass
++
++
++def identifier(value: str) -> str:
++    if not isinstance(value, str) or not ID.fullmatch(value) or len(value) > 80:
++        raise ArtifactError(f'{value!r}: use a lowercase artifact ID of at most 80 letters, digits, and hyphens')
++    return value
++
++
++def file_path(value: str) -> str:
++    if (not isinstance(value, str) or not value or '\\' in value or PureWindowsPath(value).drive
++            or any(ord(c) < 32 or ord(c) == 127 for c in value)
++            or any(not part or part.startswith('.') for part in value.split('/'))
++            or PurePosixPath(value).is_absolute()):
++        raise ArtifactError(f'{value!r}: expected a regular relative path without hidden components or traversal')
++    return value
++
++
++def manifest(value: dict) -> dict:
++    if not isinstance(value, dict) or type(value.get('schema')) is not int or value['schema'] != 1:
++        raise ArtifactError('artifact.json needs schema 1')
++    if set(value) - {'schema', 'id', 'title', 'description', 'entry', 'files'}:
++        raise ArtifactError('artifact.json has unknown fields')
++    identifier(value.get('id'))
++    for name, limit in [('title', 120), ('description', 500)]:
++        text = value.get(name, '')
++        if not isinstance(text, str) or len(text) > limit or (name == 'title' and not text.strip()):
++            raise ArtifactError(f'artifact.json needs {name} as plain text of at most {limit} characters')
++    paths = value.get('files')
++    if not isinstance(paths, list) or not 1 <= len(paths) <= MAX_FILES:
++        raise ArtifactError(f'artifact.json needs between 1 and {MAX_FILES} files')
++    seen = {}
++    for path in paths:
++        file_path(path)
++        if path == 'artifact.json':
++            raise ArtifactError('artifact.json is metadata; omit it from files')
++        if path.casefold() in seen:
++            raise ArtifactError(f'{path}: duplicate path or case collision')
++        seen[path.casefold()] = path
++    for path in paths:
++        for parent in PurePosixPath(path).parents:
++            if str(parent).casefold() in seen:
++                raise ArtifactError(f'{path}: a parent is listed as a file')
++    if value.get('entry') != 'index.html' or 'index.html' not in paths:
++        raise ArtifactError('artifact.json needs entry index.html and must list index.html in files')
++    return {**value, 'description': value.get('description', ''), 'files': sorted(paths)}
++
++
++def json_bytes(value) -> bytes:
++    try:
++        return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
++    except (UnicodeError, TypeError, ValueError) as error:
++        raise ArtifactError('artifact metadata must contain UTF-8 JSON values') from error
++
++
++def parse_json(data: bytes, name: str):
++    try:
++        return json.loads(data)
++    except (ValueError, UnicodeError) as error:
++        raise ArtifactError(f'{name}: invalid JSON: {error}') from error
++
++
++def safe_read(root: Path, path: str, limit: int) -> bytes:
++    file_path(path)
++    current = root
++    if root.is_symlink():
++        raise ArtifactError(f'{root}: symlinks are not supported')
++    try:
++        for part in path.split('/'):
++            current = current / part
++            if current.is_symlink():
++                raise ArtifactError(f'{path}: symlinks are not supported')
++        info = current.stat()
++        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
++            raise ArtifactError(f'{path}: expected a regular file of at most {limit} bytes')
++        with current.open('rb') as source:
++            data = source.read(limit + 1)
++        if len(data) > limit:
++            raise ArtifactError(f'{path}: exceeds {limit} bytes')
++        return data
++    except OSError as error:
++        raise ArtifactError(f'{path}: {error.strerror}') from error
++
++
++@dataclass
++class Bundle:
++    manifest: dict
++    files: dict[str, bytes]
++    version: str
++    records: list[dict]
++    published_at: str = ''
++
++    @property
++    def id(self) -> str:
++        return self.manifest['id']
++
++    def revision(self) -> dict:
++        return {'version': self.version, 'publishedAt': self.published_at, 'files': self.records}
++
++
++def bundle(meta: dict, read: Callable[[str, int], bytes]) -> Bundle:
++    meta = manifest(meta)
++    files, records, total = {}, [], 0
++    for path in meta['files']:
++        data = read(path, min(MAX_FILE, MAX_BUNDLE - total))
++        total += len(data)
++        files[path] = data
++        records.append({'path': path, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
++    if len(json_bytes(meta)) > MAX_JSON or len(json_bytes(records)) > MAX_JSON - 256:
++        raise ArtifactError(f'artifact metadata exceeds {MAX_JSON} bytes')
++    version = hashlib.sha256(json_bytes({'manifest': meta, 'files': records})).hexdigest()
++    return Bundle(meta, files, version, records)
++
++
++def snapshot(directory: Path) -> Bundle:
++    value = parse_json(safe_read(directory, 'artifact.json', MAX_JSON), 'artifact.json')
++    return bundle(value, partial(safe_read, directory))
++
++
++def write_source(saved: Bundle, directory: Path) -> None:
++    if directory.exists() or directory.is_symlink():
++        raise ArtifactError(f'{directory}: already exists; choose a new working directory')
++    directory.parent.mkdir(parents=True, exist_ok=True)
++    with tempfile.TemporaryDirectory(dir=directory.parent, prefix='.artifact-') as temp:
++        work = Path(temp) / 'bundle'
++        work.mkdir()
++        (work / 'artifact.json').write_bytes(json_bytes(saved.manifest) + b'\n')
++        for path, data in saved.files.items():
++            target = work / path
++            target.parent.mkdir(parents=True, exist_ok=True)
++            target.write_bytes(data)
++        work.rename(directory)
++
++
++def init(id: str, directory: Path, title: str, description: str = '') -> None:
++    meta = manifest({'schema': 1, 'id': id, 'title': title, 'description': description,
++                     'entry': 'index.html', 'files': ['index.html']})
++    page = ('<!doctype html>\n<meta charset="utf-8">\n'
++            '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
++            f'<title>{html.escape(title)}</title>\n<h1>{html.escape(title)}</h1>\n')
++    write_source(bundle(meta, lambda path, limit: page.encode('utf-8')), directory)
++
++
++class GitReader:
++    def __init__(self, root: Path, ref: str, prefix: str = FOLDER):
++        self.root = root
++        self.entries = {}
++        self.blobs = {}
++        listing = refs.git_bytes('ls-tree', '-r', '-l', '-z', ref, '--', prefix, root=root)
++        for record in listing.split(b'\0'):
++            if not record:
++                continue
++            header, path = record.split(b'\t', 1)
++            mode, kind, oid, size = header.split()
++            try:
++                name = path.decode('utf-8').removeprefix(FOLDER + '/')
++            except UnicodeError:
++                continue
++            self.entries[name] = (mode, kind, oid.decode(), int(size) if size.isdigit() else -1)
++
++    def read(self, path: str, limit: int) -> bytes:
++        record = self.entries.get(path)
++        if record is None:
++            raise ArtifactError(f'{path}: missing from the saved version')
++        mode, kind, oid, size = record
++        if mode not in (b'100644', b'100755') or kind != b'blob' or not 0 <= size <= limit:
++            raise ArtifactError(f'{path}: expected a regular blob of at most {limit} bytes')
++        if oid not in self.blobs:
++            self.blobs[oid] = refs.git_bytes('cat-file', 'blob', oid, root=self.root)
++        return self.blobs[oid]
++
++    def manifests(self) -> list[str]:
++        return [name for name in self.entries if name.count('/') == 2 and name.endswith('/artifact.json')]
++
++
++class DirectoryReader:
++    def __init__(self, root: Path):
++        self.root = root
++
++    def read(self, path: str, limit: int) -> bytes:
++        return safe_read(self.root, path, limit)
++
++    def manifests(self) -> list[str]:
++        paths = []
++        if not self.root.exists():
++            return paths
++        if self.root.is_symlink():
++            raise ArtifactError(f'{self.root}: symlinks are not supported')
++        for folder in sorted(self.root.iterdir()):
++            if not folder.is_dir() or folder.is_symlink():
++                continue
++            for version in sorted(folder.iterdir()):
++                if version.is_dir() and not version.is_symlink():
++                    paths.append(f'{folder.name}/{version.name}/artifact.json')
++        return paths
++
++
++def read_version(reader, prefix: str) -> Bundle:
++    id, version = prefix.split('/')
++    identifier(id)
++    if not VERSION.fullmatch(version):
++        raise ArtifactError(f'{prefix}: invalid version ID')
++    meta = parse_json(reader.read(f'{prefix}/artifact.json', MAX_JSON), f'{prefix}/artifact.json')
++    saved = bundle(meta, lambda path, limit: reader.read(f'{prefix}/files/{path}', limit))
++    record = parse_json(reader.read(f'{prefix}/revision.json', MAX_JSON), f'{prefix}/revision.json')
++    if not isinstance(record, dict) or (saved.id, saved.version) != (id, version) or \
++            record.get('version') != version or record.get('files') != saved.records:
++        raise ArtifactError(f'{prefix}: version or file hashes do not match the saved bytes')
++    try:
++        published = record['publishedAt']
++        when = datetime.datetime.fromisoformat(published.replace('Z', '+00:00'))
++        if when.utcoffset() != datetime.timedelta(0):
++            raise ValueError('expected UTC')
++    except (KeyError, ValueError, TypeError, AttributeError) as error:
++        raise ArtifactError(f'{prefix}: invalid UTC publication time') from error
++    saved.published_at = published
++    return saved
++
++
++@dataclass
++class Saved:
++    versions: dict[str, Bundle] = field(default_factory=dict)
++    latest: str | None = None
++    preview: bool = False
++
++
++def diagnostic(message: str) -> None:
++    print(f'artifact: {message}', file=sys.stderr)
++
++
++def read_saved(reader, report: Callable[[str], None] = diagnostic) -> dict[str, Saved]:
++    found: dict[str, Saved] = {}
++    for path in reader.manifests():
++        prefix = path.rsplit('/', 1)[0]
++        try:
++            item = read_version(reader, prefix)
++        except (ArtifactError, refs.RefError) as error:
++            report(f'skipping {prefix}: {error}')
++            continue
++        found.setdefault(item.id, Saved()).versions[item.version] = item
++    for id, saved in found.items():
++        try:
++            pointer = parse_json(reader.read(f'{id}/latest.json', MAX_JSON), f'{id}/latest.json')
++            version = pointer.get('version') if isinstance(pointer, dict) else None
++            if not isinstance(version, str) or version not in saved.versions:
++                raise ArtifactError('latest does not name a valid saved version')
++            saved.latest = version
++        except ArtifactError as error:
++            report(f'{id}: {error}; leaving it out of the directory')
++    return found
++
++
++def read_refs(root: Path, remote: str, report: Callable = diagnostic) -> dict[str, Saved]:
++    found: dict[str, Saved] = {}
++    for name in (refs.tracking_ref(remote, REF), REF):
++        if not refs.ref_tip(root, name):
++            continue
++        loaded = read_saved(GitReader(root, name), report)
++        for id, saved in loaded.items():
++            target = found.setdefault(id, Saved())
++            for version, item in saved.versions.items():
++                target.versions.setdefault(version, item)
++            target.latest = saved.latest
++            target.preview = name == REF
++    return found
++
++
++def recover(saved: Saved, directory: Path, version: str | None = None) -> None:
++    selected = version or saved.latest
++    if selected not in saved.versions:
++        raise ArtifactError(f'{selected!r}: no saved artifact version; use the full version ID')
++    write_source(saved.versions[selected], directory)
++
++
++def publish(source: Bundle, root: Path, remote: str, *, push: bool) -> Bundle:
++    run = lambda *args, **kwargs: refs.git(*args, root=root, **kwargs)
++    source.published_at = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
++    result = [source]
++    prefix = f'{source.id}/{source.version}'
++
++    def tree(parent: str) -> str:
++        if parent:
++            reader = GitReader(root, parent, f'{FOLDER}/{prefix}')
++            if f'{prefix}/artifact.json' in reader.entries:
++                result[0] = read_version(reader, prefix)
++                return run('rev-parse', f'{parent}^{{tree}}')
++        files = {f'{FOLDER}/{prefix}/files/{path}': data for path, data in source.files.items()}
++        files[f'{FOLDER}/{prefix}/artifact.json'] = json_bytes(source.manifest) + b'\n'
++        files[f'{FOLDER}/{prefix}/revision.json'] = json_bytes(source.revision()) + b'\n'
++        files[f'{FOLDER}/{source.id}/latest.json'] = json_bytes({'version': source.version}) + b'\n'
++        return refs.write_tree(parent, files, run=run)
++
++    update = refs.publish(REF, remote, tree, f'Publish artifact {source.id} at {source.version[:12]}',
++                          push=push, run=run)
++    verb = 'pushed' if push else 'saved locally'
++    print(f'{verb} {source.id}/{source.version}' if update.commit else
++          f'already saved {source.id}/{source.version}; latest is unchanged')
++    return result[0]
++
++
++def public(id: str, saved: Saved) -> dict:
++    versions = [{'version': item.version, 'title': item.manifest['title'],
++                 'description': item.manifest['description'], 'publishedAt': item.published_at,
++                 'entry': f'artifacts/{id}/{item.version}/index.html'} for item in saved.versions.values()]
++    versions.sort(key=lambda item: (item['publishedAt'], item['version']), reverse=True)
++    return {'id': id, 'latest': saved.latest, 'versions': versions, 'preview': saved.preview}
++
++
++def fetch(root: Path, remote: str, prompt: bool = True) -> str:
++    try:
++        refs.fetch_ref(remote, REF, run=partial(refs.git, root=root), prompt=prompt)
++    except refs.RefError as error:
++        return str(error)
++    return ''
++
++
++def ref_versions(root: Path, remote: str) -> tuple:
++    return tuple(refs.ref_tip(root, name) for name in (refs.tracking_ref(remote, REF), REF))
++
++
++def repository(root: Path, remote: str) -> str:
++    try:
++        url = refs.git('remote', 'get-url', remote, root=root)
++    except refs.RefError:
++        return ''
++    if not url.startswith(('git@github.com:', 'ssh://git@github.com/', 'https://github.com/')):
++        return ''
++    name = summary.repo_slug(url)
++    return name if re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', name) else ''
++
++
++def run(arguments) -> int:
++    root = summary.checkout_root(arguments.checkout)
++    if root is None:
++        raise ArtifactError('artifact commands need a Git checkout; pass --checkout')
++    command, remote = arguments.artifact_command, arguments.remote
++    if command == 'init' and not arguments.from_published:
++        if arguments.version or not arguments.title:
++            raise ArtifactError('a new artifact needs --title; --version goes with --from-published')
++        init(arguments.id, arguments.dir, arguments.title, arguments.description)
++        print(f'wrote {arguments.dir}/artifact.json and index.html')
++        return 0
++    if command in ('list', 'init'):
++        if not arguments.no_fetch:
++            reason = fetch(root, remote)
++            if reason:
++                diagnostic(f'using cached artifacts: {reason}')
++        saved = read_refs(root, remote)
++        id = arguments.id
++        if id:
++            identifier(id)
++            if id not in saved:
++                raise ArtifactError(f'{id}: no saved artifact')
++        if command == 'init':
++            if arguments.title or arguments.description:
++                raise ArtifactError('--from-published keeps the saved metadata; edit it after recovery')
++            recover(saved[id], arguments.dir, arguments.version)
++            print(f'recovered {id} to {arguments.dir}')
++        else:
++            rows = [public(name, value) for name, value in sorted(saved.items()) if id is None or name == id]
++            if arguments.json_output:
++                print(json.dumps({'artifacts': rows}, ensure_ascii=False, indent=2))
++            else:
++                for row in rows:
++                    if id:
++                        for version in row['versions']:
++                            marker = ' latest' if version['version'] == row['latest'] else ''
++                            if marker and row['preview']:
++                                marker += ' (local preview)'
++                            print(f"{version['version']} {version['publishedAt']}{marker}")
++                    else:
++                        newest = next((v for v in row['versions'] if v['version'] == row['latest']), None)
++                        print(f"{row['id']}\t{newest['title'] if newest else '(no latest)'}\t"
++                              f"{row['latest']}\t{len(row['versions'])} versions"
++                              f"{' (local preview)' if row['preview'] else ''}")
++        return 0
++    source = snapshot(arguments.dir)
++    url, reason = None, ''
++    repo = ''
++    if not arguments.local:
++        repo = repository(root, remote)
++        if repo:
++            url, reason = summary.push_decision(repo)
++        else:
++            reason = f'{remote} is not a GitHub repository'
++    saved = publish(source, root, remote, push=url is not None)
++    if url is None:
++        if reason:
++            print(f'nothing pushed: {reason}')
++        print(f'preview with project site serve at artifacts/{saved.id}/')
++        return 0
++    print(f'latest: {url}artifacts/{saved.id}/')
++    print(f'version: {url}artifacts/{saved.id}/{saved.version}/')
++    if not arguments.no_dispatch:
++        workflow = Path(summary.WORKFLOW_PATH).name
++        branch = summary.default_branch(remote, root)
++        try:
++            path = summary.site_workflow(repo)
++            if path is None:
++                raise summary.SummaryError('the site workflow is missing')
++            workflow = Path(path).name
++            branch = summary.gh('api', f'repos/{repo}', '--jq', '.default_branch').strip()
++            if not branch:
++                raise summary.SummaryError('could not read the remote default branch')
++            summary.gh('api', f'repos/{repo}/actions/workflows/{workflow}/dispatches', '-f', f'ref={branch}')
++        except summary.SummaryError as error:
++            raise ArtifactError(f'content is saved, but deployment did not start: {error}; retry with '
++                                f'gh workflow run {workflow} --repo {repo} --ref {branch}') from error
++        print('deployment requested; the site updates after its workflow succeeds')
++    return 0
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 33a24c62..c51a1bcd 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -27,7 +27,7 @@
+ 
+ from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
+                summary, watch)
+-from . import ci, hosted, rows
++from . import artifact, ci, hosted, rows
+ from . import run as headless
+ from .permissions import allow_commands
+ from .summary import WORKFLOW_PATH
+@@ -991,7 +991,7 @@ def parser() -> argparse.ArgumentParser:
+     # Without abbreviations, --prepare and --allow-prepare are always spelled in
+     # full, so the ask rule `init` adds for them matches every spelling.
+     site_build = site_commands.add_parser(
+-        "build", help="build the site from the projects, the published reviews, and the docs", allow_abbrev=False
++        "build", help="build the site from projects, published reviews, artifacts, and docs", allow_abbrev=False
+     )
+     site_build.add_argument("--out", required=True)
+     site_build.add_argument("--summaries", help="directory holding <number>/<head>/summary.json files")
+@@ -1041,8 +1041,8 @@ def parser() -> argparse.ArgumentParser:
+     site_serve.add_argument(
+         "--summaries", help="directory holding <number>/<head>/summary.json files, instead of the summaries ref"
+     )
+-    site_serve.add_argument("--remote", default="origin", help="the remote to fetch summaries from (default: origin)")
+-    site_serve.add_argument("--no-fetch", action="store_true", help="serve the summaries already fetched")
++    site_serve.add_argument("--remote", default="origin", help="the remote to fetch reviews and artifacts from (default: origin)")
++    site_serve.add_argument("--no-fetch", action="store_true", help="serve cached reviews and artifacts without fetching")
+     site_serve.add_argument("--no-watch", action="store_true", help="build once instead of rebuilding on changes")
+     site_serve.add_argument(
+         "--prepare", metavar="COMMAND",
+@@ -1064,6 +1064,30 @@ def parser() -> argparse.ArgumentParser:
+         "--branch", help="the default branch whose README and docs changes rebuild the site (default: origin's)"
+     )
+ 
++    artifacts = subcommands.add_parser("artifact", help="create, recover, and publish versioned interactive pages")
++    artifact_commands = artifacts.add_subparsers(dest="artifact_command", required=True)
++    artifact_init = artifact_commands.add_parser("init", help="create a bundle or recover saved source")
++    artifact_init.add_argument("id")
++    artifact_init.add_argument("--dir", type=Path, required=True)
++    artifact_init.add_argument("--title")
++    artifact_init.add_argument("--description", default="")
++    artifact_init.add_argument("--from-published", action="store_true")
++    artifact_init.add_argument("--version")
++    artifact_list = artifact_commands.add_parser("list", help="list artifacts or an artifact's versions")
++    artifact_list.add_argument("--id")
++    add_output(artifact_list)
++    artifact_publish = artifact_commands.add_parser("publish", help="save a bundle on the hidden artifacts ref")
++    artifact_publish.add_argument("--dir", type=Path, required=True)
++    artifact_publish.add_argument("--local", action="store_true")
++    artifact_publish.add_argument("--no-dispatch", action="store_true")
++    for command in (artifact_init, artifact_list, artifact_publish):
++        command.add_argument("--checkout", type=Path)
++        command.add_argument("--remote", default="origin")
++    for command in (artifact_init, artifact_list):
++        command.add_argument("--no-fetch", action="store_true")
++    site_build.add_argument("--artifacts", type=Path, help="directory holding saved artifact versions")
++    site_serve.add_argument("--artifacts", type=Path, help="source bundle to preview over saved artifacts")
++
+     version = subcommands.add_parser("version", help="print the version of this command")
+     # Where this command's package lives, which `install.sh status` diffs against the checkout.
+     version.add_argument("--package-dir", action="store_true", help=argparse.SUPPRESS)
+@@ -3272,7 +3296,8 @@ def trunk_branch(root: Path) -> str:
+     return head.split("/", 1)[1] if "/" in head else head
+ 
+ 
+-def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, repo: str) -> str:
++def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, repo: str,
++                   artifacts: dict | None = None) -> str:
+     """Build the site from a checkout, and summarize what it holds."""
+     projects, projects_dir = site_projects(root)
+ 
+@@ -3301,6 +3326,7 @@ def repo_stacks() -> Optional[tuple[list, int]]:
+     entries, failures, proposed = site.build_site(
+         out,
+         summaries=summaries,
++        artifacts=artifacts,
+         repo_root=root,
+         projects=projects,
+         projects_dir=projects_dir,
+@@ -3328,7 +3354,9 @@ def run_site_build(arguments: argparse.Namespace) -> int:
+     if command:
+         run_prepare(root, command)
+     summaries = Path(arguments.summaries) if arguments.summaries else None
+-    built = build_checkout(root, Path(arguments.out), summaries, arguments.base, repo)
++    artifacts = artifact.read_saved(artifact.DirectoryReader(arguments.artifacts)) if arguments.artifacts else \
++        artifact.read_refs(root, "origin")
++    built = build_checkout(root, Path(arguments.out), summaries, arguments.base, repo, artifacts)
+     print(f"wrote {arguments.out}/index.html: {built}")
+     return 0
+ 
+@@ -3347,16 +3375,23 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
+         if fetched:
+             print(f"serving the summaries already fetched; {arguments.remote} has none to fetch: {fetched}",
+                   file=sys.stderr)
++    artifact_fetched = ""
++    if not arguments.no_fetch:
++        artifact_fetched = artifact.fetch(root, arguments.remote)
++        if artifact_fetched:
++            artifact.diagnostic(f"using cached artifacts: {artifact_fetched}")
+     projects_dir = configured_projects_dir(root)
+     watched = [root / "README.md", root / "docs"]
+     if projects_dir is not None:
+         watched.append(projects_dir if projects_dir.is_absolute() else root / projects_dir)
+     if given is not None:
+         watched.append(given)
++    if arguments.artifacts is not None:
++        watched.append(arguments.artifacts.resolve())
+ 
+     def sources() -> tuple:
+         files = serve.fingerprint([path for path in watched if path.exists()])
+-        return files, published.version() if published is not None else ()
++        return files, published.version() if published is not None else (), artifact.ref_versions(root, arguments.remote)
+ 
+     def build(out: Path) -> str:
+         # The build copies what it needs from the summaries, so they outlive it only as long as it runs.
+@@ -3364,7 +3399,14 @@ def build(out: Path) -> str:
+             summaries = published.extract(Path(extracted)) if published is not None else given
+             # The build reports each page as a deploy log would; a server keeps only its one-line result.
+             with contextlib.redirect_stdout(io.StringIO()):
+-                return build_checkout(root, out, summaries, base, repo)
++                artifacts = artifact.read_refs(root, arguments.remote)
++                if arguments.artifacts is not None:
++                    preview = artifact.snapshot(arguments.artifacts)
++                    preview.published_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
++                    saved = artifacts.setdefault(preview.id, artifact.Saved())
++                    saved.versions[preview.version] = preview
++                    saved.latest, saved.preview = preview.version, True
++                return build_checkout(root, out, summaries, base, repo, artifacts)
+ 
+     command = prepare_command(root, arguments)
+     site_state = serve.Site(build, sources, (lambda: run_prepare(root, command)) if command else None)
+@@ -3401,6 +3443,10 @@ def interrupt(signum, frame) -> None:
+             if published is not None and not arguments.no_fetch:
+                 threading.Thread(target=serve.keep_fetching, daemon=True,
+                                  args=(published.fetch_quietly, stop, serve.FETCH_INTERVAL, report, fetched)).start()
++            if not arguments.no_fetch:
++                threading.Thread(target=serve.keep_fetching, daemon=True,
++                                 args=(lambda: artifact.fetch(root, arguments.remote, prompt=False), stop,
++                                       serve.FETCH_INTERVAL, report, artifact_fetched)).start()
+         print(f"serving http://{shown}:{port}{base}; press Ctrl-C to stop", flush=True)
+         server.serve_forever()
+     except KeyboardInterrupt:
+@@ -4055,6 +4101,8 @@ def run(arguments: argparse.Namespace) -> int:
+         return run_config(arguments)
+     if arguments.command == "upgrade":
+         return run_upgrade(arguments.target)
++    if arguments.command == "artifact":
++        return artifact.run(arguments)
+     if arguments.command == "summary":
+         return run_summary(arguments)
+     if arguments.command == "site":
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 6ce2a814..bb18a340 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -141,8 +141,8 @@
+ # justification Codex shows for it.
+ CODEX_ALLOW = (
+     (["project", ["check", "done", "help", "list", "owner", "preview", "priority", "search", "show", "status",
+-                  "summary", "version", "watch", "worktree"]],
+-     "Runs a Projector command that works on plans, watches, or pull request summaries, finds a branch's "
++                  "artifact", "summary", "version", "watch", "worktree"]],
++     "Runs a Projector command that works on plans or watches, publishes review summaries or artifacts, finds a branch's "
+      "worktree or a pull request's Vercel preview, or prints its version or help."),
+     (["project", "agent", ["list", "read", "register", "reply", "send", "unregister"]],
+      "Registers or unregisters the session, lists your registered sessions, or sends, reads, or answers a message "
+diff --git a/src/projector/refs.py b/src/projector/refs.py
+new file mode 100644
+index 00000000..8b14c278
+--- /dev/null
++++ b/src/projector/refs.py
+@@ -0,0 +1,118 @@
++from __future__ import annotations
++
++import os
++import random
++import subprocess
++import tempfile
++import time
++from pathlib import Path
++from typing import Callable, NamedTuple
++
++from .core import ProjectorError
++
++ATTEMPTS = 5
++RACE_SIGNS = ('non-fast-forward', 'fetch first', 'stale info', 'cannot lock ref', 'failed to update ref')
++
++
++class RefError(ProjectorError):
++    pass
++
++
++def git_bytes(*args: str, root: Path | None = None, env: dict | None = None,
++              input: str | bytes | None = None, prompt: bool = True) -> bytes:
++    command = ['git', *(['-C', str(root)] if root else []), *args]
++    data = input.encode('utf-8') if isinstance(input, str) else input
++    result = subprocess.run(command, capture_output=True, input=data,
++                            stdin=subprocess.DEVNULL if not prompt and data is None else None,
++                            env=env if prompt else
++                            {**(env or os.environ), 'GIT_TERMINAL_PROMPT': '0'}, start_new_session=not prompt)
++    if result.returncode:
++        raise RefError(f"git {' '.join(args)} failed: {result.stderr.decode('utf-8', errors='replace').strip()}")
++    return result.stdout
++
++
++def git(*args: str, **kwargs) -> str:
++    return git_bytes(*args, **kwargs).decode('utf-8', errors='replace').strip()
++
++
++def tracking_ref(remote: str, ref: str) -> str:
++    return ref.replace('refs/projector/', f'refs/projector/remotes/{remote}/', 1)
++
++
++def ref_tip(root: Path, ref: str) -> str:
++    result = subprocess.run(['git', '-C', str(root), 'rev-parse', '--verify', '--quiet', f'{ref}^{{commit}}'],
++                            capture_output=True)
++    return result.stdout.decode().strip() if result.returncode == 0 else ''
++
++
++def fetch_ref(remote: str, ref: str, run: Callable = git, strict: bool = True, prompt: bool = True) -> str:
++    local = tracking_ref(remote, ref)
++    try:
++        run('fetch', '--quiet', '--no-tags', '--no-write-fetch-head', remote, f'+{ref}:{local}', prompt=prompt)
++    except RefError as error:
++        if strict and not any(sign in str(error) for sign in ("couldn't find remote ref", 'remote ref does not exist')):
++            raise
++        return ''
++    return run('rev-parse', '--verify', '--quiet', local)
++
++
++def write_tree(parent: str, files: dict[str, str | bytes], run: Callable = git,
++               blobs: dict[str, str] | None = None) -> str:
++    with tempfile.TemporaryDirectory() as tmp:
++        env = {**os.environ, 'GIT_INDEX_FILE': str(Path(tmp) / 'index')}
++        if parent:
++            run('read-tree', parent, env=env)
++        entries = dict(blobs or {})
++        for name, content in files.items():
++            entries[name] = run('hash-object', '-w', '--stdin', input=content)
++        run('update-index', '-z', '--index-info', env=env,
++            input=''.join(f'100644 {blob}\t{name}\0' for name, blob in sorted(entries.items())))
++        return run('write-tree', env=env)
++
++
++class Update(NamedTuple):
++    commit: str
++    parent: str
++    attempts: int
++
++
++def publish(ref: str, remote: str, tree: Callable[[str], str], message: str, *, push: bool,
++            run: Callable = git, seed: Callable[[], str] | None = None,
++            fetch: Callable[[], str] | None = None, sleep: Callable | None = None) -> Update:
++    sleep = sleep or time.sleep
++    fetch = fetch or (lambda: fetch_ref(remote, ref, run=run))
++    tip = fetch() if push else _tip(ref, run)
++    initial = (seed() if seed else '') if push and not tip else ''
++    for attempt in range(ATTEMPTS):
++        parent = tip or initial
++        written = tree(parent)
++        if parent and written == run('rev-parse', f'{parent}^{{tree}}'):
++            return Update('', parent, attempt)
++        commit = run('commit-tree', written, *(['-p', parent] if parent else []), '-m', message)
++        try:
++            if push:
++                run('push', '--quiet', remote, f'{commit}:{ref}')
++            else:
++                run('update-ref', ref, commit, tip or '0' * len(commit))
++        except RefError as error:
++            if attempt + 1 == ATTEMPTS:
++                raise
++            raced = any(sign in str(error) for sign in RACE_SIGNS)
++            if raced:
++                sleep(0.5 * 2 ** attempt + random.uniform(0, 0.25))
++            moved = fetch() if push else _tip(ref, run)
++            if (tip and not moved) or (moved == tip and not raced):
++                raise
++            tip = moved
++        else:
++            if push:
++                run('update-ref', tracking_ref(remote, ref), commit)
++            return Update(commit, parent, attempt)
++    raise RefError('could not update the publication ref')
++
++
++def _tip(ref: str, run: Callable) -> str:
++    try:
++        return run('rev-parse', '--verify', '--quiet', f'{ref}^{{commit}}')
++    except RefError:
++        return ''
+diff --git a/src/projector/relay.py b/src/projector/relay.py
+index 07cfcaf2..80d26184 100644
+--- a/src/projector/relay.py
++++ b/src/projector/relay.py
+@@ -53,6 +53,7 @@
+ 
+ from . import agents, config, crypto, keychain, repo_inbox, review, s3, summary, watch
+ from .config import INLINE_KEY, KEYCHAIN, ConfigError, inline_key, unset_value, user_config_path, write_value
++from .refs import tracking_ref
+ from .core import ProjectorError, run_bounded
+ from .inbox import SESSION, InboxError, locked, read_json, write_json
+ from .keychain import KeychainError
+@@ -516,7 +517,7 @@ def parse_ref(ref: str) -> Optional[tuple[str, str, str]]:
+ 
+ 
+ def tracking(ref: str) -> str:
+-    return summary.tracking_ref(REMOTE, ref)
++    return tracking_ref(REMOTE, ref)
+ 
+ 
+ def repo_file(root: Path, folder: str, repo: str) -> Path:
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index ebe4bc48..e368b713 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -1,19 +1,6 @@
+-"""The Projector site: the static pages a repository serves from GitHub Pages.
+-
+-The site is built from content Projector keeps in the repository: its
+-README, its `docs/` directory and the projects under it, and the pull request
+-summaries published to refs/projector/summaries, which the site calls
+-reviews. It has three sections, each at a real path under the site's base:
+-the projects at the root and under projects/, every file of a project at its
+-path inside the projects directory without `.md` or `.html`; the reviews
+-under reviews/<number>/<head>/, with the newest head also at
+-reviews/<number>/; and the docs under docs/, the README at docs/ itself and
+-every other document at its path without `.md` or `.html`. An HTML page is
+-shown as it is, in a frame inside the site, and the files beside it are
+-copied too, so a page that loads its own data or a WebAssembly module works
+-as it does from disk. GitHub Pages serves only files that exist, so each path
+-gets a small shell page that loads the one shared copy of the assets and
+-fetches its data.
++"""Build repository sites with plans, reviews, documents, and versioned artifacts.
++
++Every route has a shell file because GitHub Pages serves only files that exist.
+ """
+ 
+ from __future__ import annotations
+@@ -29,6 +16,7 @@
+ from importlib import resources
+ from pathlib import Path
+ 
++from .. import artifact
+ from ..core import Project, ProjectorError, project_from_text, title_from_text
+ from ..review import identity, review_counts, verdict_marker
+ from ..summary import (ATTRIBUTES_FILE, CONTEXT_MAX_BYTES, DIFF_FILE, HEAD_DIR, LEGACY_SUMMARY_FILE, SummaryError,
+@@ -53,7 +41,7 @@ def assets_dir():
+ CONTENT = "content"
+ MAX_FILE_BYTES = 20 * 1024 * 1024
+ PAGES = (".md", ".html")
+-FIXED_ROUTES = ("", "projects/", "reviews/", "docs/", "search/")
++FIXED_ROUTES = ("", "projects/", "reviews/", "artifacts/", "docs/", "search/")
+ # Where the site serves the head's copy of each file a summary page can expand.
+ BLOBS = "reviews/blobs"
+ 
+@@ -1038,11 +1026,33 @@ def review_row(entry: dict) -> dict:
+     return row
+ 
+ 
++def build_artifacts(saved: dict, out: Path) -> tuple[list[dict], list[dict], list[str]]:
++    rows, search, routes, total = [], [], [], 0
++    for id, item in sorted(saved.items()):
++        rows.append(artifact.public(id, item))
++        if item.latest:
++            routes.append(f"artifacts/{id}/")
++        for version, bundle in item.versions.items():
++            routes.append(f"artifacts/{id}/{version}/")
++            for path, data in bundle.files.items():
++                target = out / CONTENT / "artifacts" / id / version / path
++                target.parent.mkdir(parents=True, exist_ok=True)
++                target.write_bytes(data)
++                total += len(data)
++            if version == item.latest:
++                text = html_text(bundle.files["index.html"].decode("utf-8", errors="replace"))
++                search.append({"route": f"artifacts/{id}/", "title": bundle.manifest["title"], "kind": "artifact",
++                               "text": f"{bundle.manifest['description']} {text}".strip()})
++    if rows:
++        print(f"{len(rows)} artifacts, {total} artifact bytes across all versions")
++    return rows, search, routes
++
++
+ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None = None,
+                projects: list[Project] | None = None, projects_dir: Path | None = None,
+                repo: str = "", branch: str = "main", base: str = "/",
+                trunk: str | None = None, lookup=None, status_lookup=None,
+-               stacks_lookup=None, counted: tuple[str, ...] = ()) -> tuple[list[dict], list[str], list[dict]]:
++               stacks_lookup=None, counted: tuple[str, ...] = (), artifacts: dict | None = None) -> tuple[list[dict], list[str], list[dict]]:
+     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
+ 
+     `branch` is the checked-out branch the site's GitHub links point at, and
+@@ -1084,7 +1094,9 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     projects_readme = (projects_dir / "README.md").relative_to(repo_root).as_posix() \
+         if repo_root and projects_dir and (projects_dir / "README.md").is_file() else None
+     repo = repo or os.environ.get("GITHUB_REPOSITORY", "") or (entries[0]["pr"]["repo"] if entries else "")
++    artifact_rows, artifact_search, artifact_routes = build_artifacts(artifacts or {}, out)
+     manifest = {
++        "artifacts": artifact_rows,
+         "repo": repo,
+         "base": base,
+         "branch": branch,
+@@ -1099,9 +1111,10 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     }
+     (out / "site.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+     index = search_index(out / CONTENT, readme, docs, described, projects_readme) if repo_root else []
++    index.extend(artifact_search)
+     (out / "search.json").write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+     shell = home_page(repo, base)
+-    for route in site_routes(docs, described):
++    for route in sorted(set(site_routes(docs, described) + artifact_routes)):
+         (out / route).mkdir(parents=True, exist_ok=True)
+         (out / route / "index.html").write_text(shell, encoding="utf-8")
+     (out / "404.html").write_text(shell, encoding="utf-8")
+diff --git a/src/projector/site/serve.py b/src/projector/site/serve.py
+index 5292410c..adb32bfc 100644
+--- a/src/projector/site/serve.py
++++ b/src/projector/site/serve.py
+@@ -1,13 +1,8 @@
+-"""Serve the Projector site from a checkout, without GitHub Pages.
+-
+-`project site serve` builds the same static site a deploy does into a
+-temporary directory and serves it over HTTP. It reads summaries from the
+-checkout's copy of the hidden summaries ref, so it needs no GitHub Pages
+-site and no workflow. While it runs it watches the files the site is built
+-from and the summaries ref, fetching the ref again every minute, and
+-rebuilds when either changes, as each publish redeploys a Pages site.
+-`summary init --from-published` reads a pull request's newest summary from
+-the same refs.
++"""Serve a checkout's Projector site without GitHub Pages.
++
++The CLI builds into a temporary directory and watches content and published
++refs, including local previews. The server keeps an in-flight request's build
++until its replacement is ready.
+ """
+ 
+ from __future__ import annotations
+@@ -24,6 +19,7 @@
+ from typing import Callable, NamedTuple
+ from urllib.parse import urlsplit
+ 
++from ..refs import tracking_ref
+ from ..summary import LEGACY_PAGES_REF, LEGACY_PAGES_ROOT, LEGACY_SUMMARY_FILE, PAGES_REF, PAGES_ROOT
+ 
+ ThreadingHTTPServer = http.server.ThreadingHTTPServer
+@@ -42,11 +38,6 @@ def run_git(root: Path, *args: str, detached: bool = False) -> subprocess.Comple
+                           start_new_session=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+ 
+ 
+-def tracking_ref(remote: str, ref: str = PAGES_REF) -> str:
+-    """Where `summary publish` keeps its copy of the remote's summaries ref."""
+-    return ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
+-
+-
+ def fetch_summaries(root: Path, remote: str, ref: str = PAGES_REF, prompt: bool = True) -> str:
+     """Update the local copy of the remote's summaries ref, and say why when it cannot.
+ 
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index bc49ca4f..0478b4ab 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -16,7 +16,6 @@
+ from html.parser import HTMLParser
+ import json
+ import os
+-import random
+ import re
+ import shlex
+ import subprocess
+@@ -29,6 +28,9 @@
+ 
+ from .core import FileAction, ProjectorError, write_through
+ 
++from . import refs
++from .refs import RefError as SummaryError, git, fetch_ref
++
+ SUMMARY_VERSION = 1
+ CHECK_KINDS = ("context", "verify", "flag")
+ PAGES_REF = "refs/projector/summaries"
+@@ -46,14 +48,6 @@
+ NAME_MAX = 60
+ # The REST API version the stacks endpoint is documented under.
+ STACKS_API_VERSION = "2026-03-10"
+-# Publishes running at once, as a review loop's subagents run them, race to
+-# move the summaries ref, so a push that loses is rebuilt on the new tip and
+-# tried again, up to this many pushes in all.
+-PUSH_ATTEMPTS = 5
+-# What git prints when a push lost that race: the ref moved since the fetch, or
+-# the server could not lock or update it while another push held it. A hook or
+-# permission refusal says "rejected" too, so that word alone is not one of them.
+-PUSH_RACE_SIGNS = ("non-fast-forward", "fetch first", "stale info", "cannot lock ref", "failed to update ref")
+ # The name older releases stored each summary under. The site shows no summary
+ # from this file. It reports each one with no summary.json beside it, so the
+ # repository knows to republish it, and dates a republished summary by this file.
+@@ -200,10 +194,6 @@
+ )
+ 
+ 
+-class SummaryError(ProjectorError):
+-    pass
+-
+-
+ class NeedsAdmin(SummaryError):
+     """Setting up the site needs changes on GitHub that only an admin can make.
+ 
+@@ -561,8 +551,12 @@ def exposure(repo: str, pages: dict) -> str:
+     everything the site copies from the repository would be too. A site with
+     no `public` field is treated as public.
+     """
+-    if pages.get("public", True) and (gh_lookup("api", f"repos/{repo}", "--jq", ".private") or "").strip() == "true":
+-        return f"{repo} is private but its GitHub Pages site is public"
++    if pages.get("public") is not False:
++        restricted = (gh_lookup("api", f"repos/{repo}", "--jq", '.private or .visibility == "internal"') or "").strip()
++        if restricted not in ("true", "false"):
++            raise SummaryError(f"could not confirm whether {repo} may be served publicly")
++        if restricted == "true":
++            return f"{repo} is private but its GitHub Pages site is public"
+     return ""
+ 
+ 
+@@ -651,14 +645,20 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str
+             "public": pages.get("public", True)}
+ 
+ 
++def site_workflow(repo: str) -> str | None:
++    for path in (WORKFLOW_PATH, *LEGACY_WORKFLOW_PATHS):
++        if gh_lookup("api", f"repos/{repo}/contents/{path}", "--jq", ".path") is not None:
++            return path
++    return None
++
++
+ def hosting(repo: str) -> tuple[str | None, str]:
+     """Return the URL of the repository's site for summaries, or None and why it is not set up.
+ 
+     Both halves are required. The workflow on the default branch is the reviewed
+     decision to host summaries; a Pages site alone may serve something else.
+     """
+-    if not any(gh_lookup("api", f"repos/{repo}/contents/{path}", "--jq", ".path") is not None
+-               for path in (WORKFLOW_PATH, *LEGACY_WORKFLOW_PATHS)):
++    if site_workflow(repo) is None:
+         return None, f"{repo} has no {WORKFLOW_PATH} on its default branch"
+     raw = gh_lookup("api", f"repos/{repo}/pages")
+     if raw is None:
+@@ -1084,15 +1084,6 @@ def prepare_page(summary: dict, diff: str | None = None, at_head: bool = False,
+ 
+ # Publishing to the summaries ref
+ 
+-def git(*args: str, env: dict | None = None, input: str | None = None) -> str:
+-    """Run git on UTF-8 text; output that is not UTF-8, such as a path in another encoding, reads with replacements."""
+-    try:
+-        return subprocess.run(["git", *args], check=True, capture_output=True, encoding="utf-8", errors="replace",
+-                              env=env, input=input).stdout.strip()
+-    except subprocess.CalledProcessError as exc:
+-        raise SummaryError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+-
+-
+ def repo_slug(remote_url: str) -> str:
+     url = remote_url.strip()
+     for prefix in ("git@github.com:", "ssh://git@github.com/", "https://github.com/"):
+@@ -1104,18 +1095,6 @@ def repo_slug(remote_url: str) -> str:
+     return url[:-4] if url.endswith(".git") else url
+ 
+ 
+-def tracking_ref(remote: str, ref: str) -> str:
+-    """Where this checkout keeps its copy of the remote's `ref`."""
+-    return ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
+-
+-
+-def fetch_ref(remote: str, ref: str) -> str:
+-    """Fetch the remote's `ref` into its tracking ref; return its commit, or '' when the fetch fails."""
+-    local = tracking_ref(remote, ref)
+-    fetched = subprocess.run(["git", "fetch", "--quiet", remote, f"+{ref}:{local}"], capture_output=True, text=True)
+-    return git("rev-parse", "--verify", "--quiet", local) if fetched.returncode == 0 else ""
+-
+-
+ def seed_from_legacy(remote: str) -> str:
+     """The head of a history for the summaries ref that carries the old walkthroughs ref's summaries, or ''.
+ 
+@@ -1129,7 +1108,7 @@ def seed_from_legacy(remote: str) -> str:
+     pushes it with its own summary on top. The old ref stays on the remote, and
+     the repository can delete it once the new ref exists.
+     """
+-    old = fetch_ref(remote, LEGACY_PAGES_REF)
++    old = fetch_ref(remote, LEGACY_PAGES_REF, run=git, strict=False)
+     if not old:
+         return ""
+     head = ""
+@@ -1163,11 +1142,6 @@ def dispatch(repo: str) -> None:
+     gh("api", f"repos/{repo}/dispatches", "-f", f"event_type={LEGACY_DISPATCH_EVENT}", token=token)
+ 
+ 
+-def ref_exists(ref: str) -> bool:
+-    return subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+-                          capture_output=True).returncode == 0
+-
+-
+ def summary_tree(parent: str, folder: str, summary: dict, diff: str, generated: dict[str, bool] | None = None,
+                  blobs: dict[str, str] | None = None) -> str:
+     """The tree of `parent`, or an empty one, with the summary and its diff written under `folder`.
+@@ -1181,17 +1155,8 @@ def summary_tree(parent: str, folder: str, summary: dict, diff: str, generated:
+     if generated is not None:
+         record = {GENERATED_ATTRIBUTE: dict(sorted(generated.items()))}
+         files.append((ATTRIBUTES_FILE, json.dumps(record, indent=1, ensure_ascii=False) + "\n"))
+-    with tempfile.TemporaryDirectory() as tmp:
+-        env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
+-        if parent:
+-            git("read-tree", parent, env=env)
+-        for name, content in files:
+-            blob = git("hash-object", "-w", "--stdin", input=content)
+-            git("update-index", "--add", "--cacheinfo", f"100644,{blob},{folder}/{name}", env=env)
+-        if blobs:
+-            git("update-index", "-z", "--index-info", env=env,
+-                input="".join(f"100644 {blob}\t{folder}/{HEAD_DIR}/{path}\0" for path, blob in sorted(blobs.items())))
+-        return git("write-tree", env=env)
++    return refs.write_tree(parent, {f"{folder}/{name}": content for name, content in files}, run=git,
++                           blobs={f"{folder}/{HEAD_DIR}/{path}": blob for path, blob in (blobs or {}).items()})
+ 
+ 
+ def summary_pr(summary: dict) -> dict:
+@@ -1353,50 +1318,25 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
+               *([f"{len(blobs)} head {'file' if len(blobs) == 1 else 'files'} under {HEAD_DIR}/"] if blobs else [])]
+     written = f"{folder}/{', '.join(stored[:-1])} and {stored[-1]}"
+     message = f"Publish the summary of #{pr['number']} at {pr['head'][:9]}"
++    seeds = []
++
++    def seed():
++        seeds.append(seed_from_legacy(remote))
++        return seeds[-1]
++
++    result = refs.publish(ref, remote, lambda parent: summary_tree(parent, folder, summary, diff, generated, blobs),
++                          message, push=push, run=git,
++                          seed=seed if (ref, root) == (PAGES_REF, PAGES_ROOT) else None,
++                          fetch=lambda: fetch_ref(remote, ref, run=git, strict=False), sleep=time.sleep)
++    commit, parent, attempt = result
++    if not commit:
++        print(f"{ref} already has this summary; nothing to publish")
++        return None
+     if not push:
+-        parent = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}") if ref_exists(ref) else ""
+-        tree = summary_tree(parent, folder, summary, diff, generated, blobs)
+-        if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+-            print(f"{ref} in this checkout already has this summary; nothing to publish")
+-            return None
+-        commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+-        git("update-ref", ref, commit, parent)
+         print(f"committed {commit[:9]} to {ref} in this checkout: {written}; nothing was "
+               f"pushed{f', because {reason}' if reason else ''}; preview it with `project site serve`")
+         return commit
+-    local = tracking_ref(remote, ref)
+-    tip = fetch_ref(remote, ref)
+-    seed = None
+-    for attempt in range(PUSH_ATTEMPTS):
+-        parent = tip
+-        if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
+-            if seed is None:
+-                seed = seed_from_legacy(remote)
+-            parent = seed
+-        tree = summary_tree(parent, folder, summary, diff, generated, blobs)
+-        if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
+-            print(f"{ref} already has this summary; nothing to publish")
+-            return None
+-        commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+-        try:
+-            git("push", "--quiet", remote, f"{commit}:{ref}")
+-            break
+-        except SummaryError as error:
+-            if attempt + 1 == PUSH_ATTEMPTS:
+-                raise
+-            raced = any(sign in str(error) for sign in PUSH_RACE_SIGNS)
+-            if raced:
+-                time.sleep(0.5 * 2 ** attempt + random.uniform(0, 0.25))
+-            moved = fetch_ref(remote, ref)
+-            # While the ref has not moved, the push lost no race unless git says
+-            # so, so a refused login or a dropped connection fails now rather
+-            # than after every attempt. A failed refetch leaves nothing to
+-            # build on.
+-            if (tip and not moved) or (moved == tip and not raced):
+-                raise
+-            tip = moved
+-    seeded = bool(seed) and parent == seed
+-    git("update-ref", local, commit)
++    seeded = bool(seeds and seeds[-1]) and parent == seeds[-1]
+     retried = f" after {attempt} {'retry' if attempt == 1 else 'retries'} because another publish moved the ref" if attempt else ""
+     print(f"pushed {commit[:9]} to {remote} {ref}: {written}{retried}")
+     if seeded:
+diff --git a/tests/artifact_benchmark.py b/tests/artifact_benchmark.py
+new file mode 100644
+index 00000000..a051b856
+--- /dev/null
++++ b/tests/artifact_benchmark.py
+@@ -0,0 +1,58 @@
++"""Measure artifact publication and builds without network access or retained files."""
++from __future__ import annotations
++
++import contextlib
++import io
++import json
++import subprocess
++import tempfile
++import time
++from pathlib import Path
++from projector import artifact, site
++
++
++def main() -> None:
++    with tempfile.TemporaryDirectory(prefix="projector-artifact-cost-") as temp:
++        root = Path(temp)
++        subprocess.run(['git', 'init', '-q', '-b', 'trunk', str(root)], check=True)
++        for key, value in [('user.name', 'Test'), ('user.email', 'test@example.com'), ('commit.gpgsign', 'false')]:
++            subprocess.run(['git', '-C', str(root), 'config', key, value], check=True)
++        source = root / 'source'
++        artifact.init('sample', source, 'Sample')
++        meta = json.loads((source / 'artifact.json').read_text())
++        meta['files'] += ['cases.json']
++        read_bytes = 0
++        start = time.perf_counter()
++        with contextlib.redirect_stdout(io.StringIO()):
++            for i in range(100):
++                meta['id'] = f'example-{i}'
++                (source / 'artifact.json').write_text(json.dumps(meta))
++                for version in range(5):
++                    (source / 'cases.json').write_text(json.dumps({'value': version}))
++                    bundle = artifact.snapshot(source)
++                    read_bytes += sum(len(b) for b in bundle.files.values())
++                    artifact.publish(bundle, root, 'origin', push=False)
++            history_publish = time.perf_counter() - start
++            meta['id'] = 'near-limit'
++            meta['files'] = ['index.html', 'first.bin', 'second.bin']
++            (source / 'artifact.json').write_text(json.dumps(meta))
++            (source / 'first.bin').write_bytes(b'a' * artifact.MAX_FILE)
++            (source / 'second.bin').write_bytes(b'b' * (artifact.MAX_FILE - 1024))
++            start = time.perf_counter()
++            bundle = artifact.snapshot(source)
++            near_bytes = sum(len(b) for b in bundle.files.values())
++            artifact.publish(bundle, root, 'origin', push=False)
++            near_publish = time.perf_counter() - start
++            start = time.perf_counter()
++            catalog = artifact.read_refs(root, 'origin')
++            site.build_site(root / 'site', artifacts=catalog)
++            build = time.perf_counter() - start
++        output = sum(p.stat().st_size for p in (root / 'site').rglob('*') if p.is_file())
++        print(json.dumps({'small_artifacts':100, 'versions_each':5, 'small_source_bytes':read_bytes,
++                          'history_publish_seconds':round(history_publish, 3), 'near_limit_bytes':near_bytes,
++                          'near_limit_publish_seconds':round(near_publish, 3), 'read_and_build_seconds':round(build, 3),
++                          'site_output_bytes':output}, indent=2))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tests/artifact_preview.py b/tests/artifact_preview.py
+new file mode 100644
+index 00000000..830482ed
+--- /dev/null
++++ b/tests/artifact_preview.py
+@@ -0,0 +1,40 @@
++"""Run a disposable site with two artifact versions for manual UI checks."""
++from __future__ import annotations
++
++import argparse
++import json
++import subprocess
++import tempfile
++from pathlib import Path
++
++from projector import artifact, cli
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--port', type=int, default=8765)
++    parser.add_argument('--base', default='/demo/')
++    args = parser.parse_args()
++    with tempfile.TemporaryDirectory(prefix='projector-artifact-preview-') as temp:
++        root = Path(temp)
++        subprocess.run(['git', 'init', '-q', '-b', 'trunk', str(root)], check=True)
++        for key, value in [('user.name', 'Test'), ('user.email', 'test@example.com'), ('commit.gpgsign', 'false')]:
++            subprocess.run(['git', '-C', str(root), 'config', key, value], check=True)
++        source = root / 'source'
++        artifact.init('cache-explorer', source, 'Cache explorer', 'Explore versioned cache data')
++        (source / 'index.html').write_bytes((Path(__file__).parent / 'fixtures/artifact/index.html').read_bytes())
++        (source / 'cache.svg').write_bytes((Path(__file__).parent / 'fixtures/artifact/cache.svg').read_bytes())
++        (source / 'bytes.bin').write_bytes(b'\x00\xff\x00\r\n')
++        meta = json.loads((source / 'artifact.json').read_text())
++        meta['files'] += ['cases.json', 'bytes.bin', 'cache.svg']
++        (source / 'artifact.json').write_text(json.dumps(meta))
++        for value in (17, 23):
++            (source / 'cases.json').write_text(json.dumps({'value': value}))
++            artifact.publish(artifact.snapshot(source), root, 'origin', push=False)
++        print('Latest uses 23 and the older version uses 17; add ?value=6#details to check deep-link state.', flush=True)
++        return cli.main(['site', 'serve', '--repo-root', str(root), '--no-fetch', '--no-prepare',
++                         '--port', str(args.port), '--base', args.base])
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
+diff --git a/tests/artifact_ui.mjs b/tests/artifact_ui.mjs
+new file mode 100644
+index 00000000..57b29211
+--- /dev/null
++++ b/tests/artifact_ui.mjs
+@@ -0,0 +1,119 @@
++import assert from 'node:assert/strict';
++import { createRequire } from 'node:module';
++import { mkdtempSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++const require = createRequire(import.meta.url);
++const { chromium } = require(require.resolve('playwright', {
++  paths: [process.env.PROJECTOR_PLAYWRIGHT_DIR ?? process.cwd()]
++}));
++const output = mkdtempSync(join(tmpdir(), 'projector-artifact-ui-'));
++process.stdout.write(`Screenshots: ${output}\n`);
++const bases = process.argv.slice(2);
++if (!bases.length) bases.push('http://127.0.0.1:8765/demo/');
++const browser = await chromium.launch({ headless: true, channel: process.env.PROJECTOR_BROWSER_CHANNEL });
++const results = [];
++try {
++  for (const base of bases) {
++    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
++    const page = await context.newPage();
++    page.setDefaultTimeout(10000);
++    page.setDefaultNavigationTimeout(10000);
++    const failures = [];
++    const origin = new URL(base).origin;
++    page.on('pageerror', error => failures.push(error.message));
++    page.on('response', response => {
++      if (response.url().startsWith(origin) && response.status() >= 400) {
++        failures.push(`${response.status()} ${response.url()}`);
++      }
++    });
++    const suffix = new URL(base).pathname === '/' ? 'root' : 'prefix';
++    try {
++      const response = await context.request.get(`${base}site.json`);
++      assert(response.ok());
++      const site = await response.json();
++      assert.equal(site.artifacts.length, 1);
++      const artifact = site.artifacts[0];
++      assert.equal(artifact.versions.length, 2);
++      const older = artifact.versions.find(version => version.version !== artifact.latest);
++      const latestRoute = `${base}artifacts/${artifact.id}/`;
++      const fixedRoute = `${latestRoute}${older.version}/`;
++      const frame = () => page.frameLocator('iframe.htmlpage');
++      const result = async value => {
++        await frame().getByText(`Result: ${value}`, { exact: true }).waitFor();
++        await frame().getByText('Binary bytes: 0, 255, 0, 13, 10', { exact: true }).waitFor();
++        const image = frame().getByRole('img', { name: 'Cache scale' });
++        await image.waitFor();
++        await image.evaluate(element => element.decode());
++        assert(await image.evaluate(element => element.complete && element.naturalWidth > 0), 'The relative SVG did not load');
++      };
++      await page.goto(`${base}artifacts/`);
++      await page.getByRole('heading', { name: 'Artifacts', exact: true }).waitFor();
++      const filter = page.getByRole('searchbox', { name: 'Filter artifacts' });
++      await filter.fill('no-such-artifact');
++      await page.getByText('No artifacts match.', { exact: true }).waitFor();
++      assert.equal(await page.getByRole('link', { name: 'Cache explorer', exact: true }).count(), 0);
++      await filter.fill('cache');
++      await page.getByRole('link', { name: 'Cache explorer', exact: true }).waitFor();
++      assert.equal(await page.getByRole('link', { name: 'Cache explorer', exact: true }).count(), 1);
++      await page.goto(`${latestRoute}?value=6#details`);
++      await result(29);
++      assert.equal(await frame().getByRole('slider', { name: 'Cached entries' }).inputValue(), '6');
++      assert.match(await page.locator('iframe.htmlpage').getAttribute('src'), new RegExp(`${artifact.latest}/index.html\\?value=6#details$`));
++      await page.getByRole('combobox', { name: 'Artifact version' }).selectOption(older.version);
++      await page.waitForURL(`${fixedRoute}?value=6#details`);
++      await result(23);
++      await page.goBack();
++      await page.waitForURL(`${latestRoute}?value=6#details`);
++      await result(29);
++      await page.goto(`${fixedRoute}?value=6#details`);
++      await result(23);
++      await frame().getByRole('slider', { name: 'Cached entries' }).press('ArrowRight');
++      await result(24);
++      await page.waitForURL(`${fixedRoute}?value=6#entries-7`);
++      await page.getByRole('link', { name: 'Latest', exact: true }).click();
++      await page.waitForURL(`${latestRoute}?value=6#entries-7`);
++      await result(29);
++      const before = await page.locator('iframe.htmlpage').boundingBox();
++      await page.getByRole('button', { name: 'Full screen', exact: true }).click();
++      await page.locator('header.sitebar').waitFor({ state: 'hidden' });
++      await page.getByRole('button', { name: 'Exit full screen', exact: true }).waitFor();
++      const expanded = await page.locator('iframe.htmlpage').boundingBox();
++      assert(expanded.y < before.y && expanded.height > before.height, 'Full screen did not expand the artifact');
++      await page.getByRole('button', { name: 'Exit full screen', exact: true }).click();
++      await page.locator('header.sitebar').waitFor({ state: 'visible' });
++      await page.screenshot({ path: join(output, `desktop-${suffix}.png`), fullPage: true });
++      await page.setViewportSize({ width: 375, height: 812 });
++      await result(29);
++      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'The artifact wrapper overflows the phone viewport');
++      assert(await frame().locator('body').evaluate(body => body.ownerDocument.documentElement.scrollWidth <= body.ownerDocument.defaultView.innerWidth), 'The artifact content overflows the phone viewport');
++      await page.getByRole('combobox', { name: 'Artifact version' }).selectOption(older.version);
++      await page.waitForURL(`${fixedRoute}?value=6#entries-7`);
++      await result(23);
++      await frame().getByRole('slider', { name: 'Cached entries' }).press('ArrowRight');
++      await result(24);
++      await page.getByRole('button', { name: 'Full screen', exact: true }).click();
++      await page.locator('header.sitebar').waitFor({ state: 'hidden' });
++      await page.getByRole('button', { name: 'Exit full screen', exact: true }).click();
++      await page.locator('header.sitebar').waitFor({ state: 'visible' });
++      await page.screenshot({ path: join(output, `phone-${suffix}.png`), fullPage: true });
++      await page.goto(`${base}artifacts/`);
++      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
++      await page.getByRole('searchbox', { name: 'Search the site' }).fill('Cached entries');
++      await page.getByRole('searchbox', { name: 'Search the site' }).press('Enter');
++      await page.getByRole('link', { name: 'Cache explorer', exact: true }).waitFor();
++      assert.equal(await page.getByRole('link', { name: 'Cache explorer', exact: true }).count(), 1);
++      assert.deepEqual(failures, []);
++      results.push({ base, passed: true, versions: 2, desktop: '1440x900', phone: '375x812' });
++    } catch (error) {
++      process.stderr.write(`Failed at ${page.url()}\n`);
++      await page.screenshot({ path: join(output, `failure-${suffix}.png`), fullPage: true }).catch(() => {});
++      throw error;
++    } finally {
++      await context.close();
++    }
++  }
++  process.stdout.write(JSON.stringify(results, null, 2) + '\n');
++} finally {
++  await browser.close();
++}
+diff --git a/tests/fixtures/artifact/cache.svg b/tests/fixtures/artifact/cache.svg
+new file mode 100644
+index 00000000..90fa10e1
+--- /dev/null
++++ b/tests/fixtures/artifact/cache.svg
+@@ -0,0 +1,3 @@
++<svg xmlns="http://www.w3.org/2000/svg" width="96" height="24" viewBox="0 0 96 24">
++  <path fill="#ed7628" d="M0 0h20v24H0zm25 0h20v24H25zm25 0h20v24H50zm25 0h20v24H75z"/>
++</svg>
+diff --git a/tests/fixtures/artifact/index.html b/tests/fixtures/artifact/index.html
+new file mode 100644
+index 00000000..9a8a7813
+--- /dev/null
++++ b/tests/fixtures/artifact/index.html
+@@ -0,0 +1,31 @@
++<!doctype html>
++<meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>Cache explorer</title>
++<style>
++  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
++  body { max-width: 46rem; margin: auto; padding: 2rem; }
++  label, input, output { display: block; margin: 1rem 0; }
++  input { width: min(100%, 24rem); }
++  output { font-size: 2rem; }
++</style>
++<h1>Cache explorer</h1>
++<img src="cache.svg" alt="Cache scale" width="96" height="24">
++<p>Adjust the cached entries to inspect the result from this version's data.</p>
++<label for="entries">Cached entries</label>
++<input id="entries" type="range" min="0" max="100" value="3">
++<output id="result" for="entries" aria-live="polite">Loading data…</output>
++<p id="binary"></p>
++<h2 id="details">Details</h2>
++<p>Each version loads its own JSON and binary assets.</p>
++<script type="module">
++  const input = document.getElementById('entries');
++  const query = new URLSearchParams(location.search).get('value');
++  if (query !== null) input.value = query;
++  const data = await (await fetch('cases.json')).json();
++  const bytes = new Uint8Array(await (await fetch('bytes.bin')).arrayBuffer());
++  document.getElementById('binary').textContent = `Binary bytes: ${Array.from(bytes).join(', ')}`;
++  function draw() { document.getElementById('result').textContent = `Result: ${data.value + Number(input.value)}`; }
++  input.addEventListener('input', () => { draw(); location.hash = `entries-${input.value}`; });
++  draw();
++</script>
+diff --git a/tests/test_artifact.py b/tests/test_artifact.py
+new file mode 100644
+index 00000000..9c34c18b
+--- /dev/null
++++ b/tests/test_artifact.py
+@@ -0,0 +1,362 @@
++from __future__ import annotations
++
++import json
++import os
++import queue
++import subprocess
++import sys
++import tempfile
++import threading
++import time
++import unittest
++import urllib.request
++from pathlib import Path
++from unittest import mock
++
++from projector import artifact, refs, site
++
++
++def git(root: Path, *args: str) -> str:
++    return subprocess.run(['git', '-C', str(root), *args], check=True, capture_output=True, text=True).stdout.strip()
++
++
++class ArtifactTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temp.cleanup)
++        self.root = Path(self.temp.name)
++        self.repo = self.root / 'repo'
++        self.repo.mkdir()
++        git(self.repo, 'init', '-q', '-b', 'trunk')
++        git(self.repo, 'config', 'user.name', 'Test')
++        git(self.repo, 'config', 'user.email', 'test@example.com')
++        git(self.repo, 'config', 'commit.gpgsign', 'false')
++        (self.repo / 'README.md').write_text('tracked\n')
++        git(self.repo, 'add', '.')
++        git(self.repo, 'commit', '-qm', 'Start')
++        self.remote = self.root / 'remote.git'
++        subprocess.run(['git', 'init', '-q', '--bare', str(self.remote)], check=True)
++        git(self.repo, 'remote', 'add', 'origin', str(self.remote))
++        self.source = self.root / 'bundle'
++        artifact.init('explorer', self.source, 'Cache explorer', 'Explore the cache')
++        self.manifest = json.loads((self.source / 'artifact.json').read_text())
++        self.manifest['files'] += ['cases.json', 'bytes.bin']
++        (self.source / 'cases.json').write_text('{"value":17}\n')
++        (self.source / 'bytes.bin').write_bytes(b'\x00\xff\x00\r\n')
++        self.write_manifest()
++
++    def write_manifest(self):
++        (self.source / 'artifact.json').write_text(json.dumps(self.manifest))
++
++    def publish(self, push=False, root=None):
++        return artifact.publish(artifact.snapshot(self.source), root or self.repo, 'origin', push=push)
++
++    def test_versions_recover_exact_bytes_and_republishing_old_content_keeps_latest(self):
++        first = self.publish()
++        (self.source / 'cases.json').write_text('{"value":23}\n')
++        second = self.publish()
++        (self.source / 'cases.json').write_text('{"value":17}\n')
++        tip = git(self.repo, 'rev-parse', artifact.REF)
++        self.assertEqual(first.version, self.publish().version)
++        self.assertEqual(tip, git(self.repo, 'rev-parse', artifact.REF))
++        saved = artifact.read_refs(self.repo, 'origin')['explorer']
++        self.assertEqual((second.version, 2), (saved.latest, len(saved.versions)))
++        restored = self.root / 'restored'
++        artifact.recover(saved, restored, first.version)
++        self.assertEqual(b'{"value":17}\n', (restored / 'cases.json').read_bytes())
++        self.assertEqual(b'\x00\xff\x00\r\n', (restored / 'bytes.bin').read_bytes())
++        self.assertEqual(first.version, artifact.snapshot(restored).version)
++
++    def test_metadata_changes_identity_but_file_order_does_not(self):
++        first = artifact.snapshot(self.source).version
++        self.manifest['files'].reverse()
++        self.write_manifest()
++        self.assertEqual(first, artifact.snapshot(self.source).version)
++        self.manifest['description'] = 'Different question'
++        self.write_manifest()
++        self.assertNotEqual(first, artifact.snapshot(self.source).version)
++
++    def test_unsafe_paths_missing_files_and_case_collisions_never_write_a_ref(self):
++        (self.root / 'secret').write_text('outside the bundle')
++        for name in ['.env', 'a\\b', 'a\nfile', 'CASES.json']:
++            (self.source / name).write_text('must not publish')
++        for paths in [['../secret'], [str(self.root / 'secret')], ['.env'], ['a\\b'], ['a\nfile'], ['missing'],
++                      ['cases.json', 'CASES.json']]:
++            with self.subTest(paths=paths):
++                self.manifest['files'] = ['index.html', *paths]
++                self.write_manifest()
++                with self.assertRaises(artifact.ArtifactError):
++                    self.publish()
++                self.assertEqual('', refs.ref_tip(self.repo, artifact.REF))
++        self.manifest['files'] = ['index.html', 'linked']
++        (self.source / 'linked').symlink_to(self.source / 'index.html')
++        self.write_manifest()
++        with self.assertRaises(artifact.ArtifactError):
++            self.publish()
++
++    def test_size_limits_leave_source_untouched(self):
++        before = (self.source / 'cases.json').read_bytes()
++        with mock.patch.object(artifact, 'MAX_FILE', 4), self.assertRaises(artifact.ArtifactError):
++            artifact.snapshot(self.source)
++        self.assertEqual(before, (self.source / 'cases.json').read_bytes())
++
++    def test_an_unknown_schema_cannot_be_published(self):
++        self.manifest['schema'] = 2
++        self.write_manifest()
++        with self.assertRaises(artifact.ArtifactError):
++            self.publish()
++        self.assertEqual('', refs.ref_tip(self.repo, artifact.REF))
++
++    def test_recovery_refuses_an_occupied_directory_without_partial_writes(self):
++        self.publish()
++        saved = artifact.read_refs(self.repo, 'origin')['explorer']
++        out = self.root / 'occupied'
++        out.mkdir()
++        (out / 'keep').write_text('dirty')
++        with self.assertRaises(artifact.ArtifactError):
++            artifact.recover(saved, out)
++        self.assertEqual(['keep'], [p.name for p in out.iterdir()])
++
++    def test_racing_remote_publishes_preserve_both_versions_and_dirty_checkout(self):
++        other = self.root / 'other'
++        git(self.root, 'clone', '-q', str(self.repo), str(other))
++        git(other, 'remote', 'set-url', 'origin', str(self.remote))
++        git(other, 'config', 'user.name', 'Other')
++        git(other, 'config', 'user.email', 'other@example.com')
++        git(other, 'config', 'commit.gpgsign', 'false')
++        theirs = artifact.snapshot(self.source)
++        (self.source / 'cases.json').write_text('{"value":29}\n')
++        mine = artifact.snapshot(self.source)
++        (self.repo / 'README.md').write_text('dirty\n')
++        branch = git(self.repo, 'rev-parse', 'HEAD')
++        index = (self.repo / '.git/index').read_bytes()
++        real = refs.git
++        raced = []
++
++        def racing(*args, **kwargs):
++            if args[0] == 'push' and not raced:
++                raced.append(True)
++                artifact.publish(theirs, other, 'origin', push=True)
++            return real(*args, **kwargs)
++
++        with mock.patch.object(refs, 'git', side_effect=racing), mock.patch.object(refs.time, 'sleep'):
++            artifact.publish(mine, self.repo, 'origin', push=True)
++        saved = artifact.read_refs(self.repo, 'origin')['explorer']
++        self.assertEqual((mine.version, {mine.version, theirs.version}), (saved.latest, set(saved.versions)))
++        self.assertEqual(branch, git(self.repo, 'rev-parse', 'HEAD'))
++        self.assertEqual(index, (self.repo / '.git/index').read_bytes())
++        self.assertEqual('dirty\n', (self.repo / 'README.md').read_text())
++
++    def test_site_keeps_fixed_versions_and_searches_only_latest_visible_text(self):
++        (self.source / 'index.html').write_text('<title>Old</title><p>Obsolete text</p>')
++        first = self.publish()
++        (self.source / 'index.html').write_text('<title>New</title><p>Current text</p><script>Hidden text</script>')
++        second = self.publish()
++        out = self.root / 'site'
++        site.build_site(out, artifacts=artifact.read_refs(self.repo, 'origin'), base='/demo/')
++        manifest = json.loads((out / 'site.json').read_text())
++        self.assertEqual(second.version, manifest['artifacts'][0]['latest'])
++        for version in [first.version, second.version]:
++            self.assertTrue((out / f'artifacts/explorer/{version}/index.html').is_file())
++            self.assertEqual(b'\x00\xff\x00\r\n',
++                             (out / f'content/artifacts/explorer/{version}/bytes.bin').read_bytes())
++        search = json.loads((out / 'search.json').read_text())
++        self.assertEqual(1, len(search))
++        self.assertIn('Current text', search[0]['text'])
++        self.assertNotIn('Obsolete text', search[0]['text'])
++        self.assertNotIn('Hidden text', search[0]['text'])
++        self.assertEqual('artifacts/explorer/', search[0]['route'])
++
++    def test_a_corrupt_latest_version_keeps_valid_fixed_versions_but_has_no_directory_entry(self):
++        first = self.publish()
++        (self.source / 'cases.json').write_text('{"value":31}\n')
++        second = self.publish()
++        parent = refs.ref_tip(self.repo, artifact.REF)
++        run = lambda *args, **kwargs: refs.git(*args, root=self.repo, **kwargs)
++        tree = refs.write_tree(parent, {f'artifacts/explorer/{second.version}/files/cases.json': b'corrupt'}, run=run)
++        commit = run('commit-tree', tree, '-p', parent, '-m', 'Corrupt a fixture')
++        run('update-ref', artifact.REF, commit)
++        warnings = []
++        saved = artifact.read_refs(self.repo, 'origin', report=warnings.append)
++        self.assertEqual((None, {first.version}), (saved['explorer'].latest, set(saved['explorer'].versions)))
++        self.assertIn(second.version, '\n'.join(warnings))
++        out = self.root / 'corrupt-site'
++        site.build_site(out, artifacts=saved)
++        self.assertTrue((out / f'artifacts/explorer/{first.version}/index.html').exists())
++        self.assertFalse((out / 'artifacts/explorer/index.html').exists())
++        self.assertEqual([], json.loads((out / 'search.json').read_text()))
++
++    def test_local_and_remote_versions_stay_separate_and_local_preview_wins(self):
++        remote = self.publish(push=True)
++        (self.source / 'cases.json').write_text('{"value":41}\n')
++        local = self.publish()
++        saved = artifact.read_refs(self.repo, 'origin')['explorer']
++        self.assertEqual((local.version, True, {remote.version, local.version}),
++                         (saved.latest, saved.preview, set(saved.versions)))
++        remote_tree = artifact.GitReader(self.remote, artifact.REF)
++        self.assertNotIn(f'explorer/{local.version}/artifact.json', remote_tree.entries)
++
++    def test_a_running_server_watches_local_and_fetched_artifacts_and_keeps_reviews_offline(self):
++        from tests.test_site import PLAN_DIFF, served_summary
++        from projector import summary
++
++        run = lambda *args, **kwargs: refs.git(*args, root=self.repo, **kwargs)
++        folder = f'summaries/9/{"c" * 40}'
++        tree = refs.write_tree('', {f'{folder}/summary.json': json.dumps(served_summary(9, 'c' * 40)),
++                                    f'{folder}/diff.patch': PLAN_DIFF}, run=run)
++        run('update-ref', summary.PAGES_REF, run('commit-tree', tree, '-m', 'Save a review fixture'))
++        code = '''
++from projector import cli, summary
++from projector.site import serve
++def offline(*args, **kwargs):
++    raise summary.SummaryError('offline fixture')
++summary.gh = offline
++summary.gh_lookup = lambda *args, **kwargs: None
++serve.FETCH_INTERVAL = 0.05
++raise SystemExit(cli.main())
++'''
++        env = {**os.environ, 'PYTHONPATH': str(Path(artifact.__file__).resolve().parents[1])}
++        process = subprocess.Popen([sys.executable, '-u', '-c', code, 'site', 'serve', '--repo-root', str(self.repo),
++                                    '--port', '0', '--no-prepare'], stdout=subprocess.PIPE,
++                                   stderr=subprocess.STDOUT, text=True, env=env)
++        lines = queue.Queue()
++
++        def read_lines():
++            for line in process.stdout:
++                lines.put(line)
++
++        reader = threading.Thread(target=read_lines, daemon=True)
++        reader.start()
++        output = []
++        try:
++            deadline = time.monotonic() + 10
++            while time.monotonic() < deadline:
++                try:
++                    line = lines.get(timeout=max(0.01, deadline - time.monotonic()))
++                except queue.Empty:
++                    self.fail('the preview did not start: ' + ''.join(output))
++                output.append(line)
++                if line.startswith('serving http://'):
++                    url = line.split(';')[0].split(' ', 1)[1] + 'site.json'
++                    break
++            else:
++                self.fail('the preview did not start: ' + ''.join(output))
++
++            def until(predicate):
++                deadline = time.monotonic() + 10
++                while time.monotonic() < deadline:
++                    with urllib.request.urlopen(url, timeout=2) as response:
++                        manifest = json.load(response)
++                    if predicate(manifest):
++                        return manifest
++                    time.sleep(0.05)
++                self.fail(f'the running preview did not update: {manifest}')
++
++            until(lambda data: len(data['reviews']) == 1 and not data['artifacts'])
++            local = self.publish()
++            until(lambda data: any(item['latest'] == local.version and item['preview'] for item in data['artifacts']))
++            other = self.root / 'other'
++            git(self.root, 'clone', '-q', str(self.repo), str(other))
++            git(other, 'remote', 'set-url', 'origin', str(self.remote))
++            for key, value in [('user.name', 'Other'), ('user.email', 'other@example.com'), ('commit.gpgsign', 'false')]:
++                git(other, 'config', key, value)
++            source = self.root / 'remote-bundle'
++            artifact.init('remote-explorer', source, 'Remote explorer')
++            remote = artifact.publish(artifact.snapshot(source), other, 'origin', push=True)
++            until(lambda data: {item['latest'] for item in data['artifacts']} == {local.version, remote.version})
++            git(self.repo, 'remote', 'set-url', 'origin', str(self.root / 'missing.git'))
++            (self.source / 'cases.json').write_text('{"value":47}\n')
++            changed = self.publish()
++            manifest = until(lambda data: {item['latest'] for item in data['artifacts']} == {changed.version, remote.version})
++            self.assertEqual([9], [row['number'] for row in manifest['reviews']])
++            self.assertIsNone(process.poll(), 'the same server stays running through local, remote, and offline updates')
++        finally:
++            process.terminate()
++            process.wait(timeout=5)
++            reader.join(timeout=1)
++            process.stdout.close()
++
++    def test_a_local_compare_and_swap_race_keeps_both_publishers(self):
++        theirs = artifact.snapshot(self.source)
++        (self.source / 'cases.json').write_text('{"value":43}\n')
++        mine = artifact.snapshot(self.source)
++        real = refs.git
++        raced = []
++
++        def racing(*args, **kwargs):
++            if args[:2] == ('update-ref', artifact.REF) and not raced:
++                raced.append(True)
++                artifact.publish(theirs, self.repo, 'origin', push=False)
++            return real(*args, **kwargs)
++
++        with mock.patch.object(refs, 'git', side_effect=racing), mock.patch.object(refs.time, 'sleep'):
++            artifact.publish(mine, self.repo, 'origin', push=False)
++        saved = artifact.read_refs(self.repo, 'origin')['explorer']
++        self.assertEqual((mine.version, {mine.version, theirs.version}), (saved.latest, set(saved.versions)))
++
++    def test_the_cli_keeps_unhosted_publication_local_and_recovers_its_source(self):
++        import contextlib
++        import io
++        from projector import cli
++        output = io.StringIO()
++        args = ['--checkout', str(self.repo)]
++        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
++            self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), *args]))
++            self.assertEqual(0, cli.main(['artifact', 'list', '--id', 'explorer', '--no-fetch', '--json', *args]))
++            recovered = self.root / 'cli-recovered'
++            self.assertEqual(0, cli.main(['artifact', 'init', 'explorer', '--from-published', '--no-fetch',
++                                         '--dir', str(recovered), *args]))
++        self.assertIn('preview with project site serve', output.getvalue())
++        self.assertEqual(artifact.snapshot(self.source).version, artifact.snapshot(recovered).version)
++        self.assertEqual('', refs.ref_tip(self.remote, artifact.REF))
++
++    def test_a_dispatch_failure_reports_saved_content_and_a_workflow_retry(self):
++        import contextlib
++        import io
++        from projector import cli, summary
++        output = io.StringIO()
++        with mock.patch.object(artifact, 'repository', return_value='owner/repo'), \
++             mock.patch.object(summary, 'push_decision', return_value=('https://example.test/demo/', '')), \
++             mock.patch.object(summary, 'default_branch', return_value='trunk'), \
++             mock.patch.object(summary, 'site_workflow', return_value=summary.WORKFLOW_PATH), \
++             mock.patch.object(summary, 'gh', side_effect=summary.SummaryError('permission denied')), \
++             contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
++            status = cli.main(['artifact', 'publish', '--dir', str(self.source), '--checkout', str(self.repo)])
++        self.assertEqual(65, status)
++        self.assertTrue(refs.ref_tip(self.remote, artifact.REF))
++        self.assertIn('content is saved, but deployment did not start', output.getvalue())
++        self.assertIn('gh workflow run projector-site.yml --repo owner/repo --ref trunk', output.getvalue())
++
++    def test_unknown_visibility_cannot_authorize_public_hosting(self):
++        from projector import summary
++        with mock.patch.object(summary, 'gh_lookup', return_value=None), \
++             self.assertRaisesRegex(summary.SummaryError, 'could not confirm'):
++            summary.exposure('owner/repo', {'public': True})
++
++    def test_a_checkout_without_origin_can_save_an_artifact_locally(self):
++        import contextlib
++        import io
++        from projector import cli
++        git(self.repo, 'remote', 'remove', 'origin')
++        with contextlib.redirect_stdout(io.StringIO()), mock.patch.object(artifact.summary, 'push_decision') as hosting:
++            code = cli.main(['artifact', 'publish', '--dir', str(self.source), '--checkout', str(self.repo)])
++        self.assertEqual(0, code)
++        self.assertTrue(refs.ref_tip(self.repo, artifact.REF))
++        hosting.assert_not_called()
++
++    def test_dispatch_uses_the_existing_workflow_and_remote_default_branch(self):
++        import contextlib
++        import io
++        from projector import cli, summary
++        out = io.StringIO()
++        with mock.patch.object(artifact, 'repository', return_value='owner/repo'), \
++             mock.patch.object(summary, 'push_decision', return_value=('https://example.test/demo/', '')), \
++             mock.patch.object(summary, 'site_workflow', return_value='.github/workflows/walkthroughs.yml'), \
++             mock.patch.object(summary, 'gh', side_effect=['trunk\n', '']) as gh, \
++             contextlib.redirect_stdout(out):
++            code = cli.main(['artifact', 'publish', '--dir', str(self.source), '--checkout', str(self.repo)])
++        self.assertEqual(0, code)
++        self.assertEqual(('api', 'repos/owner/repo/actions/workflows/walkthroughs.yml/dispatches', '-f', 'ref=trunk'),
++                         gh.call_args.args)
++        self.assertIn('latest: https://example.test/demo/artifacts/explorer/', out.getvalue())
++        self.assertTrue(refs.ref_tip(self.remote, artifact.REF))
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index edbe5cba..8d94309b 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -22,6 +22,7 @@
+     "fix-pr",
+     "review-repo",
+     "summarize-pr",
++    "artifact",
+     "write",
+     "rewrite",
+     "cleanup",
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 1f115e91..e1531432 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -34,6 +34,7 @@
+     ("project worktree fix/login", "allow", "allow"),
+     ("project preview acme/app#12", "allow", "allow"),
+     ("project summary publish --summary summary.json", "allow", "allow"),
++    ("project artifact publish --dir bundle", "allow", "allow"),
+     ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
+     ("project inbox tell notice --session s1", "allow", "allow"),
+     ("project inbox request 'Test the gutters' --detail '1. Open Fyra.' --session s1", "allow", "allow"),
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 840b8b81..85588f12 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -2187,14 +2187,19 @@ def publish(settings: object) -> bool:
+     def test_a_codex_file_lacking_newer_rules_says_it_still_allows_the_summary_publish(self) -> None:
+         rules = self.home / ".codex" / "rules" / "projector.rules"
+         rules.parent.mkdir(parents=True)
+-        # The file an earlier release wrote, before `project review ready` and `workflow` were allowed.
+-        stale = permissions.CODEX_RULES.replace('"publish", "ready", ', '"publish", ').replace(', "workflow"]', ']')
+-        self.assertNotEqual(permissions.CODEX_RULES, stale)
++        stale = ('prefix_rule(\n'
++                 '    pattern = ["project", ["status", "summary"]],\n'
++                 '    decision = "allow",\n'
++                 ')\n')
++        no_summary = ('prefix_rule(\n'
++                      '    pattern = ["project", ["status"]],\n'
++                      '    decision = "allow",\n'
++                      ')\n')
+         cases = {
+             "stale": (stale, True),
+-            "one-line layout": ("\n".join(permissions.CODEX_PREFIX_RULES), True),
+-            "no summary rule": (stale.replace('"status", "summary",', '"status",'), False),
+-            "summary only prompts": (stale.replace('"status", "summary",', '"status",')
++            "one-line layout": ('prefix_rule(pattern = ["project", "summary"], decision = "allow")\n', True),
++            "no summary rule": (no_summary, False),
++            "summary only prompts": (no_summary
+                                      + 'prefix_rule(pattern = ["project", "summary"], decision = "prompt")\n', False),
+             "not Projector's layout": ('prefix_rule(pattern = ["project", "summary"]  ,decision="allow")\n', False),
+             "empty": ("", False),
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 60de172d..0684f377 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -4521,3 +4521,60 @@ def test_every_workflow_projector_wrote_is_its_own_and_an_edited_one_is_not(self
+ 
+ if __name__ == "__main__":
+     unittest.main()
++
++
++@unittest.skipUnless(shutil.which("node"), "artifact view checks need node")
++class ArtifactViewTests(unittest.TestCase):
++    def test_selecting_an_older_version_preserves_page_state_and_loads_that_versions_entry(self):
++        program = r"""
++const base = '/demo/';
++const location = { search: '?value=6', hash: '#details' };
++const site = { artifacts: [{ id: 'explorer', latest: 'new', preview: false, versions: [
++  { version: 'new', title: 'Current', publishedAt: '2026-11-26T00:00:00Z', entry: 'new/index.html' },
++  { version: 'old', title: 'Original', publishedAt: '2026-11-25T00:00:00Z', entry: 'old/index.html' }
++] }] };
++const options = [];
++let changed, address, shown;
++const picker = { value: '', appendChild(o) { options.push(o); }, addEventListener(type, fn) { changed = fn; } };
++const latest = {};
++const toolbar = { querySelector(q) { return q === 'select' ? picker : latest; } };
++const document = { createElement(name) { return name === 'div' ? toolbar : {}; } };
++const history = { pushState(state, title, url) { address = url; } };
++function route() {}
++function showHtml(...args) { shown = args; }
++function frame() { throw new Error('A known version must render'); }
++""" + shared_js() + js_function("showArtifact") + r"""
++showArtifact('explorer');
++picker.value = 'old';
++changed();
++showArtifact('explorer', 'old');
++process.stdout.write(JSON.stringify({address, path: shown[1], query: shown[6],
++  selected: options.slice(2).filter(o => o.selected).map(o => o.value)}));
++"""
++        self.assertEqual({'address': '/demo/artifacts/explorer/old/?value=6#details',
++                          'path': 'old/index.html', 'query': '?value=6', 'selected': ['old']}, json.loads(node(program)))
++
++    def test_the_directory_filters_latest_metadata_and_escapes_its_title(self):
++        program = r"""
++const base = '/demo/';
++const location = { search: '?q=needle' };
++const site = { artifacts: [
++ { id: 'first', latest: 'b', preview: true, versions: [
++   { version: 'a', title: 'Needle in older title', description: '', publishedAt: '2026-11-24' },
++   { version: 'b', title: 'No match', description: '', publishedAt: '2026-11-25' }
++ ] },
++ { id: 'second', latest: 'c', preview: false, versions: [
++   { version: 'c', title: '<b>Needle</b>', description: 'Current data', publishedAt: '2026-11-26' }
++ ] }
++] };
++const input = { value: '', addEventListener() {} }, list = { innerHTML: '' };
++function frame() { return { querySelector(q) { return q === '.filter' ? input : list; } }; }
++const history = { replaceState() {} };
++""" + shared_js() + js_function("showArtifacts") + r"""
++showArtifacts();
++process.stdout.write(list.innerHTML);
++"""
++        rendered = node(program)
++        self.assertIn('/demo/artifacts/second/', rendered)
++        self.assertIn('&lt;b&gt;Needle&lt;/b&gt;', rendered)
++        self.assertNotIn('/demo/artifacts/first/', rendered)
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index 7400a0e8..42079bfc 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -11,7 +11,7 @@
+ from contextlib import AbstractContextManager, redirect_stderr, redirect_stdout
+ from pathlib import Path
+ 
+-from projector import cli, site, summary
++from projector import cli, refs, site, summary
+ from tests.scratch import copy_of
+ 
+ ROOT = Path(__file__).parents[1]
+@@ -735,8 +735,8 @@ def test_a_push_that_keeps_losing_the_race_gives_up(self) -> None:
+         with counted, self.assertRaisesRegex(summary.SummaryError, "cannot lock ref"):
+             self.publish("c" * 40)
+ 
+-        self.assertEqual(summary.PUSH_ATTEMPTS, len(pushes))
+-        self.assertEqual(summary.PUSH_ATTEMPTS - 1, len(self.sleeps))
++        self.assertEqual(refs.ATTEMPTS, len(pushes))
++        self.assertEqual(refs.ATTEMPTS - 1, len(self.sleeps))
+         self.assertLess(sum(self.sleeps), 15, "the retries stay brief")
+         self.assertEqual([], self.dispatches)
+ 
