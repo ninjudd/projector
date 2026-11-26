@@ -1,0 +1,102 @@
+{
+ "version": 1,
+ "name": "Console mouse selection",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 646,
+  "title": "Select console sessions and panel items with the mouse",
+  "head": "9e256e303cd02bb8507f07b1ca9778551fa9fdd5",
+  "headRef": "console-mouse-selection",
+  "base": "80ea9a15a778398e62a7112c0ad4be450a2a974d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector console lists agent sessions above the selected session’s pull requests, artifacts, and inbox items. This change lets you select those rows and use their drawer controls with a left click, alongside the existing keyboard navigation.",
+   "Each displayed click target keeps its session, row, and action attached. The terminal maps mouse coordinates to the visible frame; the console then applies its existing note fields, confirmations, and revision checks. Active text fields ignore clicks until you finish or cancel them."
+  ],
+  "cards": [
+   {
+    "id": "behavior",
+    "title": "What a click does",
+    "html": "<ul class=\"tight\"><li>Click a session row to select it.</li><li>Click a panel row to open or close its drawer.</li><li>Click a choice to open its optional note field, or an action to use its normal confirmation.</li><li>Use the terminal’s mouse override when selecting text to copy.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Verified on this head",
+    "html": "<ul class=\"tight\"><li>Clean review with no findings, suggestions, or follow-ups.</li><li>All 102 focused Python tests and 270 hook tests passed.</li><li>The configured validation gate and required CI check passed.</li><li>The pseudo-terminal regression sent native mouse reports through the actual CLI and verified the recorded answer.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "mouse-routing",
+   "title": "Route clicks through existing actions",
+   "kicker": "The rendered frame carries clickable rows and controls.",
+   "intro": [
+    "A click target combines a session identity with an optional panel row and drawer action. Keeping that identity in the displayed frame prevents a refresh from turning an old click into an action on another session’s same-numbered inbox item.",
+    "The terminal records the targets after both panes have been scrolled and clipped, then adjusts them for its left padding. Only left clicks on those regions are handled. A resize invalidates old coordinates until the next draw, and terminals without mouse support keep keyboard navigation.",
+    "The console executes the captured action through the same path as a key press. Existing confirmation and optional-note behavior stays in that path; a choice captured before a question revision is still checked against the stored question before an answer is recorded."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Attach session-aware targets to rendered lines and dispatch terminal mouse events through the existing console actions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 582,
+       "text": "Focused tests confirmed that clicks preserve active notes and ignore targets whose session has disappeared."
+      },
+      {
+       "kind": "verify",
+       "line": 1575,
+       "text": "Scroll and resize regressions passed: targets follow the visible viewport, and coordinates from a prior terminal size are ignored."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Document clickable rows and controls, active-field behavior, and the terminal override used to select text.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 3467,
+       "text": "Mouse support is an additional input path. Keyboard navigation, optional notes, and dismissal confirmations retain their existing behavior."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "interaction-tests",
+   "title": "Exercise clicks at model and terminal boundaries",
+   "kicker": "Regressions cover identity, layout changes, and real mouse reports.",
+   "intro": [
+    "The model tests click positions from a displayed frame and assert on recorded inbox or subscription state. They cover correct-session answers, dismissal confirmation, both panes after scrolling, noninteractive areas, other buttons, active notes, removed sessions, terminal resize, and revised choices.",
+    "A pseudo-terminal test also launches the actual CLI and sends its terminal’s native mouse encoding. This checks the curses input boundary rather than relying only on simulated console callbacks."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_console.py",
+     "note": "Drive displayed targets with mouse events and verify the actual CLI accepts native mouse reports.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1255,
+       "text": "The stale-choice test passed: a question revised after drawing is not answered by the old displayed choice, and the console reports the revision refusal."
+      },
+      {
+       "kind": "verify",
+       "line": 1640,
+       "text": "The native mouse-report regression passed within the 102-test focused run, recording only the clicked answer and exiting without a traceback."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
