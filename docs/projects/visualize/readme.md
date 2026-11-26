@@ -3,9 +3,9 @@ status: ready
 priority: now
 ---
 
-# Publish versioned visualizations on the Projector site
+# Publish versioned artifacts on the Projector site
 
-Use `/visualize` to create or revise an interactive page, save it on a hidden
+Use `/artifact` to create or revise an interactive page, save it on a hidden
 Git ref, and browse it and its versions on the repository's site.
 
 ## 1. Problem
@@ -21,27 +21,27 @@ the repository's site, directory, and access rules.
 
 ## 2. Solution
 
-Add a shared `visualize` skill and `project visualization` commands. The
+Add a shared `artifact` skill and `project artifact` commands. The
 skill authors and previews a static HTML bundle. The CLI saves immutable
-versions on `refs/projector/visualizations`, and the site adds a searchable
-Visualizations directory with a latest link and a version picker. GitHub
+versions on `refs/projector/artifacts`, and the site adds a searchable
+Artifacts directory with a latest link and a version picker. GitHub
 Pages controls who can read the whole site.
 
 ### Author and publish
 
 1. Resolve the repository from the request or checkout. Give a new
-   visualization a stable repository-local ID, such as `cache-explorer`.
-   Recover a published visualization's source before revising it, keeping
+   artifact a stable repository-local ID, such as `cache-explorer`.
+   Recover a published artifact's source before revising it, keeping
    its ID.
-2. Create a dedicated working directory with `project visualization init`.
+2. Create a dedicated working directory with `project artifact init`.
    Author `index.html` and its assets, listing the intended files in
-   `visualization.json`. Compile framework source before publication;
+   `artifact.json`. Compile framework source before publication;
    Pages serves the finished bundle without a server or build at view time.
-3. Preview with `project site serve --visualizations WORKDIR`. This overlays
+3. Preview with `project site serve --artifacts WORKDIR`. This overlays
    the source bundle without a ref write. Exercise its controls at desktop
    and phone widths, and verify relative asset and data loads. Previewing
    never runs a bundle's build commands or changes `site.prepare`.
-4. Run `project visualization publish --dir WORKDIR` directly. It validates
+4. Run `project artifact publish --dir WORKDIR` directly. It validates
    the bundle, computes its version, and checks hosting through the existing
    Pages rules. Where hosting is ready, it appends the version and updates
    this ID's latest pointer in one commit and ordinary fast-forward push.
@@ -53,25 +53,25 @@ Pages controls who can read the whole site.
    but deployment did not start, and names the workflow command to retry.
 
 Where hosting is absent, cannot be checked, or would expose private content,
-keep the version on the checkout's local `refs/projector/visualizations` and
+keep the version on the checkout's local `refs/projector/artifacts` and
 push nothing. `--local` requests this behavior even with hosting. Print a
 local preview route instead of a hosted URL. Setting up Pages or changing
 its visibility requires a separate user request.
 
 ### Commands
 
-Visualization commands accept `--checkout` and `--remote`, defaulting to the
+Artifact commands accept `--checkout` and `--remote`, defaulting to the
 current checkout and `origin`. IDs match `[a-z0-9]+(?:-[a-z0-9]+)*`, with at
 most 80 characters. Reject a differently cased ID rather than normalizing it.
 
 | Command | Behavior |
 | --- | --- |
-| `project visualization init ID --dir WORKDIR --title TITLE [--description TEXT]` | Create a source manifest and HTML starter. Refuse to overwrite existing files. |
-| `project visualization init ID --dir WORKDIR --from-published [--version VERSION]` | Recover latest, or an exact full version ID, into a new working directory. |
-| `project visualization list [--id ID] [--json]` | List IDs, latest titles and versions, and version counts. With an ID, list its versions and mark latest and local previews. |
-| `project visualization publish --dir WORKDIR [--local] [--no-dispatch]` | Validate and save one version, updating latest only for new content. Deploy when hosted unless dispatch is disabled. |
-| `project site serve --visualizations WORKDIR` | Overlay one source bundle on the published directory. Normal `site serve` includes local and remote saved versions. |
-| `project site build --visualizations DIR` | Read an extracted directory of saved visualizations, as supplied by the site action. |
+| `project artifact init ID --dir WORKDIR --title TITLE [--description TEXT]` | Create a source manifest and HTML starter. Refuse to overwrite existing files. |
+| `project artifact init ID --dir WORKDIR --from-published [--version VERSION]` | Recover latest, or an exact full version ID, into a new working directory. |
+| `project artifact list [--id ID] [--json]` | List IDs, latest titles and versions, and version counts. With an ID, list its versions and mark latest and local previews. |
+| `project artifact publish --dir WORKDIR [--local] [--no-dispatch]` | Validate and save one version, updating latest only for new content. Deploy when hosted unless dispatch is disabled. |
+| `project site serve --artifacts WORKDIR` | Overlay one source bundle on the published directory. Normal `site serve` includes local and remote saved versions. |
+| `project site build --artifacts DIR` | Read an extracted directory of saved artifacts, as supplied by the site action. |
 
 `--version` accepts a full digest, not an abbreviation or mutable branch name.
 Source recovery and listing fetch first, with `--no-fetch` for offline use.
@@ -106,11 +106,11 @@ file bytes affect identity; filesystem and publication timestamps do not.
 The version ID is the full lowercase digest.
 
 ```text
-refs/projector/visualizations
-└── visualizations/cache-explorer/
+refs/projector/artifacts
+└── artifacts/cache-explorer/
     ├── latest.json
     └── <version>/
-        ├── visualization.json
+        ├── artifact.json
         ├── revision.json
         └── files/
             ├── index.html
@@ -119,7 +119,7 @@ refs/projector/visualizations
 
 | Stored record | Contents |
 | --- | --- |
-| `visualization.json` | The normalized source manifest. |
+| `artifact.json` | The normalized source manifest. |
 | `revision.json` | `version`, `publishedAt` as a UTC timestamp, and the file records. Publication time is outside the hash. |
 | `files/` | Exact listed bytes, without Git filters or line-ending conversion. Include editable source here when the page needs compilation. |
 | `latest.json` | `{"version":"<full digest>"}`. |
@@ -146,24 +146,24 @@ All paths honor the existing site base, including a project site's prefix.
 
 | Route | Page |
 | --- | --- |
-| `visualizations/` | One row per ID: latest title, description, update time, and version count. Filter by title, description, or ID; order by update time, then ID. |
-| `visualizations/<id>/` | Latest version, with directory link and version picker. |
-| `visualizations/<id>/<version>/` | Fixed version, publication time, abbreviated digest, and link to latest. |
-| `content/visualizations/<id>/<version>/...` | Bundle files with their relative paths preserved. |
+| `artifacts/` | One row per ID: latest title, description, update time, and version count. Filter by title, description, or ID; order by update time, then ID. |
+| `artifacts/<id>/` | Latest version, with directory link and version picker. |
+| `artifacts/<id>/<version>/` | Fixed version, publication time, abbreviated digest, and link to latest. |
+| `content/artifacts/<id>/<version>/...` | Bundle files with their relative paths preserved. |
 
-Add Visualizations to the common menu when any valid ID has a latest version.
+Add Artifacts to the common menu when any valid ID has a latest version.
 Write real shell files for direct loads. Reuse the wide HTML frame and
 full-screen controls. Every version loads its own complete asset directory.
 Pass the wrapper URL's query and hash to the page, preserving both when
 selecting a version and when navigating back.
 
-Add a `visualizations` array to `site.json`, defaulting to empty when reading
+Add an `artifacts` array to `site.json`, defaulting to empty when reading
 older manifests. Each item has `id`, `latest`, and version records containing
 `version`, `title`, `description`, `publishedAt`, and the entry URL. Escape
 metadata as text. Search indexes only latest title, description, and visible
 HTML text, excluding scripts and styles, and links to the latest route.
 
-Fetch the visualization ref independently of summaries in the action and
+Fetch the artifact ref independently of summaries in the action and
 local server. Missing means an empty directory. Skip a malformed version
 with its ID, version, and reason reported, preserving valid neighbors. An
 invalid latest pointer removes that ID from the directory with a diagnostic;
@@ -183,11 +183,11 @@ reachable. Publication accepts content from an authorized repository writer;
 reading an untrusted pull request does not authorize publishing its code.
 The CLI never runs a bundle's scripts during publication or deployment.
 
-Write `skills/visualize/SKILL.md` once for both hosts, using the skill-creator
-workflow. It handles requests for a visualization or small interactive
+Write `skills/artifact/SKILL.md` once for both hosts, using the skill-creator
+workflow. It handles requests for an artifact or small interactive
 explanation or tool, and later revisions. It chooses presentation and
 controls for the question, with keyboard access, labeled controls, readable
-contrast, and phone layouts. An explicit `/visualize` request uses configured
+contrast, and phone layouts. An explicit `/artifact` request uses configured
 hosting by default; a request for local preview stays local. Recover saved
 source for edits, respect repository publication policy and the audience of
 source material, and return the resulting links or local route. Neither
@@ -197,18 +197,21 @@ host needs an artifact API or MCP server.
 
 | Component | Change |
 | --- | --- |
-| `skills/visualize/SKILL.md` | Add authoring, recovery, preview, validation, and publication guidance. |
-| `src/projector/visualization.py` | Own manifests, validation, content identity, and saved records. |
+| `skills/artifact/SKILL.md` | Add authoring, recovery, preview, validation, and publication guidance. |
+| `src/projector/artifact.py` | Own manifests, validation, content identity, and saved records. |
 | `src/projector/summary.py` and a shared ref module | Extract hidden-ref fetch, temporary-index commits, and bounded push retries. Move summary callers without changing their schema, legacy migration, or publication behavior. |
 | `src/projector/cli.py` | Register commands and preview/build inputs. Reuse checkout, repository, hosting, and visibility helpers, extending visibility handling for internal repositories if needed. |
 | `src/projector/site/__init__.py` and `serve.py` | Read bundles, combine previews, copy files, emit routes and search data, and watch both ref families. |
-| `actions/site/action.yml` | Fetch and read the visualization ref alongside summaries; pass the directory to build. |
+| `actions/site/action.yml` | Fetch and read the artifact ref alongside summaries; pass the directory to build. |
 | `site/src/site.ts`, `site/src/globals.d.ts`, and `site/assets/site.css` | Add directory, routes, menu, version picker, and types. Reuse HTML layout and search; commit rebuilt JavaScript. |
-| `tests/test_visualization.py`, `tests/test_site.py`, `tests/test_summary.py`, `tests/test_packaging.py` | Cover the boundaries below; add `visualize` to the exact published skill set. |
+| `tests/test_artifact.py`, `tests/test_site.py`, `tests/test_summary.py`, `tests/test_packaging.py` | Cover the boundaries below; add `artifact` to the exact published skill set. |
 | `README.md` and `docs/site.md` | Document commands, links, preview, access, limits, and action-pin upgrades. Leave completed plans unchanged. |
 
 ## 3. Why this design
 
+- **Name the thing you make.** Use `artifact` for the skill, commands, files,
+  and directory. “Make an /artifact” fits the request, and the name covers
+  interactive tools as well as visual explanations.
 - **Extend the site.** Hidden refs, Pages access, HTML rendering, and search
   already exist. A separate artifact service adds another storage and access
   system to configure.
@@ -218,7 +221,7 @@ host needs an artifact API or MCP server.
 - **Derive the directory.** Each ID owns its pointer and versions; publishers
   need no shared catalog to update.
 - **Share mechanics, separate formats.** Summaries need pull request heads
-  and diffs; visualizations need complete bundles. Extract Git mechanics
+  and diffs; artifacts need complete bundles. Extract Git mechanics
   rather than making either content schema serve both.
 
 ## 4. Acceptance criteria
@@ -235,7 +238,7 @@ host needs an artifact API or MCP server.
 | Direct-load both routes, change versions, and use browser back. | Static routes work, assets come from the selected version, and query and hash state reach the page. |
 | Search for text changed across versions. | Latest appears once; older text and script-only text do not appear. |
 | Supply traversal, symlinks, hidden files, case collisions, bad hashes, NUL-containing binary files, and oversized bundles. | Invalid input fails before a ref write or unsafe extraction; valid binary bytes survive; malformed stored versions leave valid neighbors usable. |
-| Build sites with only visualizations and with none; install each plugin. | Navigation and search work; existing sections retain their behavior; both hosts discover the shared skill without MCP. |
+| Build sites with only artifacts and with none; install each plugin. | Navigation and search work; existing sections retain their behavior; both hosts discover the shared skill without MCP. |
 
 Add regression tests that fail before implementation, pinning a changed JSON
 value and binary payload through publication, recovery, version selection,
@@ -250,12 +253,12 @@ relative fetches, picker, navigation, layout, and full-screen behavior.
 Snapshot and hash a bundle once per publish, reusing it for retries. Git
 shares unchanged blobs across versions, but each deploy includes every saved
 version, so storage and deploy size grow with history. Report aggregate
-visualization bytes during build; the per-bundle limits do not bound history.
+artifact bytes during build; the per-bundle limits do not bound history.
 
 Read each stored manifest and file once at build, with no per-version GitHub
 API request. Load metadata for the directory and bundles only when opened.
 Measure publish and build time, bytes read, and output size with 100 small
-visualizations at five versions each and one near-limit bundle. Record the
+artifacts at five versions each and one near-limit bundle. Record the
 measurements in the implementation hand-over. No backend service is added.
 
 ## 6. Rollout
