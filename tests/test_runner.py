@@ -36,8 +36,8 @@ class RunTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def test_a_chunk_reads_no_stdin_even_when_the_runner_has_one_that_stays_open(self) -> None:
-        # A runner started in the background can hold a stdin that never closes, and a chunk that inherited
-        # it waited on `cat` for hours.
+        # A runner started in the background can hold a stdin that never closes, and a chunk that inherits it
+        # waits forever on a test that reads stdin.
         read, write = os.pipe()
         saved = os.dup(0)
         os.dup2(read, 0)
