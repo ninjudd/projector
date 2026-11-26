@@ -1369,12 +1369,16 @@ hooks-absent   ⚠️  codex projector-hooks@projector -- run project upgrade co
 mismatch       ⚠️  what this upgrade installed does not match the v0.9.0 release -- run the command each row above names
 ```
 
-A `plugin-ahead` row means that a host installed a plugin newer than the
-release. Each host's marketplace follows the default branch, which carries a
-new version a few minutes before its release is published, so run
-`project upgrade` again once the release is out. When `status` has no release
-version to compare with, `upgrade` prints an `unverified` row instead and
-exits 0.
+Each host's marketplace follows the default branch, which can carry a new
+version before its release is published. When newer plugins are the only
+mismatch, `upgrade` prints a `retrying` row and tries again after 30 seconds.
+It looks up the newest release and reruns the installer with your original
+targets, up to five more times. It prints the mismatch rows only if the
+retries run out or another problem appears. An explicit `PROJECTOR_REF`
+keeps the release you chose and skips these retries.
+
+When `status` has no release version to compare with, `upgrade` prints an
+`unverified` row instead and exits 0.
 
 Trusting Projector's hooks in Codex's `/hooks` is a step only you can take,
 so the check does not look at it. A checkout install is not checked, because

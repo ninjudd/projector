@@ -3076,6 +3076,8 @@ class UpgradeCheckTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.setUp_upgrade()
+        self.sleep = self.patch(mock.patch.object(cli, "time", wraps=cli.time)).sleep
+        self.sleep.side_effect = AssertionError("unexpected retry")
         self.installed_from(UpgradeTests.RELEASE)
         self.state = self.root / "state"
         self.state.mkdir()
@@ -3160,18 +3162,72 @@ class UpgradeCheckTests(unittest.TestCase):
             "each row above names",
         ]), (code, rows))
 
-    def test_plugins_ahead_of_the_release_fail_the_upgrade(self) -> None:
-        # The default branch carries a release's version before its GitHub
-        # release is published, and both hosts install plugins from it.
+    def test_plugins_ahead_of_the_release_retry_and_install_the_new_release(self) -> None:
         self.newest_release(gh="v0.8.18")
         self.left(release="0.8.18", cli_version="0.8.18", plugins="0.9.0")
+        (self.bin / "pipx").write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "${{PROJECTOR_REF#v}}" > "{self.state}/cli"\n'
+        )
+
+        def publish(_seconds: float) -> None:
+            self.newest_release(gh="v0.9.0")
+            (self.state / "release").write_text("0.9.0")
+
+        self.sleep.side_effect = publish
+
+        code, rows = self.upgrade()
+
+        self.assertEqual((0, ["retrying", "verified"]), (code, [row.split()[0] for row in rows]))
+        self.assertEqual("verified       what this upgrade installed matches the v0.9.0 release", rows[-1])
+        self.assertEqual("0.9.0\n", (self.state / "cli").read_text())
+        self.assertEqual([
+            "https://raw.githubusercontent.com/ninjudd/projector/v0.8.18/install.sh",
+            "https://raw.githubusercontent.com/ninjudd/projector/v0.9.0/install.sh",
+        ], [call.args[0] for call in cli.fetch_installer.call_args_list])
+
+    def test_plugins_still_ahead_after_the_retry_limit_fail_the_upgrade(self) -> None:
+        self.newest_release(gh="v0.8.18")
+        self.left(release="0.8.18", cli_version="0.8.18", plugins="0.9.0")
+        self.patch(mock.patch.object(cli, "UPGRADE_RETRIES", 2))
+        self.sleep.side_effect = [None, None]
 
         code, rows = self.upgrade("all")
 
         self.assertEqual(1, code)
-        self.assertEqual(["plugin-ahead", "plugin-ahead", "mismatch"], [row.split()[0] for row in rows])
-        self.assertIn("claude installed 0.9.0, release 0.8.18", rows[0])
-        self.assertIn("run project upgrade all again in a few minutes", rows[0])
+        self.assertEqual(["retrying", "retrying", "plugin-ahead", "plugin-ahead", "mismatch"],
+                         [row.split()[0] for row in rows])
+        self.assertIn("claude installed 0.9.0, release 0.8.18", rows[-3])
+
+    def test_an_explicit_ref_does_not_retry_plugins_ahead_of_that_ref(self) -> None:
+        os.environ["PROJECTOR_REF"] = "v0.8.18"
+        self.left(release="0.8.18", cli_version="0.8.18", plugins="0.9.0")
+
+        code, rows = self.upgrade("claude")
+
+        self.assertEqual((1, ["plugin-ahead", "mismatch"]), (code, [row.split()[0] for row in rows]))
+        self.assertNotIn("releases/latest", self.gh_log.read_text())
+
+    def test_a_stale_cli_with_newer_plugins_fails_without_a_retry(self) -> None:
+        self.newest_release(gh="v0.8.18")
+        self.left(release="0.8.18", cli_version="0.8.17", plugins="0.9.0")
+
+        code, rows = self.upgrade("all")
+
+        self.assertEqual((1, ["cli-stale", "plugin-ahead", "plugin-ahead", "mismatch"]),
+                         (code, [row.split()[0] for row in rows]))
+
+    def test_an_installer_failure_on_a_retry_returns_its_status(self) -> None:
+        self.newest_release(gh="v0.8.18")
+        self.left(release="0.8.18", cli_version="0.8.18", plugins="0.9.0")
+
+        def fail_install(_seconds: float) -> None:
+            (self.bin / "pipx").write_text("#!/bin/sh\nexit 7\n")
+
+        self.sleep.side_effect = fail_install
+
+        code, rows = self.upgrade("all")
+
+        self.assertEqual((7, ["retrying"]), (code, [row.split()[0] for row in rows]))
 
     def test_codex_without_its_hooks_plugin_fails_the_upgrade(self) -> None:
         # The bug: an installer that never added projector-hooks left Codex

@@ -316,6 +316,8 @@ class ReleaseCheck(NamedTuple):
 
 
 MISMATCHED = 1
+UPGRADE_RETRIES = 5
+UPGRADE_RETRY_SECONDS = 30
 # The rows of `install.sh status` that name something the install left wrong, each with the command that fixes it.
 MISMATCH_ROWS = {"cli-missing", "cli-stale", "plugin-absent", "plugin-stale", "plugin-ahead", "hooks-absent"}
 # The rows it prints when it has no release version to compare with.
@@ -410,7 +412,16 @@ def run_upgrade(targets: list[str]) -> int:
     # Everything else this process still needs is imported already, so nothing
     # after it reaches for a file the reinstall is in the middle of replacing.
     before = init_digests()
-    code, check = run_installer(record, targets)
+    for attempt in range(UPGRADE_RETRIES + 1):
+        code, check = run_installer(record, targets)
+        mismatches = {name for name, _, _ in check.rows if name in MISMATCH_ROWS} if check else set()
+        if (code != 0 or mismatches != {"plugin-ahead"} or os.environ.get("PROJECTOR_REF")
+                or attempt == UPGRADE_RETRIES):
+            break
+        installer_row("retrying", f"a plugin is newer than the published release -- trying the upgrade again in "
+                      f"{UPGRADE_RETRY_SECONDS}s ({attempt + 1}/{UPGRADE_RETRIES})")
+        sys.stdout.flush()
+        time.sleep(UPGRADE_RETRY_SECONDS)
     report_init_changes(before, code == 0)
     if check is None:
         return code

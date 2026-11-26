@@ -205,8 +205,10 @@ projector.bot serves `install.sh` from the `v0` tag, which every release
 moves, and caches it for a few minutes, so just after a release it can serve
 the one before. `project upgrade` avoids that cache: it runs `install.sh` from
 the newest release's own tag, such as `v0.9.0`, and then checks what it
-installed against that release (see [the CLI guide](cli.md#upgrade)). Every
-`project` command also warns on stderr when a newer release is out (see
+installed against that release. If newer plugins are the only mismatch,
+it waits and retries automatically unless you set `PROJECTOR_REF` (see
+[the CLI guide](cli.md#upgrade)). Every `project` command also warns on stderr
+when a newer release is out (see
 [Know when a release is out](cli.md#know-when-a-release-is-out)).
 
 The installer also installs or moves the `gh-stack` plugin on each host,
