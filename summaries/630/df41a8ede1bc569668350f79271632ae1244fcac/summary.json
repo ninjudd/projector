@@ -19,7 +19,13 @@
    "<ul class=\"tight\"><li><b>No stdin.</b> Each chunk starts with stdin connected to <code>/dev/null</code>, so a test that reads stdin reads nothing and goes on.</li><li><b>A time limit.</b> Each chunk runs in a process group of its own. Past <code>--timeout</code> seconds, 300 by default, the runner kills the whole group, or only the chunk's own process where <code>os.killpg</code> does not exist, as on Windows, and fails the chunk with <code>The chunk ran past 300 seconds and was stopped.</code></li><li><b>Ctrl-C stops the chunks.</b> A chunk in a session of its own no longer receives the <code>SIGINT</code> that Ctrl-C sends the terminal's foreground process group, so when the runner is interrupted, it starts no more chunks and kills the group of each running one itself.</li></ul>",
    "The runner kills the group rather than the chunk's process alone because a process a test started, such as that <code>cat</code>, holds the chunk's output pipes open, and the runner would keep waiting to read them."
   ],
-  "cards": []
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review at this head",
+    "html": "<ul class=\"tight\"><li><b>Coverage.</b> Read all three changed files and their callers.</li><li><b>Earlier findings.</b> The three findings about the comment, documentation, and Ctrl-C are fixed and resolved.</li><li><b>Platform limit.</b> Native Windows execution was not tested. The fallback kills only the chunk, so descendants can keep its output pipes open.</li></ul>"
+   }
+  ]
  },
  "groups": [
   {
@@ -34,7 +40,7 @@
    "checks": [
     {
      "kind": "verify",
-     "text": "The gate passed at this head: <code>claude plugin validate</code>, <code>claude plugin test</code>, <code>git diff --check</code>, and the <code>check</code> CI job, which runs <code>tests.test_runner</code>, the interrupt test included."
+     "text": "The configured gate passed at this head, including both plugin validations, 263 hook tests, hook type checking, the whitespace check, and the successful <code>check</code> CI job."
     }
    ],
    "files": [
@@ -51,7 +57,7 @@
       {
        "kind": "context",
        "line": 106,
-       "text": "<code>communicate</code> raised <code>TimeoutExpired</code> before it reaped the chunk, so the group still exists when <code>stop</code> runs <code>killpg</code>, and the second <code>communicate</code> returns once every process holding the pipes is dead."
+       "text": "On timeout, the runner signals the chunk’s process group before it reads the remaining output. Processes in that group that inherited the output pipes are killed too, so those pipes close."
       },
       {
        "kind": "context",
@@ -62,13 +68,23 @@
        "kind": "context",
        "line": 142,
        "text": "After <code>interrupt</code>, the <code>with ThreadPoolExecutor</code> block's own shutdown still waits for the workers, but each one returns as soon as its killed group closes the output pipes."
+      },
+      {
+       "kind": "context",
+       "line": 68,
+       "text": "The repository already provides <code>projector.core.process_group</code> and <code>kill_group</code>, including Windows process-tree cleanup. Reusing them is a nonblocking simplification suggested by this review."
       }
      ]
     },
     {
      "path": "tests/test_runner.py",
      "note": "Five tests: a chunk ignores a stdin that never closes, a chunk past its timeout fails along with its children, a chunk past its timeout still fails where <code>os.killpg</code> does not exist, a <code>SIGINT</code> to the runner stops the running chunk and its child, and <code>--help</code> shows <code>--timeout SECONDS</code>.",
-     "checks": []
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All five runner regressions and all thirteen <code>tests.test_ci.ActionTests</code> passed on Python 3.14 in 2.5 seconds while the runner’s stdin stayed open. The runner tests exercise timeout failures, child cleanup, the fallback without <code>os.killpg</code>, Ctrl-C, and help output."
+      }
+     ]
     },
     {
      "path": "docs/develop.md",
