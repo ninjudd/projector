@@ -1,0 +1,156 @@
+{
+ "version": 1,
+ "name": "Review follow-ups",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 629,
+  "title": "Let a review list follow-ups for fix-pr to take on after the merge",
+  "head": "7791813e10186ef7549fffaa4d02eaf66785b814",
+  "headRef": "reviewer-follow-ups",
+  "base": "7ed76b1252f831016dcb76faed4ccb37bcf51d3e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's review skill reads a pull request and lists what it finds. Until now it had three kinds of output: P1 and P2 <b>findings</b>, which open review threads and block the pull request, and P3 <b>suggestions</b>, which the review body lists and the <code>fix-pr</code> skill implements or defers on the open pull request. A real problem that was not the change's own, such as a bug already present at the base, could only be a suggestion, so <code>fix-pr</code> ended up weighing work that was not part of the pull request's argument.",
+   "This change adds a fourth kind, the <b>follow-up</b>. A reviewer gives it as a threads-file entry with <code>\"priority\": \"follow-up\"</code>. <code>project review publish</code> lists it under a <code>### Follow-ups</code> heading after the suggestions. It opens no thread and never holds a head back from clean. <code>fix-pr</code> leaves it alone while the pull request is open, and takes it into a follow-up pull request once the pull request merges.",
+   "<ul><li><b>A follow-up stays owed across heads.</b> Suggestions count only on the newest head, but a follow-up names code outside the change, so the new <code>project review follow-ups</code> lists the follow-ups of every review, de-duplicated by file, line, and text.</li><li><b>The watch daemon counts them on merge.</b> The fixer's <code>MERGED</code> line now names both counts, such as <code>the 2 suggestions its merged head lists and the follow-up its reviews list</code>. A review that lists only follow-ups raises no <code>REVIEW</code> line.</li><li><b>The review marker is unchanged.</b> The count goes on a line of its own, so earlier releases still read every verdict.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Threads file</b>: the JSON list of findings a reviewer hands to <code>publish</code>.</li><li><b>Listing</b>: a kind of item a review lists in its body rather than posting as a thread. There are two: suggestions (P3) and follow-ups.</li><li><b>Count line</b>: the <code>&lt;!-- projector-…-ups v=1 count=n --&gt;</code> comment <code>publish</code> writes before a section's label, which the daemon and <code>status</code> read.</li><li><b>Owed</b>: what a merged pull request still owes its fixer.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Suggestions and follow-ups share one parser",
+   "kicker": "review.py's listed sections, publish, and the new follow-ups lister",
+   "intro": [
+    "Before this change, <code>review.py</code> had a parser, a writer, a count reader, and an entry checker written for the suggestions section alone. The change moves those into functions that take a <code>Listing</code>, a small frozen dataclass naming the threads-file priority, the section heading, the label pattern, and the count-line pattern. <code>SUGGESTIONS</code> and <code>FOLLOW_UPS</code> are its two instances, so the two sections cannot drift apart.",
+    "<code>publish</code> now sorts each threads-file entry into a finding or one of the listings, and <code>compose</code> writes the suggestions section first and the follow-ups section after it. The new <code>follow_ups</code> reads the same reviews <code>status</code> counts, at every head, oldest first, and keeps each item once."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every caller of the renamed helpers moved to the new names, and nothing in <code>src/</code>, <code>tests/</code>, or the skills still names the old ones. Checked with a repository-wide search at the head."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "The <code>Listing</code> dataclass and the parser, writer, and lister that now take one.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>Listing</code> is frozen, so it is hashable and <code>publish</code> keys its entries by it.",
+       "line": 2432
+      },
+      {
+       "kind": "verify",
+       "text": "<code>with_counts</code> splits the body again after inserting each count line, so the follow-ups label's index is right. The suggestions parser stops at the blank line before the follow-ups count line. Checked by reading <code>parse_listing</code> and by <code>PublishFollowUpTests</code>, which passed locally.",
+       "line": 2503
+      },
+      {
+       "kind": "context",
+       "text": "De-duplication keys on file, line, and text, so a repeat at a moved line lists twice. The review skill has the reviewer run <code>project review follow-ups</code> first and leave repeats out.",
+       "line": 2837
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "daemon",
+   "title": "The MERGED line counts follow-ups",
+   "kicker": "watch.py's Owed and the CLI command",
+   "intro": [
+    "The watch daemon tells a pull request's fixer what to do when it merges. It used to count only the suggestions on the merged head. <code>Pass.owed</code> now also counts the follow-ups of every review, through the same <code>follow_up_items</code> the CLI uses, and returns an <code>Owed</code> pair. <code>closing_actions</code> names whichever counts are non-zero, and when both are zero it falls back to the old line, which asks the fixer to take any suggestion it deferred.",
+    "The CLI gains <code>project review follow-ups</code>, which shares its handler with <code>suggestions</code>, and the Codex allow rule names it."
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Registers <code>review follow-ups</code> and routes it through the handler <code>suggestions</code> uses."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds <code>follow-ups</code> to the Codex allow rule for review steps."
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "<code>Owed</code> counts suggestions and follow-ups for the <code>MERGED</code> line.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The reviews the daemon counts come from the paginated REST read in <code>read_reviews</code>, not the GraphQL <code>last:100</code> query, so follow-ups from early heads count on a long pull request too.",
+       "line": 1715
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "The skills say where a follow-up goes",
+   "kicker": "review-pr, method.md, fix-pr, and cleanup",
+   "intro": [
+    "These files are instructions an agent follows. The review method now files a pre-existing defect, a problem in untouched code, a gap between a written rule and practice, or an improvement too large to fold in, as a follow-up instead of a P3. The test is whether the work belongs in this pull request. <code>fix-pr</code> builds no follow-up on the open pull request, and after the merge it lists both suggestions and follow-ups, verifies each against the base, and may split unrelated ones into separate pull requests."
+   ],
+   "files": [
+    {
+     "path": "skills/cleanup/SKILL.md",
+     "note": "Counts a follow-up still owed on a merged pull request as unfinished work."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Leaves follow-ups alone on an open pull request and takes them on after the merge."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Defines a follow-up and its threads-file entry, and narrows P3 to work that belongs in this pull request."
+    },
+    {
+     "path": "skills/review-pr/method.md",
+     "note": "Files a pre-existing defect and a rule-versus-practice gap as follow-ups."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "docs/cli.md and docs/plugins.md",
+   "intro": [
+    "The CLI reference documents the new command, the section format, the refusals, and the new <code>MERGED</code> wording. The plugin overview explains follow-ups in one paragraph."
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Publish, listing, and daemon tests",
+   "intro": [
+    "<code>PublishFollowUpTests</code> checks the two sections, their count lines, the refusals, and that release 0.7.19's marker reader still reads the verdict. <code>FollowUpListingTests</code> checks the cross-head listing and de-duplication. Three daemon tests check the <code>MERGED</code> and <code>REVIEW</code> lines."
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py"
+    },
+    {
+     "path": "tests/test_watch.py"
+    }
+   ]
+  }
+ ]
+}

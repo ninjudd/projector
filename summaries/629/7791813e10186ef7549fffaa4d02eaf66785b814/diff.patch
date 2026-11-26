@@ -1,0 +1,1383 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 0ed8c48d..c1918778 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -259,7 +259,7 @@ what it did to each:
+       decision = "allow",
+   )
+   prefix_rule(
+-      pattern = ["project", "review", ["census", "ci-workflow", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
++      pattern = ["project", "review", ["census", "ci-workflow", "finish", "follow-ups", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
+       decision = "allow",
+   )
+   prefix_rule(
+@@ -1097,7 +1097,7 @@ reads, which are these:
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+ | `review.labels` | boolean | `true` | `project review setup`, `publish`, and `finish`, to add and remove the `reviewing` label, which shows a review in progress, and the `clean` label, which shows a signed-off head; `false` leaves both labels alone, as a repository whose own `clean` or `reviewing` label means something else needs |
+ | `review.require_check` | boolean | none | `init`, as your answer to whether the repository relies on Projector alone to sign off pull requests: none asks at a terminal, `true` keeps the ruleset and the label workflow in place, and `false` asks no more; `init` writes it when you answer, as [Require a clean review before merge](#require-a-clean-review-before-merge) describes |
+-| `review.reviewers` | string | none | `project review status`, `suggestions`, `setup`, and `publish`, and the watch daemon from the configuration of a checkout a live session works in, or, for a repository no live session has a checkout of, from the `.projector.toml` its default branch commits on GitHub, as the logins whose Projector verdicts count beside the reviewer's and those of the repository's owner, members, and collaborators, separated by commas, as `github-actions[bot]`. On a public repository a review from any other account does not count, so name an account here, such as the one a CI review posts as, only when you trust every review it posts |
++| `review.reviewers` | string | none | `project review status`, `suggestions`, `follow-ups`, `setup`, and `publish`, and the watch daemon from the configuration of a checkout a live session works in, or, for a repository no live session has a checkout of, from the `.projector.toml` its default branch commits on GitHub, as the logins whose Projector verdicts count beside the reviewer's and those of the repository's owner, members, and collaborators, separated by commas, as `github-actions[bot]`. On a public repository a review from any other account does not count, so name an account here, such as the one a CI review posts as, only when you trust every review it posts |
+ | `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
+ | `review.automatic` | boolean | `true` | the watch daemon, from the configuration of a checkout a live session works in, or, for a repository no live session has a checkout of, from the `.projector.toml` its default branch commits on GitHub, as whether the repository's pull requests get a Projector review without anyone asking for one; `false` announces no `UNREVIEWED` for them, for a repository you review only when you ask |
+ | `review.ci` | boolean | none | the watch daemon, from the configuration of a checkout a live session works in, or, for a repository no live session has a checkout of, from the `.projector.toml` its default branch commits on GitHub, which announces no `UNREVIEWED` for a head from the repository's own branches while it is `true`, and `init`, as your answer to whether the repository's pull requests get a review in GitHub Actions: none asks at a terminal, `true` refreshes the workflow, and `false` asks no more; `init` writes it when you answer, as [Review pull requests in GitHub Actions](#review-pull-requests-in-github-actions) describes |
+@@ -2027,6 +2027,7 @@ project review setup 66 --model claude-opus-5-5 --replace 4011
+ project review gate 66
+ project review status 66
+ project review suggestions 66
++project review follow-ups 66
+ project review hold 66
+ project review ready 66
+ project review rules
+@@ -2257,17 +2258,32 @@ suggestions has no count line. Where a review has none but lists
+ suggestions, as one an earlier release published does, `status` counts its
+ list.
+ 
++A finding whose priority is `follow-up` is a follow-up: work that belongs in
++a pull request of its own, such as a defect already present at the base. It
++has the same shape as a P3 and opens no thread either. `publish` lists the
++follow-ups after the suggestions, in the same form under a `### Follow-ups`
++heading, with a `projector-follow-ups` line directly before it that counts
++them. `review follow-ups` reads them back:
++
++```markdown
++<!-- projector-follow-ups v=1 count=1 -->
++### Follow-ups
++
++- `src/fetch.py:88`: Close the socket `fetch` opens when the request fails, which the base already leaks.
++```
++
+ `publish` refuses, exiting 1 and keeping the lock, when:
+ 
+ - the pull request closed or its head moved;
+ - a finding's line is outside the diff's hunks, or its text lacks a priority
+   header or a `**Fix:**` line;
+-- a P3 has no path, a path holding a space, a colon, or a backtick, a `line`
+-  that is not a line number, or an empty body;
++- a P3 or follow-up has no path, a path holding a space, a colon, or a
++  backtick, a `line` that is not a line number, or an empty body;
+ - the body is empty, carries its own signature or marker comment, or has no
+   `{census}` outside quoted code;
+ - the threads file gives P3 entries and the body carries a suggestions
+-  section of its own, which would list them twice;
++  section of its own, or follow-up entries and a follow-ups section, which
++  would list them twice;
+ - the verdict disagrees with the finding count;
+ - the reviewer already has a verdict by this model on the head that this
+   loop's record does not account for.
+@@ -2471,6 +2487,16 @@ object for each suggestion:
+ | `path`, `line` | The file and line the suggestion names, or `null` where it names none. |
+ | `text` | The suggestion, on one line. |
+ 
++`follow-ups` lists the follow-ups the `fix-pr` skill takes on once the pull
++request merges: those of every Projector review among the reviews `status`
++counts, whichever head it read, oldest first. A follow-up names code outside
++the change, so a later push leaves it owed. A follow-up that several reviews
++list, with the same file, line, and text, is listed once, from the first
++review that gives it. It prints the same blocks as `suggestions`, reads its
++section in the same forms under a `Follow-ups` label, finds the repository
++and the reviewer the same way, and prints nothing when no review lists a
++follow-up. With `--json` it prints a list of objects with the same fields.
++
+ `hold` and `ready` move your own pull request's draft state. A draft means
+ that its author is still working on it. Run `ready` once your work on the
+ pull request is done, to mark it ready for review. Run `hold` to convert it
+@@ -3950,7 +3976,7 @@ records it.
+ | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
+ | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
+ | `MOVED` | any | Another session owns the role now |
+-| `MERGED`, `CLOSED` | any | The pull request merged or closed; `MERGED` says whether a layer's base reached the default branch, and tells the fixer to take the suggestions still owed on it into a follow-up pull request |
++| `MERGED`, `CLOSED` | any | The pull request merged or closed; `MERGED` says whether a layer's base reached the default branch, and tells the fixer to take the suggestions and follow-ups still owed on it into a follow-up pull request |
+ | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
+ 
+ A `LABEL` line is not work. The review commands set the `clean` and
+@@ -3965,26 +3991,28 @@ A Projector review is work only through its suggestions, and they stand
+ where `project review suggestions` lists them: in each account's newest
+ verdict on the current head by each model, and in the full review that an
+ incremental one builds on, which can be of an earlier head. Any other review
+-of an earlier head is history, so it reports nothing. The daemon announces
++of an earlier head is history, so it reports nothing. A follow-up waits for
++the merge, so a review that lists only follow-ups reports nothing either. The daemon announces
+ each review once. A pull request that a session on this machine reviews
+ waits for that review without a line of its own, and a draft waits on its
+ author.
+ 
+-A pull request can merge while suggestions on it are still owed, so the
+-fixer's `MERGED` line sends the `fix-pr` skill after them. When the merged
+-head lists suggestions, the line counts them, as `project review
+-suggestions` lists them on that head, and says to run `fix-pr` to take them
+-into a follow-up pull request:
++A pull request can merge while suggestions on it are still owed, and its
++follow-ups always wait for the merge, so the fixer's `MERGED` line sends the
++`fix-pr` skill after them. When the merged head lists suggestions, or a
++review of any head lists follow-ups, the line counts them, as `project
++review suggestions` and `project review follow-ups` list them, and says to
++run `fix-pr` to take them into a follow-up pull request:
+ 
+ ```text
+-MERGED acme/app#12 into main at 2026-10-23T01:36:44Z (merge commit ea9a364a) — run fix-pr on acme/app#12 in subagent fix-12 to take the 2 suggestions its merged head lists into a follow-up pull request, then finish it
++MERGED acme/app#12 into main at 2026-10-23T01:36:44Z (merge commit ea9a364a) — run fix-pr on acme/app#12 in subagent fix-12 to take the 2 suggestions its merged head lists and the follow-up its reviews list into a follow-up pull request, then finish it
+ ```
+ 
+ When it lists none, the line says to have the subagent take any suggestion
+ it deferred on an earlier head into one, because only the subagent knows
+-those. `fix-pr` verifies each suggestion against the base as it stands,
+-opens one follow-up for those that hold up without asking you, and leaves
+-its merge to you. A `CLOSED` line owes no follow-up.
++those. `fix-pr` verifies each one against the base as it stands, opens a
++follow-up for those that hold up without asking you, and leaves its merge to
++you. A `CLOSED` line owes no follow-up.
+ 
+ A draft means its author is still working on the pull request, so a
+ repository subscription announces nothing for one: no `NEW PR`, `NEW HEAD`,
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 51cde398..f5d7635a 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -37,10 +37,12 @@ such as a suggestion it implements or a change you ask for, it converts the
+ pull request to a draft with `project review hold`, so the pull request
+ never looks ready to merge while the changes are coming. Once the push that
+ carries them lands, it marks the pull request ready for review again with
+-`project review ready`. When you merge a pull request before every
+-suggestion on it is built, or after `fix-pr` deferred one as reaching
+-beyond the change, `fix-pr` takes those that still hold up into a follow-up
+-pull request without asking, and leaves its review and merge to you. The
++`project review ready`. A review can also list follow-ups, work outside the
++change such as a bug already present at the base, which `fix-pr` leaves
++alone while the pull request is open. When you merge a pull request, it
++takes its follow-ups, and any suggestion on it not yet built or deferred as
++reaching beyond the change, into a follow-up pull request without asking,
++keeping those that still hold up, and leaves its review and merge to you. The
+ reviewer settles its own
+ findings on every head: it resolves one it verifies fixed, reopens one resolved
+ too early, and keeps one whose decline does not hold, so its verdict rests on
+diff --git a/skills/cleanup/SKILL.md b/skills/cleanup/SKILL.md
+index 9c001d14..a5675459 100644
+--- a/skills/cleanup/SKILL.md
++++ b/skills/cleanup/SKILL.md
+@@ -32,8 +32,9 @@ holds nothing under Projector's state directory.
+ 
+ 1. Read the repository instructions.
+ 2. Reread the conversation and list each thing the user asked for. Add each
+-   thing you said you would do later, each suggestion you deferred, and each
+-   question you left for the user. For each item, find the evidence that it
++   thing you said you would do later, each suggestion you deferred, each
++   follow-up still owed on a pull request that merged, and each question you
++   left for the user. For each item, find the evidence that it
+    was delivered: a pull request URL, a commit on the remote, an answer you
+    gave, or a command's output.
+ 3. List what the session holds:
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index c3e0c32a..708cfa7a 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: fix-pr
+-description: Fix one pull request's outstanding review work once. Merge its base when the branch conflicts, verify each finding, fix and push the valid ones, reply to and resolve their threads, decline the rest with evidence, and implement or defer each suggestion, holding the pull request in draft while a change is built. Once it merges, take the suggestions still owed on it into a follow-up pull request without asking. Each push subscribes the session to fix the pull request, so later review work arrives as an event that runs this skill again in one subagent per pull request. Use when the user asks to fix, address, or answer review feedback on a pull request, or to resolve its merge conflicts.
++description: Fix one pull request's outstanding review work once. Merge its base when the branch conflicts, verify each finding, fix and push the valid ones, reply to and resolve their threads, decline the rest with evidence, and implement or defer each suggestion, holding the pull request in draft while a change is built. Once it merges, take the suggestions and follow-ups still owed on it into a follow-up pull request without asking. Each push subscribes the session to fix the pull request, so later review work arrives as an event that runs this skill again in one subagent per pull request. Use when the user asks to fix, address, or answer review feedback on a pull request, or to resolve its merge conflicts.
+ ---
+ 
+ # Fix a pull request
+@@ -10,7 +10,8 @@ Merge its base when the branch conflicts, and answer every outstanding
+ finding with a pushed fix or a declined reply. Implement or defer each
+ suggestion a review lists, and hold the pull request in draft while you
+ build a change no review has read. Once the pull request merges, take the
+-suggestions still owed on it into a follow-up pull request, as
++suggestions still owed on it, and the follow-ups its reviews list, into a
++follow-up pull request, as
+ [Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
+ describes. The fix runs once. Each push subscribes the session to fix the
+ pull request, so later work on it arrives as an event, and the session runs
+@@ -31,7 +32,8 @@ When that finds no pull request, or finds one that is not open, ask the user
+ which pull request to fix rather than guessing.
+ 
+ A merged pull request has no review work left. When the pull request you are
+-given has merged, as a `MERGED` event says, follow up on its suggestions as
++given has merged, as a `MERGED` event says, follow up on its suggestions and
++follow-ups as
+ [Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
+ describes, and do nothing else to it.
+ 
+@@ -113,6 +115,13 @@ findings. They never hold a head back from clean and need no reply, but you
+ decide each one, and you take them from `project review suggestions` rather
+ than from the body you read.
+ 
++Nor are its follow-ups. A follow-up is work outside the change, such as a
++defect already present at the base, so it is never work on the open pull
++request: build none there, and post nothing about one. You take the
++follow-ups on once the pull request merges, as
++[Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
++describes.
++
+ Draft state is not itself a finding. It says the author is still working on
+ the pull request, so look for the work in the threads and review bodies. A
+ pull request with no outstanding work whose head is not signed off is waiting
+@@ -505,21 +514,25 @@ subscription also ends by itself when the pull request merges or closes.
+ 
+ The owner can merge a signed-off head before every suggestion on it is
+ built: while you are still deciding them, or after you deferred one as
+-reaching beyond the change. Those suggestions are still owed. So when the
+-pull request merges, take each one that is warranted into a follow-up pull
+-request yourself, and do not ask the owner whether to open it. The merge
+-was their decision to make, and the follow-up's review and merge stay
+-theirs. A pull request closed without merging owes no follow-up, because its
+-suggestions went with its change.
+-
+-1. **Gather the candidates.** List the suggestions on the merged head:
++reaching beyond the change. Those suggestions are still owed, and so is
++every follow-up a review listed, which waits for the merge by design. So
++when the pull request merges, take each one that is warranted into a
++follow-up pull request yourself, and do not ask the owner whether to open
++it. The merge was their decision to make, and the follow-up's review and
++merge stay theirs. A pull request closed without merging owes no follow-up,
++because the owner set its work aside.
++
++1. **Gather the candidates.** List the suggestions on the merged head and
++   the follow-ups of every review of the pull request, whichever head it
++   read:
+ 
+    ```sh
+    project review suggestions <number> --repo <owner>/<repo>
++   project review follow-ups <number> --repo <owner>/<repo>
+    ```
+ 
+-   Add each suggestion you deferred on an earlier head that the list leaves
+-   out. Drop one the owner told you not to take, and one you deferred
++   Add each suggestion you deferred on an earlier head that the first list
++   leaves out. Drop one the owner told you not to take, and one you deferred
+    because it did not hold up.
+ 2. **Verify each against the base as it is now.** Run `git fetch origin`,
+    and verify each candidate against `origin/<baseRefName>` as you verify a
+@@ -527,12 +540,15 @@ suggestions went with its change.
+    the lines it names there, and confirm that the change it describes is
+    still correct. The merge, or a later change to the base, can already
+    carry the change or have moved the code it names.
+-3. **Take the warranted ones.** A suggestion is warranted when it holds up
+-   on the base, is clearly right, needs no decision only the owner can make,
+-   and needs no spec first, by the test `../implement/SKILL.md` gives under
+-   "Start from a description". Leave out the rest, each with a one-line
++3. **Take the warranted ones.** A suggestion or follow-up is warranted when
++   it holds up on the base, is clearly right, needs no decision only the
++   owner can make, and needs no spec first, by the test
++   `../implement/SKILL.md` gives under "Start from a description". Leave out the rest, each with a one-line
+    reason for your report.
+-4. **Build the follow-up.** When you take any, build them as one change, as
++4. **Build the follow-up.** When you take any, build them as one change,
++   unless the sizing rule under "Hand the work over" in
++   `../implement/SKILL.md` splits them, as two unrelated follow-ups can be;
++   then build each part as a pull request of its own. Build each the way
+    `../implement/SKILL.md` builds a change the user describes: from a new
+    branch off the fetched tip of the base, in a worktree of its own, through
+    the gate, and through its hand-over, which opens the pull request as a
+@@ -543,9 +559,11 @@ suggestions went with its change.
+    changes. A suggestion you were building when the pull request merged
+    carries over: copy its commits onto the new branch with
+    `git cherry-pick` rather than build it again. In the body, name the
+-   merged pull request and link the review each suggestion comes from.
+-5. **Report.** Report the follow-up's URL and the suggestions it carries,
+-   each suggestion you left out with its reason, and the validation results.
++   merged pull request and link the review each suggestion and follow-up
++   comes from.
++5. **Report.** Report each follow-up pull request's URL and the suggestions
++   and follow-ups it carries, each one you left out with its reason, and the
++   validation results.
+    When you take none, open nothing, and report each with its reason.
+ 
+ A merged pull request takes no hold and no `project review ready`, because
+@@ -647,7 +665,9 @@ role are these:
+   The line says how many the review lists, as `listing 2 suggestions`, and
+   names an earlier head when an incremental review of the current head
+   builds on that head's full review. Any other review of an earlier head,
+-  and a Projector review that lists none, report nothing.
++  and a Projector review that lists none, report nothing. A follow-up is no
++  work on the open pull request, so a Projector review that lists only
++  follow-ups reports nothing either.
+ - **`UNREVIEWED`** reports, once per head, a pull request ready for review
+   whose head is not signed off and that no session the daemon can see
+   reviews. The line names what it saw: `no session on this machine`, or,
+@@ -686,8 +706,9 @@ role are these:
+   `MERGED acme/app#75 into layer-74 at 2026-10-23T01:36:44Z, which is not in main yet`
+   means it did not. The daemon removes the subscription itself. A
+   `MERGED` line's action tells the fixer to follow up on the suggestions
+-  still owed. When the merged head lists any, it counts them, as
+-  `run fix-pr on acme/app#74 in subagent fix-74 to take the 2 suggestions its merged head lists into a follow-up pull request, then finish it`.
++  and follow-ups still owed. When the merged head lists suggestions, or a
++  review of any head lists follow-ups, it counts them, as
++  `run fix-pr on acme/app#74 in subagent fix-74 to take the 2 suggestions its merged head lists and the follow-up its reviews list into a follow-up pull request, then finish it`.
+   Otherwise it says to have the subagent take any suggestion it deferred
+   into one. Act as the next section describes.
+ - **`MISSING`** reports that the pull request does not exist or that the
+@@ -770,10 +791,10 @@ reopened thread as the recurrence it is instead of as new work.
+   with the pull request's unrelated work meanwhile.
+ - On `MERGED` or `CLOSED`, tell the user that the pull request merged or
+   closed, and send its subagent no more work for it but the follow-up a
+-  `MERGED` line names. When the line counts suggestions on the merged head,
+-  have the subagent run this skill to take them into a follow-up pull
+-  request, starting the subagent if the pull request has none. When the
+-  line counts none, have the subagent take any suggestion it deferred into
++  `MERGED` line names. When the line counts suggestions or follow-ups, have
++  the subagent run this skill to take them into a follow-up pull request,
++  starting the subagent if the pull request has none. When the line counts
++  none, have the subagent take any suggestion it deferred into
+   one. Either way it follows up as
+   [Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
+   describes, without asking the owner first, and you tell the user the
+@@ -808,7 +829,8 @@ validation results. A held pull request, a draft, is not clean however clean
+ its review. Say so, and why: "#12 is held in draft while 2 changes are
+ implemented", naming the changes you hold it for. A merged pull request has
+ no clean state left to report. Report its follow-up instead: "#12 merged;
+-#15 follows up on 2 of its suggestions and leaves out 1", with the reason
++#15 follows up on 2 of its suggestions and its follow-up, and leaves out
++1", with the reason
+ for each one left out.
+ 
+ Report a stack's readiness as one unit, the same unit its subagent fixes,
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index d069646e..3577f92c 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -709,8 +709,8 @@ head gets a full review.
+ Then write the body: a few sentences on what changed and what you checked
+ about it, at most 600 characters once its placeholders are filled. Leave out
+ the intent paragraph, the census, the coverage line, disclosures,
+-suggestions, and the list of checks, because the full review already says
+-them. Publish it:
++suggestions, follow-ups, and the list of checks, because the full review
++already says them. Publish it:
+ 
+ ```sh
+ project review publish <number> --incremental --body <file>
+@@ -803,9 +803,9 @@ changes-requested review on a fresh head never prints `0 open` above its own
+ findings. `clean` requires that last number to be zero, and printing it
+ lets a reader see the verdict was earned.
+ 
+-`findings=` is the number of P1 and P2 threads this review opens. P3 items
+-are listed in the body rather than posted as threads, and `findings=` does
+-not count them. `covered=` is how many of the changed files a pass or the
++`findings=` is the number of P1 and P2 threads this review opens. P3 and
++follow-up items are listed in the body rather than posted as threads, and
++`findings=` does not count them. `covered=` is how many of the changed files a pass or the
+ reviewer read, over how many files the head changed; the body's coverage
+ line prints the same two numbers. The marker holds no other field: every
+ earlier release reads a marker with a field it does not know as no verdict,
+@@ -813,8 +813,8 @@ so a new fact about a review goes on a line of its own.
+ 
+ The body follows the order `method.md` § 7 gives: the signature line and
+ marker, the intent paragraph, the census, the coverage line, any disclosures,
+-on a clean head what was checked, and last the suggestions `publish` lists
+-from the P3 entries you give it.
++on a clean head what was checked, and last the suggestions and follow-ups
++`publish` lists from the P3 and follow-up entries you give it.
+ 
+ **An incremental review adds one line.** Its signature line carries
+ `incremental from <short-sha>` between the verdict word and the duration, and
+@@ -850,10 +850,19 @@ threads:
+ - **P2.** A defect the change introduces or worsens, with bounded impact, or
+   a violation of a rule the repository wrote down or of a section of
+   `../guidelines.md`. A thread; blocks.
+-- **P3.** A change the code is correct without: a simplification, dead code,
+-  a gap between a written rule and practice, a defect already present at the
+-  base that the change does not worsen. An entry of the threads file that
+-  `publish` lists in the body as a suggestion; never a thread, never blocks.
++- **P3.** A change the code is correct without that belongs in this pull
++  request: a simplification, dead code, a clearer name, a test the change
++  should have. An entry of the threads file that `publish` lists in the body
++  as a suggestion; never a thread, never blocks.
++
++A **follow-up** has no priority number, because it is not this change's to
++make. It is work that belongs in a pull request of its own: a defect already
++present at the base that the change does not worsen, a problem in code the
++change does not touch, a gap between a written rule and the repository's
++practice, or an improvement too large or too far from the change's purpose
++to fold into it. It is an entry of the threads file with priority
++`follow-up`, which `publish` lists in the body as a follow-up; never a
++thread, never blocks, and `fix-pr` takes it on once the pull request merges.
+ 
+ The visible text of a thread's first comment has three parts, the shape
+ `method.md` § 7 shows with an example:
+@@ -948,9 +957,10 @@ author speaking, and it is what you weigh when a finding is declined.
+ 
+ P1 and P2 findings always go out as inline threads in **one** review, each
+ carrying the finding marker, and every review body carries the signature and
+-verdict line. P3 items are not threads: give them to `publish` as P3
+-entries, and it lists them in the body, as `method.md` § 7 describes. Never
+-write a suggestions section into the body yourself. Do not drip-feed findings
++verdict line. P3 and follow-up items are not threads: give them to
++`publish` as P3 and follow-up entries, and it lists them in the body, as
++`method.md` § 7 describes. Never write a suggestions or follow-ups section
++into the body yourself. Do not drip-feed findings
+ or use ordinary issue comments for them. What differs between the modes is
+ only the review state and what marks the outcome.
+ 
+@@ -996,6 +1006,21 @@ its `path:line` in code font. Directly before the label it writes
+ suggestions section of its own, as one an older release of this skill
+ wrote, still publishes as written, with the count line before its label.
+ 
++A follow-up entry has the same shape as a P3 entry, with
++`"priority": "follow-up"`:
++
++```json
++{"path": "src/fetch.py", "line": 88, "priority": "follow-up", "body": "Close the socket `fetch` opens when the request fails, which the base already leaks."}
++```
++
++`publish` lists the follow-ups after the suggestions, in a `### Follow-ups`
++section of the same form, after a
++`<!-- projector-follow-ups v=1 count=<n> -->` line that counts them. A
++follow-up stays owed at every later head, so `project review follow-ups`
++lists those of every review of the pull request. Before you give one, run
++`project review follow-ups <number>` and leave out any an earlier review
++already lists.
++
+ `publish` refuses, exiting 1 with what to fix and keeping the lock so you
+ can correct the input and run it again, when:
+ 
+@@ -1003,12 +1028,13 @@ can correct the input and run it again, when:
+ - a finding's line is outside the pull request's diff hunks, it has no line,
+   its text does not open with its priority header or lacks a `**Fix:**` line,
+   or it opens a `<!-- projector-… -->` marker comment of its own;
+-- a P3 entry has no path, a path holding a space, a colon, or a backtick, a
+-  `line` that is not a line number, or an empty body;
++- a P3 or follow-up entry has no path, a path holding a space, a colon, or a
++  backtick, a `line` that is not a line number, or an empty body;
+ - the body is missing or empty, opens with its own signature line or carries
+   a marker comment, or has no `{census}` outside quoted code;
+ - the threads file gives P3 entries and the body carries a suggestions
+-  section of its own, which would list them twice;
++  section of its own, or follow-up entries and a follow-ups section, which
++  would list them twice;
+ - the verdict disagrees with the census: `clean` with a finding open or
+   being posted, or `changes-requested` with none;
+ - the collision check below trips.
+@@ -1046,8 +1072,8 @@ former owner reviewed passes the check.
+ 
+ A head is *clean* only when, after you have settled every earlier finding as
+ above, no Projector finding thread is open **and this review posts no P1 or P2
+-thread**. Suggestions do not count against it: a review whose only output is
+-P3 entries is clean. Settle the earlier findings now, before choosing a
++thread**. Suggestions and follow-ups do not count against it: a review whose
++only output is P3 and follow-up entries is clean. Settle the earlier findings now, before choosing a
+ branch, and re-run the query to confirm none is open. Both
+ tests are one-way: a finding you kept or reopened makes the head not clean
+ whatever else inspection found, and a new thread makes it not clean whatever
+@@ -1126,8 +1152,8 @@ non-zero and running it again finishes that review instead of posting a
+ second one.
+ 
+ Report the review as done only after `publish` exits 0. Report the SHA, the
+-verdict, the review id, how many threads it opened and suggestions it
+-listed, the head of the full review an incremental review builds on, whether
++verdict, the review id, how many threads it opened and suggestions and
++follow-ups it listed, the head of the full review an incremental review builds on, whether
+ the head is signed off and a newer verdict that decided it when `publish`
+ names one, and the summary's URL when the next section publishes one. Before
+ a `clean` verdict, settle every earlier finding first; `publish` refuses one
+diff --git a/skills/review-pr/method.md b/skills/review-pr/method.md
+index a00ea22e..4de7ae06 100644
+--- a/skills/review-pr/method.md
++++ b/skills/review-pr/method.md
+@@ -186,7 +186,7 @@ the section it enforces, such as `guidelines.md § 1`, `testing.md § 2`,
+ the repository document and heading, or it is a preference and does not
+ ship. When the rule is one the
+ repository's own merged commits keep breaking, report the gap between the
+-document and the practice as a P3 rather than as this change's fault.
++document and the practice as a follow-up rather than as this change's fault.
+ 
+ ## 4. Follow the change outward
+ 
+@@ -253,7 +253,7 @@ Apply these rules to the verified set, in this order:
+ - **Every finding names its fix** in one sentence. A finding that cannot say
+   what to change is an observation and is dropped.
+ - **The change must introduce or worsen the defect.** Compare against the
+-  base. A defect already present at the base is at most a P3 and says so,
++  base. A defect already present at the base is a follow-up and says so,
+   unless the change worsens it. A change worsens a defect when the defect
+   reaches more callers or data, or when it can no longer be repaired, as when
+   the change erases the record that a repair would read. A worsened defect is
+@@ -285,6 +285,16 @@ change the code is correct without and no written rule requires, and it goes
+ to `publish` as a P3 entry, which lists it in the review body as a
+ suggestion, never as a thread.
+ 
++A follow-up is work that belongs in a pull request of its own: a defect
++already present at the base that the change does not worsen, a problem in
++code the change does not touch, or an improvement too large or too far from
++the change's purpose to fold into it. A change that belongs in this pull
++request, however optional, is a P3; one that would make this pull request
++about two things is a follow-up. It goes to `publish` as a follow-up entry,
++which lists it in the review body under a heading of its own, never as a
++thread, and `fix-pr` takes it on once the pull request merges rather than
++on the pull request.
++
+ There is no cap on the number of findings. The rules above are the filter,
+ and every thread is one the author must answer, so post nothing you would not
+ defend in the thread.
+@@ -336,6 +346,23 @@ The one form is what lets `project review suggestions` hand `fix-pr` every
+ item: a section written by hand comes out in whatever label and list style
+ the reviewing model chose.
+ 
++Give each follow-up to `publish` the same way, with priority `follow-up`.
++`publish` lists the follow-ups after the suggestions, in the same form under
++a `### Follow-ups` heading and a line that counts them:
++
++```markdown
++<!-- projector-follow-ups v=1 count=1 -->
++### Follow-ups
++
++- `src/fetch.py:88`: Close the socket `fetch` opens when the request fails, which the base already leaks.
++```
++
++A follow-up names code outside the change, so a later push leaves it owed,
++and `project review follow-ups` lists those of every review of the pull
++request, whichever head it read. List each one once: before you give a
++follow-up, run `project review follow-ups <number>` and leave out any that
++an earlier review already lists.
++
+ Each P1 or P2 thread's first comment, after its marker, has three parts:
+ 
+ ```
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 33a24c62..dd559f14 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -876,6 +876,10 @@ def parser() -> argparse.ArgumentParser:
+         "suggestions", help="list the suggestions the newest Projector reviews of a pull request's current head "
+                             "give, for fix-pr to implement or defer"
+     )
++    review_follow_ups = review_commands.add_parser(
++        "follow-ups", help="list the follow-ups Projector reviews of a pull request give, at any head, for fix-pr "
++                           "to take on once it merges"
++    )
+     review_hold = review_commands.add_parser(
+         "hold", help="convert your pull request to a draft while you build a change for it"
+     )
+@@ -903,7 +907,7 @@ def parser() -> argparse.ArgumentParser:
+     review_run.add_argument("--plugin-dir", type=Path, help="load Projector's Claude Code plugin from this checkout")
+     review_run.add_argument("--checkout", type=Path,
+                             help="the checkout of the repository (default: the repository containing this directory)")
+-    for command in (review_status, review_suggestions):
++    for command in (review_status, review_suggestions, review_follow_ups):
+         command.add_argument("pr", type=int, help="the pull request number")
+         command.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
+                                             "this checkout's origin)")
+@@ -2529,8 +2533,9 @@ def incremental_enabled(checkout: Path) -> bool:
+ 
+ 
+ def counted_reviewer(arguments: argparse.Namespace) -> str:
+-    """The reviewer whose reviews `review status` and `review suggestions` count beside the repository's
+-    accounts, found as `setup` finds it: --reviewer, then review.username, then the authenticated user."""
++    """The reviewer whose reviews `review status`, `review suggestions`, and `review follow-ups` count beside the
++    repository's accounts, found as `setup` finds it: --reviewer, then review.username, then the authenticated
++    user."""
+     try:
+         configured = load_config(review.checkout_root(Path.cwd())).get("review.username")
+     except ProjectorError:
+@@ -2548,15 +2553,17 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
+     return 0
+ 
+ 
+-def review_suggestions(root: Path, arguments: argparse.Namespace) -> int:
+-    """`review suggestions`: the suggestions fix-pr decides on a pull request's head, printing nothing when
+-    there are none; exit 1 only when the pull request cannot be read."""
++def review_listed(root: Path, arguments: argparse.Namespace) -> int:
++    """`review suggestions` and `review follow-ups`: the suggestions fix-pr decides on a pull request's head,
++    or the follow-ups it takes on once the pull request merges, printing nothing when there are none; exit 1
++    only when the pull request cannot be read."""
+     repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
+-    items = review.suggestions(repo, arguments.pr, counted_reviewer(arguments), counted_logins(Path.cwd()))
++    lister = review.suggestions if arguments.review_command == "suggestions" else review.follow_ups
++    items = lister(repo, arguments.pr, counted_reviewer(arguments), counted_logins(Path.cwd()))
+     if arguments.json_output:
+         print(json.dumps(items, indent=2))
+     elif items:
+-        print(review.suggestions_text(items))
++        print(review.listed_text(items))
+     return 0
+ 
+ 
+@@ -2627,8 +2634,8 @@ def run_review(arguments: argparse.Namespace) -> int:
+     root = review.state_dir(arguments.state_dir)
+     if arguments.review_command == "status":
+         return review_status(root, arguments)
+-    if arguments.review_command == "suggestions":
+-        return review_suggestions(root, arguments)
++    if arguments.review_command in ("suggestions", "follow-ups"):
++        return review_listed(root, arguments)
+     if arguments.review_command == "prune":
+         result = review.prune(root, arguments.repo, arguments.apply)
+         print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.prune_lines(result)))
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 6ce2a814..a0b735f5 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -157,8 +157,9 @@
+     (["project", "ios", ["cleanup", "crashes", "devices", "install"]],
+      "Lists paired iOS devices, installs a kept build, copies crash reports, or removes project ios's worktree "
+      "and builds, but never builds or reads a device's log."),
+-    (["project", "review", ["census", "ci-workflow", "finish", "hold", "interdiff", "move", "prune", "publish", "ready",
+-                            "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
++    (["project", "review", ["census", "ci-workflow", "finish", "follow-ups", "hold", "interdiff", "move", "prune",
++                            "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions",
++                            "workflow"]],
+      "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
+     (["project", "site", ["page", "status", "workflow"]],
+      "Builds a summary page, says where the site is hosted, or writes the site's workflow file."),
+diff --git a/src/projector/review.py b/src/projector/review.py
+index b6c2a7fd..8ff4dcd6 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -2259,7 +2259,7 @@ def change_size(result: dict) -> str:
+ # as `{short_sha}` does, so it is filled; a placeholder inside longer code is quoted code.
+ LONE_PLACEHOLDER = re.compile(r"`" + PLACEHOLDER.pattern + r"`")
+ # A comment of Projector's own at the start of a line, as a review or finding carries it.
+-OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental|suggestions)\b", re.M)
++OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental|suggestions|follow-ups)\b", re.M)
+ SIGNATURE = re.compile(
+     r"^" + re.escape(MARK) + r" \*\*Projector review\*\* of `[0-9a-f]{7}` · `[^`\n]+` · model `[^`\n]+` · "
+     r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · (?:incremental from `[0-9a-f]{7}` · )?"
+@@ -2268,7 +2268,7 @@ def change_size(result: dict) -> str:
+ # A review's marker line. Publish writes `projector=` and `clean`, but a marker an earlier release wrote
+ # may name no version or spell a clean verdict `approved`, and it still reads as the verdict it gives. Every
+ # earlier release reads a marker holding a field it does not know as no verdict, so a new fact about a review
+-# goes on a line of its own, as the incremental line and the suggestions count do.
++# goes on a line of its own, as the incremental line and the suggestions and follow-ups counts do.
+ MARKER = re.compile(
+     r"^<!-- projector-review v=1 verdict=(clean|approved|changes-requested) (?:projector=(\S+) )?model=(\S+) "
+     r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+@@ -2366,19 +2366,21 @@ def load_threads(path: Optional[Path]) -> list[dict]:
+     return threads
+ 
+ 
+-def is_suggestion(entry: object) -> bool:
+-    """Whether an entry of the threads file is a P3, which `publish` lists in the body rather than posting."""
+-    return isinstance(entry, dict) and entry.get("priority") == "P3"
++def listed_kind(entry: object) -> Optional[Listing]:
++    """The listing an entry of the threads file belongs to, a P3 to the suggestions and a follow-up to the
++    follow-ups, which `publish` lists in the body rather than posting, or None for a finding it posts."""
++    priority = entry.get("priority") if isinstance(entry, dict) else None
++    return next((listing for listing in LISTINGS if listing.priority == priority), None)
+ 
+ 
+ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]]) -> None:
+-    """Refuse a P1 or P2 finding GitHub could not anchor or a reader could not act on. `suggestion_entries`
+-    checks the P3 entries."""
++    """Refuse a P1 or P2 finding GitHub could not anchor or a reader could not act on. `listing_entries`
++    checks the P3 and follow-up entries."""
+     for i, t in enumerate(threads, 1):
+         where = f"finding {i}"
+         if not isinstance(t, dict):
+             raise ReviewError(f"{where} is not an object with path, line, priority, and body")
+-        if is_suggestion(t):
++        if listed_kind(t):
+             continue
+         path, line, priority, body = t.get("path"), t.get("line"), t.get("priority"), t.get("body") or ""
+         if not path or not isinstance(line, int) or isinstance(line, bool) or line < 1:
+@@ -2393,7 +2395,7 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
+             raise ReviewError(f"{where}: {path}:{line} is outside the pull request's diff hunks ({listed}); "
+                               "anchor it to a changed line")
+         if priority not in ("P1", "P2"):
+-            raise ReviewError(f"{where}: priority must be P1, P2, or P3")
++            raise ReviewError(f"{where}: priority must be P1, P2, P3, or follow-up")
+         if OWN_MARKER.search(body):
+             raise ReviewError(f"{where}: leave the finding marker out of the body; publish writes it with "
+                               "the head's SHA")
+@@ -2404,94 +2406,121 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
+             raise ReviewError(f"{where}: the body must carry a `**Fix:**` line")
+ 
+ 
+-# Suggestions
++# Suggestions and follow-ups
+ 
+-# The label of a review body's suggestions section, in every form a reviewer has written one: a heading of
+-# level 1 to 4, a line in bold, or a plain `Suggestions:` line, in any case, with an aside such as `(P3)`.
+-SUGGESTIONS_NAME = r"suggestions(?:\s*\([^)\n]*\))?"
+-SUGGESTIONS_LABEL = re.compile(rf"^(?:#{{1,4}}\s*{SUGGESTIONS_NAME}:?|\*\*{SUGGESTIONS_NAME}:?\*\*:?|"
+-                               rf"{SUGGESTIONS_NAME}:)$", re.I)
+-# A line that ends the section: another heading, a line in bold, or a `Label:` line such as `What was checked:`.
++# A line that ends a listed section: another heading, a line in bold, or a `Label:` line such as `What was checked:`.
+ SECTION_END = re.compile(r"^(?:#{1,6}(?:\s|$)|\*\*[^*\n].*\*\*:?$|[A-Z][^:\n]*:$)")
+ # A list item's indent and text.
+ LIST_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$")
+ FENCE = re.compile(r"^(```|~~~)")
+-# The file and line a suggestion opens with: in code font, as `publish` writes it, or bare as path:line.
++# The file and line a listed item opens with: in code font, as `publish` writes it, or bare as path:line.
+ CODE_PLACE = re.compile(r"`([^`\s:]+)(?::(\d+)(?:[-–]\d+)?)?`(\s*:)?")
+ BARE_PLACE = re.compile(r"([^`\s:]+):(\d+)(?:[-–]\d+)?(?=[\s:,;.]|$)")
+-# What joins that place to the suggestion's text.
++# What joins that place to the item's text.
+ SEPARATOR = re.compile(r"^\s*(?:[:,;.—–]|--?(?=\s))?\s*")
+-SUGGESTION_PATH = re.compile(r"[^\s`:]+")
+-# The line `publish` writes directly before a suggestions section's label, counting its items. It is a line of
+-# its own rather than a field of the review's marker, which every earlier release would then read as no verdict.
+-SUGGESTIONS_COUNT = re.compile(r"^<!-- projector-suggestions v=1 count=(\d+) -->$", re.M)
++LISTED_PATH = re.compile(r"[^\s`:]+")
+ 
+ 
+-def suggestion_entries(threads: list) -> list[dict]:
+-    """The threads file's P3 entries, as the suggestions `publish` lists in the review body: each its `path`,
+-    its `line` or None, and its `body` joined onto one line as its `text`. Refuses an entry the list could not
+-    show as `suggestions_section` writes it."""
++def section_label(name: str) -> re.Pattern:
++    """The label that opens a listed section named `name`, in every form a reviewer has written one: a heading
++    of level 1 to 4, a line in bold, or a plain `Name:` line, in any case, with an aside such as `(P3)`."""
++    named = rf"{name}(?:\s*\([^)\n]*\))?"
++    return re.compile(rf"^(?:#{{1,4}}\s*{named}:?|\*\*{named}:?\*\*:?|{named}:)$", re.I)
++
++
++@dataclass(frozen=True)
++class Listing:
++    """A kind of item a review lists in its body rather than posting as a thread. `priority` is the threads
++    file's priority that gives one, and `heading` the label of the section `publish` writes. `label` opens
++    that section in every form a reviewer has written it, and `count` matches the line `publish` writes
++    directly before the label, counting its items. The count is a line of its own rather than a field of
++    the review's marker, which every earlier release would then read as no verdict."""
++    priority: str
++    heading: str
++    label: re.Pattern
++    count: re.Pattern
++
++    @property
++    def marker(self) -> str:
++        return f"projector-{self.heading.lower()}"
++
++
++# A change the code is correct without, which `fix-pr` implements or defers on the pull request.
++SUGGESTIONS = Listing("P3", "Suggestions", section_label("suggestions"),
++                      re.compile(r"^<!-- projector-suggestions v=1 count=(\d+) -->$", re.M))
++# A defect or a change outside the pull request's scope, which `fix-pr` takes on once the pull request merges.
++FOLLOW_UPS = Listing("follow-up", "Follow-ups", section_label("follow[- ]?ups"),
++                     re.compile(r"^<!-- projector-follow-ups v=1 count=(\d+) -->$", re.M))
++LISTINGS = (SUGGESTIONS, FOLLOW_UPS)
++
++
++def listing_entries(threads: list, listing: Listing) -> list[dict]:
++    """The threads file's entries of `listing`'s priority, as `publish` lists them in the review body: each its
++    `path`, its `line` or None, and its `body` joined onto one line as its `text`. Refuses an entry the list
++    could not show as `section` writes it."""
+     entries = []
++    kind = listing.priority
+     for i, t in enumerate(threads, 1):
+-        if not is_suggestion(t):
++        if listed_kind(t) is not listing:
+             continue
+         where, path, line, body = f"finding {i}", t.get("path"), t.get("line"), t.get("body")
+         text = " ".join(part.strip() for part in body.splitlines() if part.strip()) if isinstance(body, str) else ""
+-        if not isinstance(path, str) or not SUGGESTION_PATH.fullmatch(path):
+-            raise ReviewError(f"{where} is a P3 and needs the path of the file it suggests changing, with no space, "
++        if not isinstance(path, str) or not LISTED_PATH.fullmatch(path):
++            raise ReviewError(f"{where} is a {kind} and needs the path of the file it names, with no space, "
+                               f"colon, or backtick (got {path!r})")
+         if line is not None and (not isinstance(line, int) or isinstance(line, bool) or line < 1):
+-            raise ReviewError(f"{where}: a P3's line is a line number, or left out (got {line!r})")
++            raise ReviewError(f"{where}: a {kind}'s line is a line number, or left out (got {line!r})")
+         if not text:
+-            raise ReviewError(f"{where}: a P3 needs a body that says the change")
++            raise ReviewError(f"{where}: a {kind} needs a body that says the change")
+         if re.search(r"<!--\s*projector-", text):
+-            raise ReviewError(f"{where}: leave Projector's markers out of a P3's body")
++            raise ReviewError(f"{where}: leave Projector's markers out of a {kind}'s body")
+         entries.append({"path": path, "line": line, "text": text})
+     return entries
+ 
+ 
+ def place(item: dict) -> str:
+-    """The file and line a suggestion names, as `path:line`, or `path` when it names no line."""
++    """The file and line a listed item names, as `path:line`, or `path` when it names no line."""
+     return item["path"] + ("" if item["line"] is None else f":{item['line']}")
+ 
+ 
+-def suggestions_section(entries: list[dict]) -> str:
+-    """The suggestions section `publish` ends a review body with, in the one form `method.md` § 7 gives: a
+-    `### Suggestions` heading and an item per suggestion, opening with its `path:line` in code font."""
+-    return "### Suggestions\n\n" + "\n".join(f"- `{place(entry)}`: {entry['text']}" for entry in entries)
++def section(entries: list[dict], listing: Listing) -> str:
++    """The section `publish` lists `entries` in, in the one form `method.md` § 7 gives: a heading and an item
++    per entry, opening with its `path:line` in code font."""
++    return f"### {listing.heading}\n\n" + "\n".join(f"- `{place(entry)}`: {entry['text']}" for entry in entries)
+ 
+ 
+-def suggestions_label(lines: list[str]) -> Optional[int]:
+-    """The index of the first line outside fenced code that `SUGGESTIONS_LABEL` matches, or None."""
++def find_label(lines: list[str], listing: Listing) -> Optional[int]:
++    """The index of the first line outside fenced code that opens `listing`'s section, or None."""
+     fenced = False
+     for i, line in enumerate(lines):
+         if FENCE.match(line.strip()):
+             fenced = not fenced
+-        elif not fenced and SUGGESTIONS_LABEL.match(line.strip()):
++        elif not fenced and listing.label.match(line.strip()):
+             return i
+     return None
+ 
+ 
+-def with_suggestions_count(body: str) -> str:
+-    """`body` with the line that counts its suggestions directly before their label, or as it is when it lists
+-    none."""
+-    items = parse_suggestions(body)
+-    if not items:
+-        return body
+-    lines = body.splitlines()
+-    lines.insert(suggestions_label(lines), f"<!-- projector-suggestions v=1 count={len(items)} -->")
+-    return "\n".join(lines)
++def with_counts(body: str) -> str:
++    """`body` with the line that counts each listed section's items directly before its label, leaving out a
++    section that lists none."""
++    for listing in LISTINGS:
++        items = parse_listing(body, listing)
++        if items:
++            lines = body.splitlines()
++            lines.insert(find_label(lines, listing), f"<!-- {listing.marker} v=1 count={len(items)} -->")
++            body = "\n".join(lines)
++    return body
+ 
+ 
+-def parse_suggestions(body: str) -> Optional[list[dict]]:
+-    """The items of a review body's suggestions section, each its `path` and `line`, None where the item names
+-    none, and its `text`, or None when the body has no such section.
++def parse_listing(body: str, listing: Listing) -> Optional[list[dict]]:
++    """The items of a review body's section for `listing`, each its `path` and `line`, None where the item
++    names none, and its `text`, or None when the body has no such section.
+ 
+-    The section opens at the first line outside fenced code that `SUGGESTIONS_LABEL` matches, and ends at a
+-    line `SECTION_END` matches or at a paragraph after a blank line. Each list item at the first item's indent
+-    is a suggestion, and the lines under it, a deeper list included, join its text."""
++    The section opens at the first line outside fenced code that `listing.label` matches, and ends at a line
++    `SECTION_END` matches or at a paragraph after a blank line. Each list item at the first item's indent is
++    one item, and the lines under it, a deeper list included, join its text."""
+     lines = body.splitlines()
+-    start = suggestions_label(lines)
++    start = find_label(lines, listing)
+     if start is None:
+         return None
+     items: list[list[str]] = []
+@@ -2516,11 +2545,11 @@ def parse_suggestions(body: str) -> Optional[list[dict]]:
+         elif items:
+             items[-1].append(stripped)
+             blank = False
+-    return [suggestion_item(" ".join(parts)) for parts in items]
++    return [listed_item(" ".join(parts)) for parts in items]
+ 
+ 
+-def suggestion_item(text: str) -> dict:
+-    """A suggestion's `path`, `line`, and `text`, from an item that opens with the place it names, or with
++def listed_item(text: str) -> dict:
++    """A listed item's `path`, `line`, and `text`, from an item that opens with the place it names, or with
+     neither when it opens with none. A code span opens with a place when it holds a line number, a `/` or a
+     `.`, or a colon follows it."""
+     code, bare = CODE_PLACE.match(text), BARE_PLACE.match(text)
+@@ -2533,12 +2562,12 @@ def suggestion_item(text: str) -> dict:
+     return {"path": path, "line": int(line) if line else None, "text": SEPARATOR.sub("", rest)}
+ 
+ 
+-def listed_suggestions(review: dict) -> int:
+-    """How many suggestions a review lists: the count `publish` wrote before their label, or, in a review an
+-    earlier release published, the items of its body's section."""
++def listed_count(review: dict, listing: Listing) -> int:
++    """How many items of `listing` a review lists: the count `publish` wrote before their label, or, in a
++    review an earlier release published, the items of its body's section."""
+     body = review.get("body") or ""
+-    found = SUGGESTIONS_COUNT.search(body)
+-    return int(found.group(1)) if found else len(parse_suggestions(body) or [])
++    found = listing.count.search(body)
++    return int(found.group(1)) if found else len(parse_listing(body, listing) or [])
+ 
+ 
+ def with_full_review(review: dict, reviews: list[dict]) -> list[dict]:
+@@ -2716,7 +2745,7 @@ def order(entry: dict) -> tuple[datetime, int]:
+         if known is None or order(entry) >= order(known[0]):
+             newest[key] = (entry, found)
+     for entry, found in newest.values():
+-        entry["suggestions"] = sum(map(listed_suggestions, with_full_review(found, reviews)))
++        entry["suggestions"] = sum(listed_count(r, SUGGESTIONS) for r in with_full_review(found, reviews))
+     return sorted((entry for entry, _ in newest.values()), key=order, reverse=True)
+ 
+ 
+@@ -2751,7 +2780,7 @@ def status(repo: str, number: int, reviewer: str, also: tuple[str, ...] = ()) ->
+     newest = verdict["newest"]
+     return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
+             "verdict": newest["verdict"] if newest else "unreviewed", "newest": newest, "models": verdict["models"],
+-            "suggestions": sum(map(listed_suggestions, suggesting_reviews(head, found))),
++            "suggestions": sum(listed_count(r, SUGGESTIONS) for r in suggesting_reviews(head, found)),
+             "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads],
+             "signed_off": verdict["signed_off"], "labels": sorted(label_names(pr) & LABELS.keys()),
+             "check": commit_status(repo, head)}
+@@ -2795,13 +2824,41 @@ def suggestions(repo: str, number: int, reviewer: str, also: tuple[str, ...] = (
+     `text`."""
+     pr = read_pull_request(repo, number)
+     reviews = suggesting_reviews(pr["head"]["sha"], verdicts(repo, number, reviewer, repo_visibility(pr), also))
++    return listed_items(reviews, SUGGESTIONS)
++
++
++def follow_ups(repo: str, number: int, reviewer: str, also: tuple[str, ...] = ()) -> list[dict]:
++    """`review follow-ups`: the follow-ups `fix-pr` takes on once the pull request merges, as `follow_up_items`
++    finds them among the reviews `status` counts."""
++    pr = read_pull_request(repo, number)
++    return follow_up_items(verdicts(repo, number, reviewer, repo_visibility(pr), also))
++
++
++def follow_up_items(reviews: list[dict]) -> list[dict]:
++    """The follow-ups every Projector review among `reviews` lists, whichever head it read, oldest first, each
++    once however many reviews list it. A follow-up names code outside the change, so a later push leaves it
++    standing, and a review of that later head need not list it again."""
++    ordered = sorted((r for r in reviews if verdict_marker(r.get("body") or "")), key=lambda r: r.get("at") or "")
++    seen: set[tuple] = set()
++    items = []
++    for item in listed_items(ordered, FOLLOW_UPS):
++        key = (item["path"], item["line"], item["text"])
++        if key not in seen:
++            seen.add(key)
++            items.append(item)
++    return items
++
++
++def listed_items(reviews: list[dict], listing: Listing) -> list[dict]:
++    """The items of `listing` each of `reviews` lists, in order. Each has its review's `url` and the head `sha`
++    that review's marker names, and the item's `path`, `line`, and `text`."""
+     return [{"url": r.get("url"), "sha": verdict_marker(r.get("body") or "").sha, **item}
+-            for r in reviews for item in parse_suggestions(r.get("body") or "") or []]
++            for r in reviews for item in parse_listing(r.get("body") or "", listing) or []]
+ 
+ 
+-def suggestions_text(items: list[dict]) -> str:
+-    """`review suggestions` without --json: a block for each suggestion, naming the place it names and the
+-    head of the review it comes from, with its text below."""
++def listed_text(items: list[dict]) -> str:
++    """`review suggestions` and `review follow-ups` without --json: a block for each item, naming the place it
++    names and the head of the review it comes from, with its text below."""
+     return "\n\n".join(f"{place(item) if item['path'] else '(no file named)'}, in the review of {item['sha'][:7]}: "
+                        f"{item['url']}\n{item['text']}" for item in items)
+ 
+@@ -2859,23 +2916,27 @@ def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime
+ 
+ 
+ def compose(state: dict, verdict: str, body: str, covered: str, findings: int, census_line: str,
+-            at: datetime, entries: list[dict]) -> str:
+-    """The review's text: the signature line and marker, then the body with its placeholders filled, then
+-    the section listing the suggestions `entries` gives. A body that lists suggestions of its own, as one an
+-    older skill wrote, publishes as written, but never beside `entries`. Either way the line that counts the
+-    suggestions comes directly before their label."""
++            at: datetime, entries: dict[Listing, list[dict]]) -> str:
++    """The review's text: the signature line and marker, then the body with its placeholders filled, then a
++    section for each listing `entries` gives items of, the suggestions before the follow-ups. A body that
++    lists suggestions of its own, as one an older skill wrote, publishes as written, but never beside entries
++    of the same listing. Either way the line that counts a section's items comes directly before its label."""
+     check_body(body)
+     if "{census}" not in prose(body):
+         raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
+                           "outside code")
+-    if entries and parse_suggestions(body) is not None:
+-        raise ReviewError("the body has a suggestions section of its own, and the threads file gives P3 entries; "
+-                          "take the section out of the body, and publish lists the P3 entries in its place")
++    for listing in LISTINGS:
++        if entries.get(listing) and parse_listing(body, listing) is not None:
++            name = listing.heading.lower()
++            raise ReviewError(f"the body has a {name} section of its own, and the threads file gives "
++                              f"{listing.priority} entries; take the section out of the body, and publish lists "
++                              f"the {listing.priority} entries in its place")
+     signature, marker, values = heading(state, verdict, findings, covered, at)
+     filled = fill(body, dict(values, census=census_line)).strip()
+-    if entries:
+-        filled += f"\n\n{suggestions_section(entries)}"
+-    return f"{signature}\n\n{marker}\n\n{with_suggestions_count(filled)}\n"
++    for listing in LISTINGS:
++        if entries.get(listing):
++            filled += f"\n\n{section(entries[listing], listing)}"
++    return f"{signature}\n\n{marker}\n\n{with_counts(filled)}\n"
+ 
+ 
+ def listed(items: list[str]) -> str:
+@@ -2970,7 +3031,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+             raise ReviewError(f"the body file {body_path} does not exist; compose the review there first")
+         body = body_path.read_text(encoding="utf-8")
+         threads = load_threads(threads_path)
+-        entries = suggestion_entries(threads)
++        entries = {listing: listing_entries(threads, listing) for listing in LISTINGS}
+         pr = pull_request(repo, number)
+         if pr["head"]["sha"] != sha:
+             raise ReviewError(f"the head moved to {pr['head']['sha'][:7]} since {sha[:7]} was set up; "
+@@ -2988,8 +3049,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+             text = compose_incremental(state, body, rules, not mine, now())
+             event = "COMMENT"
+         else:
+-            check_threads(threads, diff_lines(repo, number) if any(not is_suggestion(t) for t in threads) else {})
+-            threads = [t for t in threads if not is_suggestion(t)]
++            check_threads(threads, diff_lines(repo, number) if any(not listed_kind(t) for t in threads) else {})
++            threads = [t for t in threads if not listed_kind(t)]
+             tally = census(repo, number)
+             open_now = tally["open"] + len(threads)
+             if verdict == "clean" and open_now:
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index cbc441a4..08ef5755 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -708,17 +708,23 @@ def trim_review(found: dict) -> dict:
+             "submitted_at": found.get("submitted_at"), "author_association": found.get("author_association")}
+ 
+ 
++def counted_rows(reviews: list[dict], operator: str, visibility: Optional[str], also: tuple[str, ...]) -> list[dict]:
++    """The reviews among `reviews`, as `trim_review` keeps them, that `project review status`, run by the
++    operator, counts, in the shape it reads them."""
++    rows = [{"id": found.get("id"), "url": found.get("html_url"), "at": found.get("submitted_at"),
++             "login": (found.get("user") or {}).get("login"), "association": found.get("author_association"),
++             "body": found.get("body") or ""} for found in reviews if found.get("id") is not None]
++    return review.counted_reviews(rows, operator, visibility, also)
++
++
+ def standing_suggestions(reviews: list[dict], head: str, operator: str, visibility: Optional[str],
+                          also: tuple[str, ...] = ()) -> dict:
+     """How many suggestions each review lists, for the reviews whose suggestions `project review suggestions`,
+     run by the operator, lists on `head`: each account's newest Projector verdict on it by each model, and the
+     full review an incremental one among them builds on, which can be of an earlier head. `reviews` are the
+     pull request's reviews as `trim_review` keeps them."""
+-    rows = [{"id": found.get("id"), "url": found.get("html_url"), "at": found.get("submitted_at"),
+-             "login": (found.get("user") or {}).get("login"), "association": found.get("author_association"),
+-             "body": found.get("body") or ""} for found in reviews if found.get("id") is not None]
+-    chosen = review.suggesting_reviews(head, review.counted_reviews(rows, operator, visibility, also))
+-    return {found["id"]: review.listed_suggestions(found) for found in chosen}
++    chosen = review.suggesting_reviews(head, counted_rows(reviews, operator, visibility, also))
++    return {found["id"]: review.listed_count(found, review.SUGGESTIONS) for found in chosen}
+ 
+ 
+ def open_pull(found: dict, repo: str) -> dict:
+@@ -1694,8 +1700,8 @@ def close(self, pull: tuple[str, int], roles: dict, owners: dict[str, str], entr
+                 if detail is None:
+                     detail = self.closed_detail(ref, number, repo, entry)
+                 fixer = self.fixer(pull, repo, pr) if "fix" in names else ""
+-                suggestions = self.merged_suggestions(repo, entry) if "fix" in names else None
+-                self.tell(session, f"{detail} — {closing_actions(repo, number, names, fixer, suggestions)}")
++                owed = self.owed(repo, entry) if "fix" in names else None
++                self.tell(session, f"{detail} — {closing_actions(repo, number, names, fixer, owed)}")
+         for name in session_names(self.root):
+             remove(self.root, name, repo, number, None)
+         for state in self.states.values():
+@@ -1706,15 +1712,19 @@ def close(self, pull: tuple[str, int], roles: dict, owners: dict[str, str], entr
+             del owners[label]
+         self.forget_adopted(repo, number, adopted)
+ 
+-    def merged_suggestions(self, repo: str, entry: dict) -> Optional[int]:
+-        """How many suggestions `project review suggestions` lists on a merged pull request's last head, as
+-        `REVIEW` counts them, or None when it closed without merging and its suggestions went with it."""
++    def owed(self, repo: str, entry: dict) -> Optional[Owed]:
++        """What a merged pull request still owes: the suggestions `project review suggestions` lists on its
++        last head, as `REVIEW` counts them, and the follow-ups `project review follow-ups` lists at any head.
++        None when it closed without merging, and its suggestions and follow-ups went with it."""
+         pr = pull_request(entry)
+         if pr.get("state") != "MERGED":
+             return None
+         visibility = (entry.get("repository") or {}).get("visibility")
+-        return sum(standing_suggestions(entry.get("reviews") or [], pr.get("headRefOid") or "",
+-                                        self.daemon.operator or "", visibility, self.counted_logins(repo)).values())
++        reviews, operator, also = entry.get("reviews") or [], self.daemon.operator or "", self.counted_logins(repo)
++        suggestions = sum(standing_suggestions(reviews, pr.get("headRefOid") or "", operator, visibility,
++                                               also).values())
++        follow_ups = len(review.follow_up_items(counted_rows(reviews, operator, visibility, also)))
++        return Owed(suggestions, follow_ups)
+ 
+     def closed_detail(self, ref: str, number: int, repo: str, entry: dict) -> str:
+         pr = pull_request(entry)
+@@ -2322,12 +2332,31 @@ def stack_layers(stack: Optional[dict]) -> list[dict]:
+             if isinstance(layer, dict) and isinstance(layer.get("number"), int)]
+ 
+ 
+-def closing_actions(repo: str, number: int, names: list[str], fixer: str, suggestions: Optional[int] = None) -> str:
++@dataclass(frozen=True)
++class Owed:
++    """What a merged pull request owes its fixer: how many suggestions its last head lists, and how many
++    follow-ups its reviews list at any head."""
++    suggestions: int
++    follow_ups: int
++
++    def listed(self) -> str:
++        """The owed items a `MERGED` line names, as `the 2 suggestions its merged head lists and the follow-up
++        its reviews list`, or nothing when it owes none."""
++        def counted(count: int, noun: str, where: str) -> str:
++            return (f"the {noun}" if count == 1 else f"the {count} {noun}s") + where
++
++        parts = ([counted(self.suggestions, "suggestion", " its merged head lists")] if self.suggestions else []) \
++            + ([counted(self.follow_ups, "follow-up", " its reviews list")] if self.follow_ups else [])
++        return " and ".join(parts)
++
++
++def closing_actions(repo: str, number: int, names: list[str], fixer: str, owed: Optional[Owed] = None) -> str:
+     """What each role's owner does once the pull request merges or closes. A merged pull request's fixer takes
+-    the suggestions still owed on it into a follow-up pull request: the `suggestions` its last head lists, which
+-    a fixer never started for it learns of only here, or else any it deferred on an earlier head, which only the
+-    fixer remembers. `suggestions` is None for a pull request closed without merging, which owes none. A stack's
+-    fixer goes on fixing the layers still open, because the user can merge a stack's lower layers first."""
++    the suggestions and follow-ups still owed on it into a follow-up pull request: those `owed` counts, which a
++    fixer never started for it learns of only here, or else any suggestion it deferred on an earlier head,
++    which only the fixer remembers. `owed` is None for a pull request closed without merging, which owes none.
++    A stack's fixer goes on fixing the layers still open, because the user can merge a stack's lower layers
++    first."""
+     ref = f"{repo}#{number}"
+     stack = fixer.startswith("fix-stack-")
+ 
+@@ -2336,11 +2365,10 @@ def finish(who: str) -> str:
+             else f"finish {who}"
+ 
+     actions = []
+-    if "fix" in names and suggestions:
+-        listed = "the suggestion" if suggestions == 1 else f"the {suggestions} suggestions"
+-        actions.append(f"run fix-pr on {ref} in subagent {fixer} to take {listed} its merged head lists into a "
+-                       f"follow-up pull request, then {finish('it')}")
+-    elif "fix" in names and suggestions == 0:
++    if "fix" in names and owed is not None and owed.listed():
++        actions.append(f"run fix-pr on {ref} in subagent {fixer} to take {owed.listed()} into a follow-up pull "
++                       f"request, then {finish('it')}")
++    elif "fix" in names and owed is not None:
+         deferred = f"it deferred on {ref}" if stack else "it deferred"
+         actions.append(f"have subagent {fixer} take any suggestion {deferred} into a follow-up pull request, then "
+                        f"{finish('it')}")
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 44df4f03..a213f299 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -1666,6 +1666,11 @@ def test_publish_without_a_review_holding_the_lock_is_refused(self) -> None:
+       {"path": "README.md", "priority": "P3", "body": "Say that a cold start warms the cache."}]
+ LISTED = [{"path": "src/x.py", "line": 12, "text": "Name the helper `warm`, as the cache calls it."},
+           {"path": "README.md", "line": None, "text": "Say that a cold start warms the cache."}]
++FOLLOW_UPS = [{"path": "src/y.py", "line": 7, "priority": "follow-up",
++               "body": "Close the socket `fetch` opens\nwhen the request fails."},
++              {"path": "docs/cli.md", "priority": "follow-up", "body": "Document the `--cold` flag."}]
++FOLLOWED = [{"path": "src/y.py", "line": 7, "text": "Close the socket `fetch` opens when the request fails."},
++            {"path": "docs/cli.md", "line": None, "text": "Document the `--cold` flag."}]
+ 
+ 
+ # The review marker as release 0.7.19 reads it, copied from that release. A review loop on another machine
+@@ -1712,8 +1717,8 @@ def test_lists_p3_entries_in_one_form_after_the_body_and_counts_them_before_the_
+         self.assertIn("1 finding thread: 0 resolved, 1 open", posted["body"])
+         self.assertEqual([("src/x.py", 3)], [(c["path"], c["line"]) for c in posted["comments"]],
+                          "a P3 opens no thread, and its line need not be in the diff")
+-        self.assertEqual(LISTED, review.parse_suggestions(posted["body"]))
+-        self.assertEqual(2, review.listed_suggestions(posted))
++        self.assertEqual(LISTED, review.parse_listing(posted["body"], review.SUGGESTIONS))
++        self.assertEqual(2, review.listed_count(posted, review.SUGGESTIONS))
+ 
+     def test_a_head_whose_only_entries_are_p3_is_clean(self) -> None:
+         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+@@ -1737,7 +1742,7 @@ def test_a_body_that_lists_suggestions_by_hand_publishes_as_written_and_is_count
+         self.assertIn("\n<!-- projector-suggestions v=1 count=3 -->\n### Suggestions\n", self.posted()["body"],
+                       "the count goes directly before the body's own label")
+         self.assertTrue(self.posted()["body"].endswith(CHECKED), "the body publishes as written")
+-        self.assertEqual(WRITTEN, review.parse_suggestions(self.posted()["body"]))
++        self.assertEqual(WRITTEN, review.parse_listing(self.posted()["body"], review.SUGGESTIONS))
+ 
+     def test_refuses_a_body_that_lists_suggestions_beside_p3_entries(self) -> None:
+         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+@@ -1769,13 +1774,80 @@ def test_refuses_a_p3_entry_the_list_could_not_show(self) -> None:
+                 self.assertIn(words, err)
+                 self.assertEqual([], self.github.reviews, "nothing was posted")
+ 
+-    def test_a_priority_outside_p1_p2_and_p3_is_refused(self) -> None:
++    def test_a_priority_outside_p1_p2_p3_and_follow_up_is_refused(self) -> None:
+         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+ 
+         code, _, err = self.publish("changes-requested", "--threads", str(self.threads(finding(priority="P4"))))
+ 
+         self.assertEqual(1, code)
+-        self.assertIn("priority must be P1, P2, or P3", err)
++        self.assertIn("priority must be P1, P2, P3, or follow-up", err)
++
++
++class PublishFollowUpTests(PublishCase):
++    def test_lists_follow_ups_in_a_section_of_their_own_after_the_suggestions_and_counts_each(self) -> None:
++        # The entries come interleaved, and each section keeps only its own: a follow-up the suggestions
++        # section swallowed would be built on the pull request, and one it lost would never be built.
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        entries = (P3[0], FOLLOW_UPS[0], P3[1], FOLLOW_UPS[1])
++
++        code, _, err = self.publish("clean", "--threads", str(self.threads(*entries)))
++
++        self.assertEqual(0, code, err)
++        posted = self.posted()
++        self.assertTrue(posted["body"].endswith(
++            "Covered 3 of 3 changed files.\n\n"
++            "<!-- projector-suggestions v=1 count=2 -->\n"
++            "### Suggestions\n\n"
++            "- `src/x.py:12`: Name the helper `warm`, as the cache calls it.\n"
++            "- `README.md`: Say that a cold start warms the cache.\n\n"
++            "<!-- projector-follow-ups v=1 count=2 -->\n"
++            "### Follow-ups\n\n"
++            "- `src/y.py:7`: Close the socket `fetch` opens when the request fails.\n"
++            "- `docs/cli.md`: Document the `--cold` flag.\n"), posted["body"])
++        self.assertEqual(LISTED, review.parse_listing(posted["body"], review.SUGGESTIONS))
++        self.assertEqual(FOLLOWED, review.parse_listing(posted["body"], review.FOLLOW_UPS))
++        self.assertEqual((2, 2), (review.listed_count(posted, review.SUGGESTIONS),
++                                  review.listed_count(posted, review.FOLLOW_UPS)))
++        self.assertEqual([], posted["comments"], "a follow-up opens no thread, and its line need not be in the diff")
++        self.assertIn(" findings=0 ", posted["body"], "a follow-up is no finding")
++        self.assertEqual(["clean"], self.github.labels(), "a follow-up never holds the head back from clean")
++        self.assertEqual(("clean", self.head), verdict_0_7_19(posted["body"]),
++                         "a release from before follow-ups reads the verdict")
++
++    def test_a_review_with_only_follow_ups_lists_no_suggestions(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(*FOLLOW_UPS)))[0])
++
++        body = self.posted()["body"]
++        self.assertNotIn("projector-suggestions", body)
++        self.assertIsNone(review.parse_listing(body, review.SUGGESTIONS))
++        self.assertEqual(FOLLOWED, review.parse_listing(body, review.FOLLOW_UPS))
++
++    def test_refuses_a_body_that_lists_follow_ups_beside_follow_up_entries(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        body = self.body("This change warms the cache.\n\n{census}\n\n### Follow-ups\n\n- `a.py`: Fix it.\n")
++
++        code, _, err = self.publish("clean", "--threads", str(self.threads(*FOLLOW_UPS)), body=body)
++
++        self.assertEqual(1, code)
++        self.assertIn("the body has a follow-ups section of its own, and the threads file gives follow-up entries",
++                      err)
++        self.assertEqual([], self.github.reviews, "nothing was posted")
++
++    def test_refuses_a_follow_up_entry_the_list_could_not_show(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        for entry, words in (({"priority": "follow-up", "body": "Fix it."},
++                              "finding 2 is a follow-up and needs the path"),
++                             ({"path": "a.py", "line": "7", "priority": "follow-up", "body": "Fix it."},
++                              "a follow-up's line is a line number"),
++                             ({"path": "a.py", "priority": "follow-up", "body": ""}, "a follow-up needs a body")):
++            with self.subTest(words):
++                code, _, err = self.publish("clean", "--threads", str(self.threads(FOLLOW_UPS[0], entry)))
++
++                self.assertEqual(1, code)
++                self.assertIn(words, err)
++                self.assertEqual([], self.github.reviews, "nothing was posted")
+ 
+ 
+ def verdict_body(sha: str, model: str | None, verdict: str = "clean") -> str:
+@@ -4416,15 +4488,42 @@ def test_an_incremental_review_brings_and_counts_the_suggestions_of_the_full_rev
+                          (result["newest"]["review"], result["newest"]["suggestions"], result["suggestions"]))
+ 
+ 
++class FollowUpListingTests(IncrementalCase):
++    def test_lists_the_follow_ups_of_every_head_once_each_and_leaves_them_out_of_the_suggestions(self) -> None:
++        # A follow-up names code outside the change, so a push leaves it owed: listing only the newest head's
++        # would lose the first review's, and listing a repeated one twice would build it twice.
++        self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
++        self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(FOLLOW_UPS[0])))[0])
++        first = self.posted()["id"]
++        head = self.pushed()
++        self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(P3[0], *FOLLOW_UPS)))[0])
++        second = self.posted()["id"]
++
++        code, out, err = self.project("follow-ups", "1", "--repo", REPO, "--json")
++        text = self.project("follow-ups", "1", "--repo", REPO)[1]
++        suggested = json.loads(self.project("suggestions", "1", "--repo", REPO, "--json")[1])
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([dict(FOLLOWED[0], url=review_page(first), sha=self.reviewed),
++                          dict(FOLLOWED[1], url=review_page(second), sha=head)], json.loads(out))
++        self.assertEqual(f"src/y.py:7, in the review of {self.reviewed[:7]}: {review_page(first)}",
++                         text.splitlines()[0])
++        self.assertEqual([dict(LISTED[0], url=review_page(second), sha=head)], suggested)
++
++    def test_prints_nothing_when_no_review_lists_a_follow_up(self) -> None:
++        self.assertEqual((0, ""), self.project("follow-ups", "1", "--repo", REPO)[:2])
++
++
+ class SuggestionParsingTests(unittest.TestCase):
+     def test_reads_each_label_a_reviewer_has_written_in_any_case(self) -> None:
+         for label, text in LABELED.items():
+             for body in (text, text.replace("Suggestions", "SUGGESTIONS")):
+                 with self.subTest(label, body=body[len(INTENT):len(INTENT) + 30]):
+-                    self.assertEqual(WRITTEN, review.parse_suggestions(body))
++                    self.assertEqual(WRITTEN, review.parse_listing(body, review.SUGGESTIONS))
+ 
+     def test_reads_the_form_publish_writes_back_as_it_was_given(self) -> None:
+-        self.assertEqual(LISTED, review.parse_suggestions(f"{INTENT}\n{review.suggestions_section(LISTED)}\n"))
++        body = f"{INTENT}\n{review.section(LISTED, review.SUGGESTIONS)}\n"
++        self.assertEqual(LISTED, review.parse_listing(body, review.SUGGESTIONS))
+ 
+     def test_a_body_without_the_section_has_none(self) -> None:
+         for body in (f"{INTENT}\n### What was checked\n\n{CHECKED}",
+@@ -4432,10 +4531,11 @@ def test_a_body_without_the_section_has_none(self) -> None:
+                      f"{INTENT}\n```markdown\n## Suggestions\n\n- `a.py:1`: quoted, not listed.\n```\n",
+                      f"{INTENT}\n##### Suggestions\n\n{ITEMS}\n"):
+             with self.subTest(body[len(INTENT):len(INTENT) + 40]):
+-                self.assertIsNone(review.parse_suggestions(body))
++                self.assertIsNone(review.parse_listing(body, review.SUGGESTIONS))
+ 
+     def test_an_empty_section_lists_none(self) -> None:
+-        self.assertEqual([], review.parse_suggestions(f"{INTENT}\n### Suggestions\n\n### What was checked\n"))
++        body = f"{INTENT}\n### Suggestions\n\n### What was checked\n"
++        self.assertEqual([], review.parse_listing(body, review.SUGGESTIONS))
+ 
+     def test_the_section_ends_at_a_paragraph_and_a_deeper_list_joins_its_item(self) -> None:
+         body = (f"{INTENT}\n### Suggestions (P3)\n\n"
+@@ -4447,7 +4547,7 @@ def test_the_section_ends_at_a_paragraph_and_a_deeper_list_joins_its_item(self)
+ 
+         self.assertEqual([{"path": "src/x.py", "line": 3, "text": "Inline the helper. - It has one caller."},
+                           {"path": "src/y.py", "line": 4, "text": "Drop the unused import."}],
+-                         review.parse_suggestions(body))
++                         review.parse_listing(body, review.SUGGESTIONS))
+ 
+ 
+ class VerdictMarkerTests(unittest.TestCase):
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index 5fbf0b74..d19d9ded 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -88,6 +88,15 @@ def projector_body(sha, *, model=MODEL, count=1, builds_on=None, body="Clean."):
+     return f"Projector review\n\n{marker}\n\n{counted}{body}"
+ 
+ 
++SOCKET = "- `src/y.py:7`: Close the socket `fetch` opens when the request fails."
++FLAG = "- `docs/cli.md`: Document the `--cold` flag."
++
++
++def follow_ups(*items):
++    """The follow-ups section `project review publish` writes, listing `items`."""
++    return f"<!-- projector-follow-ups v=1 count={len(items)} -->\n### Follow-ups\n\n" + "\n".join(items)
++
++
+ def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:00Z", association="COLLABORATOR",
+                       model=MODEL, who="operator"):
+     """A GraphQL review node by `who` whose body carries the marker line `project review publish` writes."""
+@@ -1025,6 +1034,15 @@ def test_a_projector_review_counts_as_project_review_suggestions_counts_it(self)
+             f"REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 1 suggestion: Projector review Clean. — {fix_action(1)}",
+         ], events["fixer"])
+ 
++    def test_a_projector_review_that_lists_only_follow_ups_is_no_work_on_the_open_pull_request(self) -> None:
++        # The fixer takes a follow-up on only once the pull request merges, so a REVIEW line would start a
++        # subagent with nothing to do.
++        self.github.pull_request(1, reviews=[
++            rest_review(81, who="operator", body=projector_body(SHA_A, count=None, body=follow_ups(SOCKET)))])
++        self.fixer("acme/app#1 fix")
++
++        self.assertEqual([], self.cycle()["fixer"])
++
+     def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
+         self.github.pull_request(1, draft=False, threads=[thread("T1")], reviews=[rest_review(5)])
+         self.fixer("acme/app#1 fix")
+@@ -1370,6 +1388,32 @@ def test_a_merged_pull_request_sends_its_fixer_to_follow_up_on_the_suggestions_i
+         self.assertEqual(["MERGED acme/app#1 into main — run fix-pr on acme/app#1 in subagent fix-1 to take the 2 "
+                           "suggestions its merged head lists into a follow-up pull request, then finish it"], events)
+ 
++    def test_a_merged_pull_request_sends_its_fixer_to_take_the_follow_ups_every_head_lists(self) -> None:
++        # Head A's review is history for its suggestions, but not for its follow-up, which names code outside
++        # the change: head B's review repeats it, and it counts once.
++        self.github.pull_request(1, head=SHA_B, state="MERGED", reviews=[
++            rest_review(81, who="operator", body=projector_body(SHA_A, count=3, body=follow_ups(SOCKET)),
++                        at="2026-10-30T00:00:00Z"),
++            rest_review(82, who="operator", sha=SHA_B,
++                        body=projector_body(SHA_B, count=2, body=follow_ups(SOCKET, FLAG)),
++                        at="2026-10-30T01:00:00Z")])
++        self.fixer("acme/app#1 fix")
++
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(["MERGED acme/app#1 into main — run fix-pr on acme/app#1 in subagent fix-1 to take the 2 "
++                          "suggestions its merged head lists and the 2 follow-ups its reviews list into a follow-up "
++                          "pull request, then finish it"], events)
++
++    def test_a_merged_pull_request_with_only_a_follow_up_sends_its_fixer_to_take_it(self) -> None:
++        self.github.pull_request(1, state="MERGED", reviews=[
++            rest_review(81, who="operator", body=projector_body(SHA_A, count=None, body=follow_ups(SOCKET)))])
++        self.fixer("acme/app#1 fix")
++
++        self.assertEqual(["MERGED acme/app#1 into main — run fix-pr on acme/app#1 in subagent fix-1 to take the "
++                          "follow-up its reviews list into a follow-up pull request, then finish it"],
++                         self.cycle()["fixer"])
++
+     def test_a_pull_request_closed_without_merging_owes_no_follow_up(self) -> None:
+         self.github.pull_request(2, state="CLOSED", reviews=[
+             rest_review(81, who="operator", body=projector_body(SHA_A, count=2))])
