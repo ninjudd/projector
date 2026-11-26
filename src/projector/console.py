@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, TextIO
 
-from . import agents, artifact_panel, codex_watch, inbox, repo_inbox, rows, session_titles, summary, watch
+from . import agents, artifact_panel, codex_watch, inbox, repo_inbox, rows, session_titles, watch
 from .core import ProjectorError
 
 INBOX_EVERY = 1.0
@@ -135,7 +135,6 @@ class Work:
     rows: bool
     signatures: dict[str, Optional[tuple]]
     items: dict[str, list[dict]] = field(default_factory=dict)
-    directories: dict[str, str] = field(default_factory=dict)
     pull: Optional[rows.Pull] = None
     drawer: Optional[str] = None
 
@@ -355,10 +354,9 @@ def item_key(item: dict) -> str:
     return f"item:{item['ref']}"
 
 
-def read_artifacts(state: Path, session: str, cwd: str) -> Optional[list[dict]]:
+def read_artifacts(state: Path, session: str) -> Optional[list[dict]]:
     try:
-        checkout = summary.checkout_root(Path(cwd)) if cwd else None
-        return artifact_panel.listing(checkout, 'origin', session, state) if checkout else []
+        return artifact_panel.listing(session, state)
     except (ProjectorError, OSError):
         return None
 
@@ -425,8 +423,7 @@ class Console:
     def due(self, now: float) -> Optional[Work]:
         work = Work(inbox=now >= self.next_inbox, rows=now >= self.next_rows,
                     signatures={name: session.signature for name, session in self.sessions.items()},
-                    items={name: session.items for name, session in self.sessions.items()},
-                    directories={name: session.cwd for name, session in self.sessions.items()})
+                    items={name: session.items for name, session in self.sessions.items()})
         if work.inbox:
             self.next_inbox = now + INBOX_EVERY
         if work.rows:
@@ -454,7 +451,8 @@ class Console:
                 if not (record or any(not line.excluded for line in watch.subscriptions(
                         watch.session_folder(self.root, name)))
                         or any(is_shown(item, now_ms) for item in current_items)
-                        or any(not repo_inbox.is_snoozed(entry, now_ms) for entry in entries)):
+                        or any(not repo_inbox.is_snoozed(entry, now_ms) for entry in entries)
+                        or artifact_panel.context(name, self.root)):
                     continue
                 found.live[name] = (*describe(self.root, name, delivery, record), seen, items)
                 found.entries[name] = entries
@@ -465,8 +463,7 @@ class Console:
         for name in names:
             if work.rows or name not in work.signatures:
                 found.rows[name] = rows.rows_for(self.root, name)
-                cwd = found.live[name][2] if found.live is not None else work.directories.get(name, '')
-                artifacts = read_artifacts(self.root, name, cwd)
+                artifacts = read_artifacts(self.root, name)
                 if artifacts is not None:
                     found.artifacts[name] = artifacts
         if work.pull is not None:

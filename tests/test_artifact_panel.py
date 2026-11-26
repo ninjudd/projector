@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import signal
@@ -10,6 +12,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from contextlib import redirect_stdout
 from unittest import mock
 
 from projector import artifact, artifact_panel, cli, console, inbox, refs
@@ -32,6 +35,7 @@ class ArtifactPanelTests(unittest.TestCase):
         self.source = self.root / 'source'
         artifact.init('explorer', self.source, 'Cache explorer', 'Explore saved data')
         self.save()
+        artifact_panel.attach(self.repo, 'origin', 'one', 'explorer')
 
     def git(self, *args):
         return subprocess.run(['git', '-C', str(self.repo), *args], check=True,
@@ -41,14 +45,68 @@ class ArtifactPanelTests(unittest.TestCase):
         return artifact.publish(artifact.snapshot(self.source), self.repo, 'origin', push=False)
 
     def listed(self, session='one'):
-        return artifact_panel.listing(self.repo, 'origin', session)
+        return artifact_panel.listing(session)
 
     def clean_up_preview(self):
         registry = next((artifact_panel.watch.state_root() / 'artifact-previews').glob('*/preview.json'))
         pid = json.loads(registry.read_text())['pid']
         self.addCleanup(lambda: os.kill(pid, signal.SIGTERM))
 
-    def test_existing_artifacts_appear_and_dismissal_survives_a_revision_only_in_its_session(self):
+    def panel(self, session, checkout=None):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = cli.main(['artifact', 'panel', '--session', session, '--json',
+                             '--checkout', str(checkout or self.repo)])
+        self.assertEqual(0, code)
+        return json.loads(output.getvalue())['artifacts']
+
+    def publishing_worktree(self):
+        self.git('switch', '--orphan', 'fixture')
+        self.git('commit', '--allow-empty', '-qm', 'Start fixture')
+        worktree = self.root / 'publishing-worktree'
+        self.git('worktree', 'add', '--detach', str(worktree), 'HEAD')
+        return worktree
+
+    def test_sessions_only_list_artifacts_they_publish_or_explicitly_attach(self):
+        self.assertEqual([], self.panel('unrelated'))
+        tip = refs.ref_tip(self.repo, artifact.REF)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), '--local',
+                                         '--checkout', str(self.repo), '--session', 'publisher']))
+        self.assertEqual(tip, refs.ref_tip(self.repo, artifact.REF))
+        self.assertEqual(['explorer'], [row['id'] for row in self.panel('publisher')])
+        self.assertEqual([], self.panel('unrelated'))
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(0, cli.main(['artifact', 'attach', 'explorer', '--checkout', str(self.repo),
+                                         '--session', 'unrelated']))
+        self.assertEqual(['explorer'], [row['id'] for row in self.panel('unrelated')])
+        self.assertEqual(['explorer'], [row['id'] for row in self.panel('publisher', self.root)])
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(0, cli.main(['artifact', 'dismiss', 'explorer', '--checkout', str(self.repo),
+                                         '--session', 'publisher']))
+            self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), '--local',
+                                         '--checkout', str(self.repo), '--session', 'publisher']))
+        self.assertEqual([], self.panel('publisher'))
+        self.assertEqual(['explorer'], [row['id'] for row in self.panel('unrelated')])
+
+    def test_a_session_keeps_its_artifact_after_the_publishing_worktree_is_removed(self):
+        worktree = self.publishing_worktree()
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), '--local',
+                                         '--checkout', str(worktree), '--session', 'publisher']))
+            self.assertEqual(0, cli.main(['artifact', 'dismiss', 'explorer', '--checkout', str(worktree),
+                                         '--session', 'publisher']))
+        self.assertEqual([], self.panel('publisher'))
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(0, cli.main(['artifact', 'restore', 'explorer', '--checkout', str(worktree),
+                                         '--session', 'publisher']))
+        self.git('worktree', 'remove', str(worktree))
+        rows = self.panel('publisher')
+        self.assertEqual(['explorer'], [row['id'] for row in rows])
+        self.assertEqual(str(self.repo.resolve()), rows[0]['checkout'])
+
+    def test_attached_artifacts_keep_dismissals_through_revisions_only_in_their_session(self):
+        artifact_panel.attach(self.repo, 'origin', 'two', 'explorer')
         first = self.listed()[0]
         tip = refs.ref_tip(self.repo, artifact.REF)
         artifact_panel.dismiss(self.repo, 'origin', 'one', 'explorer')
@@ -61,11 +119,62 @@ class ArtifactPanelTests(unittest.TestCase):
         self.save()
         self.assertEqual([], self.listed())
         self.assertEqual('Revised explorer', self.listed('two')[0]['title'])
-        artifact_panel.dismiss(self.repo, 'origin', 'one', 'explorer', restore=True)
+        artifact_panel.attach(self.repo, 'origin', 'one', 'explorer', restore=True)
         self.assertEqual(first['key'], self.listed()[0]['key'])
         self.assertEqual('Revised explorer', self.listed()[0]['title'])
 
+    def test_a_dormant_session_keeps_its_artifacts_and_dismissals_after_watch_cleanup(self):
+        source = self.root / 'dismissed-source'
+        artifact.init('dismissed', source, 'Dismissed example', 'A saved artifact set aside')
+        artifact.publish(artifact.snapshot(source), self.repo, 'origin', push=False)
+        artifact_panel.attach(self.repo, 'origin', 'one', 'dismissed')
+        artifact_panel.dismiss(self.repo, 'origin', 'one', 'dismissed')
+        state = artifact_panel.watch.state_root()
+        artifact_panel.watch.renew(state, 'one', 'mod', 1)
+        delivery = artifact_panel.watch.session_folder(state, 'one')
+        for path in delivery.iterdir():
+            os.utime(path, (1, 1))
+        daemon = artifact_panel.watch.Daemon(state, settings=artifact_panel.watch.Settings())
+        daemon.forget_sessions(artifact_panel.watch.FORGET + 2)
+        self.assertFalse(delivery.exists())
+        self.assertEqual(['explorer'], [row['id'] for row in self.listed()])
+        self.assertEqual([], self.listed('unrelated'))
+
+    def test_publication_preserves_a_dismissal_written_with_watch_delivery_state(self):
+        delivery = artifact_panel.watch.session_folder(artifact_panel.watch.state_root(), 'legacy')
+        delivery.mkdir(parents=True)
+        path = delivery / 'artifact-dismissals.json'
+        inbox.write_json(path, {'keys': [artifact_panel.key(self.repo, 'origin', 'explorer')]})
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(0, cli.main(['artifact', 'publish', '--dir', str(self.source), '--local',
+                                         '--checkout', str(self.repo), '--session', 'legacy']))
+        self.assertEqual([], self.listed('legacy'))
+        path.unlink()
+        self.assertEqual([], self.listed('legacy'))
+
+    def test_legacy_worktree_dismissal_is_migrated_once_and_explicit_restoration_sticks(self):
+        worktree = self.publishing_worktree()
+        published = ['artifact', 'publish', '--dir', str(self.source), '--local', '--checkout', str(worktree)]
+        for session, command, expected in [
+                ('published', published, []),
+                ('attached', ['artifact', 'attach', 'explorer', '--checkout', str(worktree)], ['explorer']),
+                ('restored', ['artifact', 'restore', 'explorer', '--checkout', str(worktree)], ['explorer'])]:
+            with self.subTest(command=command[1]), redirect_stdout(io.StringIO()):
+                delivery = artifact_panel.watch.session_folder(artifact_panel.watch.state_root(), session)
+                delivery.mkdir(parents=True)
+                encoded = json.dumps([str(worktree.resolve()), 'origin', 'explorer']).encode()
+                inbox.write_json(delivery / 'artifact-dismissals.json',
+                                 {'keys': [hashlib.sha256(encoded).hexdigest()]})
+                self.assertEqual(0, cli.main([*command, '--session', session]))
+                self.assertEqual(expected, [row['id'] for row in self.panel(session)])
+                self.assertEqual(0, cli.main(['artifact', 'restore', 'explorer', '--checkout', str(self.repo),
+                                             '--session', session]))
+                self.assertEqual(0, cli.main([*published, '--session', session]))
+                self.assertEqual(['explorer'], [row['id'] for row in self.panel(session)])
+
     def test_cached_metadata_does_not_load_payloads_and_invalid_latest_keeps_valid_neighbors(self):
+        (self.source / 'index.html').write_text('<h1>Revised explorer</h1>')
+        self.save()
         read = artifact.GitReader.read
         paths = []
 
@@ -181,7 +290,7 @@ class ArtifactPanelTests(unittest.TestCase):
         app.key('enter')
         self.assertEqual([
             f'Artifact explorer@{version}: Cache explorer; Description: Explore saved data; '
-            f'Checkout: {self.repo}; Remote: origin. Make the controls clearer',
+            f'Checkout: {self.repo.resolve()}; Remote: origin. Make the controls clearer',
         ], [item['messages'][0]['text'] for item in inbox.load_items(inbox.session_dir('one'))])
 
     def test_an_idle_preview_stops_and_removes_its_extracted_files(self):
@@ -207,8 +316,7 @@ class ArtifactPanelTests(unittest.TestCase):
         self.assertFalse((artifact_panel.watch.state_root() / 'artifact-previews').exists())
 
     def test_cli_dismiss_and_restore_change_only_the_selected_session(self):
-        from contextlib import redirect_stdout
-        import io
+        artifact_panel.attach(self.repo, 'origin', 'two', 'explorer')
         arguments = ['--checkout', str(self.repo), '--session', 'one']
         with redirect_stdout(io.StringIO()):
             self.assertEqual(0, cli.main(['artifact', 'dismiss', 'explorer', *arguments]))
@@ -245,3 +353,13 @@ class ArtifactPanelTests(unittest.TestCase):
             f'Artifact explorer@{version}: Cache explorer; Description: Explore saved data; '
             f'Checkout: {self.repo.resolve()}; Remote: origin. Explain this view',
         ], [item['messages'][0]['text'] for item in inbox.load_items(inbox.session_dir('one'))])
+
+    def test_an_artifact_keeps_its_session_visible_without_leaking_to_a_neighbor(self):
+        app = console.Console(artifact_panel.watch.state_root())
+        with mock.patch.object(console, 'live_sessions', return_value={'one': 'codex', 'two': 'codex'}):
+            with mock.patch.object(console.agents, 'record', return_value={}):
+                with mock.patch.object(app.titles, 'read', return_value={}):
+                    found = app.load(console.Work(inbox=True, rows=True, signatures={}))
+        app.apply(found)
+        self.assertEqual(['one'], list(app.sessions))
+        self.assertEqual(['explorer'], [row['id'] for row in app.sessions['one'].artifacts])

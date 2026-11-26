@@ -25,6 +25,10 @@ class ArtifactTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        self.env = mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root / 'state'),
+                                                'PROJECTOR_SESSION': '', 'CLAUDE_CODE_SESSION_ID': ''})
+        self.env.start()
+        self.addCleanup(self.env.stop)
         self.repo = self.root / 'repo'
         self.repo.mkdir()
         git(self.repo, 'init', '-q', '-b', 'trunk')
@@ -313,7 +317,7 @@ raise SystemExit(cli.main())
     def test_a_dispatch_failure_reports_saved_content_and_a_workflow_retry(self):
         import contextlib
         import io
-        from projector import cli, summary
+        from projector import artifact_panel, cli, summary
         output = io.StringIO()
         with mock.patch.object(artifact, 'repository', return_value='owner/repo'), \
              mock.patch.object(summary, 'push_decision', return_value=('https://example.test/demo/', '')), \
@@ -321,9 +325,11 @@ raise SystemExit(cli.main())
              mock.patch.object(summary, 'site_workflow', return_value=summary.WORKFLOW_PATH), \
              mock.patch.object(summary, 'gh', side_effect=summary.SummaryError('permission denied')), \
              contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-            status = cli.main(['artifact', 'publish', '--dir', str(self.source), '--checkout', str(self.repo)])
+            status = cli.main(['artifact', 'publish', '--dir', str(self.source), '--checkout', str(self.repo),
+                               '--session', 'publisher'])
         self.assertEqual(65, status)
         self.assertTrue(refs.ref_tip(self.remote, artifact.REF))
+        self.assertEqual(['explorer'], [row['id'] for row in artifact_panel.listing('publisher')])
         self.assertIn('content is saved, but deployment did not start', output.getvalue())
         self.assertIn('gh workflow run projector-site.yml --repo owner/repo --ref trunk', output.getvalue())
 

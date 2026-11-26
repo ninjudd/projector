@@ -64,7 +64,7 @@ class Console(console.Console):
                 if name not in work.signatures:
                     found.rows[name] = rows.rows_for(self.root, name)
                 if (work.rows or name not in work.signatures) and name not in found.artifacts:
-                    artifacts = console.read_artifacts(self.root, name, cwd)
+                    artifacts = console.read_artifacts(self.root, name)
                     if artifacts is not None:
                         found.artifacts[name] = artifacts
                 if name not in found.entries:
