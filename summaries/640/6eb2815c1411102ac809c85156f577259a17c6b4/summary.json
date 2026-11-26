@@ -1,0 +1,76 @@
+{
+ "version": 1,
+ "name": "Live artifact publication outcome",
+ "project": "visualize",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 640,
+  "title": "Record the live artifact publication check",
+  "head": "6eb2815c1411102ac809c85156f577259a17c6b4",
+  "headRef": "artifact-live-verification",
+  "base": "679bb8b9c1f391845be7040b827b57dbbaad9487",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector artifacts are static interactive pages saved as immutable versions and served by a repository’s site. The implementation plan deferred a live publication check until its site action merged. This change records that check in the completed plan’s outcome.",
+   "Storage checks succeeded: two versions are saved, older source recovers exactly, and publishing the older content again leaves latest on the newer version. GitHub Pages deployment failed after upload in both attempts, so hosted browser verification remains blocked. No implementation or access settings change."
+  ],
+  "cards": [
+   {
+    "id": "stored",
+    "title": "Saved versions verified",
+    "html": "<p>The first cache explorer version contains data value 17; the second contains 23 and remains latest. Both stored identities and exact binary bytes survive source recovery.</p>"
+   },
+   {
+    "id": "deployment",
+    "title": "Hosted check remains blocked",
+    "html": "<p>Both linked site runs upload <code>github-pages</code> successfully, then report that the deployment cannot find it. The public manifest still lists no artifacts.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "outcome",
+   "title": "Record storage success and the deployment blocker",
+   "kicker": "The deferred live check becomes part of the completed plan’s outcome.",
+   "intro": [
+    "The artifact plan already records the shipped design and local verification. Its rollout leaves one check for after merge: save a harmless example through the live publication path and test its hosted links.",
+    "The new outcome names the two saved versions on <code>refs/projector/artifacts</code>, a Git ref kept separate from ordinary source branches. It records recovery and duplicate publication before distinguishing saved content from a working hosted deployment."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/visualize/readme.md",
+     "collapsed": false,
+     "note": "Section 9 replaces the pending live-check note with saved version links, recovery evidence, and two failed deployment attempts.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The project remains <code>completed</code>. Repository policy permits recording the result of a check explicitly deferred until after merge; this edit does not reopen or revise the design."
+      },
+      {
+       "kind": "verify",
+       "line": 346,
+       "text": "The published listing contains exactly these two digests and keeps the second as latest. A temporary Git repository reproduced both digests, values 17 and 23, and exact NUL-containing binary bytes after recovery. Republishing the older bundle added no commit or version and preserved latest."
+      },
+      {
+       "kind": "verify",
+       "line": 352,
+       "text": "Both linked run logs show a successful upload followed by the missing-artifact deployment error. GitHub’s artifact API still lists an unexpired <code>github-pages</code> upload for each run."
+      },
+      {
+       "kind": "verify",
+       "line": 355,
+       "text": "The public <code>site.json</code> contains no artifacts. The saved version links therefore represent published storage identities; the outcome correctly leaves hosted browser verification blocked."
+      },
+      {
+       "kind": "verify",
+       "text": "The exact-head validation gate passed: both plugin validators, 263 hook tests, hook type checking, whitespace checks, and the required <code>check</code> job. Review 6071138249 is clean with no finding threads, suggestions, or follow-ups."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
