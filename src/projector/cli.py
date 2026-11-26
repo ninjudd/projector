@@ -27,7 +27,7 @@ from urllib.request import Request, url2pathname, urlopen
 
 from . import (agents, codex_watch, crypto, inbox, instructions, ios, permissions, relay, repo_inbox, review, site,
                summary, watch)
-from . import ci, hosted, rows
+from . import artifact, ci, hosted, rows
 from . import run as headless
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
@@ -991,7 +991,7 @@ def parser() -> argparse.ArgumentParser:
     # Without abbreviations, --prepare and --allow-prepare are always spelled in
     # full, so the ask rule `init` adds for them matches every spelling.
     site_build = site_commands.add_parser(
-        "build", help="build the site from the projects, the published reviews, and the docs", allow_abbrev=False
+        "build", help="build the site from projects, published reviews, artifacts, and docs", allow_abbrev=False
     )
     site_build.add_argument("--out", required=True)
     site_build.add_argument("--summaries", help="directory holding <number>/<head>/summary.json files")
@@ -1041,8 +1041,8 @@ def parser() -> argparse.ArgumentParser:
     site_serve.add_argument(
         "--summaries", help="directory holding <number>/<head>/summary.json files, instead of the summaries ref"
     )
-    site_serve.add_argument("--remote", default="origin", help="the remote to fetch summaries from (default: origin)")
-    site_serve.add_argument("--no-fetch", action="store_true", help="serve the summaries already fetched")
+    site_serve.add_argument("--remote", default="origin", help="the remote to fetch reviews and artifacts from (default: origin)")
+    site_serve.add_argument("--no-fetch", action="store_true", help="serve cached reviews and artifacts without fetching")
     site_serve.add_argument("--no-watch", action="store_true", help="build once instead of rebuilding on changes")
     site_serve.add_argument(
         "--prepare", metavar="COMMAND",
@@ -1063,6 +1063,30 @@ def parser() -> argparse.ArgumentParser:
     site_workflow.add_argument(
         "--branch", help="the default branch whose README and docs changes rebuild the site (default: origin's)"
     )
+
+    artifacts = subcommands.add_parser("artifact", help="create, recover, and publish versioned interactive pages")
+    artifact_commands = artifacts.add_subparsers(dest="artifact_command", required=True)
+    artifact_init = artifact_commands.add_parser("init", help="create a bundle or recover saved source")
+    artifact_init.add_argument("id")
+    artifact_init.add_argument("--dir", type=Path, required=True)
+    artifact_init.add_argument("--title")
+    artifact_init.add_argument("--description", default="")
+    artifact_init.add_argument("--from-published", action="store_true")
+    artifact_init.add_argument("--version")
+    artifact_list = artifact_commands.add_parser("list", help="list artifacts or an artifact's versions")
+    artifact_list.add_argument("--id")
+    add_output(artifact_list)
+    artifact_publish = artifact_commands.add_parser("publish", help="save a bundle on the hidden artifacts ref")
+    artifact_publish.add_argument("--dir", type=Path, required=True)
+    artifact_publish.add_argument("--local", action="store_true")
+    artifact_publish.add_argument("--no-dispatch", action="store_true")
+    for command in (artifact_init, artifact_list, artifact_publish):
+        command.add_argument("--checkout", type=Path)
+        command.add_argument("--remote", default="origin")
+    for command in (artifact_init, artifact_list):
+        command.add_argument("--no-fetch", action="store_true")
+    site_build.add_argument("--artifacts", type=Path, help="directory holding saved artifact versions")
+    site_serve.add_argument("--artifacts", type=Path, help="source bundle to preview over saved artifacts")
 
     version = subcommands.add_parser("version", help="print the version of this command")
     # Where this command's package lives, which `install.sh status` diffs against the checkout.
@@ -3272,7 +3296,8 @@ def trunk_branch(root: Path) -> str:
     return head.split("/", 1)[1] if "/" in head else head
 
 
-def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, repo: str) -> str:
+def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, repo: str,
+                   artifacts: dict | None = None) -> str:
     """Build the site from a checkout, and summarize what it holds."""
     projects, projects_dir = site_projects(root)
 
@@ -3301,6 +3326,7 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
     entries, failures, proposed = site.build_site(
         out,
         summaries=summaries,
+        artifacts=artifacts,
         repo_root=root,
         projects=projects,
         projects_dir=projects_dir,
@@ -3328,7 +3354,9 @@ def run_site_build(arguments: argparse.Namespace) -> int:
     if command:
         run_prepare(root, command)
     summaries = Path(arguments.summaries) if arguments.summaries else None
-    built = build_checkout(root, Path(arguments.out), summaries, arguments.base, repo)
+    artifacts = artifact.read_saved(artifact.DirectoryReader(arguments.artifacts)) if arguments.artifacts else \
+        artifact.read_refs(root, "origin")
+    built = build_checkout(root, Path(arguments.out), summaries, arguments.base, repo, artifacts)
     print(f"wrote {arguments.out}/index.html: {built}")
     return 0
 
@@ -3347,16 +3375,23 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
         if fetched:
             print(f"serving the summaries already fetched; {arguments.remote} has none to fetch: {fetched}",
                   file=sys.stderr)
+    artifact_fetched = ""
+    if not arguments.no_fetch:
+        artifact_fetched = artifact.fetch(root, arguments.remote)
+        if artifact_fetched:
+            artifact.diagnostic(f"using cached artifacts: {artifact_fetched}")
     projects_dir = configured_projects_dir(root)
     watched = [root / "README.md", root / "docs"]
     if projects_dir is not None:
         watched.append(projects_dir if projects_dir.is_absolute() else root / projects_dir)
     if given is not None:
         watched.append(given)
+    if arguments.artifacts is not None:
+        watched.append(arguments.artifacts.resolve())
 
     def sources() -> tuple:
         files = serve.fingerprint([path for path in watched if path.exists()])
-        return files, published.version() if published is not None else ()
+        return files, published.version() if published is not None else (), artifact.ref_versions(root, arguments.remote)
 
     def build(out: Path) -> str:
         # The build copies what it needs from the summaries, so they outlive it only as long as it runs.
@@ -3364,7 +3399,14 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
             summaries = published.extract(Path(extracted)) if published is not None else given
             # The build reports each page as a deploy log would; a server keeps only its one-line result.
             with contextlib.redirect_stdout(io.StringIO()):
-                return build_checkout(root, out, summaries, base, repo)
+                artifacts = artifact.read_refs(root, arguments.remote)
+                if arguments.artifacts is not None:
+                    preview = artifact.snapshot(arguments.artifacts)
+                    preview.published_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    saved = artifacts.setdefault(preview.id, artifact.Saved())
+                    saved.versions[preview.version] = preview
+                    saved.latest, saved.preview = preview.version, True
+                return build_checkout(root, out, summaries, base, repo, artifacts)
 
     command = prepare_command(root, arguments)
     site_state = serve.Site(build, sources, (lambda: run_prepare(root, command)) if command else None)
@@ -3401,6 +3443,10 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
             if published is not None and not arguments.no_fetch:
                 threading.Thread(target=serve.keep_fetching, daemon=True,
                                  args=(published.fetch_quietly, stop, serve.FETCH_INTERVAL, report, fetched)).start()
+            if not arguments.no_fetch:
+                threading.Thread(target=serve.keep_fetching, daemon=True,
+                                 args=(lambda: artifact.fetch(root, arguments.remote, prompt=False), stop,
+                                       serve.FETCH_INTERVAL, report, artifact_fetched)).start()
         print(f"serving http://{shown}:{port}{base}; press Ctrl-C to stop", flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
@@ -4055,6 +4101,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_config(arguments)
     if arguments.command == "upgrade":
         return run_upgrade(arguments.target)
+    if arguments.command == "artifact":
+        return artifact.run(arguments)
     if arguments.command == "summary":
         return run_summary(arguments)
     if arguments.command == "site":

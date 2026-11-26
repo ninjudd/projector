@@ -1,5 +1,5 @@
 name: Projector site
-description: Build the Projector site from the content Projector keeps in the repository, its README, docs and project plans and the summaries under refs/projector/summaries, and deploy it to GitHub Pages.
+description: Build the repository's Projector site with projects, docs, review summaries, and versioned artifacts, and deploy it to GitHub Pages.
 inputs:
   ref:
     description: The hidden ref holding <root>/<number>/<head>/summary.json files.
@@ -39,6 +39,12 @@ runs:
           git fetch --no-tags origin "+$REF:$REF"
           git worktree add --detach "$RUNNER_TEMP/summaries-ref" "$REF"
           echo "SUMMARIES=$RUNNER_TEMP/summaries-ref/$ROOT" >> "$GITHUB_ENV"
+        fi
+    - name: Fetch the artifacts
+      shell: bash
+      run: |
+        if git ls-remote --exit-code origin refs/projector/artifacts >/dev/null; then
+          git fetch --no-tags origin "+refs/projector/artifacts:refs/projector/remotes/origin/artifacts"
         fi
     - id: pages
       uses: actions/configure-pages@v5

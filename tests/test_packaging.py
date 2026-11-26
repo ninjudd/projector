@@ -22,6 +22,7 @@ PUBLISHED_SKILLS = {
     "fix-pr",
     "review-repo",
     "summarize-pr",
+    "artifact",
     "write",
     "rewrite",
     "cleanup",

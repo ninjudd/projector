@@ -4521,3 +4521,59 @@ class WorkflowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(shutil.which("node"), "artifact view checks need node")
+class ArtifactViewTests(unittest.TestCase):
+    def test_selecting_an_older_version_preserves_page_state_and_loads_that_versions_entry(self):
+        program = r"""
+const base = '/demo/';
+const location = { search: '?value=6', hash: '#details' };
+const site = { artifacts: [{ id: 'explorer', latest: 'new', preview: false, versions: [
+  { version: 'new', title: 'Current', publishedAt: '2026-11-26T00:00:00Z', entry: 'new/index.html' },
+  { version: 'old', title: 'Original', publishedAt: '2026-11-25T00:00:00Z', entry: 'old/index.html' }
+] }] };
+const options = [];
+let changed, address, shown;
+const picker = { value: '', appendChild(o) { options.push(o); }, addEventListener(type, fn) { changed = fn; } };
+const toolbar = { querySelector(q) { return q === 'select' ? picker : null; } };
+const document = { createElement(name) { return name === 'div' ? toolbar : {}; } };
+const history = { pushState(state, title, url) { address = url; } };
+function route() {}
+function showHtml(...args) { shown = args; }
+function frame() { throw new Error('A known version must render'); }
+""" + shared_js() + js_function("showArtifact") + r"""
+showArtifact('explorer');
+picker.value = 'old';
+changed();
+showArtifact('explorer', 'old');
+process.stdout.write(JSON.stringify({address, path: shown[1], query: shown[6],
+  selected: options.slice(2).filter(o => o.selected).map(o => o.value)}));
+"""
+        self.assertEqual({'address': '/demo/artifacts/explorer/old/?value=6#details',
+                          'path': 'old/index.html', 'query': '?value=6', 'selected': ['old']}, json.loads(node(program)))
+
+    def test_the_directory_filters_latest_metadata_and_escapes_its_title(self):
+        program = r"""
+const base = '/demo/';
+const location = { search: '?q=needle' };
+const site = { artifacts: [
+ { id: 'first', latest: 'b', preview: true, versions: [
+   { version: 'a', title: 'Needle in older title', description: '', publishedAt: '2026-11-24' },
+   { version: 'b', title: 'No match', description: '', publishedAt: '2026-11-25' }
+ ] },
+ { id: 'second', latest: 'c', preview: false, versions: [
+   { version: 'c', title: '<b>Needle</b>', description: 'Current data', publishedAt: '2026-11-26' }
+ ] }
+] };
+const input = { value: '', addEventListener() {} }, list = { innerHTML: '' };
+function frame() { return { querySelector(q) { return q === '.filter' ? input : list; } }; }
+const history = { replaceState() {} };
+""" + shared_js() + js_function("showArtifacts") + r"""
+showArtifacts();
+process.stdout.write(list.innerHTML);
+"""
+        rendered = node(program)
+        self.assertIn('/demo/artifacts/second/', rendered)
+        self.assertIn('&lt;b&gt;Needle&lt;/b&gt;', rendered)
+        self.assertNotIn('/demo/artifacts/first/', rendered)

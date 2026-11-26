@@ -11,7 +11,7 @@ from unittest import mock
 from contextlib import AbstractContextManager, redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from projector import cli, site, summary
+from projector import cli, refs, site, summary
 from tests.scratch import copy_of
 
 ROOT = Path(__file__).parents[1]
@@ -735,8 +735,8 @@ class PublishTests(unittest.TestCase):
         with counted, self.assertRaisesRegex(summary.SummaryError, "cannot lock ref"):
             self.publish("c" * 40)
 
-        self.assertEqual(summary.PUSH_ATTEMPTS, len(pushes))
-        self.assertEqual(summary.PUSH_ATTEMPTS - 1, len(self.sleeps))
+        self.assertEqual(refs.ATTEMPTS, len(pushes))
+        self.assertEqual(refs.ATTEMPTS - 1, len(self.sleeps))
         self.assertLess(sum(self.sleeps), 15, "the retries stay brief")
         self.assertEqual([], self.dispatches)
 

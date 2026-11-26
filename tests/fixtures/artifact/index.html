@@ -1,0 +1,30 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache explorer</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { max-width: 46rem; margin: auto; padding: 2rem; }
+  label, input, output { display: block; margin: 1rem 0; }
+  input { width: min(100%, 24rem); }
+  output { font-size: 2rem; }
+</style>
+<h1>Cache explorer</h1>
+<p>Adjust the cached entries to inspect the result from this version's data.</p>
+<label for="entries">Cached entries</label>
+<input id="entries" type="range" min="0" max="100" value="3">
+<output id="result" for="entries" aria-live="polite">Loading data…</output>
+<p id="binary"></p>
+<h2 id="details">Details</h2>
+<p>Each version loads its own JSON and binary assets.</p>
+<script type="module">
+  const input = document.getElementById('entries');
+  const query = new URLSearchParams(location.search).get('value');
+  if (query !== null) input.value = query;
+  const data = await (await fetch('cases.json')).json();
+  const bytes = new Uint8Array(await (await fetch('bytes.bin')).arrayBuffer());
+  document.getElementById('binary').textContent = `Binary bytes: ${Array.from(bytes).join(', ')}`;
+  function draw() { document.getElementById('result').textContent = `Result: ${data.value + Number(input.value)}`; }
+  input.addEventListener('input', () => { draw(); location.hash = `entries-${input.value}`; });
+  draw();
+</script>

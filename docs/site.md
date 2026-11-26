@@ -1,12 +1,12 @@
 # Set up the Projector site
 
 Projector can host a site for a repository on GitHub Pages, built from content
-Projector keeps in the repository itself. Its menu has three sections:
+Projector keeps in the repository itself. Its menu has four sections:
 **Projects**, the home page, lists the projects under `docs/projects` with
 each one's priority, and its owner when any plan names one, beside the plans
 that open pull requests propose, each marked **Proposed**;
 **Reviews** lists the pull request summaries the `summarize-pr` skill
-publishes; and **Docs** renders `README.md` beside a sidebar of every other
+publishes; **Artifacts** lists versioned interactive pages; and **Docs** renders `README.md` beside a sidebar of every other
 document under `docs/`. A document is Markdown, which the site renders, or an
 HTML page, which it shows as it is inside the site, with the files beside it,
 so an interactive explorer or a WebAssembly playground works there as it does
@@ -216,3 +216,99 @@ Once `refs/projector/summaries` exists, delete the old ref:
 ```sh
 git push origin :refs/projector/walkthroughs
 ```
+
+## Create and version artifacts
+
+Ask the `artifact` skill to make an interactive explanation, chart, diagram,
+or small tool. In Claude Code, use `/projector:artifact`; in Codex, use
+`$artifact`. The skill builds a static HTML bundle, previews its controls,
+and publishes to the repository's configured site. The Artifacts section
+lists each artifact and offers its saved versions.
+
+To author a bundle yourself, create a new working directory:
+
+```sh
+project artifact init cache-explorer --dir /tmp/cache-explorer --title 'Cache explorer'
+```
+
+Edit `index.html` and add every supporting file to `artifact.json`:
+
+```json
+{
+  "schema": 1,
+  "id": "cache-explorer",
+  "title": "Cache explorer",
+  "description": "Compare cache policies with adjustable inputs.",
+  "entry": "index.html",
+  "files": ["index.html", "cases.json"]
+}
+```
+
+Use relative URLs for scripts, styles, data, images, and WebAssembly. Compile
+framework source before publication and list any editable source needed for
+later revisions. Pages serves finished files and runs no server or build.
+The explicit file list excludes unrelated working files. Each bundle holds
+at most 1,000 files, 25 MiB per file, and 50 MiB total. Files must be regular,
+with no hidden components, symlinks, traversal, or case collisions.
+
+Preview without saving, then publish:
+
+```sh
+project site serve --artifacts /tmp/cache-explorer --no-fetch
+project artifact publish --dir /tmp/cache-explorer
+```
+
+Open `artifacts/cache-explorer/` under the preview address. Stop the preview
+server before running the next command in the same terminal. Publication
+saves source and exact asset bytes on `refs/projector/artifacts`, without
+changing branches, your index, or checkout files. It prints a latest link at
+`artifacts/cache-explorer/` and a fixed link at
+`artifacts/cache-explorer/<version>/`. The full content digest identifies a
+version. Changes to metadata or bytes create new versions; republishing saved
+content adds no version and leaves latest unchanged. Every saved version
+remains reachable after later edits.
+
+Publication requests the existing site workflow on its default branch. The
+page updates when that workflow succeeds. `--no-dispatch` saves remotely
+without requesting a deploy. If dispatch fails, content remains saved and
+the command prints a workflow retry command. Repositories pinned to an exact
+site action release or commit need an action version that supports artifacts;
+update that pin through a pull request first. The compatible `@v0` action
+picks up artifact support with its release.
+
+List artifacts and recover source for an edit:
+
+```sh
+project artifact list --json
+project artifact list --id cache-explorer --json
+project artifact init cache-explorer --dir /tmp/cache-revision --from-published
+```
+
+The recovery directory must not exist. Add `--version FULL_DIGEST` to recover
+a fixed version, or `--no-fetch` to use cached data. Add `--checkout CHECKOUT`
+or `--remote REMOTE` to select the repository or remote explicitly.
+
+Without safe configured hosting, publication saves only in the checkout's
+local ref. `--local` does this even when hosting exists. Normal
+`project site serve` combines local and fetched remote versions and marks
+local latest versions as previews. It notices subsequent ref changes without
+a restart. The Artifacts directory and site search index the latest version;
+older versions stay available through the picker and fixed links.
+
+Artifacts use the site's existing audience. GitHub write access controls
+publication; GitHub Pages controls reading, with no per-artifact sharing.
+Private and internal repositories require confirmed private Pages. Hidden
+refs are visible to repository readers. Published HTML and its scripts have
+the same origin and trust as the site's other HTML pages. Credentials do not
+belong in a bundle. A deploy repeats the site's visibility check for all
+versions and assets.
+
+`project site build` reads artifacts directly from the checkout's local and
+fetched refs. The site action fetches the artifact ref separately from review
+summaries, without checking out or running the bundle. To build from a saved
+directory instead, pass `--artifacts DIR`, where `DIR` contains
+`<id>/<version>/artifact.json`, `revision.json`, `files/`, and each ID's
+`latest.json`. Invalid versions are reported and skipped; an invalid latest
+pointer leaves that artifact out of the directory while keeping valid fixed
+links. The build reports total artifact bytes across retained versions, which
+grow with history.

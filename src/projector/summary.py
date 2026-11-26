@@ -16,7 +16,6 @@ import html
 from html.parser import HTMLParser
 import json
 import os
-import random
 import re
 import shlex
 import subprocess
@@ -28,6 +27,9 @@ from typing import Callable, NamedTuple
 from urllib.parse import urlparse
 
 from .core import FileAction, ProjectorError, write_through
+
+from . import refs
+from .refs import RefError as SummaryError, git, fetch_ref
 
 SUMMARY_VERSION = 1
 CHECK_KINDS = ("context", "verify", "flag")
@@ -46,14 +48,6 @@ CONTEXT_MAX_BYTES = 1024 * 1024
 NAME_MAX = 60
 # The REST API version the stacks endpoint is documented under.
 STACKS_API_VERSION = "2026-03-10"
-# Publishes running at once, as a review loop's subagents run them, race to
-# move the summaries ref, so a push that loses is rebuilt on the new tip and
-# tried again, up to this many pushes in all.
-PUSH_ATTEMPTS = 5
-# What git prints when a push lost that race: the ref moved since the fetch, or
-# the server could not lock or update it while another push held it. A hook or
-# permission refusal says "rejected" too, so that word alone is not one of them.
-PUSH_RACE_SIGNS = ("non-fast-forward", "fetch first", "stale info", "cannot lock ref", "failed to update ref")
 # The name older releases stored each summary under. The site shows no summary
 # from this file. It reports each one with no summary.json beside it, so the
 # repository knows to republish it, and dates a republished summary by this file.
@@ -198,10 +192,6 @@ jobs:
         uses: ninjudd/projector/actions/site@{ref}
 """,
 )
-
-
-class SummaryError(ProjectorError):
-    pass
 
 
 class NeedsAdmin(SummaryError):
@@ -561,8 +551,12 @@ def exposure(repo: str, pages: dict) -> str:
     everything the site copies from the repository would be too. A site with
     no `public` field is treated as public.
     """
-    if pages.get("public", True) and (gh_lookup("api", f"repos/{repo}", "--jq", ".private") or "").strip() == "true":
-        return f"{repo} is private but its GitHub Pages site is public"
+    if pages.get("public") is not False:
+        restricted = (gh_lookup("api", f"repos/{repo}", "--jq", '.private or .visibility == "internal"') or "").strip()
+        if restricted not in ("true", "false"):
+            raise SummaryError(f"could not confirm whether {repo} may be served publicly")
+        if restricted == "true":
+            return f"{repo} is private but its GitHub Pages site is public"
     return ""
 
 
@@ -651,14 +645,20 @@ def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str
             "public": pages.get("public", True)}
 
 
+def site_workflow(repo: str) -> str | None:
+    for path in (WORKFLOW_PATH, *LEGACY_WORKFLOW_PATHS):
+        if gh_lookup("api", f"repos/{repo}/contents/{path}", "--jq", ".path") is not None:
+            return path
+    return None
+
+
 def hosting(repo: str) -> tuple[str | None, str]:
     """Return the URL of the repository's site for summaries, or None and why it is not set up.
 
     Both halves are required. The workflow on the default branch is the reviewed
     decision to host summaries; a Pages site alone may serve something else.
     """
-    if not any(gh_lookup("api", f"repos/{repo}/contents/{path}", "--jq", ".path") is not None
-               for path in (WORKFLOW_PATH, *LEGACY_WORKFLOW_PATHS)):
+    if site_workflow(repo) is None:
         return None, f"{repo} has no {WORKFLOW_PATH} on its default branch"
     raw = gh_lookup("api", f"repos/{repo}/pages")
     if raw is None:
@@ -1084,15 +1084,6 @@ def prepare_page(summary: dict, diff: str | None = None, at_head: bool = False, 
 
 # Publishing to the summaries ref
 
-def git(*args: str, env: dict | None = None, input: str | None = None) -> str:
-    """Run git on UTF-8 text; output that is not UTF-8, such as a path in another encoding, reads with replacements."""
-    try:
-        return subprocess.run(["git", *args], check=True, capture_output=True, encoding="utf-8", errors="replace",
-                              env=env, input=input).stdout.strip()
-    except subprocess.CalledProcessError as exc:
-        raise SummaryError(f"git {' '.join(args)} failed: {exc.stderr.strip()}") from exc
-
-
 def repo_slug(remote_url: str) -> str:
     url = remote_url.strip()
     for prefix in ("git@github.com:", "ssh://git@github.com/", "https://github.com/"):
@@ -1102,18 +1093,6 @@ def repo_slug(remote_url: str) -> str:
     else:
         return ""
     return url[:-4] if url.endswith(".git") else url
-
-
-def tracking_ref(remote: str, ref: str) -> str:
-    """Where this checkout keeps its copy of the remote's `ref`."""
-    return ref.replace("refs/projector/", f"refs/projector/remotes/{remote}/", 1)
-
-
-def fetch_ref(remote: str, ref: str) -> str:
-    """Fetch the remote's `ref` into its tracking ref; return its commit, or '' when the fetch fails."""
-    local = tracking_ref(remote, ref)
-    fetched = subprocess.run(["git", "fetch", "--quiet", remote, f"+{ref}:{local}"], capture_output=True, text=True)
-    return git("rev-parse", "--verify", "--quiet", local) if fetched.returncode == 0 else ""
 
 
 def seed_from_legacy(remote: str) -> str:
@@ -1129,7 +1108,7 @@ def seed_from_legacy(remote: str) -> str:
     pushes it with its own summary on top. The old ref stays on the remote, and
     the repository can delete it once the new ref exists.
     """
-    old = fetch_ref(remote, LEGACY_PAGES_REF)
+    old = fetch_ref(remote, LEGACY_PAGES_REF, run=git, strict=False)
     if not old:
         return ""
     head = ""
@@ -1163,11 +1142,6 @@ def dispatch(repo: str) -> None:
     gh("api", f"repos/{repo}/dispatches", "-f", f"event_type={LEGACY_DISPATCH_EVENT}", token=token)
 
 
-def ref_exists(ref: str) -> bool:
-    return subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-                          capture_output=True).returncode == 0
-
-
 def summary_tree(parent: str, folder: str, summary: dict, diff: str, generated: dict[str, bool] | None = None,
                  blobs: dict[str, str] | None = None) -> str:
     """The tree of `parent`, or an empty one, with the summary and its diff written under `folder`.
@@ -1181,17 +1155,8 @@ def summary_tree(parent: str, folder: str, summary: dict, diff: str, generated: 
     if generated is not None:
         record = {GENERATED_ATTRIBUTE: dict(sorted(generated.items()))}
         files.append((ATTRIBUTES_FILE, json.dumps(record, indent=1, ensure_ascii=False) + "\n"))
-    with tempfile.TemporaryDirectory() as tmp:
-        env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
-        if parent:
-            git("read-tree", parent, env=env)
-        for name, content in files:
-            blob = git("hash-object", "-w", "--stdin", input=content)
-            git("update-index", "--add", "--cacheinfo", f"100644,{blob},{folder}/{name}", env=env)
-        if blobs:
-            git("update-index", "-z", "--index-info", env=env,
-                input="".join(f"100644 {blob}\t{folder}/{HEAD_DIR}/{path}\0" for path, blob in sorted(blobs.items())))
-        return git("write-tree", env=env)
+    return refs.write_tree(parent, {f"{folder}/{name}": content for name, content in files}, run=git,
+                           blobs={f"{folder}/{HEAD_DIR}/{path}": blob for path, blob in (blobs or {}).items()})
 
 
 def summary_pr(summary: dict) -> dict:
@@ -1353,50 +1318,25 @@ def publish(summary_path: Path, remote: str, send_dispatch: bool = True, ref: st
               *([f"{len(blobs)} head {'file' if len(blobs) == 1 else 'files'} under {HEAD_DIR}/"] if blobs else [])]
     written = f"{folder}/{', '.join(stored[:-1])} and {stored[-1]}"
     message = f"Publish the summary of #{pr['number']} at {pr['head'][:9]}"
+    seeds = []
+
+    def seed():
+        seeds.append(seed_from_legacy(remote))
+        return seeds[-1]
+
+    result = refs.publish(ref, remote, lambda parent: summary_tree(parent, folder, summary, diff, generated, blobs),
+                          message, push=push, run=git,
+                          seed=seed if (ref, root) == (PAGES_REF, PAGES_ROOT) else None,
+                          fetch=lambda: fetch_ref(remote, ref, run=git, strict=False), sleep=time.sleep)
+    commit, parent, attempt = result
+    if not commit:
+        print(f"{ref} already has this summary; nothing to publish")
+        return None
     if not push:
-        parent = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}") if ref_exists(ref) else ""
-        tree = summary_tree(parent, folder, summary, diff, generated, blobs)
-        if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
-            print(f"{ref} in this checkout already has this summary; nothing to publish")
-            return None
-        commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
-        git("update-ref", ref, commit, parent)
         print(f"committed {commit[:9]} to {ref} in this checkout: {written}; nothing was "
               f"pushed{f', because {reason}' if reason else ''}; preview it with `project site serve`")
         return commit
-    local = tracking_ref(remote, ref)
-    tip = fetch_ref(remote, ref)
-    seed = None
-    for attempt in range(PUSH_ATTEMPTS):
-        parent = tip
-        if not parent and (ref, root) == (PAGES_REF, PAGES_ROOT):
-            if seed is None:
-                seed = seed_from_legacy(remote)
-            parent = seed
-        tree = summary_tree(parent, folder, summary, diff, generated, blobs)
-        if parent and tree == git("rev-parse", f"{parent}^{{tree}}"):
-            print(f"{ref} already has this summary; nothing to publish")
-            return None
-        commit = git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
-        try:
-            git("push", "--quiet", remote, f"{commit}:{ref}")
-            break
-        except SummaryError as error:
-            if attempt + 1 == PUSH_ATTEMPTS:
-                raise
-            raced = any(sign in str(error) for sign in PUSH_RACE_SIGNS)
-            if raced:
-                time.sleep(0.5 * 2 ** attempt + random.uniform(0, 0.25))
-            moved = fetch_ref(remote, ref)
-            # While the ref has not moved, the push lost no race unless git says
-            # so, so a refused login or a dropped connection fails now rather
-            # than after every attempt. A failed refetch leaves nothing to
-            # build on.
-            if (tip and not moved) or (moved == tip and not raced):
-                raise
-            tip = moved
-    seeded = bool(seed) and parent == seed
-    git("update-ref", local, commit)
+    seeded = bool(seeds and seeds[-1]) and parent == seeds[-1]
     retried = f" after {attempt} {'retry' if attempt == 1 else 'retries'} because another publish moved the ref" if attempt else ""
     print(f"pushed {commit[:9]} to {remote} {ref}: {written}{retried}")
     if seeded:

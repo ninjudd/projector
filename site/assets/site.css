@@ -255,3 +255,14 @@ ol.results li { padding: 12px 0; border-bottom: 1px solid var(--border); }
 ol.results li a { font-weight: 500; text-decoration: none; }
 .snippet { margin-top: 4px; font-size: 14px; color: var(--muted); }
 .snippet mark { background: var(--warn-bg); color: var(--text); border-radius: 2px; padding: 0 1px; }
+
+.artifactrows { list-style: none; padding: 0; }
+.artifactrows li { padding: 18px 0; border-bottom: 1px solid var(--border); }
+.artifactrows p { margin: 6px 0; }
+.artifactbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 20px; }
+.artifactbar label { margin-left: auto; }
+.artifactbar select { max-width: 100%; font: inherit; color: inherit; background: var(--bg); }
+@media (max-width: 600px) {
+  .artifactbar { padding: 10px; }
+  .artifactbar label { margin-left: 0; }
+}

@@ -231,7 +231,7 @@ what it did to each:
 
   ```text
   prefix_rule(
-      pattern = ["project", ["check", "done", "help", "list", "owner", "preview", "priority", "search", "show", "status", "summary", "version", "watch", "worktree"]],
+      pattern = ["project", ["check", "done", "help", "list", "owner", "preview", "priority", "search", "show", "status", "artifact", "summary", "version", "watch", "worktree"]],
       decision = "allow",
   )
   prefix_rule(
