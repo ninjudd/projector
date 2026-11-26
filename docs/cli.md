@@ -3464,6 +3464,14 @@ visible. Within each directory, sessions with the most open questions and
 requests come first. Ties go to the session whose newest item is newest,
 then to the name.
 
+In a terminal with mouse support, click a session row to select it, or a
+pull request, artifact, or inbox row to focus the panel and open that row's
+drawer. Click the row again to close its drawer. Drawer choices and actions
+also accept clicks and keep their usual note fields and confirmations.
+While you edit a text field, finish or cancel it before you click another
+row or action. To select text for copying, use your terminal's mouse
+override.
+
 Up and down select a session and update the bottom panel immediately. Press
 Enter or Right to move the focus into that panel. The session list stays
 visible above it, with its own scroll position. The panel lists the pull

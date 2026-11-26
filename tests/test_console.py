@@ -1125,6 +1125,148 @@ class TerminalCase(ConsoleCase):
             self.terminal.draw()
 
 
+class MouseCurses(FakeCurses):
+    KEY_MOUSE = 409
+    BUTTON1_RELEASED, BUTTON1_CLICKED, BUTTON1_PRESSED, BUTTON3_CLICKED = 1, 2, 4, 8
+
+    def __init__(self) -> None:
+        self.events: list[tuple[int, int, int, int, int]] = []
+
+    def getmouse(self) -> tuple[int, int, int, int, int]:
+        if not self.events:
+            raise self.error("no mouse event")
+        return self.events.pop(0)
+
+
+class Mouse(TerminalCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.window.height, self.window.width = 24, 180
+        self.curses = MouseCurses()
+        self.terminal = console.Screen(self.window, self.console, self.curses)
+
+    def mouse_at(self, x: int, y: int, buttons: int = MouseCurses.BUTTON1_RELEASED) -> None:
+        self.curses.events.append((0, x, y, 0, buttons))
+        self.window.pressed.append(MouseCurses.KEY_MOUSE)
+        self.assertIsNone(self.terminal.read_key())
+
+    def click(self, text: str) -> None:
+        self.draw()
+        y, row = next((y, row) for y, row in self.window.rows.items() if text in row)
+        self.mouse_at(row.index(text), y)
+
+    def sessions(self, count: int = 2) -> None:
+        with mock.patch.object(inbox, "now_ms", return_value=int(self.clock.now * 1000)):
+            for at in range(count):
+                name = f"worker-{at:02}"
+                self.codex(name, cwd="/work/app")
+                write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
+                self.ask(name, f"Question from {name}?")
+        self.console.tick()
+
+    def test_clicking_a_session_then_its_question_records_only_that_sessions_clicked_choice(self) -> None:
+        self.sessions()
+        self.click("worker-01")
+        self.assertEqual(("home", "worker-01"), (self.console.view, self.console.viewed().name))
+        self.click("- Question from worker-01?")
+        self.assertEqual(("panel", "worker-01", "item:1"),
+                         (self.console.view, self.console.session, self.console.drawer))
+        self.click("2: Fix it")
+        self.assertIsNone(inbox.read_item(inbox.session_dir("worker-01"), "1").get("answer"))
+        self.type("Keep the test")
+        self.press("enter")
+
+        self.assertEqual(("b", "Keep the test", None),
+                         (inbox.read_item(inbox.session_dir("worker-01"), "1")["answer"]["letter"],
+                          inbox.read_item(inbox.session_dir("worker-01"), "1")["answer"]["note"],
+                          inbox.read_item(inbox.session_dir("worker-00"), "1").get("answer")))
+
+    def test_clicking_a_pull_requests_dismiss_action_keeps_its_confirmation(self) -> None:
+        self.codex("s1")
+        self.subscribe("s1", "acme/app#12 fix")
+        self.cache("acme/app", 12, title="Ready title")
+        self.console.tick()
+        self.click("Ready title")
+        self.click("8: Dismiss")
+        self.assertEqual(["acme/app#12 fix"], watch.read_lines(self.folder("s1")))
+        self.click("8: Yes, dismiss it")
+
+        self.assertEqual(["acme/app#12 fix", "!acme/app#12 fix"], watch.read_lines(self.folder("s1")))
+
+    def test_click_targets_follow_the_visible_rows_after_both_panes_scroll(self) -> None:
+        self.window.height = 12
+        self.sessions(20)
+        inbox.revise("worker-18", "1", detail="\n".join(f"Detail line {at}." for at in range(40)))
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.press("end")
+        self.click("worker-18")
+        self.assertEqual("worker-18", self.console.viewed().name)
+        self.click("- Question from worker-18?")
+        self.draw()
+        self.press_terminal(*[FakeCurses.KEY_NPAGE] * 12)
+        self.click("8: Dismiss")
+
+        self.assertEqual((True, None),
+                         (inbox.read_item(inbox.session_dir("worker-18"), "1")["answer"]["dismissed"],
+                          inbox.read_item(inbox.session_dir("worker-19"), "1").get("answer")))
+
+    def test_padding_headings_other_buttons_and_typing_do_not_select_or_discard_input(self) -> None:
+        self.sessions()
+        self.draw()
+        y, row = next((y, row) for y, row in self.window.rows.items() if "worker-01" in row)
+        for x, clicked_y, buttons in ((0, y, MouseCurses.BUTTON1_RELEASED),
+                                      (row.index("worker-01"), y, MouseCurses.BUTTON3_CLICKED),
+                                      (row.index("worker-01"), y, MouseCurses.BUTTON1_PRESSED),
+                                      (1, 2, MouseCurses.BUTTON1_RELEASED)):
+            self.mouse_at(x, clicked_y, buttons)
+        self.assertEqual("worker-00", self.console.viewed().name)
+        self.click("- Question from worker-00?")
+        self.click("1: Decline it")
+        self.type("unfinished note")
+        self.click("worker-01")
+
+        self.assertEqual(("worker-00", "unfinished note", None),
+                         (self.console.session, self.console.field.text,
+                          inbox.read_item(inbox.session_dir("worker-00"), "1").get("answer")))
+
+    def test_a_stale_frame_cannot_open_a_different_sessions_same_numbered_item(self) -> None:
+        self.sessions()
+        self.draw()
+        y, row = next((y, row) for y, row in self.window.rows.items() if "- Question from worker-00?" in row)
+        (self.folder("worker-00") / "codex.json").unlink()
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.mouse_at(row.index("Question"), y)
+
+        self.assertEqual(("home", "worker-01", None),
+                         (self.console.view, self.console.viewed().name, self.console.drawer))
+
+    def test_resize_invalidates_the_old_click_positions_until_the_next_draw(self) -> None:
+        self.sessions()
+        self.draw()
+        y, row = next((y, row) for y, row in self.window.rows.items() if "worker-01" in row)
+        self.window.height = 12
+        self.mouse_at(row.index("worker-01"), y)
+        self.assertEqual("worker-00", self.console.viewed().name)
+        self.click("worker-01")
+        self.assertEqual("worker-01", self.console.viewed().name)
+
+    def test_a_clicked_choice_keeps_the_revision_that_was_on_screen(self) -> None:
+        self.sessions(1)
+        self.click("- Question from worker-00?")
+        self.draw()
+        y, row = next((y, row) for y, row in self.window.rows.items() if "2: Fix it" in row)
+        inbox.revise("worker-00", "1", recommend="New first choice", options=["New second choice"])
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.mouse_at(row.index("2: Fix it"), y)
+        self.press("enter")
+
+        self.assertIsNone(inbox.read_item(inbox.session_dir("worker-00"), "1").get("answer"))
+        self.assertIsInstance(self.console.refusal, inbox.ChangedError)
+
+
 class SplitLayout(TerminalCase):
     def test_only_the_selected_agent_name_has_color_and_neither_session_row_is_reversed(self) -> None:
         for name in ("first", "second"):
@@ -1430,6 +1572,16 @@ class Terminal(unittest.TestCase):
                 return
             self.read_for(0.4)
 
+    def click(self, x: int, y: int) -> None:
+        import curses
+
+        curses.setupterm(self.env["TERM"])
+        prefix = curses.tigetstr("kmous")
+        if prefix == b"\x1b[<":
+            self.send(f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m".encode())
+        else:
+            self.send(prefix + bytes((32, x + 32, y + 32)) + prefix + bytes((35, x + 32, y + 32)))
+
     def exited(self, seconds: float, *, kill: bool = True) -> Optional[int]:
         """The console's exit code once it exits within `seconds`, or None, killing it unless `kill` is false, when
         it still runs."""
@@ -1483,6 +1635,20 @@ class Terminal(unittest.TestCase):
         self.send(b"\x03")
 
         self.assertEqual((None, True, 0), (first, hinted, self.exited(10)))
+
+    @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
+    def test_terminal_mouse_reports_open_a_question_and_choose_the_clicked_answer(self) -> None:
+        self.prepare()
+        self.start()
+        self.read_for(10, until=b"Decline the finding?")
+        self.click(3, 9)
+        self.click(7, 12)
+        self.send(b"\r", b"\x1b", b"\x1b", b"\x03")
+        code = self.exited(10)
+        item = json.loads((Path(self.state) / "projector" / "inbox" / "S" / "1.json").read_text())
+
+        self.assertEqual(("b", 0), ((item.get("answer") or {}).get("letter"), code))
+        self.assertNotIn(b"Traceback", bytes(self.shown))
 
 
 class Command(unittest.TestCase):
