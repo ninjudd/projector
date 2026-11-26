@@ -155,6 +155,8 @@ def live_preview(url: str) -> bool:
 
 
 def serve(work: Path, token: str, idle: float = PREVIEW_IDLE) -> None:
+    prefix = f'/{token}/'
+
     class Server(http.server.HTTPServer):
         def get_request(self):
             connection, address = super().get_request()
@@ -164,13 +166,14 @@ def serve(work: Path, token: str, idle: float = PREVIEW_IDLE) -> None:
     class Handler(http.server.SimpleHTTPRequestHandler):
         def route(self):
             host = self.headers.get('Host', '').split(':')[0]
-            prefix = f'/{token}/'
             if host != '127.0.0.1' or not self.path.startswith(prefix):
                 self.send_error(404)
                 return False
-            self.path = self.path[len(prefix) - 1:]
             server.last_request = time.monotonic()
             return True
+
+        def translate_path(self, path):
+            return super().translate_path(path[len(prefix) - 1:])
 
         def do_GET(self):
             if self.route():

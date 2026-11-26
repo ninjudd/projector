@@ -43,6 +43,11 @@ class ArtifactPanelTests(unittest.TestCase):
     def listed(self, session='one'):
         return artifact_panel.listing(self.repo, 'origin', session)
 
+    def clean_up_preview(self):
+        registry = next((artifact_panel.watch.state_root() / 'artifact-previews').glob('*/preview.json'))
+        pid = json.loads(registry.read_text())['pid']
+        self.addCleanup(lambda: os.kill(pid, signal.SIGTERM))
+
     def test_existing_artifacts_appear_and_dismissal_survives_a_revision_only_in_its_session(self):
         first = self.listed()[0]
         tip = refs.ref_tip(self.repo, artifact.REF)
@@ -92,9 +97,7 @@ class ArtifactPanelTests(unittest.TestCase):
                                 capture_output=True, text=True, timeout=15)
         self.assertEqual(0, opened.returncode, opened.stderr)
         url = opened.stdout.strip()
-        registry = next((artifact_panel.watch.state_root() / 'artifact-previews').glob('*/preview.json'))
-        pid = json.loads(registry.read_text())['pid']
-        self.addCleanup(lambda: os.kill(pid, signal.SIGTERM))
+        self.clean_up_preview()
         with urllib.request.urlopen(url) as response:
             self.assertIn(b'Cache explorer', response.read())
         with urllib.request.urlopen(url.removesuffix('index.html') + 'data.bin') as response:
@@ -105,6 +108,21 @@ class ArtifactPanelTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as error:
                 urllib.request.urlopen(request)
             self.assertEqual(404, error.exception.code)
+
+    def test_local_preview_directory_redirects_keep_the_token_and_query(self):
+        meta = json.loads((self.source / 'artifact.json').read_text())
+        meta['files'].append('docs/index.html')
+        (self.source / 'artifact.json').write_text(json.dumps(meta))
+        (self.source / 'docs').mkdir()
+        (self.source / 'docs/index.html').write_text('<h1>Nested artifact</h1>')
+        self.save()
+        base = artifact_panel.open_url(self.repo, 'origin', 'explorer').removesuffix('index.html')
+        self.clean_up_preview()
+        for method in ('GET', 'HEAD'):
+            with self.subTest(method=method):
+                request = urllib.request.Request(base + 'docs?mode=compact', method=method)
+                with urllib.request.urlopen(request) as response:
+                    self.assertEqual((200, base + 'docs/?mode=compact'), (response.status, response.url))
 
     def test_console_opens_and_dismisses_an_artifact_without_changing_its_saved_versions(self):
         state = artifact_panel.watch.state_root()
