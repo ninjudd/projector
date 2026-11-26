@@ -1,0 +1,90 @@
+{
+ "version": 1,
+ "name": "Versioned artifact publishing",
+ "project": "visualize",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 631,
+  "title": "Plan versioned artifacts on the Projector site",
+  "head": "f15b25d4df4cfe02f95eb4b70b761a31edba6e32",
+  "headRef": "visualize-plan",
+  "base": "7ed76b1252f831016dcb76faed4ccb37bcf51d3e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector site already gathers a repository’s plans, documentation, and pull request summaries. Interactive explanations and small tools have no equivalent publishing path: each revision needs an ordinary source commit or a separate host.",
+   "This pull request adds a ready plan for an <code>artifact</code> skill and CLI commands that save complete static bundles on a hidden Git ref. A hidden ref is a Git reference outside ordinary branches; it stores the versions without adding them to the repository’s normal source history. The existing site gains an Artifacts directory, stable latest links, and fixed links for each version.",
+   "The plan is <code>ready</code> with priority <code>now</code>. The commands and site behavior are not implemented in this pull request. Per-item access, history deletion, and server applications stay outside this project."
+  ],
+  "cards": [
+   {
+    "id": "version-contract",
+    "title": "Stable identity, immutable content",
+    "html": "<p>Each artifact keeps one repository-local ID. A SHA-256 digest of its normalized manifest and exact file records identifies each saved version. A separate latest pointer advances only when new content is published; republishing an older version leaves it unchanged.</p>"
+   },
+   {
+    "id": "review-result",
+    "title": "Plan reviewed clean",
+    "html": "<p>Review <a href=\"https://github.com/ninjudd/projector/pull/631#pullrequestreview-6069543675\">6069543675</a> covers <code>f15b25d</code> with no findings. The configured gate passed, including 263 hook tests and the required CI check. These validate the current repository and plan, not the proposed artifact implementation.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "artifact-plan",
+   "title": "Publish complete bundles on the existing site",
+   "kicker": "One plan defines authoring, immutable storage, recovery, routes, access, and acceptance evidence.",
+   "intro": [
+    "Read section 2 as the contract for the future implementation. An author creates a bundle with an explicit file manifest, previews it locally, and publishes its bytes as one version. The CLI reuses the summary publisher’s Git operations while keeping artifact records separate from pull request summaries.",
+    "The site serves each version from its own asset directory and wraps it with navigation and a version picker. Repository write access controls who publishes; GitHub Pages controls who reads. The plan treats an HTML page as trusted code on the site’s origin and keeps unknown or unsafe hosting local.",
+    "Sections 4–6 define how the implementation earns completion: exact-byte recovery, deterministic publication races, safe extraction, direct routes, search, browser behavior, and a compatible action rollout. A live example is a later check when a test site is available; local and action tests establish merge criteria."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/visualize/readme.md",
+     "collapsed": false,
+     "note": "Adds the complete ready plan; the permanent project path remains visualize while the proposed product surface is artifact.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2,
+       "text": "Read the whole plan against the project readiness rules: publication policy, offline behavior, recovery, concurrency, and rollout are answered; section 7 explicitly defers independent sharing, history management, and server applications."
+      },
+      {
+       "kind": "context",
+       "line": 101,
+       "text": "The explicit file list and validation rules are the boundary against publishing unrelated files or extracting unsafe stored paths. Implementation tests must cover both source input and stored Git objects."
+      },
+      {
+       "kind": "context",
+       "line": 135,
+       "text": "Publication snapshots bytes once, then retries competing ref updates. Local preview refs remain separate from fetched remote refs so publishing one bundle cannot upload other local previews."
+      },
+      {
+       "kind": "context",
+       "line": 180,
+       "text": "The frame provides layout, not security isolation. A published bundle has the site’s origin privileges and must come from an authorized writer; reading a pull request does not authorize publishing its scripts."
+      },
+      {
+       "kind": "verify",
+       "line": 202,
+       "text": "Traced the existing summary publisher’s temporary-index commit and five-attempt retry loop, its hosting helpers, local ref union, and the site’s unsandboxed HTML rendering. The proposed extraction targets existing mechanisms and explicitly preserves summary behavior."
+      },
+      {
+       "kind": "context",
+       "line": 253,
+       "text": "Per-bundle limits do not bound retained history. Every version remains deployed, so the plan requires aggregate byte reporting and measurements before implementation hand-over."
+      },
+      {
+       "kind": "verify",
+       "line": 295,
+       "text": "Checked <a href=\"https://docs.github.com/en/enterprise-cloud@latest/pages/getting-started-with-github-pages/about-privately-published-github-pages-sites\">GitHub’s private Pages rules</a> and <a href=\"https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch\">workflow dispatch requirements</a>. The plan names the organization and Enterprise Cloud restriction and requires the workflow on the default branch."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
