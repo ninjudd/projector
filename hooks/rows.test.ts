@@ -49,6 +49,7 @@ const pullOf = (pr: PullRequest) => ({
   labels: pr.labels.map(label => label.name),
   summary_url: pr.summaryUrl,
   is_loading: pr.isLoading === true,
+  updated_at: pr.updatedAt,
 })
 
 const threadOf = (thread: Thread) => ({

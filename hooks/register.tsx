@@ -1831,7 +1831,11 @@ export const register: Register = on => {
     const label = labeler(shown.rows.map(row => row.pr))
     const reference = referencer(shown.rows.map(row => row.pr))
     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
-    // Another person's line names its author after `draft`, in a column as
+    const stateWidth = Math.max(
+      0,
+      ...shown.rows.filter(row => row.pr.isLoading !== true).map(row => rowState(row.pr).text.length),
+    )
+    // Another person's line names its author after the status, in a column as
     // wide as the longest of those logins, so their titles start in one
     // column too.
     const authorWidth = Math.max(
@@ -2529,13 +2533,8 @@ export const register: Register = on => {
       const isLoaded = pr.isLoading !== true
       return (
         <Box key={key} flexDirection="column">
-          {/* Only the title gives way when the line is short; the label column
-              is as wide as the longest label, so every title starts in one
-              column, and the title fills the line, so its notes and age end
-              it as an item's pull request and age do. The label is a plain
-              Button rather than a link, so it takes a click in fullscreen and
-              Enter on the main screen, and no terminal ever draws a URL
-              beside it. */}
+          {/* A plain Button takes Enter on the main screen and clicks in fullscreen,
+              without drawing a URL beside the reference in a terminal. */}
           <Box flexDirection="row" columnGap={1}>
             <Box flexShrink={0} width={labelWidth}>
               <Button
@@ -2550,13 +2549,13 @@ export const register: Register = on => {
                 </Text>
               </Button>
             </Box>
-            {isLoaded && (
-              <Box flexShrink={0}>
+            <Box key={`state:${key}`} flexShrink={0} width={stateWidth}>
+              {isLoaded && (
                 <Text color={state.color} italic={pr.isDraft}>
                   {state.text}
                 </Text>
-              </Box>
-            )}
+              )}
+            </Box>
             {isLoaded && isReviewRequest(pr, shown.viewer) && (
               <Box key={`author:${key}`} flexShrink={0} width={authorWidth}>
                 <Text color="subtle">{pr.author ?? ''}</Text>
