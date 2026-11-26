@@ -876,6 +876,10 @@ def parser() -> argparse.ArgumentParser:
         "suggestions", help="list the suggestions the newest Projector reviews of a pull request's current head "
                             "give, for fix-pr to implement or defer"
     )
+    review_follow_ups = review_commands.add_parser(
+        "follow-ups", help="list the follow-ups Projector reviews of a pull request give, at any head, for fix-pr "
+                           "to take on once it merges"
+    )
     review_hold = review_commands.add_parser(
         "hold", help="convert your pull request to a draft while you build a change for it"
     )
@@ -903,7 +907,7 @@ def parser() -> argparse.ArgumentParser:
     review_run.add_argument("--plugin-dir", type=Path, help="load Projector's Claude Code plugin from this checkout")
     review_run.add_argument("--checkout", type=Path,
                             help="the checkout of the repository (default: the repository containing this directory)")
-    for command in (review_status, review_suggestions):
+    for command in (review_status, review_suggestions, review_follow_ups):
         command.add_argument("pr", type=int, help="the pull request number")
         command.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
                                             "this checkout's origin)")
@@ -2553,8 +2557,9 @@ def incremental_enabled(checkout: Path) -> bool:
 
 
 def counted_reviewer(arguments: argparse.Namespace) -> str:
-    """The reviewer whose reviews `review status` and `review suggestions` count beside the repository's
-    accounts, found as `setup` finds it: --reviewer, then review.username, then the authenticated user."""
+    """The reviewer whose reviews `review status`, `review suggestions`, and `review follow-ups` count beside the
+    repository's accounts, found as `setup` finds it: --reviewer, then review.username, then the authenticated
+    user."""
     try:
         configured = load_config(review.checkout_root(Path.cwd())).get("review.username")
     except ProjectorError:
@@ -2572,15 +2577,17 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
     return 0
 
 
-def review_suggestions(root: Path, arguments: argparse.Namespace) -> int:
-    """`review suggestions`: the suggestions fix-pr decides on a pull request's head, printing nothing when
-    there are none; exit 1 only when the pull request cannot be read."""
+def review_listed(root: Path, arguments: argparse.Namespace) -> int:
+    """`review suggestions` and `review follow-ups`: the suggestions fix-pr decides on a pull request's head,
+    or the follow-ups it takes on once the pull request merges, printing nothing when there are none; exit 1
+    only when the pull request cannot be read."""
     repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
-    items = review.suggestions(repo, arguments.pr, counted_reviewer(arguments), counted_logins(Path.cwd()))
+    lister = review.suggestions if arguments.review_command == "suggestions" else review.follow_ups
+    items = lister(repo, arguments.pr, counted_reviewer(arguments), counted_logins(Path.cwd()))
     if arguments.json_output:
         print(json.dumps(items, indent=2))
     elif items:
-        print(review.suggestions_text(items))
+        print(review.listed_text(items))
     return 0
 
 
@@ -2651,8 +2658,8 @@ def run_review(arguments: argparse.Namespace) -> int:
     root = review.state_dir(arguments.state_dir)
     if arguments.review_command == "status":
         return review_status(root, arguments)
-    if arguments.review_command == "suggestions":
-        return review_suggestions(root, arguments)
+    if arguments.review_command in ("suggestions", "follow-ups"):
+        return review_listed(root, arguments)
     if arguments.review_command == "prune":
         result = review.prune(root, arguments.repo, arguments.apply)
         print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.prune_lines(result)))

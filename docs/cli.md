@@ -259,7 +259,7 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "review", ["census", "ci-workflow", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
+      pattern = ["project", "review", ["census", "ci-workflow", "finish", "follow-ups", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
       decision = "allow",
   )
   prefix_rule(
@@ -1097,7 +1097,7 @@ reads, which are these:
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `review.labels` | boolean | `true` | `project review setup`, `publish`, and `finish`, to add and remove the `reviewing` label, which shows a review in progress, and the `clean` label, which shows a signed-off head; `false` leaves both labels alone, as a repository whose own `clean` or `reviewing` label means something else needs |
 | `review.require_check` | boolean | none | `init`, as your answer to whether the repository relies on Projector alone to sign off pull requests: none asks at a terminal, `true` keeps the ruleset and the label workflow in place, and `false` asks no more; `init` writes it when you answer, as [Require a clean review before merge](#require-a-clean-review-before-merge) describes |
-| `review.reviewers` | string | none | `project review status`, `suggestions`, `setup`, and `publish`, and the watch daemon from the configuration of a checkout a live session works in, or, for a repository no live session has a checkout of, from the `.projector.toml` its default branch commits on GitHub, as the logins whose Projector verdicts count beside the reviewer's and those of the repository's owner, members, and collaborators, separated by commas, as `github-actions[bot]`. On a public repository a review from any other account does not count, so name an account here, such as the one a CI review posts as, only when you trust every review it posts |
+| `review.reviewers` | string | none | `project review status`, `suggestions`, `follow-ups`, `setup`, and `publish`, and the watch daemon from the configuration of a checkout a live session works in, or, for a repository no live session has a checkout of, from the `.projector.toml` its default branch commits on GitHub, as the logins whose Projector verdicts count beside the reviewer's and those of the repository's owner, members, and collaborators, separated by commas, as `github-actions[bot]`. On a public repository a review from any other account does not count, so name an account here, such as the one a CI review posts as, only when you trust every review it posts |
 | `review.runner` | string | `claude` | `project review run`, as the agent it starts unless `--agent` says otherwise: `claude` or `codex`, a preset, or any other command, which reads the prompt on standard input, as [Review a head with no session](#review-a-head-with-no-session) describes |
 | `review.automatic` | boolean | `true` | the watch daemon, from the configuration of a checkout a live session works in, or, for a repository no live session has a checkout of, from the `.projector.toml` its default branch commits on GitHub, as whether the repository's pull requests get a Projector review without anyone asking for one; `false` announces no `UNREVIEWED` for them, for a repository you review only when you ask |
 | `review.ci` | boolean | none | the watch daemon, from the configuration of a checkout a live session works in, or, for a repository no live session has a checkout of, from the `.projector.toml` its default branch commits on GitHub, which announces no `UNREVIEWED` for a head from the repository's own branches while it is `true`, and `init`, as your answer to whether the repository's pull requests get a review in GitHub Actions: none asks at a terminal, `true` refreshes the workflow, and `false` asks no more; `init` writes it when you answer, as [Review pull requests in GitHub Actions](#review-pull-requests-in-github-actions) describes |
@@ -2027,6 +2027,7 @@ project review setup 66 --model claude-opus-5-5 --replace 4011
 project review gate 66
 project review status 66
 project review suggestions 66
+project review follow-ups 66
 project review hold 66
 project review ready 66
 project review rules
@@ -2257,17 +2258,32 @@ suggestions has no count line. Where a review has none but lists
 suggestions, as one an earlier release published does, `status` counts its
 list.
 
+A finding whose priority is `follow-up` is a follow-up: work that belongs in
+a pull request of its own, such as a defect already present at the base. It
+has the same shape as a P3 and opens no thread either. `publish` lists the
+follow-ups after the suggestions, in the same form under a `### Follow-ups`
+heading, with a `projector-follow-ups` line directly before it that counts
+them. `review follow-ups` reads them back:
+
+```markdown
+<!-- projector-follow-ups v=1 count=1 -->
+### Follow-ups
+
+- `src/fetch.py:88`: Close the socket `fetch` opens when the request fails, which the base already leaks.
+```
+
 `publish` refuses, exiting 1 and keeping the lock, when:
 
 - the pull request closed or its head moved;
 - a finding's line is outside the diff's hunks, or its text lacks a priority
   header or a `**Fix:**` line;
-- a P3 has no path, a path holding a space, a colon, or a backtick, a `line`
-  that is not a line number, or an empty body;
+- a P3 or follow-up has no path, a path holding a space, a colon, or a
+  backtick, a `line` that is not a line number, or an empty body;
 - the body is empty, carries its own signature or marker comment, or has no
   `{census}` outside quoted code;
 - the threads file gives P3 entries and the body carries a suggestions
-  section of its own, which would list them twice;
+  section of its own, or follow-up entries and a follow-ups section, which
+  would list them twice;
 - the verdict disagrees with the finding count;
 - the reviewer already has a verdict by this model on the head that this
   loop's record does not account for.
@@ -2470,6 +2486,16 @@ object for each suggestion:
 | `sha` | The head that review read, which for a full review an incremental review builds on is an earlier head. |
 | `path`, `line` | The file and line the suggestion names, or `null` where it names none. |
 | `text` | The suggestion, on one line. |
+
+`follow-ups` lists the follow-ups the `fix-pr` skill takes on once the pull
+request merges: those of every Projector review among the reviews `status`
+counts, whichever head it read, oldest first. A follow-up names code outside
+the change, so a later push leaves it owed. A follow-up that several reviews
+list, with the same file, line, and text, is listed once, from the first
+review that gives it. It prints the same blocks as `suggestions`, reads its
+section in the same forms under a `Follow-ups` label, finds the repository
+and the reviewer the same way, and prints nothing when no review lists a
+follow-up. With `--json` it prints a list of objects with the same fields.
 
 `hold` and `ready` move your own pull request's draft state. A draft means
 that its author is still working on it. Run `ready` once your work on the
@@ -3959,7 +3985,7 @@ records it.
 | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
 | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
 | `MOVED` | any | Another session owns the role now |
-| `MERGED`, `CLOSED` | any | The pull request merged or closed; `MERGED` says whether a layer's base reached the default branch, and tells the fixer to take the suggestions still owed on it into a follow-up pull request |
+| `MERGED`, `CLOSED` | any | The pull request merged or closed; `MERGED` says whether a layer's base reached the default branch, and tells the fixer to take the suggestions and follow-ups still owed on it into a follow-up pull request |
 | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
 
 A `LABEL` line is not work. The review commands set the `clean` and
@@ -3974,26 +4000,28 @@ A Projector review is work only through its suggestions, and they stand
 where `project review suggestions` lists them: in each account's newest
 verdict on the current head by each model, and in the full review that an
 incremental one builds on, which can be of an earlier head. Any other review
-of an earlier head is history, so it reports nothing. The daemon announces
+of an earlier head is history, so it reports nothing. A follow-up waits for
+the merge, so a review that lists only follow-ups reports nothing either. The daemon announces
 each review once. A pull request that a session on this machine reviews
 waits for that review without a line of its own, and a draft waits on its
 author.
 
-A pull request can merge while suggestions on it are still owed, so the
-fixer's `MERGED` line sends the `fix-pr` skill after them. When the merged
-head lists suggestions, the line counts them, as `project review
-suggestions` lists them on that head, and says to run `fix-pr` to take them
-into a follow-up pull request:
+A pull request can merge while suggestions on it are still owed, and its
+follow-ups always wait for the merge, so the fixer's `MERGED` line sends the
+`fix-pr` skill after them. When the merged head lists suggestions, or a
+review of any head lists follow-ups, the line counts them, as `project
+review suggestions` and `project review follow-ups` list them, and says to
+run `fix-pr` to take them into a follow-up pull request:
 
 ```text
-MERGED acme/app#12 into main at 2026-10-23T01:36:44Z (merge commit ea9a364a) — run fix-pr on acme/app#12 in subagent fix-12 to take the 2 suggestions its merged head lists into a follow-up pull request, then finish it
+MERGED acme/app#12 into main at 2026-10-23T01:36:44Z (merge commit ea9a364a) — run fix-pr on acme/app#12 in subagent fix-12 to take the 2 suggestions its merged head lists and the follow-up its reviews list into a follow-up pull request, then finish it
 ```
 
 When it lists none, the line says to have the subagent take any suggestion
 it deferred on an earlier head into one, because only the subagent knows
-those. `fix-pr` verifies each suggestion against the base as it stands,
-opens one follow-up for those that hold up without asking you, and leaves
-its merge to you. A `CLOSED` line owes no follow-up.
+those. `fix-pr` verifies each one against the base as it stands, opens a
+follow-up for those that hold up without asking you, and leaves its merge to
+you. A `CLOSED` line owes no follow-up.
 
 A draft means its author is still working on the pull request, so a
 repository subscription announces nothing for one: no `NEW PR`, `NEW HEAD`,

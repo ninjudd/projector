@@ -1,6 +1,6 @@
 ---
 name: fix-pr
-description: Fix one pull request's outstanding review work once. Merge its base when the branch conflicts, verify each finding, fix and push the valid ones, reply to and resolve their threads, decline the rest with evidence, and implement or defer each suggestion, holding the pull request in draft while a change is built. Once it merges, take the suggestions still owed on it into a follow-up pull request without asking. Each push subscribes the session to fix the pull request, so later review work arrives as an event that runs this skill again in one subagent per pull request. Use when the user asks to fix, address, or answer review feedback on a pull request, or to resolve its merge conflicts.
+description: Fix one pull request's outstanding review work once. Merge its base when the branch conflicts, verify each finding, fix and push the valid ones, reply to and resolve their threads, decline the rest with evidence, and implement or defer each suggestion, holding the pull request in draft while a change is built. Once it merges, take the suggestions and follow-ups still owed on it into a follow-up pull request without asking. Each push subscribes the session to fix the pull request, so later review work arrives as an event that runs this skill again in one subagent per pull request. Use when the user asks to fix, address, or answer review feedback on a pull request, or to resolve its merge conflicts.
 ---
 
 # Fix a pull request
@@ -10,7 +10,8 @@ Merge its base when the branch conflicts, and answer every outstanding
 finding with a pushed fix or a declined reply. Implement or defer each
 suggestion a review lists, and hold the pull request in draft while you
 build a change no review has read. Once the pull request merges, take the
-suggestions still owed on it into a follow-up pull request, as
+suggestions still owed on it, and the follow-ups its reviews list, into a
+follow-up pull request, as
 [Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
 describes. The fix runs once. Each push subscribes the session to fix the
 pull request, so later work on it arrives as an event, and the session runs
@@ -31,7 +32,8 @@ When that finds no pull request, or finds one that is not open, ask the user
 which pull request to fix rather than guessing.
 
 A merged pull request has no review work left. When the pull request you are
-given has merged, as a `MERGED` event says, follow up on its suggestions as
+given has merged, as a `MERGED` event says, follow up on its suggestions and
+follow-ups as
 [Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
 describes, and do nothing else to it.
 
@@ -112,6 +114,13 @@ The suggestions a Projector review lists in its body are not body-only
 findings. They never hold a head back from clean and need no reply, but you
 decide each one, and you take them from `project review suggestions` rather
 than from the body you read.
+
+Nor are its follow-ups. A follow-up is work outside the change, such as a
+defect already present at the base, so it is never work on the open pull
+request: build none there, and post nothing about one. You take the
+follow-ups on once the pull request merges, as
+[Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
+describes.
 
 Draft state is not itself a finding. It says the author is still working on
 the pull request, so look for the work in the threads and review bodies. A
@@ -505,21 +514,25 @@ subscription also ends by itself when the pull request merges or closes.
 
 The owner can merge a signed-off head before every suggestion on it is
 built: while you are still deciding them, or after you deferred one as
-reaching beyond the change. Those suggestions are still owed. So when the
-pull request merges, take each one that is warranted into a follow-up pull
-request yourself, and do not ask the owner whether to open it. The merge
-was their decision to make, and the follow-up's review and merge stay
-theirs. A pull request closed without merging owes no follow-up, because its
-suggestions went with its change.
+reaching beyond the change. Those suggestions are still owed, and so is
+every follow-up a review listed, which waits for the merge by design. So
+when the pull request merges, take each one that is warranted into a
+follow-up pull request yourself, and do not ask the owner whether to open
+it. The merge was their decision to make, and the follow-up's review and
+merge stay theirs. A pull request closed without merging owes no follow-up,
+because the owner set its work aside.
 
-1. **Gather the candidates.** List the suggestions on the merged head:
+1. **Gather the candidates.** List the suggestions on the merged head and
+   the follow-ups of every review of the pull request, whichever head it
+   read:
 
    ```sh
    project review suggestions <number> --repo <owner>/<repo>
+   project review follow-ups <number> --repo <owner>/<repo>
    ```
 
-   Add each suggestion you deferred on an earlier head that the list leaves
-   out. Drop one the owner told you not to take, and one you deferred
+   Add each suggestion you deferred on an earlier head that the first list
+   leaves out. Drop one the owner told you not to take, and one you deferred
    because it did not hold up.
 2. **Verify each against the base as it is now.** Run `git fetch origin`,
    and verify each candidate against `origin/<baseRefName>` as you verify a
@@ -527,12 +540,15 @@ suggestions went with its change.
    the lines it names there, and confirm that the change it describes is
    still correct. The merge, or a later change to the base, can already
    carry the change or have moved the code it names.
-3. **Take the warranted ones.** A suggestion is warranted when it holds up
-   on the base, is clearly right, needs no decision only the owner can make,
-   and needs no spec first, by the test `../implement/SKILL.md` gives under
-   "Start from a description". Leave out the rest, each with a one-line
+3. **Take the warranted ones.** A suggestion or follow-up is warranted when
+   it holds up on the base, is clearly right, needs no decision only the
+   owner can make, and needs no spec first, by the test
+   `../implement/SKILL.md` gives under "Start from a description". Leave out the rest, each with a one-line
    reason for your report.
-4. **Build the follow-up.** When you take any, build them as one change, as
+4. **Build the follow-up.** When you take any, build them as one change,
+   unless the sizing rule under "Hand the work over" in
+   `../implement/SKILL.md` splits them, as two unrelated follow-ups can be;
+   then build each part as a pull request of its own. Build each the way
    `../implement/SKILL.md` builds a change the user describes: from a new
    branch off the fetched tip of the base, in a worktree of its own, through
    the gate, and through its hand-over, which opens the pull request as a
@@ -543,9 +559,11 @@ suggestions went with its change.
    changes. A suggestion you were building when the pull request merged
    carries over: copy its commits onto the new branch with
    `git cherry-pick` rather than build it again. In the body, name the
-   merged pull request and link the review each suggestion comes from.
-5. **Report.** Report the follow-up's URL and the suggestions it carries,
-   each suggestion you left out with its reason, and the validation results.
+   merged pull request and link the review each suggestion and follow-up
+   comes from.
+5. **Report.** Report each follow-up pull request's URL and the suggestions
+   and follow-ups it carries, each one you left out with its reason, and the
+   validation results.
    When you take none, open nothing, and report each with its reason.
 
 A merged pull request takes no hold and no `project review ready`, because
@@ -647,7 +665,9 @@ role are these:
   The line says how many the review lists, as `listing 2 suggestions`, and
   names an earlier head when an incremental review of the current head
   builds on that head's full review. Any other review of an earlier head,
-  and a Projector review that lists none, report nothing.
+  and a Projector review that lists none, report nothing. A follow-up is no
+  work on the open pull request, so a Projector review that lists only
+  follow-ups reports nothing either.
 - **`UNREVIEWED`** reports, once per head, a pull request ready for review
   whose head is not signed off and that no session the daemon can see
   reviews. The line names what it saw: `no session on this machine`, or,
@@ -686,8 +706,9 @@ role are these:
   `MERGED acme/app#75 into layer-74 at 2026-10-23T01:36:44Z, which is not in main yet`
   means it did not. The daemon removes the subscription itself. A
   `MERGED` line's action tells the fixer to follow up on the suggestions
-  still owed. When the merged head lists any, it counts them, as
-  `run fix-pr on acme/app#74 in subagent fix-74 to take the 2 suggestions its merged head lists into a follow-up pull request, then finish it`.
+  and follow-ups still owed. When the merged head lists suggestions, or a
+  review of any head lists follow-ups, it counts them, as
+  `run fix-pr on acme/app#74 in subagent fix-74 to take the 2 suggestions its merged head lists and the follow-up its reviews list into a follow-up pull request, then finish it`.
   Otherwise it says to have the subagent take any suggestion it deferred
   into one. Act as the next section describes.
 - **`MISSING`** reports that the pull request does not exist or that the
@@ -770,10 +791,10 @@ reopened thread as the recurrence it is instead of as new work.
   with the pull request's unrelated work meanwhile.
 - On `MERGED` or `CLOSED`, tell the user that the pull request merged or
   closed, and send its subagent no more work for it but the follow-up a
-  `MERGED` line names. When the line counts suggestions on the merged head,
-  have the subagent run this skill to take them into a follow-up pull
-  request, starting the subagent if the pull request has none. When the
-  line counts none, have the subagent take any suggestion it deferred into
+  `MERGED` line names. When the line counts suggestions or follow-ups, have
+  the subagent run this skill to take them into a follow-up pull request,
+  starting the subagent if the pull request has none. When the line counts
+  none, have the subagent take any suggestion it deferred into
   one. Either way it follows up as
   [Follow up on a merged pull request](#follow-up-on-a-merged-pull-request)
   describes, without asking the owner first, and you tell the user the
@@ -808,7 +829,8 @@ validation results. A held pull request, a draft, is not clean however clean
 its review. Say so, and why: "#12 is held in draft while 2 changes are
 implemented", naming the changes you hold it for. A merged pull request has
 no clean state left to report. Report its follow-up instead: "#12 merged;
-#15 follows up on 2 of its suggestions and leaves out 1", with the reason
+#15 follows up on 2 of its suggestions and its follow-up, and leaves out
+1", with the reason
 for each one left out.
 
 Report a stack's readiness as one unit, the same unit its subagent fixes,

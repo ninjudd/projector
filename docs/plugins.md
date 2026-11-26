@@ -37,10 +37,12 @@ such as a suggestion it implements or a change you ask for, it converts the
 pull request to a draft with `project review hold`, so the pull request
 never looks ready to merge while the changes are coming. Once the push that
 carries them lands, it marks the pull request ready for review again with
-`project review ready`. When you merge a pull request before every
-suggestion on it is built, or after `fix-pr` deferred one as reaching
-beyond the change, `fix-pr` takes those that still hold up into a follow-up
-pull request without asking, and leaves its review and merge to you. The
+`project review ready`. A review can also list follow-ups, work outside the
+change such as a bug already present at the base, which `fix-pr` leaves
+alone while the pull request is open. When you merge a pull request, it
+takes its follow-ups, and any suggestion on it not yet built or deferred as
+reaching beyond the change, into a follow-up pull request without asking,
+keeping those that still hold up, and leaves its review and merge to you. The
 reviewer settles its own
 findings on every head: it resolves one it verifies fixed, reopens one resolved
 too early, and keeps one whose decline does not hold, so its verdict rests on

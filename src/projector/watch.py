@@ -708,17 +708,23 @@ def trim_review(found: dict) -> dict:
             "submitted_at": found.get("submitted_at"), "author_association": found.get("author_association")}
 
 
+def counted_rows(reviews: list[dict], operator: str, visibility: Optional[str], also: tuple[str, ...]) -> list[dict]:
+    """The reviews among `reviews`, as `trim_review` keeps them, that `project review status`, run by the
+    operator, counts, in the shape it reads them."""
+    rows = [{"id": found.get("id"), "url": found.get("html_url"), "at": found.get("submitted_at"),
+             "login": (found.get("user") or {}).get("login"), "association": found.get("author_association"),
+             "body": found.get("body") or ""} for found in reviews if found.get("id") is not None]
+    return review.counted_reviews(rows, operator, visibility, also)
+
+
 def standing_suggestions(reviews: list[dict], head: str, operator: str, visibility: Optional[str],
                          also: tuple[str, ...] = ()) -> dict:
     """How many suggestions each review lists, for the reviews whose suggestions `project review suggestions`,
     run by the operator, lists on `head`: each account's newest Projector verdict on it by each model, and the
     full review an incremental one among them builds on, which can be of an earlier head. `reviews` are the
     pull request's reviews as `trim_review` keeps them."""
-    rows = [{"id": found.get("id"), "url": found.get("html_url"), "at": found.get("submitted_at"),
-             "login": (found.get("user") or {}).get("login"), "association": found.get("author_association"),
-             "body": found.get("body") or ""} for found in reviews if found.get("id") is not None]
-    chosen = review.suggesting_reviews(head, review.counted_reviews(rows, operator, visibility, also))
-    return {found["id"]: review.listed_suggestions(found) for found in chosen}
+    chosen = review.suggesting_reviews(head, counted_rows(reviews, operator, visibility, also))
+    return {found["id"]: review.listed_count(found, review.SUGGESTIONS) for found in chosen}
 
 
 def open_pull(found: dict, repo: str) -> dict:
@@ -1694,8 +1700,8 @@ class Pass:
                 if detail is None:
                     detail = self.closed_detail(ref, number, repo, entry)
                 fixer = self.fixer(pull, repo, pr) if "fix" in names else ""
-                suggestions = self.merged_suggestions(repo, entry) if "fix" in names else None
-                self.tell(session, f"{detail} — {closing_actions(repo, number, names, fixer, suggestions)}")
+                owed = self.owed(repo, entry) if "fix" in names else None
+                self.tell(session, f"{detail} — {closing_actions(repo, number, names, fixer, owed)}")
         for name in session_names(self.root):
             remove(self.root, name, repo, number, None)
         for state in self.states.values():
@@ -1706,15 +1712,19 @@ class Pass:
             del owners[label]
         self.forget_adopted(repo, number, adopted)
 
-    def merged_suggestions(self, repo: str, entry: dict) -> Optional[int]:
-        """How many suggestions `project review suggestions` lists on a merged pull request's last head, as
-        `REVIEW` counts them, or None when it closed without merging and its suggestions went with it."""
+    def owed(self, repo: str, entry: dict) -> Optional[Owed]:
+        """What a merged pull request still owes: the suggestions `project review suggestions` lists on its
+        last head, as `REVIEW` counts them, and the follow-ups `project review follow-ups` lists at any head.
+        None when it closed without merging, and its suggestions and follow-ups went with it."""
         pr = pull_request(entry)
         if pr.get("state") != "MERGED":
             return None
         visibility = (entry.get("repository") or {}).get("visibility")
-        return sum(standing_suggestions(entry.get("reviews") or [], pr.get("headRefOid") or "",
-                                        self.daemon.operator or "", visibility, self.counted_logins(repo)).values())
+        reviews, operator, also = entry.get("reviews") or [], self.daemon.operator or "", self.counted_logins(repo)
+        suggestions = sum(standing_suggestions(reviews, pr.get("headRefOid") or "", operator, visibility,
+                                               also).values())
+        follow_ups = len(review.follow_up_items(counted_rows(reviews, operator, visibility, also)))
+        return Owed(suggestions, follow_ups)
 
     def closed_detail(self, ref: str, number: int, repo: str, entry: dict) -> str:
         pr = pull_request(entry)
@@ -2322,12 +2332,31 @@ def stack_layers(stack: Optional[dict]) -> list[dict]:
             if isinstance(layer, dict) and isinstance(layer.get("number"), int)]
 
 
-def closing_actions(repo: str, number: int, names: list[str], fixer: str, suggestions: Optional[int] = None) -> str:
+@dataclass(frozen=True)
+class Owed:
+    """What a merged pull request owes its fixer: how many suggestions its last head lists, and how many
+    follow-ups its reviews list at any head."""
+    suggestions: int
+    follow_ups: int
+
+    def listed(self) -> str:
+        """The owed items a `MERGED` line names, as `the 2 suggestions its merged head lists and the follow-up
+        its reviews list`, or nothing when it owes none."""
+        def counted(count: int, noun: str, where: str) -> str:
+            return (f"the {noun}" if count == 1 else f"the {count} {noun}s") + where
+
+        parts = ([counted(self.suggestions, "suggestion", " its merged head lists")] if self.suggestions else []) \
+            + ([counted(self.follow_ups, "follow-up", " its reviews list")] if self.follow_ups else [])
+        return " and ".join(parts)
+
+
+def closing_actions(repo: str, number: int, names: list[str], fixer: str, owed: Optional[Owed] = None) -> str:
     """What each role's owner does once the pull request merges or closes. A merged pull request's fixer takes
-    the suggestions still owed on it into a follow-up pull request: the `suggestions` its last head lists, which
-    a fixer never started for it learns of only here, or else any it deferred on an earlier head, which only the
-    fixer remembers. `suggestions` is None for a pull request closed without merging, which owes none. A stack's
-    fixer goes on fixing the layers still open, because the user can merge a stack's lower layers first."""
+    the suggestions and follow-ups still owed on it into a follow-up pull request: those `owed` counts, which a
+    fixer never started for it learns of only here, or else any suggestion it deferred on an earlier head,
+    which only the fixer remembers. `owed` is None for a pull request closed without merging, which owes none.
+    A stack's fixer goes on fixing the layers still open, because the user can merge a stack's lower layers
+    first."""
     ref = f"{repo}#{number}"
     stack = fixer.startswith("fix-stack-")
 
@@ -2336,11 +2365,10 @@ def closing_actions(repo: str, number: int, names: list[str], fixer: str, sugges
             else f"finish {who}"
 
     actions = []
-    if "fix" in names and suggestions:
-        listed = "the suggestion" if suggestions == 1 else f"the {suggestions} suggestions"
-        actions.append(f"run fix-pr on {ref} in subagent {fixer} to take {listed} its merged head lists into a "
-                       f"follow-up pull request, then {finish('it')}")
-    elif "fix" in names and suggestions == 0:
+    if "fix" in names and owed is not None and owed.listed():
+        actions.append(f"run fix-pr on {ref} in subagent {fixer} to take {owed.listed()} into a follow-up pull "
+                       f"request, then {finish('it')}")
+    elif "fix" in names and owed is not None:
         deferred = f"it deferred on {ref}" if stack else "it deferred"
         actions.append(f"have subagent {fixer} take any suggestion {deferred} into a follow-up pull request, then "
                        f"{finish('it')}")

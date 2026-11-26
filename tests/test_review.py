@@ -1666,6 +1666,11 @@ P3 = [{"path": "src/x.py", "line": 12, "priority": "P3", "body": "Name the helpe
       {"path": "README.md", "priority": "P3", "body": "Say that a cold start warms the cache."}]
 LISTED = [{"path": "src/x.py", "line": 12, "text": "Name the helper `warm`, as the cache calls it."},
           {"path": "README.md", "line": None, "text": "Say that a cold start warms the cache."}]
+FOLLOW_UPS = [{"path": "src/y.py", "line": 7, "priority": "follow-up",
+               "body": "Close the socket `fetch` opens\nwhen the request fails."},
+              {"path": "docs/cli.md", "priority": "follow-up", "body": "Document the `--cold` flag."}]
+FOLLOWED = [{"path": "src/y.py", "line": 7, "text": "Close the socket `fetch` opens when the request fails."},
+            {"path": "docs/cli.md", "line": None, "text": "Document the `--cold` flag."}]
 
 
 # The review marker as release 0.7.19 reads it, copied from that release. A review loop on another machine
@@ -1712,8 +1717,8 @@ class PublishSuggestionTests(PublishCase):
         self.assertIn("1 finding thread: 0 resolved, 1 open", posted["body"])
         self.assertEqual([("src/x.py", 3)], [(c["path"], c["line"]) for c in posted["comments"]],
                          "a P3 opens no thread, and its line need not be in the diff")
-        self.assertEqual(LISTED, review.parse_suggestions(posted["body"]))
-        self.assertEqual(2, review.listed_suggestions(posted))
+        self.assertEqual(LISTED, review.parse_listing(posted["body"], review.SUGGESTIONS))
+        self.assertEqual(2, review.listed_count(posted, review.SUGGESTIONS))
 
     def test_a_head_whose_only_entries_are_p3_is_clean(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -1737,7 +1742,7 @@ class PublishSuggestionTests(PublishCase):
         self.assertIn("\n<!-- projector-suggestions v=1 count=3 -->\n### Suggestions\n", self.posted()["body"],
                       "the count goes directly before the body's own label")
         self.assertTrue(self.posted()["body"].endswith(CHECKED), "the body publishes as written")
-        self.assertEqual(WRITTEN, review.parse_suggestions(self.posted()["body"]))
+        self.assertEqual(WRITTEN, review.parse_listing(self.posted()["body"], review.SUGGESTIONS))
 
     def test_refuses_a_body_that_lists_suggestions_beside_p3_entries(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -1769,13 +1774,80 @@ class PublishSuggestionTests(PublishCase):
                 self.assertIn(words, err)
                 self.assertEqual([], self.github.reviews, "nothing was posted")
 
-    def test_a_priority_outside_p1_p2_and_p3_is_refused(self) -> None:
+    def test_a_priority_outside_p1_p2_p3_and_follow_up_is_refused(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
         code, _, err = self.publish("changes-requested", "--threads", str(self.threads(finding(priority="P4"))))
 
         self.assertEqual(1, code)
-        self.assertIn("priority must be P1, P2, or P3", err)
+        self.assertIn("priority must be P1, P2, P3, or follow-up", err)
+
+
+class PublishFollowUpTests(PublishCase):
+    def test_lists_follow_ups_in_a_section_of_their_own_after_the_suggestions_and_counts_each(self) -> None:
+        # The entries come interleaved, and each section keeps only its own: a follow-up the suggestions
+        # section swallowed would be built on the pull request, and one it lost would never be built.
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        entries = (P3[0], FOLLOW_UPS[0], P3[1], FOLLOW_UPS[1])
+
+        code, _, err = self.publish("clean", "--threads", str(self.threads(*entries)))
+
+        self.assertEqual(0, code, err)
+        posted = self.posted()
+        self.assertTrue(posted["body"].endswith(
+            "Covered 3 of 3 changed files.\n\n"
+            "<!-- projector-suggestions v=1 count=2 -->\n"
+            "### Suggestions\n\n"
+            "- `src/x.py:12`: Name the helper `warm`, as the cache calls it.\n"
+            "- `README.md`: Say that a cold start warms the cache.\n\n"
+            "<!-- projector-follow-ups v=1 count=2 -->\n"
+            "### Follow-ups\n\n"
+            "- `src/y.py:7`: Close the socket `fetch` opens when the request fails.\n"
+            "- `docs/cli.md`: Document the `--cold` flag.\n"), posted["body"])
+        self.assertEqual(LISTED, review.parse_listing(posted["body"], review.SUGGESTIONS))
+        self.assertEqual(FOLLOWED, review.parse_listing(posted["body"], review.FOLLOW_UPS))
+        self.assertEqual((2, 2), (review.listed_count(posted, review.SUGGESTIONS),
+                                  review.listed_count(posted, review.FOLLOW_UPS)))
+        self.assertEqual([], posted["comments"], "a follow-up opens no thread, and its line need not be in the diff")
+        self.assertIn(" findings=0 ", posted["body"], "a follow-up is no finding")
+        self.assertEqual(["clean"], self.github.labels(), "a follow-up never holds the head back from clean")
+        self.assertEqual(("clean", self.head), verdict_0_7_19(posted["body"]),
+                         "a release from before follow-ups reads the verdict")
+
+    def test_a_review_with_only_follow_ups_lists_no_suggestions(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(*FOLLOW_UPS)))[0])
+
+        body = self.posted()["body"]
+        self.assertNotIn("projector-suggestions", body)
+        self.assertIsNone(review.parse_listing(body, review.SUGGESTIONS))
+        self.assertEqual(FOLLOWED, review.parse_listing(body, review.FOLLOW_UPS))
+
+    def test_refuses_a_body_that_lists_follow_ups_beside_follow_up_entries(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        body = self.body("This change warms the cache.\n\n{census}\n\n### Follow-ups\n\n- `a.py`: Fix it.\n")
+
+        code, _, err = self.publish("clean", "--threads", str(self.threads(*FOLLOW_UPS)), body=body)
+
+        self.assertEqual(1, code)
+        self.assertIn("the body has a follow-ups section of its own, and the threads file gives follow-up entries",
+                      err)
+        self.assertEqual([], self.github.reviews, "nothing was posted")
+
+    def test_refuses_a_follow_up_entry_the_list_could_not_show(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        for entry, words in (({"priority": "follow-up", "body": "Fix it."},
+                              "finding 2 is a follow-up and needs the path"),
+                             ({"path": "a.py", "line": "7", "priority": "follow-up", "body": "Fix it."},
+                              "a follow-up's line is a line number"),
+                             ({"path": "a.py", "priority": "follow-up", "body": ""}, "a follow-up needs a body")):
+            with self.subTest(words):
+                code, _, err = self.publish("clean", "--threads", str(self.threads(FOLLOW_UPS[0], entry)))
+
+                self.assertEqual(1, code)
+                self.assertIn(words, err)
+                self.assertEqual([], self.github.reviews, "nothing was posted")
 
 
 def verdict_body(sha: str, model: str | None, verdict: str = "clean") -> str:
@@ -4416,15 +4488,42 @@ class IncrementalSuggestionsTests(IncrementalCase):
                          (result["newest"]["review"], result["newest"]["suggestions"], result["suggestions"]))
 
 
+class FollowUpListingTests(IncrementalCase):
+    def test_lists_the_follow_ups_of_every_head_once_each_and_leaves_them_out_of_the_suggestions(self) -> None:
+        # A follow-up names code outside the change, so a push leaves it owed: listing only the newest head's
+        # would lose the first review's, and listing a repeated one twice would build it twice.
+        self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
+        self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(FOLLOW_UPS[0])))[0])
+        first = self.posted()["id"]
+        head = self.pushed()
+        self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(P3[0], *FOLLOW_UPS)))[0])
+        second = self.posted()["id"]
+
+        code, out, err = self.project("follow-ups", "1", "--repo", REPO, "--json")
+        text = self.project("follow-ups", "1", "--repo", REPO)[1]
+        suggested = json.loads(self.project("suggestions", "1", "--repo", REPO, "--json")[1])
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([dict(FOLLOWED[0], url=review_page(first), sha=self.reviewed),
+                          dict(FOLLOWED[1], url=review_page(second), sha=head)], json.loads(out))
+        self.assertEqual(f"src/y.py:7, in the review of {self.reviewed[:7]}: {review_page(first)}",
+                         text.splitlines()[0])
+        self.assertEqual([dict(LISTED[0], url=review_page(second), sha=head)], suggested)
+
+    def test_prints_nothing_when_no_review_lists_a_follow_up(self) -> None:
+        self.assertEqual((0, ""), self.project("follow-ups", "1", "--repo", REPO)[:2])
+
+
 class SuggestionParsingTests(unittest.TestCase):
     def test_reads_each_label_a_reviewer_has_written_in_any_case(self) -> None:
         for label, text in LABELED.items():
             for body in (text, text.replace("Suggestions", "SUGGESTIONS")):
                 with self.subTest(label, body=body[len(INTENT):len(INTENT) + 30]):
-                    self.assertEqual(WRITTEN, review.parse_suggestions(body))
+                    self.assertEqual(WRITTEN, review.parse_listing(body, review.SUGGESTIONS))
 
     def test_reads_the_form_publish_writes_back_as_it_was_given(self) -> None:
-        self.assertEqual(LISTED, review.parse_suggestions(f"{INTENT}\n{review.suggestions_section(LISTED)}\n"))
+        body = f"{INTENT}\n{review.section(LISTED, review.SUGGESTIONS)}\n"
+        self.assertEqual(LISTED, review.parse_listing(body, review.SUGGESTIONS))
 
     def test_a_body_without_the_section_has_none(self) -> None:
         for body in (f"{INTENT}\n### What was checked\n\n{CHECKED}",
@@ -4432,10 +4531,11 @@ class SuggestionParsingTests(unittest.TestCase):
                      f"{INTENT}\n```markdown\n## Suggestions\n\n- `a.py:1`: quoted, not listed.\n```\n",
                      f"{INTENT}\n##### Suggestions\n\n{ITEMS}\n"):
             with self.subTest(body[len(INTENT):len(INTENT) + 40]):
-                self.assertIsNone(review.parse_suggestions(body))
+                self.assertIsNone(review.parse_listing(body, review.SUGGESTIONS))
 
     def test_an_empty_section_lists_none(self) -> None:
-        self.assertEqual([], review.parse_suggestions(f"{INTENT}\n### Suggestions\n\n### What was checked\n"))
+        body = f"{INTENT}\n### Suggestions\n\n### What was checked\n"
+        self.assertEqual([], review.parse_listing(body, review.SUGGESTIONS))
 
     def test_the_section_ends_at_a_paragraph_and_a_deeper_list_joins_its_item(self) -> None:
         body = (f"{INTENT}\n### Suggestions (P3)\n\n"
@@ -4447,7 +4547,7 @@ class SuggestionParsingTests(unittest.TestCase):
 
         self.assertEqual([{"path": "src/x.py", "line": 3, "text": "Inline the helper. - It has one caller."},
                           {"path": "src/y.py", "line": 4, "text": "Drop the unused import."}],
-                         review.parse_suggestions(body))
+                         review.parse_listing(body, review.SUGGESTIONS))
 
 
 class VerdictMarkerTests(unittest.TestCase):
