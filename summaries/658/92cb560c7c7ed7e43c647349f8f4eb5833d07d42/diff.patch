@@ -1,0 +1,348 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index af7ef36d..d2cceb42 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3442,15 +3442,18 @@ hooks alone do not put a session in the list.
+ 
+ Directory headings sort by path and keep separate checkouts apart, even when
+ they share a repository. Paths within your home directory start with `~`.
+-Sessions whose records have no directory appear under `Unknown working
+-directory`, after the other groups. A blank line precedes each group,
+-including the first. The screen leaves one space at the left edge.
++Claude sessions use the working directory in their own native transcript,
++with the Projector registration as a fallback. Sessions without a recorded
++directory appear under `Unknown working directory`, after the other groups.
++A blank line precedes each group, including the first. The screen leaves one
++space at the left edge.
+ 
+ The session list has four aligned fields, without headings:
+ 
+ - **Session** shows the chat title from Codex's session index or Claude
+-  Code's `/rename` metadata. It falls back to the registered session name,
+-  then `Unnamed session` when neither is available. It uses normal text
++  Code's `/rename` metadata, automatic title, or agent name, in that order.
++  It falls back to the registered session name, then `Unnamed session` when
++  neither is available. It uses normal text
+   color. The selected session name is bright gray with a `▸` marker; the row
+   has no highlight.
+ - **PRs** counts all open pull requests the session fixes or reviews, as
+@@ -3463,6 +3466,9 @@ The session list has four aligned fields, without headings:
+   delivery heartbeats do not change it. A session with no recorded time
+   shows `—`.
+ 
++Sessions with different native IDs remain separate, even when they share a
++title, directory, or pull requests.
++
+ Long names and requests shorten with an ellipsis to keep the other columns
+ visible. Within each directory, sessions with the most open questions and
+ requests come first. Ties go to the session whose newest item is newest,
+diff --git a/src/projector/console.py b/src/projector/console.py
+index fe140dab..9953fbb0 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -27,7 +27,7 @@
+ from pathlib import Path
+ from typing import Any, Callable, Optional, TextIO
+ 
+-from . import agents, artifact_panel, codex_watch, inbox, repo_inbox, rows, session_titles, watch
++from . import agents, artifact_panel, codex_watch, inbox, repo_inbox, rows, session_metadata, watch
+ from .core import ProjectorError
+ 
+ INBOX_EVERY = 1.0
+@@ -399,7 +399,7 @@ def __init__(self, root: Path, *, clock: Callable[[], float] = time.time,
+         self.lock = threading.RLock()
+         self.refresh_now = threading.Event()
+         self.sessions: dict[str, Session] = {}
+-        self.titles = session_titles.SessionTitles()
++        self.metadata = session_metadata.SessionMetadata()
+         self.view = "home"
+         self.session: Optional[str] = None
+         self.selected: Optional[str] = None
+@@ -477,9 +477,10 @@ def load(self, work: Work) -> Found:
+                     continue
+                 found.live[name] = (*describe(self.root, name, delivery, record), seen, items)
+                 found.entries[name] = entries
+-            titles = self.titles.read({name: details[1] for name, details in found.live.items()})
+-            for name, title in titles.items():
+-                found.live[name] = (title, *found.live[name][1:])
++            metadata = self.metadata.read({name: details[1] for name, details in found.live.items()})
++            for name, native in metadata.items():
++                label, _, cwd, *rest = found.live[name]
++                found.live[name] = (native.title or label, native.host, native.cwd or cwd, *rest)
+             names = list(found.live)
+         for name in names:
+             if work.rows or name not in work.signatures:
+diff --git a/src/projector/session_titles.py b/src/projector/session_metadata.py
+similarity index 58%
+rename from src/projector/session_titles.py
+rename to src/projector/session_metadata.py
+index bb011980..239c78ea 100644
+--- a/src/projector/session_titles.py
++++ b/src/projector/session_metadata.py
+@@ -1,4 +1,4 @@
+-"""Read native session titles without loading conversations into the console."""
++"""Read native session metadata without loading conversations into the console."""
+ 
+ from __future__ import annotations
+ 
+@@ -13,29 +13,29 @@
+ 
+ 
+ @dataclass
+-class TitleFile:
++class MetadataFile:
+     signature: tuple | None = None
+     offset: int = 0
+     partial: bool = False
+     skipping: bool = False
+-    titles: dict[str, str] = field(default_factory=dict)
++    records: dict[str, dict[str, str]] = field(default_factory=dict)
+ 
+-    def read(self, path: Path, identifier: str, title_key: str) -> dict[str, str]:
++    def read(self, path: Path, identifier: str, keys: tuple[str, ...]) -> dict[str, dict[str, str]]:
+         try:
+             stat = path.stat()
+             signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+             if signature == self.signature and (self.offset >= stat.st_size or self.partial):
+-                return self.titles
++                return self.records
+             if self.signature is not None and signature != self.signature and (
+                     signature[:2] != self.signature[:2] or stat.st_size <= self.signature[2]):
+                 self.offset = 0
+                 self.skipping = False
+-                self.titles.clear()
++                self.records.clear()
+             with path.open("rb") as stream:
+                 stream.seek(self.offset)
+                 chunk = stream.read(READ_BYTES)
+         except OSError:
+-            return self.titles
++            return self.records
+         self.signature = signature
+         complete = chunk.rfind(b"\n") + 1
+         self.partial = len(chunk) < READ_BYTES and complete < len(chunk)
+@@ -43,15 +43,15 @@ def read(self, path: Path, identifier: str, title_key: str) -> dict[str, str]:
+             if len(chunk) == READ_BYTES:
+                 self.offset += len(chunk)
+                 self.skipping = True
+-            return self.titles
++            return self.records
+         self.offset += complete
+         lines = chunk[:complete].splitlines()
+         if self.skipping:
+             lines = lines[1:]
+             self.skipping = False
+-        marker = ('"' + title_key + '"').encode()
++        markers = [('"' + key + '"').encode() for key in keys]
+         for line in lines:
+-            if marker not in line:
++            if not any(marker in line for marker in markers):
+                 continue
+             try:
+                 record = json.loads(line)
+@@ -59,29 +59,41 @@ def read(self, path: Path, identifier: str, title_key: str) -> dict[str, str]:
+                 continue
+             if not isinstance(record, dict):
+                 continue
+-            name, title = record.get(identifier), record.get(title_key)
+-            if isinstance(name, str) and isinstance(title, str) and title.strip():
+-                self.titles[name] = title.strip()
+-        return self.titles
++            name = record.get(identifier)
++            if not isinstance(name, str) or record.get("isSidechain") is True:
++                continue
++            for key in keys:
++                value = record.get(key)
++                if isinstance(value, str) and value.strip():
++                    self.records.setdefault(name, {})[key] = value
++        return self.records
++
++
++@dataclass(frozen=True)
++class Metadata:
++    title: str
++    host: str
++    cwd: str = ""
+ 
+ 
+-class SessionTitles:
++class SessionMetadata:
+     def __init__(self) -> None:
+-        self.files: dict[Path, TitleFile] = {}
++        self.files: dict[Path, MetadataFile] = {}
+         self.claude_paths: dict[str, Path] = {}
+ 
+-    def read(self, sessions: dict[str, str]) -> dict[str, str]:
+-        found: dict[str, str] = {}
++    def read(self, sessions: dict[str, str]) -> dict[str, Metadata]:
++        found: dict[str, Metadata] = {}
+         active_paths: set[Path] = set()
+         if "codex" in sessions.values():
+             home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+             path = home / "session_index.jsonl"
+             active_paths.add(path)
+-            titles = self.files.setdefault(path, TitleFile()).read(path, "id", "thread_name")
+-            found.update({name: title for name, title in titles.items() if sessions.get(name) == "codex"})
++            records = self.files.setdefault(path, MetadataFile()).read(path, "id", ("thread_name",))
++            found.update({name: Metadata(record["thread_name"].strip(), "codex") for name, record in records.items()
++                          if sessions.get(name) == "codex"})
+         root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+         for name, host in sessions.items():
+-            if host != "claude" or not watch.SESSION.fullmatch(name):
++            if host == "codex" or not watch.SESSION.fullmatch(name):
+                 continue
+             path = self.claude_paths.get(name)
+             if path is None or not path.is_file():
+@@ -93,9 +105,13 @@ def read(self, sessions: dict[str, str]) -> dict[str, str]:
+                     continue
+                 self.claude_paths[name] = path
+             active_paths.add(path)
+-            titles = self.files.setdefault(path, TitleFile()).read(path, "sessionId", "customTitle")
+-            if name in titles:
+-                found[name] = titles[name]
++            records = self.files.setdefault(path, MetadataFile()).read(
++                path, "sessionId", ("customTitle", "aiTitle", "agentName", "cwd"))
++            record = records.get(name)
++            if record:
++                title = record.get("customTitle") or record.get("aiTitle") or record.get("agentName", "")
++                cwd = record.get("cwd", "")
++                found[name] = Metadata(title.strip(), "claude", cwd if "\0" not in cwd and Path(cwd).is_absolute() else "")
+         self.files = {path: data for path, data in self.files.items() if path in active_paths}
+         self.claude_paths = {name: path for name, path in self.claude_paths.items() if name in sessions}
+         return found
+diff --git a/tests/test_artifact_panel.py b/tests/test_artifact_panel.py
+index c55db38b..e9f6ab7d 100644
+--- a/tests/test_artifact_panel.py
++++ b/tests/test_artifact_panel.py
+@@ -359,7 +359,7 @@ def test_an_artifact_keeps_its_session_visible_without_leaking_to_a_neighbor(sel
+         app = console.Console(artifact_panel.watch.state_root())
+         with mock.patch.object(console, 'live_sessions', return_value={'one': 'codex', 'two': 'codex'}):
+             with mock.patch.object(console.agents, 'record', return_value={}):
+-                with mock.patch.object(app.titles, 'read', return_value={}):
++                with mock.patch.object(app.metadata, 'read', return_value={}):
+                     found = app.load(console.Work(inbox=True, rows=True, signatures={}))
+         app.apply(found)
+         self.assertEqual(['one'], list(app.sessions))
+diff --git a/tests/test_console.py b/tests/test_console.py
+index f534a234..6ce71c28 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -20,7 +20,7 @@
+ from typing import Optional
+ from unittest import mock
+ 
+-from projector import cli, config, console, inbox, relay, repo_inbox, session_titles, watch
++from projector import cli, config, console, inbox, relay, repo_inbox, session_metadata, watch
+ from projector.inbox import read_json, write_json
+ 
+ SOURCE = Path(cli.__file__).resolve().parents[1]
+@@ -264,6 +264,100 @@ def test_an_items_drawer_lists_the_messages_you_sent_about_it(self) -> None:
+ 
+ 
+ class SessionColumns(ConsoleCase):
++    def test_native_metadata_distinguishes_sessions_watching_the_same_pull_requests(self) -> None:
++        self.claude("claude-session")
++        write_json(self.folder("claude-session") / "agent.json",
++                   {"schema_version": 1, "host": "other", "cwd": "/work/old"})
++        write_json(self.folder("stream-session") / "session.json",
++                   {"deliverer": "stream", "renewed_at": watch.stamp(self.clock.now)})
++        self.codex("codex-session", cwd="/work/app")
++        index = self.home / ".codex" / "session_index.jsonl"
++        index.parent.mkdir()
++        index.write_text(json.dumps({"id": "codex-session", "thread_name": "Review changes"}) + "\n")
++        transcripts = self.home / ".claude" / "projects" / "project"
++        transcripts.mkdir(parents=True)
++        for name, title in (("claude-session", "Review changes"),
++                            ("stream-session", "Check the release")):
++            (transcripts / f"{name}.jsonl").write_text("\n".join(json.dumps(record) for record in (
++                {"type": "ai-title", "sessionId": name, "aiTitle": title},
++                {"type": "user", "sessionId": name, "cwd": "/work/app"},
++                {"type": "ai-title", "sessionId": "another-session", "aiTitle": "Unrelated title"},
++                {"type": "user", "sessionId": "another-session", "cwd": "/work/unrelated"},
++            )) + "\n")
++        for name in ("claude-session", "stream-session", "codex-session"):
++            self.subscribe(name, "acme/app#12 fix")
++            self.ask(name, f"Question for {name}?")
++        self.cache("acme/app", 12)
++
++        self.console.tick()
++
++        self.assertEqual({
++            "claude-session": ("Review changes", "claude", "/work/app"),
++            "stream-session": ("Check the release", "claude", "/work/app"),
++            "codex-session": ("Review changes", "codex", "/work/app"),
++        }, {one.name: (one.label, one.host, one.cwd) for one in self.console.home()})
++        for one in self.console.home():
++            self.assertEqual(1, len(one.rows))
++            self.assertEqual(f"Question for {one.name}?", one.items[0]["subject"])
++        self.assertNotIn("Unknown working directory", self.screen())
++
++    def test_claude_custom_titles_take_precedence_and_agent_names_are_a_fallback(self) -> None:
++        transcripts = self.home / ".claude" / "projects" / "project"
++        transcripts.mkdir(parents=True)
++        for name in ("named", "automatic", "agent"):
++            self.claude(name)
++            self.ask(name)
++        (transcripts / "named.jsonl").write_text("\n".join(json.dumps(record) for record in (
++            {"sessionId": "named", "customTitle": "My chosen title"},
++            {"sessionId": "named", "aiTitle": "Automatic title"},
++            {"sessionId": "named", "agentName": "worker"},
++        )) + "\n")
++        (transcripts / "automatic.jsonl").write_text("\n".join(json.dumps(record) for record in (
++            {"sessionId": "automatic", "aiTitle": "Automatic title"},
++            {"sessionId": "automatic", "agentName": "worker"},
++        )) + "\n")
++        (transcripts / "agent.jsonl").write_text(json.dumps({"sessionId": "agent", "agentName": "build worker"})
++                                                + "\n")
++
++        self.console.tick()
++
++        self.assertEqual({"named": "My chosen title", "automatic": "Automatic title", "agent": "build worker"},
++                         {one.name: one.label for one in self.console.home()})
++
++    def test_claude_metadata_refreshes_without_a_partial_or_sidechain_directory_replacing_its_own(self) -> None:
++        self.claude("s1")
++        self.ask("s1")
++        transcript = self.home / ".claude" / "projects" / "project" / "s1.jsonl"
++        transcript.parent.mkdir(parents=True)
++        transcript.write_text(json.dumps({"sessionId": "s1", "aiTitle": "Review changes", "cwd": "/work/App "})
++                              + "\n")
++        self.console.tick()
++        self.assertEqual("/work/App ", self.console.viewed().cwd)
++        with transcript.open("a") as stream:
++            stream.write(json.dumps({"sessionId": "s1", "isSidechain": True, "cwd": "/work/sidechain"}) + "\n")
++            stream.write('{"sessionId":"s1","customTitle":"My title","cwd":"/work/new"}')
++        self.clock.now += console.INBOX_EVERY
++        self.console.tick()
++        self.assertEqual(("Review changes", "/work/App "),
++                         (self.console.viewed().label, self.console.viewed().cwd))
++
++        with transcript.open("a") as stream:
++            stream.write("\n")
++        self.clock.now += console.INBOX_EVERY
++        self.console.tick()
++        self.assertEqual(("My title", "/work/new"), (self.console.viewed().label, self.console.viewed().cwd))
++
++        write_json(self.folder("s1") / "agent.json",
++                   {"schema_version": 1, "name": "registered name", "cwd": "/work/fallback"})
++        replacement = transcript.with_suffix(".new")
++        replacement.write_text(json.dumps({"sessionId": "s1", "agentName": "new worker", "cwd": "relative"})
++                               + "\n")
++        replacement.replace(transcript)
++        self.clock.now += console.INBOX_EVERY
++        self.console.tick()
++        self.assertEqual(("new worker", "/work/fallback"),
++                         (self.console.viewed().label, self.console.viewed().cwd))
++
+     def test_a_codex_rename_appears_without_an_inbox_change_and_a_partial_name_waits_for_its_newline(self) -> None:
+         self.codex("s1", cwd="/work/app")
+         self.subscribe("s1", "acme/app review claude operator")
+@@ -298,7 +392,7 @@ def test_a_claude_session_uses_its_native_custom_title_after_a_large_non_title_e
+         transcript.write_text(json.dumps({"type": "tool", "content": "x" * 400}) + "\n"
+                               + json.dumps({"type": "custom-title", "sessionId": "s1", "customTitle": "Ship preview"})
+                               + "\n")
+-        with mock.patch.object(session_titles, "READ_BYTES", 128):
++        with mock.patch.object(session_metadata, "READ_BYTES", 128):
+             for _ in range(6):
+                 self.console.tick()
+                 self.clock.now += console.INBOX_EVERY

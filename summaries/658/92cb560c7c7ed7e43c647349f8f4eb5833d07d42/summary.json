@@ -1,0 +1,114 @@
+{
+ "version": 1,
+ "name": "Native session metadata",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 658,
+  "title": "Read native session names and directories in the console",
+  "head": "92cb560c7c7ed7e43c647349f8f4eb5833d07d42",
+  "headRef": "deduplicate-console-sessions",
+  "base": "cf027735532d7d5de6479a639f25a19bb45f5f25",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector console lists live agent sessions and their inboxes. Claude sessions can look identical when their native transcript uses an automatic title or agent name, and a stream-delivered session can lack a registered working directory.",
+   "This change reads each session’s own title, provider, and working directory from native metadata while keeping different session IDs separate. Claude names prefer an explicit rename, then an automatic title, then an agent name. Missing native values fall back to the Projector registration.",
+   "The earlier review finding is fixed: the artifact-isolation fixture uses the renamed metadata reader. The focused regressions and required gate pass, and no finding remains open at this head."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Validation at this head",
+    "html": "<ul class=\"tight\"><li>All 133 focused console, agent-console, and artifact-panel tests pass.</li><li>The required CI <code>check</code> job passes.</li><li>The configured local gate passes both plugin validators, hook tests, hook type-checking, and whitespace validation.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "native-metadata",
+   "title": "Read each session’s native metadata",
+   "kicker": "One bounded reader supplies names and directories without displaying conversation content.",
+   "intro": [
+    "Native metadata means fields saved by the agent host: Codex keeps thread names in its session index, while Claude keeps title and directory fields in each session transcript. The existing title reader becomes a metadata reader so the console can recover the provider and working directory as well as the label.",
+    "Reads remain incremental and limited to 256 KiB per file per refresh. Incomplete lines wait for a newline, replaced files reset their cached data, and Claude sidechain records are ignored. A sidechain is a branch of a conversation whose directory should not replace the main session’s directory."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/session_metadata.py",
+     "note": "Renames the shared title reader and returns native title, host, and directory fields with session-ID filtering.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Traced incremental offsets, partial-line buffering, file replacement, sidechain filtering, and active-session cache pruning; the focused regressions passed these paths."
+      },
+      {
+       "kind": "verify",
+       "line": 112,
+       "text": "Checked explicit-title precedence over automatic titles and agent names, plus absolute-directory validation and registration fallback, through the session-column tests."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "console-integration",
+   "title": "Apply metadata without merging sessions",
+   "kicker": "Native labels improve the list; session IDs still select inboxes and subscriptions.",
+   "intro": [
+    "The console first builds its live-session map using the native session ID as the key. It then replaces display values with the available native title, host, and directory. Equal names, paths, or pull requests do not combine independent sessions.",
+    "The regressions exercise Claude and Codex sessions watching the same pull request, metadata precedence, partial writes, sidechain records, exact directory spelling, and transcript replacement. The artifact-panel fixture uses the renamed reader so its session-isolation check continues to run."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Loads the metadata reader and replaces only display fields in each live session.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 483,
+       "text": "Traced the live-session map through apply and the home list: session IDs remain the keys, and native fields only replace each session’s own display values."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "collapsed": true,
+     "note": "Exercises native metadata precedence, refresh boundaries, and distinct sessions sharing the same pull requests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All console, agent-console, and artifact-panel regressions pass in the focused 133-test run."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_artifact_panel.py",
+     "collapsed": true,
+     "note": "Updates the artifact-isolation fixture to use the renamed metadata reader.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 362,
+       "text": "Re-ran the previously failing artifact-isolation test within the focused suite: the fixture now patches app.metadata and all 133 tests pass."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "collapsed": true,
+     "note": "Documents Claude native directories, title fallbacks, and separate rows for different native session IDs.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Compared the documented title order and directory fallback with the metadata reader and console integration at the reviewed head."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
