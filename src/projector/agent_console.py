@@ -228,6 +228,16 @@ class Console(console.Console):
         else:
             super().press_focus()
 
+    def panel_key(self, name):
+        if self.session in self.runtimes and self.drawer is not None and name in ("esc", "left", "0"):
+            cancel = next((control for control in self.controls() if control.key == "0"), None)
+            if name == "0" and cancel is not None:
+                self.press(cancel)
+            else:
+                self.compose()
+            return
+        super().panel_key(name)
+
     def scroll(self, name):
         if self.view == "panel" and self.selected_key() == CONVERSATION:
             self.follow = name in ("end", "G")
@@ -330,6 +340,9 @@ class Console(console.Console):
             return
         if purpose == "chat" and name in ("pageup", "pagedown"):
             self.scroll(name)
+            return
+        if purpose == "queue-edit" and name in ("esc", "ctrl-c"):
+            self.compose()
             return
         multiline = purpose in ("launch-prompt", "chat", "queue-edit")
         if name == "ctrl-j" and not multiline:

@@ -104,6 +104,8 @@ same line. Launch settings use this menu too.
 The menu shows the actions that apply to the session's current state.
 PgUp, PgDn, and the mouse wheel scroll history while the composer stays in
 place. Your draft survives a trip to the inbox, menus, or another session.
+Escape closes an inbox or message card and returns to that draft. It also
+cancels an edit to a waiting message without saving it.
 
 Click rows and menu choices to use them. Drag to select visible text without
 activating the row underneath. Projector keeps that view fixed until you

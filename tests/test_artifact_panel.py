@@ -337,7 +337,8 @@ class ArtifactPanelTests(unittest.TestCase):
         app.apply(found)
         self.assertEqual('explorer', app.sessions['one'].artifacts[0]['id'])
         app.open_panel('one')
-        app.key('enter')
+        app.key('up')
+        app.key('b')
         with mock.patch.object(artifact_panel, 'open_url', return_value='https://example.com/artifacts/explorer/'):
             with mock.patch.object(app, 'open_url') as opened:
                 with mock.patch.object(agent_console.runtime, 'control') as control:

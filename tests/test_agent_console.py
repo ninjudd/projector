@@ -313,7 +313,7 @@ class AgentConsoleTests(unittest.TestCase):
         self.console.open_panel('managed-session')
         self.now += 0.3
         self.console.tick()
-        for key in ('up', 'k', 'esc', 'down', 'enter'):
+        for key in ('up', 'k', 'down', 'down', 'down', 'enter'):
             self.console.key(key)
         shown = '\n'.join(line.text for line in self.console.lines(100)[0])
         self.assertIn('second message', shown)
@@ -421,6 +421,40 @@ class AgentConsoleTests(unittest.TestCase):
         self.console.key('enter')
         self.assertEqual('Updated message', store.command('waiting')['text'])
         self.assertEqual('Unsent draft', self.console.field.text)
+
+    def test_canceling_a_resend_keeps_the_card_and_escape_restores_the_draft(self):
+        folder = self.managed()
+        store = Store(folder)
+        store.enqueue('held', 'Check this message', [])
+        store.begin('held', 'old-worker')
+        store.recover()
+        self.console.open_panel('managed-session')
+        self.now += 0.3
+        self.console.tick()
+        self.type('My draft')
+        for key in ('up', 'k', 's', '0'):
+            self.console.key(key)
+        self.assertEqual(agent_console.MESSAGE + 'held', self.console.drawer)
+        self.assertIsNone(self.console.recovery_retry)
+        self.console.key('esc')
+        self.assertEqual(('chat', 'My draft'), (self.console.field.purpose, self.console.field.text))
+        self.assertEqual('uncertain', store.command('held')['state'])
+
+    def test_canceling_a_waiting_message_edit_returns_to_the_chat_draft(self):
+        folder = self.managed()
+        store = Store(folder)
+        store.enqueue('waiting', 'Original message', [])
+        self.console.open_panel('managed-session')
+        self.now += 0.3
+        self.console.tick()
+        self.type('My draft')
+        for key in ('up', 'q', 'enter'):
+            self.console.key(key)
+        self.replace_field('Do not save this')
+        self.console.key('esc')
+        self.assertIsNotNone(self.console.field)
+        self.assertEqual(('chat', 'My draft'), (self.console.field.purpose, self.console.field.text))
+        self.assertEqual('Original message', store.command('waiting')['text'])
 
     def test_a_typed_answer_returns_the_actual_text_without_colliding_with_five_options(self):
         self.managed()
