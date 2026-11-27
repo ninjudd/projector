@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 from unittest import mock
 
-from projector import cli, config, console, inbox, relay, repo_inbox, session_titles, watch
+from projector import cli, config, console, inbox, relay, repo_inbox, session_metadata, watch
 from projector.inbox import read_json, write_json
 
 SOURCE = Path(cli.__file__).resolve().parents[1]
@@ -264,6 +264,100 @@ class HomeOrder(ConsoleCase):
 
 
 class SessionColumns(ConsoleCase):
+    def test_native_metadata_distinguishes_sessions_watching_the_same_pull_requests(self) -> None:
+        self.claude("claude-session")
+        write_json(self.folder("claude-session") / "agent.json",
+                   {"schema_version": 1, "host": "other", "cwd": "/work/old"})
+        write_json(self.folder("stream-session") / "session.json",
+                   {"deliverer": "stream", "renewed_at": watch.stamp(self.clock.now)})
+        self.codex("codex-session", cwd="/work/app")
+        index = self.home / ".codex" / "session_index.jsonl"
+        index.parent.mkdir()
+        index.write_text(json.dumps({"id": "codex-session", "thread_name": "Review changes"}) + "\n")
+        transcripts = self.home / ".claude" / "projects" / "project"
+        transcripts.mkdir(parents=True)
+        for name, title in (("claude-session", "Review changes"),
+                            ("stream-session", "Check the release")):
+            (transcripts / f"{name}.jsonl").write_text("\n".join(json.dumps(record) for record in (
+                {"type": "ai-title", "sessionId": name, "aiTitle": title},
+                {"type": "user", "sessionId": name, "cwd": "/work/app"},
+                {"type": "ai-title", "sessionId": "another-session", "aiTitle": "Unrelated title"},
+                {"type": "user", "sessionId": "another-session", "cwd": "/work/unrelated"},
+            )) + "\n")
+        for name in ("claude-session", "stream-session", "codex-session"):
+            self.subscribe(name, "acme/app#12 fix")
+            self.ask(name, f"Question for {name}?")
+        self.cache("acme/app", 12)
+
+        self.console.tick()
+
+        self.assertEqual({
+            "claude-session": ("Review changes", "claude", "/work/app"),
+            "stream-session": ("Check the release", "claude", "/work/app"),
+            "codex-session": ("Review changes", "codex", "/work/app"),
+        }, {one.name: (one.label, one.host, one.cwd) for one in self.console.home()})
+        for one in self.console.home():
+            self.assertEqual(1, len(one.rows))
+            self.assertEqual(f"Question for {one.name}?", one.items[0]["subject"])
+        self.assertNotIn("Unknown working directory", self.screen())
+
+    def test_claude_custom_titles_take_precedence_and_agent_names_are_a_fallback(self) -> None:
+        transcripts = self.home / ".claude" / "projects" / "project"
+        transcripts.mkdir(parents=True)
+        for name in ("named", "automatic", "agent"):
+            self.claude(name)
+            self.ask(name)
+        (transcripts / "named.jsonl").write_text("\n".join(json.dumps(record) for record in (
+            {"sessionId": "named", "customTitle": "My chosen title"},
+            {"sessionId": "named", "aiTitle": "Automatic title"},
+            {"sessionId": "named", "agentName": "worker"},
+        )) + "\n")
+        (transcripts / "automatic.jsonl").write_text("\n".join(json.dumps(record) for record in (
+            {"sessionId": "automatic", "aiTitle": "Automatic title"},
+            {"sessionId": "automatic", "agentName": "worker"},
+        )) + "\n")
+        (transcripts / "agent.jsonl").write_text(json.dumps({"sessionId": "agent", "agentName": "build worker"})
+                                                + "\n")
+
+        self.console.tick()
+
+        self.assertEqual({"named": "My chosen title", "automatic": "Automatic title", "agent": "build worker"},
+                         {one.name: one.label for one in self.console.home()})
+
+    def test_claude_metadata_refreshes_without_a_partial_or_sidechain_directory_replacing_its_own(self) -> None:
+        self.claude("s1")
+        self.ask("s1")
+        transcript = self.home / ".claude" / "projects" / "project" / "s1.jsonl"
+        transcript.parent.mkdir(parents=True)
+        transcript.write_text(json.dumps({"sessionId": "s1", "aiTitle": "Review changes", "cwd": "/work/App "})
+                              + "\n")
+        self.console.tick()
+        self.assertEqual("/work/App ", self.console.viewed().cwd)
+        with transcript.open("a") as stream:
+            stream.write(json.dumps({"sessionId": "s1", "isSidechain": True, "cwd": "/work/sidechain"}) + "\n")
+            stream.write('{"sessionId":"s1","customTitle":"My title","cwd":"/work/new"}')
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.assertEqual(("Review changes", "/work/App "),
+                         (self.console.viewed().label, self.console.viewed().cwd))
+
+        with transcript.open("a") as stream:
+            stream.write("\n")
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.assertEqual(("My title", "/work/new"), (self.console.viewed().label, self.console.viewed().cwd))
+
+        write_json(self.folder("s1") / "agent.json",
+                   {"schema_version": 1, "name": "registered name", "cwd": "/work/fallback"})
+        replacement = transcript.with_suffix(".new")
+        replacement.write_text(json.dumps({"sessionId": "s1", "agentName": "new worker", "cwd": "relative"})
+                               + "\n")
+        replacement.replace(transcript)
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.assertEqual(("new worker", "/work/fallback"),
+                         (self.console.viewed().label, self.console.viewed().cwd))
+
     def test_a_codex_rename_appears_without_an_inbox_change_and_a_partial_name_waits_for_its_newline(self) -> None:
         self.codex("s1", cwd="/work/app")
         self.subscribe("s1", "acme/app review claude operator")
@@ -298,7 +392,7 @@ class SessionColumns(ConsoleCase):
         transcript.write_text(json.dumps({"type": "tool", "content": "x" * 400}) + "\n"
                               + json.dumps({"type": "custom-title", "sessionId": "s1", "customTitle": "Ship preview"})
                               + "\n")
-        with mock.patch.object(session_titles, "READ_BYTES", 128):
+        with mock.patch.object(session_metadata, "READ_BYTES", 128):
             for _ in range(6):
                 self.console.tick()
                 self.clock.now += console.INBOX_EVERY

@@ -3442,15 +3442,18 @@ hooks alone do not put a session in the list.
 
 Directory headings sort by path and keep separate checkouts apart, even when
 they share a repository. Paths within your home directory start with `~`.
-Sessions whose records have no directory appear under `Unknown working
-directory`, after the other groups. A blank line precedes each group,
-including the first. The screen leaves one space at the left edge.
+Claude sessions use the working directory in their own native transcript,
+with the Projector registration as a fallback. Sessions without a recorded
+directory appear under `Unknown working directory`, after the other groups.
+A blank line precedes each group, including the first. The screen leaves one
+space at the left edge.
 
 The session list has four aligned fields, without headings:
 
 - **Session** shows the chat title from Codex's session index or Claude
-  Code's `/rename` metadata. It falls back to the registered session name,
-  then `Unnamed session` when neither is available. It uses normal text
+  Code's `/rename` metadata, automatic title, or agent name, in that order.
+  It falls back to the registered session name, then `Unnamed session` when
+  neither is available. It uses normal text
   color. The selected session name is bright gray with a `▸` marker; the row
   has no highlight.
 - **PRs** counts all open pull requests the session fixes or reviews, as
@@ -3462,6 +3465,9 @@ The session list has four aligned fields, without headings:
   a pull request's GitHub update, or a repository inbox update. Polls and
   delivery heartbeats do not change it. A session with no recorded time
   shows `—`.
+
+Sessions with different native IDs remain separate, even when they share a
+title, directory, or pull requests.
 
 Long names and requests shorten with an ellipsis to keep the other columns
 visible. Within each directory, sessions with the most open questions and
