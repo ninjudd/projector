@@ -1,0 +1,357 @@
+diff --git a/docs/agents.md b/docs/agents.md
+index 31103a4e..dec3ca96 100644
+--- a/docs/agents.md
++++ b/docs/agents.md
+@@ -82,6 +82,9 @@ any automatic approvals you configured. Projector adds no permission bypass.
+ Use Up, then `p`, to inspect the settings and effective policy reported by
+ the runtime. Claude reports its mode when the first turn initializes.
+ 
++In the session list, Backspace collapses the selected directory group.
++Enter or Right expands it again. Click the directory heading to toggle it.
++
+ Select a managed session and press Enter, or click it, to open its chat.
+ The composer has focus immediately and stays ready after you send a message.
+ Enter sends through the existing Projector message route. Shift-Enter or
+diff --git a/docs/cli.md b/docs/cli.md
+index f75115de..d2c30d38 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3494,11 +3494,22 @@ The bottom hint line shows shortcuts for the current view. The session list
+ offers `n new agent session`; chat and prompt editors show their own
+ shortcuts. An empty session list offers only the actions you can use there.
+ 
+-Up and down select a session and update the bottom panel immediately. Press
+-Enter or Right to move the focus into that panel. The session list stays
+-visible above it, with its own scroll position. The panel lists the pull
+-requests the session subscribes to, as Projector's panel does, then its
+-inbox items, newest first. Pull request statuses occupy a column as wide as
++Up and down select a session and update the bottom panel immediately. The
++list uses the available screen space, reserving at least three rows for the
++panel when the terminal is tall enough. Sessions stay in place while you
++move the selection. The list scrolls only when the selected row no longer
++fits, keeping its directory heading visible.
++
++At the top level, Backspace collapses the selected session's directory group
++into its heading. Up and down skip the hidden sessions. Enter or Right
++expands the group again; clicking a directory heading also toggles its group.
++Groups start expanded when you open the console, and stay collapsed through
++refreshes until you expand them. Backspace in a text field still edits text.
++
++In an expanded group, Enter or Right moves the focus into the selected
++session's panel. The session list stays visible above it, with its own
++scroll position. The panel lists the pull requests the session subscribes
++to, as Projector's panel does, then its inbox items, newest first. Pull request statuses occupy a column as wide as
+ the longest status, so the authors and titles after them line up. Each item
+ line shows its subject, its state words (`sending`, `unclear`, and a request's `starting`,
+ `ready`, or `blocked`), its pull request, and its age. Press Enter on a row
+@@ -3578,7 +3589,8 @@ leave the session's panel.
+ | Key | Effect |
+ | --- | --- |
+ | Up and down, or `k` and `j` | In the session list, select a session and update its bottom panel. In the panel, move the focus through the rows, and the open drawer's options and actions, and stay put at the first and the last |
+-| Enter, or Right in the session list | Moves the focus into the selected session's panel. In the panel, Enter presses the focused option or action, closes the open drawer when its row has the focus, opens the focused row's drawer in place of the open one |
++| Backspace in the session list | Collapses the selected session's directory group. Enter or Right expands a collapsed group |
++| Enter, or Right in the session list | Expands a collapsed directory group, or moves the focus into the selected session's panel. In the panel, Enter presses the focused option or action, closes the open drawer when its row has the focus, opens the focused row's drawer in place of the open one |
+ | An option's or action's own key, such as `2` or `8` | Presses it in the open drawer, as Enter on it does |
+ | Left, Esc, or `0` | Closes the open drawer, leaving the focus on its row, or, with no drawer open, returns the focus to the session list |
+ | `7` in a panel with no drawer open | Sends a message about the session |
+diff --git a/src/projector/agent_console.py b/src/projector/agent_console.py
+index ce893839..c552d848 100644
+--- a/src/projector/agent_console.py
++++ b/src/projector/agent_console.py
+@@ -202,7 +202,8 @@ def click_target(self, target):
+             self.status = ""
+             target.control.act()
+             return
+-        if target.entry is None and target.session in self.runtimes and target.session in self.sessions:
++        if (not target.group and target.entry is None and target.session in self.runtimes
++                and target.session in self.sessions):
+             self.open_panel(target.session)
+             return
+         if (self.field is not None and self.field.purpose in ("chat", "chat-options", "chat-info")
+@@ -581,7 +582,10 @@ def footer(self, width=None):
+                     return [Line([(console.fit(self.status, width), "error")])]
+                 hint = "n new agent session"
+                 if self.sessions:
+-                    hint += " · ↑↓ select · Enter open"
++                    session = self.viewed()
++                    action = "Enter expand" if session and session.cwd in self.collapsed else (
++                        "Enter open · Backspace collapse")
++                    hint += " · ↑↓ select · " + action
+                 return [Line([(console.fit(hint + " · Ctrl-C quit", width), "subtle")])]
+             return super().footer(width)
+         purpose = typing.purpose
+diff --git a/src/projector/console.py b/src/projector/console.py
+index e8553715..4be889fc 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -43,6 +43,7 @@
+ SNOOZES = (("15 min", 15), ("1 hour", 60), ("4 hours", 240), ("1 day", 1440))
+ SUBSCRIPTION_ROLE = {held: role for role, held in rows.ROLE_OF.items()}
+ DRAWER_INDENT = 4
++MIN_PANEL_ROWS = 3
+ # Page Down or Space, Page Up or `b`, End or `G`, and Home or `g`: the second of each pair for a terminal that keeps
+ # the first for its own scrollback.
+ SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "G", "home", "g")
+@@ -117,6 +118,7 @@ class Target:
+     session: str
+     entry: Optional[str] = None
+     control: Optional[Control] = None
++    group: bool = False
+ 
+ 
+ @dataclass
+@@ -424,6 +426,8 @@ def __init__(self, root: Path, *, clock: Callable[[], float] = time.time,
+         self.kept_note: Optional[tuple[str, str, str]] = None
+         self.offset = 0
+         self.home_offset = 1
++        # Keep a session as each collapsed directory's target so reopening it preserves the selection.
++        self.collapsed: dict[str, str] = {}
+         self.home_room = 1
+         self.room = 1
+         self.status = ""
+@@ -527,8 +531,17 @@ def reload(self) -> None:
+         self.settle_view()
+ 
+     def settle_view(self) -> None:
+-        """Leave a panel whose session is gone, close a drawer whose row is gone, and close a note field whose
+-        option is gone."""
++        """Keep collapsed groups navigable and close controls whose session, row, or option is gone."""
++        for cwd, name in list(self.collapsed.items()):
++            if name in self.sessions and self.sessions[name].cwd == cwd:
++                continue
++            replacement = next((session.name for session in self.home() if session.cwd == cwd), None)
++            if replacement is None:
++                del self.collapsed[cwd]
++            else:
++                self.collapsed[cwd] = replacement
++                if self.view == "home" and self.selected == name:
++                    self.selected = replacement
+         if self.view == "panel" and self.session not in self.sessions:
+             self.status = "The selected session is no longer live"
+             self.go_home()
+@@ -574,7 +587,8 @@ def entries(self) -> list[tuple[str, object]]:
+ 
+     def keys(self) -> list[str]:
+         if self.view == "home":
+-            return [session.name for session in self.home()]
++            return [session.name for session in self.home()
++                    if session.cwd not in self.collapsed or self.collapsed[session.cwd] == session.name]
+         return [key for key, _ in self.entries()]
+ 
+     def row(self, key: Optional[str]) -> Optional[rows.Row]:
+@@ -603,6 +617,8 @@ def click(self, target: Target) -> None:
+                     self.go_home()
+                 self.selected = target.session
+                 self.offset = 0
++                if target.group:
++                    self.toggle_group(target.session)
+             else:
+                 viewed = self.viewed()
+                 if viewed is None or viewed.name != target.session or target.entry not in dict(self.entries()):
+@@ -641,11 +657,26 @@ def key(self, name: str) -> None:
+             elif name in SCROLL_KEYS:
+                 self.scroll(name)
+             elif self.view == "home":
+-                if name in ("enter", "right") and self.selected_key() is not None:
+-                    self.open_panel(self.selected_key())
++                session = self.viewed()
++                if session is not None:
++                    if name == "backspace" and session.cwd not in self.collapsed:
++                        self.toggle_group(session.name)
++                    elif name in ("enter", "right"):
++                        if session.cwd in self.collapsed:
++                            self.toggle_group(session.name)
++                        else:
++                            self.open_panel(session.name)
+             else:
+                 self.panel_key(name)
+ 
++    def toggle_group(self, name: str) -> None:
++        cwd = self.sessions[name].cwd
++        if cwd in self.collapsed:
++            del self.collapsed[cwd]
++        else:
++            self.collapsed[cwd] = name
++        self.selected = name
++
+     def scroll(self, name: str) -> None:
+         """Page between sessions in the list, or scroll a panel's open drawer."""
+         if self.view == "home":
+@@ -1084,7 +1115,7 @@ def viewport(self, width: int, room: int) -> list[Line]:
+             home, focus = self.home_lines(width)
+             if self.viewed() is None:
+                 return home[:room]
+-            self.home_room = min(len(home), max(1, room // 2))
++            self.home_room = min(len(home), max(1, room - MIN_PANEL_ROWS - 1))
+             listed = self.home_viewport(home, focus, self.home_room)
+             if room < 3:
+                 return listed[:room]
+@@ -1094,6 +1125,7 @@ def viewport(self, width: int, room: int) -> list[Line]:
+     def home_viewport(self, lines: list[Line], focus: tuple[int, int], room: int) -> list[Line]:
+         """Keep the selected session and its directory heading visible as the list scrolls."""
+         if len(lines) <= room:
++            self.home_offset = 1
+             return lines
+         first, last = focus
+         if room == 1:
+@@ -1105,8 +1137,8 @@ def home_viewport(self, lines: list[Line], focus: tuple[int, int], room: int) ->
+         if last - first + 1 > space:
+             self.home_offset = min(max(self.home_offset, last - space + 2), last)
+             return [*prefix, lines[first], *lines[self.home_offset:self.home_offset + space - 1]]
+-        self.home_offset = first + 1
+-        return [*prefix, *lines[first:first + space]]
++        self.home_offset = max(len(prefix), min(max(self.home_offset, last - space + 1), first, len(lines) - space))
++        return [*prefix, *lines[self.home_offset:self.home_offset + space]]
+ 
+     def panel_viewport(self, width: int, room: int) -> list[Line]:
+         """The body's lines that fit in `room` rows. The offset survives each redraw and moves only as far as it
+@@ -1142,7 +1174,10 @@ def footer(self, width: Optional[int] = None) -> list[Line]:
+             if self.exit_at is not None and self.clock() - self.exit_at < EXIT_WINDOW:
+                 return [*lines, Line([("Press Ctrl-C again to exit", "warning")])]
+             if self.view == "home":
+-                hint = "↑↓ or click session · Enter or → focus panel · PgUp PgDn scroll · Ctrl-C quit"
++                session = self.viewed()
++                action = "Enter or → expand group" if session and session.cwd in self.collapsed else (
++                    "Enter or → focus panel · Backspace collapse group")
++                hint = f"↑↓ select · {action} · PgUp PgDn scroll · Ctrl-C quit"
+             elif self.drawer is None:
+                 hint = ("↑↓ move · Enter or click open · 7 message this session · ← or Esc back"
+                         " · Ctrl-C twice quit")
+@@ -1186,8 +1221,16 @@ def columns(label: str, count: str, request: str, changed: str, chosen: bool = F
+             if session.cwd != previous:
+                 lines.append(Line([]))
+                 group_start = len(lines)
+-                lines.append(Line([(directory_label(session.cwd), "branch")]))
++                closed = session.cwd in self.collapsed
++                target = self.collapsed.get(session.cwd, session.name)
++                lines.append(Line([("▸ " if closed else "", "subtle"),
++                                   (directory_label(session.cwd), "focus-branch" if closed and target == chosen
++                                    else "branch")], targets=[(0, width, Target(target, group=True))]))
+                 previous = session.cwd
++                if closed and target == chosen:
++                    focus = (group_start, group_start)
++            if session.cwd in self.collapsed:
++                continue
+             start = len(lines)
+             request = headline(session, now)
+             lines.append(columns(session.label, counts[session.name], request["subject"] if request else "—",
+diff --git a/tests/test_agent_console.py b/tests/test_agent_console.py
+index 5874f122..877e6448 100644
+--- a/tests/test_agent_console.py
++++ b/tests/test_agent_console.py
+@@ -42,6 +42,28 @@ def managed(self, name='managed-session', state='ready'):
+         self.console.tick()
+         return folder
+ 
++    def test_a_managed_group_reopens_without_entering_chat_and_backspace_still_edits_the_prompt(self):
++        self.managed()
++        self.console.key('backspace')
++        self.assertIn('Enter expand', self.console.footer(100)[0].text)
++        lines, _ = self.console.home_lines(100)
++        target = next(target for line in lines for _, _, target in line.targets if target.group)
++        self.console.click(target)
++        self.assertEqual(('home', None), (self.console.view, self.console.field))
++        self.assertIn('Backspace collapse', self.console.footer(100)[0].text)
++        self.console.key('enter')
++        self.type('ab')
++        self.console.key('backspace')
++        self.assertEqual(('panel', 'a'), (self.console.view, self.console.field.text))
++        self.console.key('up')
++        self.console.key('h')
++        self.console.key('backspace')
++        self.console.key('n')
++        self.assertEqual(self.temporary.name, self.console.launch_form['cwd'])
++        self.type('ab')
++        self.console.key('backspace')
++        self.assertEqual('a', self.console.field.text)
++
+     def test_a_registered_generic_process_keeps_its_inbox_without_managed_controls(self):
+         folder = watch.session_folder(self.root, 'generic-session')
+         watch.renew(self.root, 'generic-session', 'stream', time.time())
+diff --git a/tests/test_console.py b/tests/test_console.py
+index 7fa00e9c..9d17bf65 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -1416,6 +1416,82 @@ def test_a_clicked_choice_keeps_the_revision_that_was_on_screen(self) -> None:
+ 
+ 
+ class SplitLayout(TerminalCase):
++    def grouped_sessions(self) -> None:
++        for group in ("a", "b", "c"):
++            for number in (1, 2):
++                name = f"worker-{group}{number}"
++                self.codex(name, cwd=f"/work/{group}")
++                write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
++        self.console.tick()
++
++    def session_positions(self) -> dict[str, int]:
++        self.draw()
++        return {name: y for y, line in self.window.rows.items() for name in self.console.sessions
++                if line.startswith((" ▸ " + name, "   " + name))}
++
++    def test_all_sessions_stay_visible_when_the_list_and_panel_fit_the_screen(self) -> None:
++        self.window.height, self.window.width = 18, 100
++        self.grouped_sessions()
++        original = self.session_positions()
++        self.assertEqual(set(self.console.sessions), set(original))
++
++        for _ in range(5):
++            self.press_terminal(FakeCurses.KEY_DOWN)
++            self.assertEqual(original, self.session_positions())
++        self.assertIn("No pull requests or items", self.draw())
++
++    def test_crossing_a_visible_directory_keeps_earlier_rows_until_scrolling_is_needed(self) -> None:
++        self.window.height, self.window.width = 14, 100
++        self.grouped_sessions()
++        original = self.session_positions()
++        self.assertEqual({"worker-a1", "worker-a2", "worker-b1", "worker-b2"}, set(original))
++
++        for _ in range(3):
++            self.press_terminal(FakeCurses.KEY_DOWN)
++            self.assertEqual(original, self.session_positions())
++        self.press_terminal(FakeCurses.KEY_DOWN)
++        self.assertIn("worker-c1", self.session_positions())
++        self.assertIn("/work/c", self.draw())
++        self.press_terminal(FakeCurses.KEY_HOME)
++        self.assertEqual(original, self.session_positions())
++        self.window.height = 20
++        self.assertEqual(set(self.console.sessions), set(self.session_positions()))
++
++    def test_backspace_collapses_only_the_current_group_and_enter_or_right_reopens_it(self) -> None:
++        self.window.height, self.window.width = 30, 100
++        self.grouped_sessions()
++        self.press_terminal(FakeCurses.KEY_DOWN, "backspace", "backspace")
++        self.assertEqual({"worker-b1", "worker-b2", "worker-c1", "worker-c2"}, set(self.session_positions()))
++        self.assertIn("/work/a", self.draw())
++        self.assertIn("expand", self.console.footer()[-1].text)
++        self.press_terminal(FakeCurses.KEY_DOWN)
++        self.assertEqual("worker-b1", self.console.viewed().name)
++        self.press_terminal("up", "right")
++        self.assertEqual("home", self.console.view)
++        self.assertEqual(set(self.console.sessions), set(self.session_positions()))
++        self.press_terminal("enter", "backspace")
++        self.assertEqual("panel", self.console.view)
++        self.assertEqual(set(self.console.sessions), set(self.session_positions()))
++        self.press_terminal("esc", "backspace", "enter")
++        self.assertEqual("home", self.console.view)
++        self.assertEqual(set(self.console.sessions), set(self.session_positions()))
++
++    def test_a_collapsed_group_stays_closed_when_its_first_session_expires(self) -> None:
++        self.window.height, self.window.width = 30, 100
++        self.grouped_sessions()
++        self.press_terminal(FakeCurses.KEY_DOWN, FakeCurses.KEY_DOWN, "backspace")
++        (self.folder("worker-b1") / "codex.json").unlink()
++        self.clock.now += console.INBOX_EVERY
++        self.console.tick()
++
++        self.assertEqual("worker-b2", self.console.viewed().name)
++        self.assertNotIn("worker-b2", self.session_positions())
++        self.assertIn("/work/b", self.draw())
++        self.press_terminal(FakeCurses.KEY_DOWN)
++        self.assertEqual("worker-c1", self.console.viewed().name)
++        self.press_terminal("up", "enter")
++        self.assertIn("worker-b2", self.session_positions())
++
+     def test_selected_agent_name_is_gray_and_neither_session_row_is_reversed(self) -> None:
+         for name in ("first", "second"):
+             self.codex(name, cwd="/work/app")

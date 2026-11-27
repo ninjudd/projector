@@ -1,0 +1,116 @@
+{
+ "version": 1,
+ "name": "Session list navigation",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 662,
+  "title": "Keep session groups in place while navigating",
+  "head": "8cb0df63c66910f0f147f5a9637a3b2862f99012",
+  "headRef": "console-stable-session-list",
+  "base": "99d4b1067c0e0a27926938f833e97120626db4ec",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The console lists live agent sessions by working directory above the selected session's panel. Previously, moving into another directory group moved that group to the top even when its rows already fit on screen. The list now keeps its scroll position until the selection needs more room, and uses the available height while reserving three panel rows when the terminal is tall enough.",
+   "You can also collapse a directory group with Backspace and reopen it with Enter or Right. Collapsed groups retain a session as their navigation target, so the panel still previews that session and expanding the group restores its selection. These choices last for the current console run."
+  ],
+  "cards": [
+   {
+    "id": "controls",
+    "title": "Session-list controls",
+    "html": "<ul class=\"tight\"><li><b>Up and Down:</b> select sessions or collapsed directory headings.</li><li><b>Backspace:</b> collapse the selected directory group.</li><li><b>Enter or Right:</b> expand a collapsed group; otherwise open the selected session.</li><li><b>Directory-heading click:</b> toggle that group.</li></ul>"
+   },
+   {
+    "id": "validation",
+    "title": "Review and validation",
+    "html": "<p>The review covered all six changed files and found no issues. All 121 console and managed-console tests passed on Python 3.12. The configured gate passed, including 270 hook tests, plugin validation, hook type checking, whitespace checks, and the head's CI check.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "session-list",
+   "title": "Keep sessions visible and groups navigable",
+   "kicker": "The shared console's layout and selection state",
+   "intro": [
+    "The shared console owns the session list, its selected session, and the panel preview below it. The list now takes the height left after reserving a divider and three panel rows. Its scroll offset changes only enough to keep the selected row and its directory heading visible.",
+    "A collapsed group hides its session rows but keeps one session ID as its selectable target. Refreshes replace that target when the session disappears, or remove the collapsed state when the directory has no sessions left. Directory-heading click targets are marked separately from session-row targets so callers can distinguish toggling a group from opening a session."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Stores collapsed groups, keeps their targets live, routes their controls, and clamps session-list scrolling.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1140,
+       "text": "The session list preserves its row positions while the selected directory remains visible. The focused console tests passed, including crossing a directory boundary, scrolling to a later group, and resizing until every session fits."
+      },
+      {
+       "kind": "verify",
+       "line": 539,
+       "text": "A collapsed directory remains selectable after its target session expires. The regression test removes that session's live registration, refreshes the console, navigates away and back, and expands the surviving session."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "Adds visible-row, scroll-boundary, collapse/expand, and session-expiry regressions.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "managed-sessions",
+   "title": "Keep group clicks separate from chat",
+   "kicker": "Managed-agent routing and contextual hints",
+   "intro": [
+    "A managed session is an agent whose conversation the console can open directly. Its click handler now lets directory-heading clicks reach the shared group toggle, while ordinary session clicks still open chat. The bottom hint switches between expanding a collapsed group and opening a session.",
+    "Text fields receive keys before session-list controls do. Backspace therefore continues deleting text in chat and in a new-session prompt, even after the session's directory group was collapsed."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/agent_console.py",
+     "note": "Distinguishes directory-heading clicks from managed-session clicks and shows the matching list shortcut.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 205,
+       "text": "The managed-console regression passed: reopening a directory heading leaves the console on its home list, Enter then opens chat, and Backspace edits both chat and launch-prompt text. Existing click targets default to group=false."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_agent_console.py",
+     "note": "Covers managed group reopening and preserves Backspace editing in chat and launch prompts.",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "documentation",
+   "title": "Describe the new list behavior",
+   "kicker": "User-facing navigation guidance",
+   "intro": [
+    "The console and agent guides now explain how directory groups collapse and expand, when the list scrolls, and how much space remains for the panel. They also state that collapsed state lasts through refreshes in the current console run and that text-field Backspace keeps its editing behavior."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents space reservation, stable scrolling, group persistence, and keyboard controls.",
+     "collapsed": true
+    },
+    {
+     "path": "docs/agents.md",
+     "note": "Adds directory-group controls beside managed-session navigation.",
+     "collapsed": true
+    }
+   ]
+  }
+ ]
+}
