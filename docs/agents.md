@@ -5,6 +5,17 @@ items, and open the same conversation in the agent's native terminal.
 Externally started processes keep their existing Projector inbox and messages.
 The console controls execution only for sessions it launches.
 
+To run the console directly from a source checkout, use Python 3.11 or newer
+from the repository root:
+
+```sh
+PYTHONPATH=src python3 -m projector.console
+```
+
+This uses your checkout's code and existing sessions without changing the
+installed `projector` command. Add `setup` to prepare agent support from that
+checkout.
+
 ## Install agent support
 
 Install Projector with Python 3.11 or newer. Both `project` and `projector`

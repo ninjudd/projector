@@ -1576,7 +1576,7 @@ class Colors(ConsoleCase):
 
 
 class Terminal(unittest.TestCase):
-    """`project console` run in a pseudo-terminal, with the bytes a terminal sends for each key."""
+    """`projector.console` run in a pseudo-terminal, with the bytes a terminal sends for each key."""
 
     def prepare(self) -> None:
         """A state directory and a home of its own with one live Claude Code session, `S`, asking one question."""
@@ -1602,7 +1602,7 @@ class Terminal(unittest.TestCase):
         self.code: Optional[int] = None
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
-            os.execve(sys.executable, [sys.executable, "-m", "projector", "console"], self.env)
+            os.execve(sys.executable, [sys.executable, "-m", "projector.console"], self.env)
         self.addCleanup(os.close, self.fd)
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
         self.shown = bytearray()

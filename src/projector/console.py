@@ -1,4 +1,4 @@
-"""`project console`: live Projector sessions grouped by directory, above the selected session's panel.
+"""`projector`: live Projector sessions grouped by directory, above the selected session's panel.
 
 Enter moves the focus from the session list into its panel: its pull request rows, as `rows.py` reads them,
 its inbox items, each with a drawer that answers, discusses, dismisses, or snoozes it. Every choice and message
@@ -7,11 +7,12 @@ and the session's own deliverer brings it in: Claude Code's panel, or the watch 
 console never claims, delivers, or settles a line, so it never races a deliverer.
 
 `Console` holds what is on screen, turns key names into those calls, and lays the screen out as lines of styled
-text. `main` puts it in a terminal with curses, which only `main` imports, so tests drive `Console` without one.
+text. `Screen` draws those lines with curses. Tests drive `Console` without a terminal.
 """
 
 from __future__ import annotations
 
+import argparse
 import base64
 import os
 import signal
@@ -1956,13 +1957,26 @@ class Screen:
         return 0
 
 
-def main(wake: Callable[[str, dict], None], ensure: Callable[[], object] = lambda: None) -> int:
-    """Run the console in this terminal until Ctrl-C quits it."""
-    import curses
+def parser() -> argparse.ArgumentParser:
+    command = argparse.ArgumentParser(prog="projector", description="Run and supervise your agents in a terminal")
+    command.add_argument("command", nargs="?", choices=("setup",), help="install the optional agent environment")
+    return command
 
-    os.environ.setdefault("ESCDELAY", "25")
-    console = Console(watch.state_root(), wake=wake, ensure=ensure)
-    try:
-        return curses.wrapper(lambda window: Screen(window, console, curses).run())
-    except KeyboardInterrupt:
-        return 0
+
+def main(argv: Optional[list[str]] = None) -> int:
+    command = parser()
+    args = command.parse_args(argv)
+    if args.command == "setup":
+        from . import runtime
+        try:
+            path = runtime.setup(watch.state_root())
+            print(f"Agent environment ready: {path}")
+            return 0
+        except ProjectorError as error:
+            command.exit(error.exit_code, str(error) + "\n")
+    from .cli import main as project_main
+    return project_main(["console"])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
