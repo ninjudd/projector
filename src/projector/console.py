@@ -15,6 +15,8 @@ from __future__ import annotations
 import base64
 import os
 import signal
+import shutil
+import subprocess
 import sys
 import textwrap
 import threading
@@ -348,6 +350,16 @@ def clipboard_sequence(text: str, environ: Optional[dict] = None) -> str:
     if environ.get("TMUX"):
         return "\x1bPtmux;" + sequence.replace("\x1b", "\x1b\x1b") + "\x1b\\"
     return sequence
+
+
+def local_clipboard(text: str) -> bool:
+    command = shutil.which("pbcopy") if sys.platform == "darwin" and not is_remote() else None
+    if command is None:
+        return False
+    try:
+        return subprocess.run([command], input=text.encode("utf-8"), capture_output=True, timeout=2, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def pull_key(pull: rows.Pull) -> str:
@@ -1116,7 +1128,7 @@ class Console:
             self.reveal = False
             return body[self.offset:self.offset + room]
 
-    def footer(self) -> list[Line]:
+    def footer(self, width: Optional[int] = None) -> list[Line]:
         """The lines under the body: what the keys do, and the last refusal or note."""
         with self.lock:
             lines = [Line([(self.status, "error")])] if self.status else []
@@ -1577,11 +1589,13 @@ def printable(text: str) -> str:
 class Screen:
     """Draws a `Console` with curses and feeds it keys and mouse clicks."""
 
-    def __init__(self, window: Any, console: Console, curses: Any, out: Optional[TextIO] = None) -> None:
+    def __init__(self, window: Any, console: Console, curses: Any, out: Optional[TextIO] = None,
+                 copy_local: Callable[[str], bool] = local_clipboard) -> None:
         self.window, self.console, self.curses = window, console, curses
         # Where escape sequences that curses does not draw, such as the clipboard's, go to the terminal.
         self.out = sys.stdout if out is None else out
         self.styles = styles(curses)
+        self.copy_local = copy_local
         # What `read_key` read past the end of an escape sequence, to hand over next.
         self.pending: list[object] = []
         self.targets: list[tuple[int, int, int, Target]] = []
@@ -1590,9 +1604,18 @@ class Screen:
         self.paste_buffer: Optional[list[str]] = None
         self.paste_tail = ""
         self.paste_overflow = False
+        self.frame: dict[int, Line] = {}
+        self.selection_frame: dict[int, Line] = {}
+        self.selection_anchor: Optional[tuple[int, int]] = None
+        self.selection_end: Optional[tuple[int, int]] = None
+        self.dragging = False
+        self.cancelled_drag = False
+        self.mouse_reporting = False
 
     def input_mode(self, enabled: bool) -> None:
         if self.input_enabled != enabled:
+            if self.mouse_reporting:
+                self.out.write("\x1b[?1003l\x1b[?1006h\x1b[?1002h" if enabled else "\x1b[?1002l\x1b[?1006l")
             self.out.write("\x1b[>1u\x1b[?2004h" if enabled else "\x1b[?2004l\x1b[<u")
             self.out.flush()
             self.input_enabled = enabled
@@ -1605,24 +1628,46 @@ class Screen:
             lit = line.selected or at == line.lit
             attributes = self.styles.get(style, 0) | (self.curses.A_REVERSE if lit else 0)
             shown = printable(text)[:width - x]
-            try:
-                self.window.addstr(y, x, shown, attributes)
-            except self.curses.error:
-                pass
+            span = self.selection_span(y, width)
+            pieces = [(shown, attributes)]
+            if span is not None:
+                left, right = max(0, span[0] - x), min(len(shown), span[1] - x)
+                if left < right:
+                    pieces = [(shown[:left], attributes), (shown[left:right], attributes ^ self.curses.A_REVERSE),
+                              (shown[right:], attributes)]
+            column = x
+            for part, style in pieces:
+                if part:
+                    try:
+                        self.window.addstr(y, column, part, style)
+                    except self.curses.error:
+                        pass
+                column += len(part)
             x += len(shown)
 
     def draw(self) -> None:
         height, width = self.window.getmaxyx()
-        footer = self.console.footer()
+        if self.size != (height, width) and self.selection_frame:
+            self.clear_selection()
+        if self.selection_frame:
+            self.window.erase()
+            for y, line in self.selection_frame.items():
+                self.put(y, line, width)
+            try:
+                self.curses.curs_set(0)
+            except self.curses.error:
+                pass
+            self.window.refresh()
+            self.flush_clipboard()
+            return
+        footer = self.console.footer(max(1, width - 1))
         typing = self.console.field
         below = typing is not None and not typing.inline
         room = max(1, height - len(footer) - (1 if below else 0))
         shown = self.console.viewport(max(0, width - 1), room)
-        self.targets = [(y, start + 1, min(width, end + 1), target)
-                        for y, line in enumerate(shown[:height]) for start, end, target in line.targets
-                        if start + 1 < min(width, end + 1)]
         self.size = (height, width)
         self.window.erase()
+        self.frame = {**dict(enumerate(shown)), **{room + y: line for y, line in enumerate(footer)}}
         for y, line in enumerate(shown):
             self.put(y, line, width)
         for y, line in enumerate(footer, room):
@@ -1631,23 +1676,73 @@ class Screen:
         if typing is not None and below:
             space = max(1, width - len(typing.prompt) - 2)
             start = max(0, typing.cursor - space)
-            self.put(height - 1, Line([(typing.prompt, "bold"), (typing.text[start:start + space], "")]), width)
+            line = Line([(typing.prompt, "bold"), (typing.text[start:start + space], "")])
+            self.frame[height - 1] = line
+            self.put(height - 1, line, width)
             at = (height - 1, min(width - 1, 1 + len(typing.prompt) + typing.cursor - start))
         elif typing is not None:
-            at = next(((y, min(width - 1, 1 + line.cursor)) for y, line in enumerate(shown) if line.cursor is not None),
+            positioned = [*enumerate(shown), *((room + y, line) for y, line in enumerate(footer))]
+            at = next(((y, min(width - 1, 1 + line.cursor)) for y, line in positioned if line.cursor is not None),
                       None)
         if at is not None:
             self.window.move(*at)
+        self.targets = [(y, start + 1, min(width, end + 1), target)
+                        for y, line in self.frame.items() for start, end, target in line.targets
+                        if start + 1 < min(width, end + 1)]
         try:
             self.curses.curs_set(0 if at is None else 1)
         except self.curses.error:
             pass
         self.window.refresh()
         # After curses has written the screen, so the sequence reaches the terminal whole and is never drawn as text.
+        self.flush_clipboard()
+
+    def flush_clipboard(self) -> None:
         copied = self.console.take_clipboard()
-        if copied is not None:
+        if copied is not None and not self.copy_local(copied):
             self.out.write(clipboard_sequence(copied))
             self.out.flush()
+
+    def selection_span(self, y: int, width: int) -> Optional[tuple[int, int]]:
+        if self.selection_anchor is None or self.selection_end is None or self.selection_anchor == self.selection_end:
+            return None
+        first, last = sorted((self.selection_anchor, self.selection_end))
+        if not first[0] <= y <= last[0]:
+            return None
+        return (first[1] if y == first[0] else 1, last[1] + 1 if y == last[0] else width)
+
+    def selected_text(self) -> str:
+        if self.size is None:
+            return ""
+        if self.selection_anchor is None or self.selection_end is None:
+            return ""
+        lines = []
+        first, last = sorted((self.selection_anchor, self.selection_end))
+        for y in range(first[0], last[0] + 1):
+            line = self.selection_frame.get(y, Line([]))
+            span = self.selection_span(y, self.size[1])
+            if span is not None:
+                lines.append(printable(line.text)[max(0, span[0] - 1):max(0, span[1] - 1)].rstrip())
+        return "\n".join(lines)
+
+    def clear_selection(self) -> None:
+        self.cancelled_drag = self.dragging
+        self.selection_anchor = self.selection_end = None
+        self.selection_frame = {}
+        self.dragging = False
+
+    def key(self, name: str) -> None:
+        selected = self.selected_text()
+        if self.selection_frame and name == "ctrl-c":
+            if selected.strip():
+                self.console.clipboard = selected
+            self.clear_selection()
+            return
+        if self.selection_frame and name == "esc":
+            self.clear_selection()
+            return
+        self.clear_selection()
+        self.console.key(name)
 
     def read_key(self) -> Optional[str]:
         """Read complete keys and pastes so their control sequences cannot become prompt text."""
@@ -1672,7 +1767,13 @@ class Screen:
             body += byte
             if "@" <= byte <= "~":
                 break
+        if follow == "O" and body == "M":
+            return "enter"
+        if body == "M" or (body.startswith("<") and body[-1:] in ("M", "m")):
+            self.mouse_report(body)
+            return None
         if body == "200~":
+            self.clear_selection()
             self.paste_buffer, self.paste_tail, self.paste_overflow = [], "", False
             return self.read_paste()
         return escape_key(body)
@@ -1705,10 +1806,81 @@ class Screen:
             _, x, y, _, buttons = self.curses.getmouse()
         except self.curses.error:
             return
-        if not buttons & (self.curses.BUTTON1_CLICKED | self.curses.BUTTON1_RELEASED):
+        if buttons & getattr(self.curses, "BUTTON4_PRESSED", 0):
+            kind = "wheel-up"
+        elif buttons & getattr(self.curses, "BUTTON5_PRESSED", 0):
+            kind = "wheel-down"
+        elif buttons & self.curses.BUTTON1_RELEASED:
+            kind = "release" if self.dragging or self.cancelled_drag else "click"
+        elif buttons & getattr(self.curses, "BUTTON1_PRESSED", 0):
+            kind = "move" if self.dragging else "press"
+        elif buttons & self.curses.BUTTON1_CLICKED:
+            kind = "click"
+        elif buttons & getattr(self.curses, "REPORT_MOUSE_POSITION", 0):
+            kind = "move"
+        else:
             return
+        self.pointer(x, y, kind)
+
+    def mouse_report(self, body: str) -> None:
+        try:
+            if body == "M":
+                values = [self.follow() for _ in range(3)]
+                if not all(isinstance(value, str) and len(value) == 1 for value in values):
+                    return
+                code, x, y = (ord(value) - 32 for value in values)
+                released = code & 3 == 3
+            else:
+                code, x, y = map(int, body[1:-1].split(";"))
+                released = body.endswith("m")
+            if code & 64:
+                kind = "wheel-down" if code & 1 else "wheel-up"
+            elif released:
+                if code & 3 not in (0, 3):
+                    return
+                kind = "release"
+            elif code & 3 != 0:
+                return
+            else:
+                kind = "move" if code & 32 else "press"
+        except ValueError:
+            return
+        self.pointer(x - 1, y - 1, kind)
+
+    def pointer(self, x: int, y: int, kind: str) -> None:
         if self.size != self.window.getmaxyx():
+            self.clear_selection()
             return
+        if kind in ("wheel-up", "wheel-down"):
+            self.clear_selection()
+            with self.console.lock:
+                self.console.scroll("pageup" if kind == "wheel-up" else "pagedown")
+            return
+        point = (max(0, min(y, self.size[0] - 1)), max(1, min(x, self.size[1] - 1)))
+        if kind == "press":
+            self.clear_selection()
+            self.cancelled_drag = False
+            self.selection_anchor = self.selection_end = point
+            self.selection_frame, self.dragging = dict(self.frame), True
+            return
+        if self.dragging:
+            self.selection_end = point
+            if kind != "release":
+                return
+            self.dragging = False
+            if self.selection_anchor != self.selection_end:
+                selected = self.selected_text()
+                if selected.strip():
+                    self.console.clipboard = selected
+                return
+            kind = "click"
+            self.clear_selection()
+        elif self.cancelled_drag and kind == "release":
+            self.cancelled_drag = False
+            return
+        if kind != "click":
+            return
+        self.clear_selection()
         target = next((target for row, start, end, target in self.targets if row == y and start <= x < end), None)
         if target is not None:
             self.console.click(target)
@@ -1726,11 +1898,16 @@ class Screen:
     def run(self) -> int:
         """Draw and take keys until the console quits. The terminal's Ctrl-C reaches curses as SIGINT, which only
         sets a flag here, so it is a key like any other and never stops the console between two of its steps."""
-        self.window.keypad(True)
+        # curses can discard a press when several mouse reports arrive together.
+        self.window.keypad(False)
         self.window.timeout(REDRAW_WAIT)
         mouse_mask = mouse_interval = None
         try:
-            _, mouse_mask = self.curses.mousemask(self.curses.BUTTON1_CLICKED | self.curses.BUTTON1_RELEASED)
+            requested = (self.curses.BUTTON1_CLICKED | self.curses.BUTTON1_RELEASED
+                         | getattr(self.curses, "BUTTON1_PRESSED", 0) | getattr(self.curses, "REPORT_MOUSE_POSITION", 0)
+                         | getattr(self.curses, "BUTTON4_PRESSED", 0) | getattr(self.curses, "BUTTON5_PRESSED", 0))
+            available, mouse_mask = self.curses.mousemask(requested)
+            self.mouse_reporting = bool(available)
             mouse_interval = self.curses.mouseinterval(0)
         except (AttributeError, self.curses.error):
             pass
@@ -1755,7 +1932,7 @@ class Screen:
             while not self.console.quit:
                 if interrupted.is_set():
                     interrupted.clear()
-                    self.console.key("ctrl-c")
+                    self.key("ctrl-c")
                     continue
                 self.draw()
                 try:
@@ -1763,7 +1940,7 @@ class Screen:
                 except self.curses.error:
                     continue
                 if name is not None:
-                    self.console.key(name)
+                    self.key(name)
         finally:
             self.input_mode(False)
             signal.signal(signal.SIGINT, previous)

@@ -116,7 +116,7 @@ class Store:
         with self.connection() as db:
             if not db.execute("UPDATE commands SET state=?,outcome=? WHERE id=? AND state='uncertain'",
                               ("queued" if retry else "finished", None if retry else "confirmed", ident)).rowcount:
-                raise EnvironmentError("This command no longer needs recovery")
+                raise EnvironmentError("This message no longer needs checking")
 
     def edit(self, ident: str, text: str | None) -> None:
         with self.connection() as db:

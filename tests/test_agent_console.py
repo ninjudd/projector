@@ -62,7 +62,8 @@ class AgentConsoleTests(unittest.TestCase):
         self.assertEqual('stopped', self.console.runtimes['managed-session']['state'])
         self.assertIsInstance(self.console.sessions['managed-session'].updated_at, (int, float))
         self.console.open_panel('managed-session')
-        self.assertIn('r resume', '\n'.join(line.text for line in self.console.lines(100)[0]))
+        self.console.key('up')
+        self.assertIn('r Resume', self.console.footer()[0].text)
 
     def test_a_new_prompt_uses_the_highlighted_sessions_directory(self):
         first = Path(self.temporary.name) / 'first'
@@ -120,7 +121,6 @@ class AgentConsoleTests(unittest.TestCase):
         for key in ('up', 'x'):
             self.console.key(key)
         self.assertEqual('', self.console.launch_form['model'])
-        self.assertIn('example-model', '\n'.join(line.text for line in self.console.lines(100)[0]))
         self.console.key('1')
         for key in ('up', 'd'):
             self.console.key(key)
@@ -194,7 +194,6 @@ class AgentConsoleTests(unittest.TestCase):
     def test_chat_records_input_in_the_same_inbox_as_other_person_to_session_messages(self):
         self.managed()
         self.console.open_panel('managed-session')
-        self.console.key('c')
         self.type('first\nsecond')
         self.console.key('enter')
         items = inbox.load_items(inbox.session_dir('managed-session'))
@@ -203,7 +202,6 @@ class AgentConsoleTests(unittest.TestCase):
     def test_completion_changes_the_live_prompt_without_adding_a_status_message_or_losing_the_draft(self):
         folder = self.managed(state='running')
         self.console.open_panel('managed-session')
-        self.console.key('c')
         self.type('A follow-up')
         active = self.console.field.prompt
         store = Store(folder)
@@ -249,7 +247,6 @@ class AgentConsoleTests(unittest.TestCase):
     def test_long_chat_input_keeps_the_cursor_visible_when_editing_earlier_lines(self):
         self.managed()
         self.console.open_panel('managed-session')
-        self.console.key('c')
         self.type('first line\n' + 'long input ' * 100 + '\nlast line')
         self.console.key('home')
         shown = self.console.viewport(40, 10)
@@ -306,22 +303,124 @@ class AgentConsoleTests(unittest.TestCase):
         self.assertEqual([('agent', 'first second'), ('status', 'failed: disk full')], chat)
         self.assertIn('failed: disk full', '\n'.join(line.text for line in self.console.lines(100)[0]))
 
-    def test_retrying_uncertain_input_requires_an_explicit_confirmation(self):
+    def test_checking_a_message_uses_its_identity_and_resending_needs_confirmation(self):
         folder = self.managed()
-        self.console.open_panel('managed-session')
         store = Store(folder)
-        store.enqueue('uncertain', 'may have changed files', [])
-        store.begin('uncertain', 'old-worker')
+        for ident in ('first', 'second'):
+            store.enqueue(ident, ident + ' message', [])
+            store.begin(ident, 'old-worker')
         store.recover()
-        self.console.key('R')
-        self.type('1')
+        self.console.open_panel('managed-session')
+        self.now += 0.3
+        self.console.tick()
+        for key in ('up', 'k', 'esc', 'down', 'enter'):
+            self.console.key(key)
+        shown = '\n'.join(line.text for line in self.console.lines(100)[0])
+        self.assertIn('second message', shown)
+        self.assertIn('Already reached the agent', shown)
+        with patch.object(runtime, 'control') as control:
+            for key in ('s', 'enter'):
+                self.console.key(key)
+            control.assert_not_called()
+            for key in ('s', 's'):
+                self.console.key(key)
+        control.assert_called_once_with(self.root, 'managed-session', 'retry:second')
+        self.assertEqual('chat', self.console.field.purpose)
+
+    def test_a_message_checked_by_another_console_cannot_be_resubmitted_from_stale_buttons(self):
+        folder = self.managed()
+        store = Store(folder)
+        store.enqueue('first', 'Check this message', [])
+        store.begin('first', 'old-worker')
+        store.recover()
+        self.console.open_panel('managed-session')
+        self.now += 0.3
+        self.console.tick()
+        for key in ('up', 'k', 's'):
+            self.console.key(key)
+        store.resolve('first', retry=False)
+        with patch.object(runtime, 'control') as control:
+            self.console.key('s')
+        control.assert_not_called()
+        self.assertIn('no longer needs checking', self.console.status)
+
+    def test_chat_is_ready_by_default_and_sending_keeps_the_composer_open(self):
+        self.managed()
+        self.console.open_panel('managed-session')
+        self.assertIsNotNone(self.console.field)
+        self.assertEqual('chat', self.console.field.purpose)
+        for text in ('first message', 'c is ordinary text'):
+            self.type(text)
+            self.console.key('enter')
+            self.assertEqual('', self.console.field.text)
+        items = inbox.load_items(inbox.session_dir('managed-session'))
+        self.assertEqual(['first message', 'c is ordinary text'], [item['messages'][0]['text'] for item in items])
+        shown = '\n'.join(line.text for line in self.console.lines(100)[0])
+        for label in ('Conversation', 'interrupt', 'retry uncertain', 'Approvals:', 'Input number:'):
+            self.assertNotIn(label, shown)
+
+    def test_opening_chat_and_launch_options_keeps_every_body_line_in_place(self):
+        self.managed()
+        for launch in (False, True):
+            with self.subTest(launch=launch):
+                if launch:
+                    self.console.go_home()
+                    self.console.key('n')
+                else:
+                    self.console.open_panel('managed-session')
+                self.type('Keep this prompt where it is')
+                before = [line.text for line in self.console.viewport(80, 12)]
+                self.console.key('up')
+                self.assertEqual(before, [line.text for line in self.console.viewport(80, 12)])
+                self.assertEqual(1, len(self.console.footer(80)))
+                self.assertIn('Native' if not launch else 'directory', self.console.footer(80)[0].text)
+                self.console.key('down')
+                self.assertEqual('Keep this prompt where it is', self.console.field.text)
+
+    def test_history_scrolls_while_the_draft_stays_in_place(self):
+        self.managed()
+        self.console.chats['managed-session'] = [('agent', f'Output line {at}') for at in range(50)]
+        self.console.open_panel('managed-session')
+        self.type('My draft')
+        before = self.console.viewport(60, 15)
+        self.console.key('pageup')
+        after = self.console.viewport(60, 15)
+        self.assertNotEqual([line.text for line in before[:-1]], [line.text for line in after[:-1]])
+        self.assertEqual(before[-1].text, after[-1].text)
+        self.assertEqual(self.console.field.text, 'My draft')
+
+    def test_clicking_an_unavailable_inline_action_keeps_the_draft_and_shows_the_error(self):
+        from tests.test_console import FakeWindow, MouseCurses
+        self.managed()
+        self.console.open_panel('managed-session')
+        self.type('Keep my draft')
+        self.console.key('up')
+        curses = MouseCurses()
+        window = FakeWindow(15, 100)
+        screen = agent_console.Screen(window, self.console, curses, io.StringIO())
+        screen.draw()
+        y, text = next((y, text) for y, text in window.rows.items() if 'o Native' in text)
+        with patch.object(runtime, 'control', side_effect=runtime.UsageError('Wait for the turn to finish')):
+            curses.events.append((0, text.index('o Native'), y, 0, curses.BUTTON1_RELEASED))
+            window.pressed.append(curses.KEY_MOUSE)
+            screen.read_key()
+        self.assertEqual('Wait for the turn to finish', self.console.status)
+        self.assertEqual('Keep my draft', self.console.drafts['managed-session'].text)
+
+    def test_editing_a_waiting_message_preserves_the_unsent_chat_draft(self):
+        folder = self.managed()
+        store = Store(folder)
+        store.enqueue('waiting', 'old message', [])
+        self.console.open_panel('managed-session')
+        self.now += 0.3
+        self.console.tick()
+        self.type('Unsent draft')
+        for key in ('up', 'q', 'enter'):
+            self.console.key(key)
+        self.replace_field('Updated message')
         self.console.key('enter')
-        self.type('yes')
-        self.console.key('enter')
-        self.assertEqual('uncertain', store.command('uncertain')['state'])
-        self.replace_field('RETRY')
-        self.console.key('enter')
-        self.assertEqual('queued', store.command('uncertain')['state'])
+        self.assertEqual('Updated message', store.command('waiting')['text'])
+        self.assertEqual('Unsent draft', self.console.field.text)
 
     def test_a_typed_answer_returns_the_actual_text_without_colliding_with_five_options(self):
         self.managed()

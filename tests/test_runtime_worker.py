@@ -47,6 +47,36 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.worker.state = 'ready'
         self.worker.snapshot()
 
+    async def test_checked_messages_continue_only_after_every_uncertain_message_is_resolved(self):
+        store = self.worker.store
+        for ident in ('resend', 'already-there'):
+            store.enqueue(ident, ident, [])
+            store.begin(ident, 'old-worker')
+        store.recover()
+        self.worker.paused = True
+        self.worker.state = 'recovering'
+        store.request_control('retry-request', 'retry:resend')
+        await self.worker.tick()
+        self.assertTrue(self.worker.paused)
+        self.assertEqual([], self.worker.backend.submitted)
+        store.request_control('confirm-request', 'confirm:already-there')
+        await self.worker.tick()
+        self.assertFalse(self.worker.paused)
+        self.assertEqual(['resend'], self.worker.backend.submitted)
+        self.assertEqual('confirmed', store.command('already-there')['outcome'])
+
+    async def test_resending_a_changed_delivery_keeps_it_held_instead_of_replaying_it(self):
+        store = self.worker.store
+        store.enqueue('stale', 'outdated answer', ['inbox', 'missing', 0, 'expired-token'])
+        store.begin('stale', 'old-worker')
+        store.recover()
+        self.worker.paused = True
+        with self.assertRaisesRegex(EnvironmentError, 'delivery has changed'):
+            await self.worker.act('retry:stale')
+        self.assertEqual('uncertain', store.command('stale')['state'])
+        self.assertTrue(self.worker.paused)
+        self.assertEqual([], self.worker.backend.submitted)
+
     async def test_multiline_input_uses_the_existing_inbox_and_reaches_one_native_turn(self):
         text = '-v "hi" $HOME\nsecond paragraph\n\nlast'
         item = runtime.send(self.root, self.session, text)

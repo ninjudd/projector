@@ -1138,6 +1138,7 @@ class TerminalCase(ConsoleCase):
 class MouseCurses(FakeCurses):
     KEY_MOUSE = 409
     BUTTON1_RELEASED, BUTTON1_CLICKED, BUTTON1_PRESSED, BUTTON3_CLICKED = 1, 2, 4, 8
+    REPORT_MOUSE_POSITION = 16
 
     def __init__(self) -> None:
         self.events: list[tuple[int, int, int, int, int]] = []
@@ -1153,7 +1154,7 @@ class Mouse(TerminalCase):
         super().setUp()
         self.window.height, self.window.width = 24, 180
         self.curses = MouseCurses()
-        self.terminal = console.Screen(self.window, self.console, self.curses)
+        self.terminal = console.Screen(self.window, self.console, self.curses, io.StringIO(), copy_local=lambda text: False)
 
     def mouse_at(self, x: int, y: int, buttons: int = MouseCurses.BUTTON1_RELEASED) -> None:
         self.curses.events.append((0, x, y, 0, buttons))
@@ -1173,6 +1174,49 @@ class Mouse(TerminalCase):
                 write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
                 self.ask(name, f"Question from {name}?")
         self.console.tick()
+
+    def test_dragging_text_copies_without_activating_a_row_and_ctrl_c_keeps_the_console_running(self) -> None:
+        self.sessions()
+        self.draw()
+        y, row = next((y, row) for y, row in self.window.rows.items() if 'worker-01' in row)
+        start = row.index('worker-01')
+        self.mouse_at(start, y, self.curses.BUTTON1_PRESSED)
+        self.mouse_at(start + len('worker-01') - 1, y, self.curses.REPORT_MOUSE_POSITION)
+        self.mouse_at(start + len('worker-01') - 1, y, self.curses.BUTTON1_RELEASED)
+        self.assertEqual('worker-01', self.console.take_clipboard())
+        self.assertEqual('worker-00', self.console.viewed().name)
+        self.terminal.key('ctrl-c')
+        self.assertFalse(self.console.quit)
+        self.assertEqual('worker-01', self.console.take_clipboard())
+        self.click('worker-01')
+        self.assertEqual('worker-01', self.console.viewed().name)
+
+    def test_selected_text_stays_fixed_while_the_underlying_session_list_changes(self) -> None:
+        self.sessions()
+        self.draw()
+        y, row = next((y, row) for y, row in self.window.rows.items() if 'worker-01' in row)
+        start = row.index('worker-01')
+        self.mouse_at(start, y, self.curses.BUTTON1_PRESSED)
+        self.mouse_at(start + 8, y, self.curses.REPORT_MOUSE_POSITION)
+        self.mouse_at(start + 8, y, self.curses.BUTTON1_RELEASED)
+        self.console.sessions['worker-01'].label = 'changed title'
+        self.draw()
+        self.assertIn('worker-01', self.window.text())
+        self.assertNotIn('changed title', self.window.text())
+        self.terminal.key('esc')
+        self.draw()
+        self.assertIn('changed title', self.window.text())
+
+    def test_a_successful_local_copy_avoids_a_duplicate_terminal_clipboard_request(self) -> None:
+        self.sessions()
+        output = io.StringIO()
+        self.terminal.out = output
+        captured = []
+        self.terminal.copy_local = lambda text: captured.append(text) is None
+        self.console.clipboard = 'résumé'
+        self.terminal.draw()
+        self.assertEqual(['résumé'], captured)
+        self.assertEqual('', output.getvalue())
 
     def test_clicking_a_session_then_its_question_records_only_that_sessions_clicked_choice(self) -> None:
         self.sessions()
@@ -1668,7 +1712,7 @@ class Terminal(unittest.TestCase):
                    "owner": "managed", "state": "ready", "cwd": str(self.home), "renewed_at": time.time()})
         self.start()
         try:
-            self.send(b"\r", b"c", b"first\nsecond", b"\x1b[13;2uthird", b"\x1b[27;2;13~fourth")
+            self.send(b"\r", b"first\nsecond", b"\x1b[13;2uthird", b"\x1b[27;2;13~fourth")
             self.send(b"\x1b[200~\r\npasted\r\n\r\nlast\x1b[201~")
             items = Path(self.state) / "projector" / "inbox" / "S"
             before = sorted(path.name for path in items.glob("*.json") if path.stem.isdecimal())
@@ -1682,6 +1726,37 @@ class Terminal(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertIn(b"\x1b[>1u", self.shown)
         self.assertIn(b"\x1b[<u", self.shown)
+
+    @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
+    def test_drag_select_copies_text_and_a_later_click_can_still_answer_a_question(self) -> None:
+        import curses
+        self.prepare()
+        self.env['PROJECTOR_REMOTE'] = '1'
+        self.start()
+        curses.setupterm(self.env['TERM'])
+        prefix = curses.tigetstr('kmous')
+        def event(button, x, y, release=False):
+            if prefix == b'\x1b[<':
+                return f"\x1b[<{button};{x};{y}{'m' if release else 'M'}".encode()
+            return prefix + bytes((35 if release else button + 32, x + 32, y + 32))
+        try:
+            self.send(event(0, 4, 9) + event(32, 10, 9) + event(0, 10, 9, True))
+            selected = b'\x1b]52;c;RGVjbGluZQ==\x07' in self.shown
+            self.send(b'\x03')
+            stayed_open = self.exited(0.2, kill=False) is None
+            self.click(3, 9)
+            self.send(b'2', b'\r')
+        finally:
+            self.send(b'\x1b', b'\x1b', b'\x03')
+            code = self.exited(10)
+        item = json.loads((Path(self.state) / 'projector' / 'inbox' / 'S' / '1.json').read_text())
+        import base64
+        import re
+        copies = [base64.b64decode(value).decode('utf-8') for value in re.findall(rb'\x1b]52;c;([^\x07]*)\x07', self.shown)]
+        self.assertTrue(selected, copies)
+        self.assertTrue(stayed_open)
+        self.assertEqual('b', item['answer']['letter'])
+        self.assertEqual(0, code)
 
     @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
     def test_a_panel_quits_on_the_second_ctrl_c_and_not_the_first(self) -> None:

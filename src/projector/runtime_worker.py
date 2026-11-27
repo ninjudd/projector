@@ -272,12 +272,23 @@ class Worker:
             self.stopping = True
         elif action == "send":
             if self.store.commands(("uncertain",)):
-                raise EnvironmentError("Resolve uncertain input before sending queued work")
+                raise EnvironmentError("Check the highlighted messages before continuing")
             self.paused = False
-        elif action.startswith("confirm:"):
-            ident = action.removeprefix("confirm:")
-            self.store.resolve(ident, retry=False)
-            self.settle(ident)
+        elif action.startswith(("confirm:", "retry:")):
+            if self.backend is None:
+                raise EnvironmentError("Return to Projector before checking this message")
+            operation, ident = action.split(":", 1)
+            retry = operation == "retry"
+            command = self.store.command(ident)
+            if retry and command and command["source"] and not codex_watch.eligible(
+                    self.folder, {"key": json.dumps(command["source"]), "line": command["text"]}):
+                raise EnvironmentError("This delivery has changed. Check the agent conversation and the current inbox item.")
+            self.store.resolve(ident, retry=retry)
+            if not retry:
+                self.settle(ident)
+            self.paused = bool(self.store.commands(("uncertain",)))
+            self.state = "recovering" if self.paused else "ready"
+            self.snapshot()
         elif action == "handoff":
             if self.current or self.requests:
                 raise EnvironmentError("Interrupt the turn and wait for it to end before opening the native terminal")
