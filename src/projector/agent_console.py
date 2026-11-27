@@ -19,11 +19,19 @@ Field = console.Field
 CONVERSATION = "runtime:conversation"
 
 
+class LaunchField(Field):
+    @property
+    def inline(self):
+        return True
+
+
 class Console(console.Console):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.runtimes = {}
         self.launch_form = {}
+        self.launch_prompt = None
+        self.launch_models = {}
         self.pending_native = None
         self.stores = {}
         self.cursors = {}
@@ -187,8 +195,19 @@ class Console(console.Console):
                         self.refresh_now.set()
                         return
                 if self.field is None and self.view == "home" and name == "n":
-                    self.launch_form = {"backend": "claude", "cwd": str(Path.cwd()), "name": "", "model": ""}
-                    self.field = Field("launch-backend", None, "Agent (claude or codex): ", "claude", 6)
+                    session = self.viewed()
+                    backend = session.host if session is not None and session.host in ("claude", "codex") else "claude"
+                    cwd = session.cwd if session is not None and session.cwd else str(Path.cwd())
+                    self.launch_form = {"backend": backend, "cwd": cwd, "name": "", "model": ""}
+                    self.launch_models = {host: [] for host in ("claude", "codex")}
+                    for record in agents.records(self.root).values():
+                        host, model = record.get("host"), record.get("model")
+                        if host in ("claude", "codex") and isinstance(model, str) and agents.MODEL_ID.fullmatch(model):
+                            if model not in self.launch_models[host]:
+                                self.launch_models[host].append(model)
+                    self.launch_prompt = LaunchField("launch-prompt", None, "Prompt: ")
+                    self.field = self.launch_prompt
+                    self.status = ""
                     return
                 if self.field is None and self.view == "panel" and self.drawer is None and self.session in self.runtimes:
                     if name == "v":
@@ -220,33 +239,18 @@ class Console(console.Console):
         if typing is None:
             return
         purpose = typing.purpose
-        if purpose == "launch-backend" and name in ("tab", "up", "down"):
-            typing.text = "codex" if typing.text == "claude" else "claude"
-            typing.cursor = len(typing.text)
+        if purpose.startswith("launch-"):
+            self.launch_key(name)
             return
-        multiline = purpose in ("launch-prompt", "chat", "queue-edit")
+        multiline = purpose in ("chat", "queue-edit")
         if multiline and name == "enter":
             typing.text = typing.text[:typing.cursor] + "\n" + typing.text[typing.cursor:]
             typing.cursor += 1
             return
         if (multiline and name == "ctrl-d") or (not multiline and name == "enter"
                                                 and purpose not in ("queue-confirm", "queue-confirm-received")
-                                                and purpose.startswith(("launch-", "queue-"))):
-            if purpose.startswith("launch-"):
-                field = purpose.removeprefix("launch-")
-                self.launch_form[field] = typing.text
-                if field != "prompt":
-                    following = {"backend": "cwd", "cwd": "name", "name": "model", "model": "prompt"}[field]
-                    value = self.launch_form.get(following, "")
-                    prompts = {"cwd": "Working directory: ", "name": "Name (optional): ", "model": "Model (native default if empty): ",
-                               "prompt": "Prompt (Enter: newline; Ctrl-D: launch): "}
-                    self.field = Field("launch-" + following, None, prompts[following], value, len(value))
-                    return
-                runtime.launch(self.root, self.launch_form["backend"].strip(), self.launch_form["cwd"],
-                    self.launch_form["prompt"], name=self.launch_form["name"].strip(), model=self.launch_form["model"].strip(),
-                    parent=os.environ.get("PROJECTOR_SESSION", ""))
-                self.ensure()
-            elif purpose == "chat":
+                                                and purpose.startswith("queue-")):
+            if purpose == "chat":
                 runtime.send(self.root, self.session, typing.text)
                 self.wake(self.session, {})
             elif purpose == "queue-edit":
@@ -299,8 +303,91 @@ class Console(console.Console):
             return
         super().field_key(name)
 
+    def launch_key(self, name):
+        typing = self.field
+        purpose = typing.purpose
+        if name == "ctrl-c" or (name == "esc" and purpose == "launch-prompt"):
+            self.field = self.launch_prompt = None
+        elif name == "esc":
+            self.field = self.launch_prompt
+        elif purpose == "launch-prompt":
+            if name == "up":
+                self.field = LaunchField("launch-settings", None, "")
+            elif name == "enter":
+                typing.text = typing.text[:typing.cursor] + "\n" + typing.text[typing.cursor:]
+                typing.cursor += 1
+            elif name == "ctrl-d":
+                runtime.launch(self.root, self.launch_form["backend"], self.launch_form["cwd"], typing.text,
+                    name=self.launch_form["name"], model=self.launch_form["model"],
+                    parent=os.environ.get("PROJECTOR_SESSION", ""))
+                self.ensure()
+                self.field = self.launch_prompt = None
+                self.next_inbox = float("-inf")
+                self.refresh_now.set()
+            else:
+                super().field_key(name)
+        elif purpose == "launch-settings":
+            if name in ("c", "x"):
+                backend = "claude" if name == "c" else "codex"
+                if backend != self.launch_form["backend"]:
+                    self.launch_form["backend"], self.launch_form["model"] = backend, ""
+                self.field = LaunchField("launch-models", None, "")
+            elif name == "m":
+                self.field = LaunchField("launch-models", None, "")
+            elif name in ("d", "n"):
+                field, prompt = ("cwd", "Directory: ") if name == "d" else ("name", "Name (optional): ")
+                value = self.launch_form[field]
+                self.field = LaunchField("launch-" + field, None, prompt, value, len(value))
+            elif name in ("enter", "down"):
+                self.field = self.launch_prompt
+        elif purpose == "launch-models":
+            choices = self.model_choices()
+            if name in choices:
+                self.launch_form["model"] = choices[name][1]
+                self.field = self.launch_prompt
+            elif name == "t":
+                value = self.launch_form["model"]
+                self.field = LaunchField("launch-model", None, "Model ID (empty: native default): ", value, len(value))
+            elif name in ("enter", "down"):
+                self.field = self.launch_prompt
+        elif name == "enter":
+            field = purpose.removeprefix("launch-")
+            value = typing.text if field == "cwd" else typing.text.strip()
+            if field == "cwd":
+                directory = Path(value).expanduser().resolve()
+                if not value or not directory.is_dir():
+                    raise UsageError("Choose an existing working directory")
+                value = str(directory)
+            elif field == "model" and value and not agents.MODEL_ID.fullmatch(value):
+                raise UsageError("Use a native model ID without spaces or control characters")
+            self.launch_form[field] = value
+            self.field = self.launch_prompt
+        else:
+            super().field_key(name)
+
+    def model_choices(self):
+        backend = self.launch_form["backend"]
+        choices = {"0": ("Native default", "")}
+        if backend == "claude":
+            choices.update({"o": ("Opus", "opus"), "s": ("Sonnet", "sonnet")})
+        known = {value for _, value in choices.values()}
+        models = [model for model in self.launch_models.get(backend, []) if model not in known]
+        choices.update({key: (model + " (from your sessions)", model)
+                        for key, model in zip("123456789", models)})
+        return choices
+
     def footer(self):
-        if self.field is not None and self.field.purpose in ("launch-prompt", "chat", "queue-edit"):
+        if self.field is not None and self.field.purpose.startswith("launch-"):
+            purpose = self.field.purpose
+            if purpose == "launch-prompt":
+                hint = "↑ settings · Enter adds a line · Ctrl-D launches · Esc cancels"
+            elif purpose in ("launch-settings", "launch-models"):
+                hint = "Press a choice · ↓ or Esc returns to prompt · Ctrl-C cancels"
+            else:
+                hint = "Enter saves · Esc returns to prompt · Ctrl-C cancels"
+            errors = [Line([(self.status, "error")])] if self.status else []
+            return [*errors, Line([(hint, "subtle")])]
+        if self.field is not None and self.field.purpose in ("chat", "queue-edit"):
             return [Line([("Enter adds a line · Ctrl-D sends · Esc cancels", "subtle")])]
         return super().footer()
 
@@ -333,17 +420,71 @@ class Console(console.Console):
         if answer is not None:
             self.field = None
 
+    def lines(self, width):
+        with self.lock:
+            if self.field is not None and self.field.purpose.startswith("launch-"):
+                return self.launch_lines(width)
+            return super().lines(width)
+
+    def viewport(self, width, room):
+        with self.lock:
+            if self.field is not None and self.field.purpose.startswith("launch-"):
+                lines, (_, last) = self.launch_lines(width)
+                start = max(0, last - room + 1)
+                return lines[start:start + room]
+            return super().viewport(width, room)
+
+    def launch_lines(self, width):
+        width = max(1, width)
+        form, typing = self.launch_form, self.field
+        lines = []
+
+        def append(text, style="subtle"):
+            lines.extend(Line([(part, style)]) for part in textwrap.wrap(text, width) or [""])
+
+        append("New agent session", "bold")
+        append(f"{form['backend']} · {form['model'] or 'Native default'}")
+        append("Directory: " + form["cwd"])
+        if form["name"]:
+            append("Name: " + form["name"])
+        append("Native permission and sandbox settings apply, including configured automatic approvals.")
+        first = len(lines)
+        if typing.purpose == "launch-settings":
+            append("c Claude · x Codex · m model · d directory · n name", "accent")
+        elif typing.purpose == "launch-models":
+            for key, (label, _) in self.model_choices().items():
+                append(f"{key} {label}", "accent")
+            append("t Type another model ID", "accent")
+        last = len(lines) - 1
+        if typing.purpose not in ("launch-prompt", "launch-settings", "launch-models"):
+            field_lines = self.launch_field_lines(typing, width)
+            last = len(lines) + next(at for at, line in enumerate(field_lines) if line.cursor is not None)
+            lines.extend(field_lines)
+        lines.append(Line([]))
+        prompt = self.launch_field_lines(self.launch_prompt, width, active=typing is self.launch_prompt)
+        if typing is self.launch_prompt:
+            first = last = len(lines) + next(at for at, line in enumerate(prompt) if line.cursor is not None)
+        lines.extend(prompt)
+        return lines, (first, last)
+
+    @staticmethod
+    def launch_field_lines(typing, width, *, active=True):
+        text = typing.prompt + typing.text
+        cursor = len(typing.prompt) + typing.cursor
+        lines, offset = [], 0
+        for paragraph in text.split("\n"):
+            parts = [paragraph[at:at + width] for at in range(0, len(paragraph), width)] or [""]
+            row, column = divmod(cursor - offset, width)
+            here = active and offset <= cursor <= offset + len(paragraph)
+            if here and row == len(parts):
+                parts.append("")
+            lines.extend(Line([(part, "")], spot=here and row == at,
+                              cursor=column if here and row == at else None) for at, part in enumerate(parts))
+            offset += len(paragraph) + 1
+        return lines
+
     def home_lines(self, width):
         lines, focus = super().home_lines(width)
-        if self.field is not None and self.field.purpose.startswith("launch-"):
-            lines = [Line([("New agent session", "bold")]),
-                     Line([("Native permission and sandbox settings apply, including configured automatic approvals.", "subtle")]),
-                     Line([("Effective policy appears when the runtime reports it; Projector adds no bypass.", "subtle")])]
-            lines.extend(Line([(key + ": " + value, "subtle")]) for key, value in self.launch_form.items())
-            lines.append(self.form_line(self.field))
-            if self.status:
-                lines.append(Line([(self.status, "error")]))
-            return lines, (0, len(lines) - 1)
         lines.append(Line([("n new agent session", "subtle")]))
         if self.status:
             lines.append(Line([(self.status, "error")]))
