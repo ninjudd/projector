@@ -175,6 +175,25 @@ class AgentConsoleTests(unittest.TestCase):
         self.assertEqual('launch-prompt', self.console.field.purpose)
         self.assertEqual(str(Path.cwd()), self.console.launch_form['cwd'])
 
+    def test_new_session_hint_stays_at_the_bottom_and_changes_with_the_active_view(self):
+        from tests.test_console import FakeCurses, FakeWindow
+        self.assertIn('n new agent session', self.console.footer(100)[0].text)
+        self.assertNotIn('↑↓', self.console.footer(100)[0].text)
+        self.managed()
+        window = FakeWindow(20, 100)
+        screen = agent_console.Screen(window, self.console, FakeCurses(), io.StringIO())
+        screen.draw()
+        self.assertEqual([19], [row for row, text in window.rows.items() if 'n new agent session' in text])
+        self.assertIn('↑↓', self.console.footer(100)[0].text)
+        self.console.open_panel('managed-session')
+        self.assertNotIn('new agent session', self.console.footer(100)[0].text)
+        self.assertIn('Enter send', self.console.footer(100)[0].text)
+        self.console.go_home()
+        self.console.key('n')
+        self.assertNotIn('new agent session', self.console.footer(100)[0].text)
+        self.console.key('up')
+        self.assertIn('d directory', self.console.footer(100)[0].text)
+
     def test_a_long_multiline_prompt_keeps_its_cursor_visible_in_a_small_terminal(self):
         self.managed()
         self.console.key('n')

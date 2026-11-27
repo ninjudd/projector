@@ -1322,7 +1322,7 @@ class Mouse(TerminalCase):
 
 
 class SplitLayout(TerminalCase):
-    def test_only_the_selected_agent_name_has_color_and_neither_session_row_is_reversed(self) -> None:
+    def test_selected_agent_name_is_gray_and_neither_session_row_is_reversed(self) -> None:
         for name in ("first", "second"):
             self.codex(name, cwd="/work/app")
             write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
@@ -1331,14 +1331,17 @@ class SplitLayout(TerminalCase):
         lines = self.console.home_lines(100)[0]
         rows = [line for line in lines if line.text.startswith(("▸ first", "  second"))]
         window = FakeWindow(2, 100)
-        with mock.patch.dict(os.environ, {"NO_COLOR": ""}):
-            screen = console.Screen(window, self.console, ColorCurses(256))
+        curses = ColorCurses(256)
+        with mock.patch.dict(os.environ, {"NO_COLOR": "", "COLORFGBG": ""}):
+            screen = console.Screen(window, self.console, curses)
         screen.put(0, rows[0], 100)
         screen.put(1, rows[1], 100)
         names = {text.strip(): attributes for text, attributes in window.drawn if text.strip() in ("first", "second")}
 
         self.assertGreater(names["first"] >> 8, 0)
         self.assertEqual(0, names["second"])
+        red, green, blue = curses.rgb(names["first"])
+        self.assertEqual((red, red), (green, blue))
         self.assertFalse(any(attributes & FakeCurses.A_REVERSE for _, attributes in window.drawn))
 
     def test_narrow_rows_shorten_the_request_and_preserve_the_rightmost_update_column(self) -> None:
@@ -1534,6 +1537,15 @@ class ColorCurses(FakeCurses):
     def color_pair(self, pair: int) -> int:
         return pair << 8
 
+    def rgb(self, attributes: int) -> tuple[int, int, int]:
+        color = self.pairs[attributes >> 8]
+        if color >= 232:
+            return (8 + (color - 232) * 10,) * 3
+        red, remainder = divmod(color - 16, 36)
+        green, blue = divmod(remainder, 6)
+        levels = (0, 95, 135, 175, 215, 255)
+        return levels[red], levels[green], levels[blue]
+
 
 class Colors(ConsoleCase):
     def attributes(self, curses: ColorCurses, environ: dict[str, str]) -> dict[str, int]:
@@ -1546,6 +1558,36 @@ class Colors(ConsoleCase):
     def foregrounds(self, curses: ColorCurses, environ: dict[str, str]) -> dict[str, object]:
         """The foreground each piece of text on the screen was drawn in, or None when it has no color."""
         return {text: curses.pairs.get(attributes >> 8) for text, attributes in self.attributes(curses, environ).items()}
+
+    def test_selected_inbox_subjects_get_brighter_without_losing_their_kind_color(self) -> None:
+        self.claude('s1')
+        question = self.ask('s1', 'Question')
+        request = inbox.request('s1', 'Request')
+        notice = inbox.tell('s1', 'Notice')
+        self.console.tick()
+        for background in ('', '0;15'):
+            with self.subTest(background=background):
+                curses = ColorCurses(256)
+                environ = {'NO_COLOR': '', 'COLORFGBG': background}
+                self.console.go_home()
+                original = self.attributes(curses, environ)
+                selected = {}
+                for item in (question, request, notice):
+                    subject = '- ' + item['subject']
+                    self.console.open_panel('s1')
+                    self.console.selected = 'item:' + item['ref']
+                    focused = self.attributes(curses, environ)
+                    color = curses.rgb(focused[subject])
+                    self.assertGreater(sum(color), sum(curses.rgb(original[subject])), subject)
+                    selected[item['subject']] = color
+                red, green, blue = selected['Request']
+                self.assertGreater(red, green)
+                self.assertGreater(green, blue)
+                red, green, blue = selected['Question']
+                self.assertGreater(blue, red)
+                self.assertGreater(blue, green)
+                red, green, blue = selected['Notice']
+                self.assertEqual((red, red), (green, blue))
 
     def test_panel_focus_colors_only_the_pr_label_and_preserves_its_other_colors(self) -> None:
         self.claude('s1')
@@ -1792,11 +1834,11 @@ class Terminal(unittest.TestCase):
                 return f"\x1b[<{button};{x};{y}{'m' if release else 'M'}".encode()
             return prefix + bytes((35 if release else button + 32, x + 32, y + 32))
         try:
-            self.send(event(0, 4, 9) + event(32, 10, 9) + event(0, 10, 9, True))
+            self.send(event(0, 4, 8) + event(32, 10, 8) + event(0, 10, 8, True))
             selected = b'\x1b]52;c;RGVjbGluZQ==\x07' in self.shown
             self.send(b'\x03')
             stayed_open = self.exited(0.2, kill=False) is None
-            self.click(3, 9)
+            self.click(3, 8)
             self.send(b'2', b'\r')
         finally:
             self.send(b'\x1b', b'\x1b', b'\x03')
@@ -1827,8 +1869,8 @@ class Terminal(unittest.TestCase):
         self.prepare()
         self.start()
         self.read_for(10, until=b"Decline the finding?")
-        self.click(3, 9)
-        self.click(7, 12)
+        self.click(3, 8)
+        self.click(7, 11)
         self.send(b"\r", b"\x1b", b"\x1b", b"\x03")
         code = self.exited(10)
         item = json.loads((Path(self.state) / "projector" / "inbox" / "S" / "1.json").read_text())
