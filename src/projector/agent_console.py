@@ -576,6 +576,13 @@ class Console(console.Console):
         width = max(1, width or 100)
         typing = self.field
         if typing is None:
+            if self.view == "home":
+                if self.status:
+                    return [Line([(console.fit(self.status, width), "error")])]
+                hint = "n new agent session"
+                if self.sessions:
+                    hint += " · ↑↓ select · Enter open"
+                return [Line([(console.fit(hint + " · Ctrl-C quit", width), "subtle")])]
             return super().footer(width)
         purpose = typing.purpose
         if self.status:
@@ -752,13 +759,6 @@ class Console(console.Console):
                               cursor=column if active and here and row == at else None) for at, part in enumerate(parts))
             offset += len(paragraph) + 1
         return lines
-
-    def home_lines(self, width):
-        lines, focus = super().home_lines(width)
-        lines.append(Line([("n new agent session", "subtle")]))
-        if self.status:
-            lines.append(Line([(self.status, "error")]))
-        return lines, focus
 
     @staticmethod
     def form_line(typing):

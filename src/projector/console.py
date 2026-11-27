@@ -1170,9 +1170,9 @@ class Console:
         def columns(label: str, count: str, request: str, changed: str, chosen: bool = False) -> Line:
             if width < 20:
                 return Line([("▸ " if chosen else "  ", "subtle"),
-                             (fit(label, max(0, width - 2)), "suggestion" if chosen else "")])
+                             (fit(label, max(0, width - 2)), "focus" if chosen else "")])
             return Line([("▸ " if chosen else "  ", "subtle"),
-                         (fit(label, name_width), "suggestion" if chosen else ""),
+                         (fit(label, name_width), "focus" if chosen else ""),
                          (f"  {count.ljust(count_width)}  ", "claude"), (fit(request, request_width), ""),
                          (f"  {changed.rjust(age_width)} ", "subtle")])
 
@@ -1553,22 +1553,26 @@ def theme_name(environ: Optional[dict] = None) -> str:
 def styles(curses: Any) -> dict[str, int]:
     """Keep user messages distinct while preserving the terminal's background for other text."""
     found = {"": 0, "subtle": curses.A_DIM, "bold": curses.A_BOLD}
-    names = [*THEMES["dark"], *PALETTE, "user"]
+    names = [*THEMES["dark"], *PALETTE, "focus", "user"]
     if os.environ.get("NO_COLOR") or not curses.has_colors():
-        found.update({name: curses.A_BOLD if name == "error" else 0 for name in names if name != "subtle"})
+        found.update({name: curses.A_BOLD if name in ("error", "focus") else 0
+                      for name in names if name != "subtle"})
         found["user"] = curses.A_REVERSE
         return found
     curses.start_color()
     curses.use_default_colors()
-    theme = THEMES[theme_name()]
+    current_theme = theme_name()
+    theme = THEMES[current_theme]
     rich = getattr(curses, "COLORS", 8) >= 256
-    for index, name in enumerate(names, 1):
+    palette = {}
+    for name in names:
+        background = -1
         if name == "user":
-            foreground = xterm_color((255, 255, 255)) if rich else curses.COLOR_BLACK
+            color = xterm_color((255, 255, 255)) if rich else curses.COLOR_BLACK
             background = xterm_color((64, 64, 64)) if rich else curses.COLOR_WHITE
-            curses.init_pair(index, foreground, background)
-            found[name] = curses.color_pair(index)
-            continue
+        elif name == "focus":
+            gray = (255, 255, 255) if current_theme == "dark" else (64, 64, 64)
+            color = xterm_color(gray) if rich else curses.COLOR_WHITE
         elif name in PALETTE:
             color = PALETTE[name]
         elif rich:
@@ -1577,8 +1581,17 @@ def styles(curses: Any) -> dict[str, int]:
             color = getattr(curses, BASIC[name])
         else:
             continue
-        curses.init_pair(index, color, -1)
-        found[name] = curses.color_pair(index)
+        palette[name] = (color, background)
+        if name not in ("focus", "user"):
+            if rich and name in theme:
+                brighter = tuple((3 * channel + 255) // 4 for channel in theme[name])
+                focused = xterm_color(brighter)
+            else:
+                focused = color + 8 if getattr(curses, "COLORS", 8) >= 16 and color < 8 else color
+            palette["focus-" + name] = (focused, -1)
+    for index, (name, (foreground, background)) in enumerate(palette.items(), 1):
+        curses.init_pair(index, foreground, background)
+        found[name] = curses.color_pair(index) | (curses.A_BOLD if name == "focus" or name.startswith("focus-") else 0)
     return found
 
 
@@ -1629,7 +1642,7 @@ class Screen:
             lit = (line.selected and at == 0) or at == line.lit
             attributes = self.styles.get(style, 0)
             if lit:
-                attributes = self.styles.get("suggestion", 0) | self.curses.A_BOLD
+                attributes = self.styles.get("focus-" + style, self.styles["focus"])
             shown = printable(text)[:width - x]
             span = self.selection_span(y, width)
             pieces = [(shown, attributes)]

@@ -3451,8 +3451,8 @@ The session list has four aligned fields, without headings:
 - **Session** shows the chat title from Codex's session index or Claude
   Code's `/rename` metadata. It falls back to the registered session name,
   then `Unnamed session` when neither is available. It uses normal text
-  color. The selected session name has color and a `▸` marker; the row has
-  no highlight.
+  color. The selected session name is bright gray with a `▸` marker; the row
+  has no highlight.
 - **PRs** counts all open pull requests the session fixes or reviews, as
   `1 PR` or `5 PRs`, in orange. The count is blank when there are none.
 - **Latest request** shows the newest open, awake question or request.
@@ -3483,6 +3483,10 @@ Managed sessions use the chat layout described in [Run agents in the
 console](agents.md). Press Up for actions in the existing hint line, without
 moving the chat or prompt. Other processes keep the list and panel layout
 below.
+
+The bottom hint line shows shortcuts for the current view. The session list
+offers `n new agent session`; chat and prompt editors show their own
+shortcuts. An empty session list offers only the actions you can use there.
 
 Up and down select a session and update the bottom panel immediately. Press
 Enter or Right to move the focus into that panel. The session list stays
@@ -3545,10 +3549,11 @@ first. Enter presses what has the focus: an option, an action
 such as `7: Discuss` or `9: Snooze`, or a row, which opens that row's drawer
 in place of the open one, or closes the drawer when it is the open row
 itself. A drawer without options opens with the focus on its row, so Enter
-twice opens and closes it. The focused pull request label, inbox subject,
-option, or action uses the selected session name's color. Other row colors
-stay intact. Focused text is bold so a subject that already uses that color,
-or a terminal without colors, still shows the focus.
+twice opens and closes it. The focused label uses a brighter version of its
+existing color: blue for a question, orange for a request, and gray for a
+notice. Pull request labels, session names, and plain option and action
+labels use bright gray. Other row colors stay intact. Bold also shows focus
+in terminals without colors.
 An option or action also has a `›` before it.
 
 The note goes to the agent on the same line as your choice, as
