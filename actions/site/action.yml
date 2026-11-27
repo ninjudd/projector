@@ -68,8 +68,15 @@ runs:
         python3 -P -m projector site build --out "$RUNNER_TEMP/summary-site" --check-visibility \
           --base "${BASE:-/}" --repo-root "$GITHUB_WORKSPACE" ${SUMMARIES:+--summaries "$SUMMARIES"} \
           ${PREPARE:+--prepare "$PREPARE"}
-    - uses: actions/upload-pages-artifact@v3
+    - id: upload
+      uses: actions/upload-pages-artifact@v3
       with:
         path: ${{ runner.temp }}/summary-site
     - id: deploy
-      uses: actions/deploy-pages@v4
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+      env:
+        PAGES_ARTIFACT_ID: ${{ steps.upload.outputs.artifact_id }}
+        PROJECTOR_DEPLOY_SCRIPT: ${{ github.action_path }}/deploy.cjs
+      with:
+        script: |
+          return await require(process.env.PROJECTOR_DEPLOY_SCRIPT)({github, context, core, artifactId: process.env.PAGES_ARTIFACT_ID});

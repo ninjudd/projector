@@ -4390,6 +4390,12 @@ def earlier_workflows(projects_dir: str | None = None) -> list[str]:
 
 
 class WorkflowTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node"), "Pages deployment checks need node")
+    def test_pages_deploys_the_upload_id_and_reports_the_result(self) -> None:
+        result = subprocess.run(["node", "--test", str(Path(__file__).with_name("site_deploy.test.cjs"))],
+                                capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
     def test_the_action_hands_its_prepare_input_to_the_build_after_its_checkout(self) -> None:
         action = (Path(__file__).parents[1] / "actions" / "site" / "action.yml").read_text()
 
