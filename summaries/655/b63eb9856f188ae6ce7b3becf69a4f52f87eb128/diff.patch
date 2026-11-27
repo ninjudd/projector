@@ -1,0 +1,168 @@
+diff --git a/docs/agents.md b/docs/agents.md
+index f933fe71..31103a4e 100644
+--- a/docs/agents.md
++++ b/docs/agents.md
+@@ -5,6 +5,17 @@ items, and open the same conversation in the agent's native terminal.
+ Externally started processes keep their existing Projector inbox and messages.
+ The console controls execution only for sessions it launches.
+ 
++To run the console directly from a source checkout, use Python 3.11 or newer
++from the repository root:
++
++```sh
++PYTHONPATH=src python3 -m projector.console
++```
++
++This uses your checkout's code and existing sessions without changing the
++installed `projector` command. Add `setup` to prepare agent support from that
++checkout.
++
+ ## Install agent support
+ 
+ Install Projector with Python 3.11 or newer. Both `project` and `projector`
+diff --git a/pyproject.toml b/pyproject.toml
+index ac83131c..431720e0 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -13,7 +13,7 @@ requires-python = ">=3.11"
+ 
+ [project.scripts]
+ project = "projector.cli:main"
+-projector = "projector.human:main"
++projector = "projector.console:main"
+ 
+ # The site's assets live with its TypeScript in site/, outside src/, and ship
+ # inside the wheel as projector.site.assets. Mapping a directory from outside
+diff --git a/src/projector/console.py b/src/projector/console.py
+index 07bc24a1..e6a30ec4 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -1,4 +1,4 @@
+-"""`project console`: live Projector sessions grouped by directory, above the selected session's panel.
++"""`projector`: live Projector sessions grouped by directory, above the selected session's panel.
+ 
+ Enter moves the focus from the session list into its panel: its pull request rows, as `rows.py` reads them,
+ its inbox items, each with a drawer that answers, discusses, dismisses, or snoozes it. Every choice and message
+@@ -7,11 +7,12 @@
+ console never claims, delivers, or settles a line, so it never races a deliverer.
+ 
+ `Console` holds what is on screen, turns key names into those calls, and lays the screen out as lines of styled
+-text. `main` puts it in a terminal with curses, which only `main` imports, so tests drive `Console` without one.
++text. `Screen` draws those lines with curses. Tests drive `Console` without a terminal.
+ """
+ 
+ from __future__ import annotations
+ 
++import argparse
+ import base64
+ import os
+ import signal
+@@ -1956,13 +1957,26 @@ def refresh() -> None:
+         return 0
+ 
+ 
+-def main(wake: Callable[[str, dict], None], ensure: Callable[[], object] = lambda: None) -> int:
+-    """Run the console in this terminal until Ctrl-C quits it."""
+-    import curses
++def parser() -> argparse.ArgumentParser:
++    command = argparse.ArgumentParser(prog="projector", description="Run and supervise your agents in a terminal")
++    command.add_argument("command", nargs="?", choices=("setup",), help="install the optional agent environment")
++    return command
+ 
+-    os.environ.setdefault("ESCDELAY", "25")
+-    console = Console(watch.state_root(), wake=wake, ensure=ensure)
+-    try:
+-        return curses.wrapper(lambda window: Screen(window, console, curses).run())
+-    except KeyboardInterrupt:
+-        return 0
++
++def main(argv: Optional[list[str]] = None) -> int:
++    command = parser()
++    args = command.parse_args(argv)
++    if args.command == "setup":
++        from . import runtime
++        try:
++            path = runtime.setup(watch.state_root())
++            print(f"Agent environment ready: {path}")
++            return 0
++        except ProjectorError as error:
++            command.exit(error.exit_code, str(error) + "\n")
++    from .cli import main as project_main
++    return project_main(["console"])
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/src/projector/human.py b/src/projector/human.py
+deleted file mode 100644
+index 1012067a..00000000
+--- a/src/projector/human.py
++++ /dev/null
+@@ -1,30 +0,0 @@
+-from __future__ import annotations
+-
+-import argparse
+-
+-from . import runtime, watch
+-from .core import ProjectorError
+-
+-
+-def parser() -> argparse.ArgumentParser:
+-    command = argparse.ArgumentParser(prog="projector", description="Run and supervise your agents in a terminal")
+-    command.add_argument("command", nargs="?", choices=("setup",), help="install the optional agent environment")
+-    return command
+-
+-
+-def main(argv=None) -> int:
+-    command = parser()
+-    args = command.parse_args(argv)
+-    if args.command == "setup":
+-        try:
+-            path = runtime.setup(watch.state_root())
+-            print(f"Agent environment ready: {path}")
+-            return 0
+-        except ProjectorError as error:
+-            command.exit(error.exit_code, str(error) + "\n")
+-    from .cli import main as project_main
+-    return project_main(["console"])
+-
+-
+-if __name__ == "__main__":
+-    raise SystemExit(main())
+diff --git a/tests/test_console.py b/tests/test_console.py
+index d6dcecdd..2079a6a6 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -1576,7 +1576,7 @@ def test_a_question_line_and_a_conflict_draw_in_the_panels_permission_and_error_
+ 
+ 
+ class Terminal(unittest.TestCase):
+-    """`project console` run in a pseudo-terminal, with the bytes a terminal sends for each key."""
++    """`projector.console` run in a pseudo-terminal, with the bytes a terminal sends for each key."""
+ 
+     def prepare(self) -> None:
+         """A state directory and a home of its own with one live Claude Code session, `S`, asking one question."""
+@@ -1602,7 +1602,7 @@ def start(self) -> None:
+         self.code: Optional[int] = None
+         self.pid, self.fd = pty.fork()
+         if self.pid == 0:
+-            os.execve(sys.executable, [sys.executable, "-m", "projector", "console"], self.env)
++            os.execve(sys.executable, [sys.executable, "-m", "projector.console"], self.env)
+         self.addCleanup(os.close, self.fd)
+         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+         self.shown = bytearray()
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 7e2792b5..2aab9a05 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -254,8 +254,8 @@ def test_each_command_line_is_one_the_parser_runs_or_refuses_for_its_leading_opt
+                 while re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0], re.DOTALL):
+                     words.pop(0)
+                 if words[0] == "projector":
+-                    from projector import human
+-                    human.parser().parse_args(words[1:])
++                    from projector import console
++                    console.parser().parse_args(words[1:])
+                     continue
+                 if not words[1].startswith("-"):
+                     parser.parse_args(words[1:])

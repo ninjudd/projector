@@ -1,0 +1,126 @@
+{
+ "version": 1,
+ "name": "Source console entry point",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 655,
+  "title": "Run the console through projector.console",
+  "head": "b63eb9856f188ae6ce7b3becf69a4f52f87eb128",
+  "headRef": "console-entrypoint",
+  "base": "03957f52655b0424f55bcc1af7dc3c6780cc533c",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s terminal console lets you supervise agent sessions and answer their inbox items. This change gives the console a direct source-checkout launch command: <code>PYTHONPATH=src python3 -m projector.console</code>. You can try the checked-out code without replacing the installed <code>projector</code> command.",
+   "The installed command and the source module use one argument parser. Both retain <code>setup</code> for preparing the optional agent environment and open the existing managed console for ordinary launches. The separate <code>human.py</code> module and unused base-console startup code are removed."
+  ],
+  "cards": [
+   {
+    "id": "launch-paths",
+    "title": "Two launch paths, one console",
+    "html": "<ul class=\"tight\"><li><b>Checkout:</b> <code>PYTHONPATH=src python3 -m projector.console</code></li><li><b>Installed package:</b> <code>projector</code></li><li><b>Optional environment:</b> add <code>setup</code> to either command.</li><li>Both ordinary launches require terminal input and output and reach the existing managed-session console.</li></ul>"
+   },
+   {
+    "id": "review-result",
+    "title": "Review and validation",
+    "html": "<ul class=\"tight\"><li>Clean review at <code>b63eb98</code>, with no findings, suggestions, or follow-ups.</li><li>The configured gate, 138 focused Python tests, and 270 hook tests passed.</li><li>A temporary wheel loaded its installed entry point and preserved the terminal-required error. No installed tool was replaced and no live provider session was launched.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "entrypoint",
+   "title": "One console entry point",
+   "kicker": "Connect the package command and source module to the managed console.",
+   "intro": [
+    "A Python entry point is the function an installed shell command calls. The package now sends <code>projector</code> to <code>projector.console:main</code>, the same module that Python executes for <code>python -m projector.console</code>. The parser accepts the existing optional <code>setup</code> command.",
+    "For an ordinary launch, <code>main</code> delegates to the existing <code>project console</code> handler. That handler checks terminal support and opens the managed console, so this relocation preserves session controls and delivery behavior. Setup still prepares the separate worker environment and reports its normal errors."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "pyproject.toml",
+     "note": "Point the installed projector command at the console module.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 16,
+       "text": "Built a wheel, installed it into an isolated temporary environment, and ran projector --help and projector setup --help successfully without PYTHONPATH."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/console.py",
+     "note": "Own argument parsing and module execution, and reuse the managed-console startup path.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1970,
+       "text": "Traced both setup and ordinary launches. Source and installed ordinary launches retain exit 69 and the terminal-required message when standard input is not a terminal."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/human.py",
+     "note": "Remove the separate startup module after moving its parser and dispatcher.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Searched the repository for projector.human, human:main, and human.py references. No runtime caller or package target still names the removed module."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "verification",
+   "title": "Exercise and document source launches",
+   "kicker": "Run terminal regressions through the module people invoke from a checkout.",
+   "intro": [
+    "The terminal tests launch the console in a pseudo-terminal, a controlled terminal used by the test process. They now execute <code>python -m projector.console</code>, so the existing input, mouse, and shutdown regressions check the new source launch path directly.",
+    "Permission-rule tests parse human-interface commands with the relocated parser. The agent guide documents running the source module and its <code>setup</code> command without changing the installed executable."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_console.py",
+     "collapsed": true,
+     "note": "Exercise source module execution in the existing real-process terminal tests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1605,
+       "text": "The focused run passed all 138 console, managed-console, permissions, and packaging tests, including the pseudo-terminal tests launched through this command."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "collapsed": true,
+     "note": "Check the documented human-interface commands against the parser’s new location.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 258,
+       "text": "Permission-rule regressions pass with console.parser, preserving the existing command and setup grammar."
+      }
+     ]
+    },
+    {
+     "path": "docs/agents.md",
+     "collapsed": true,
+     "note": "Document running the checked-out console directly.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 12,
+       "text": "Ran the documented source module with --help and setup --help. Both describe the console and setup command; its ordinary-launch behavior is covered by the terminal tests."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
