@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, TextIO
 
-from . import agents, artifact_panel, codex_watch, inbox, repo_inbox, rows, session_titles, watch
+from . import agents, artifact_panel, codex_watch, inbox, repo_inbox, rows, session_metadata, watch
 from .core import ProjectorError
 
 INBOX_EVERY = 1.0
@@ -399,7 +399,7 @@ class Console:
         self.lock = threading.RLock()
         self.refresh_now = threading.Event()
         self.sessions: dict[str, Session] = {}
-        self.titles = session_titles.SessionTitles()
+        self.metadata = session_metadata.SessionMetadata()
         self.view = "home"
         self.session: Optional[str] = None
         self.selected: Optional[str] = None
@@ -477,9 +477,10 @@ class Console:
                     continue
                 found.live[name] = (*describe(self.root, name, delivery, record), seen, items)
                 found.entries[name] = entries
-            titles = self.titles.read({name: details[1] for name, details in found.live.items()})
-            for name, title in titles.items():
-                found.live[name] = (title, *found.live[name][1:])
+            metadata = self.metadata.read({name: details[1] for name, details in found.live.items()})
+            for name, native in metadata.items():
+                label, _, cwd, *rest = found.live[name]
+                found.live[name] = (native.title or label, native.host, native.cwd or cwd, *rest)
             names = list(found.live)
         for name in names:
             if work.rows or name not in work.signatures:
