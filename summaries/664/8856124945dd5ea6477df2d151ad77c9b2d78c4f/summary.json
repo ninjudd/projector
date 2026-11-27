@@ -1,0 +1,147 @@
+{
+ "version": 1,
+ "name": "Console checkout groups",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 664,
+  "title": "Group worktree sessions under their main checkout",
+  "head": "8856124945dd5ea6477df2d151ad77c9b2d78c4f",
+  "headRef": "console-main-checkout-groups",
+  "base": "ebe85778d9206add444efa0cff2f0a2d6e4188d5",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector console lists live agent sessions under directory headings. A Git worktree is an additional working copy of a repository. Previously, a session in each worktree appeared under its own heading, making one checkout's work look like several unrelated projects.",
+   "This change finds the main checkout through Git metadata and uses it as the shared heading for linked worktrees, including worktrees stored elsewhere. Each session retains its actual working directory for actions and new-session prompts. Independent clones stay separate, even when they use the same remote."
+  ],
+  "cards": [
+   {
+    "id": "directory-contract",
+    "title": "Two directory values",
+    "html": "<ul class=\"tight\"><li><b>Checkout group:</b> the heading, sort key, and collapse key shared by sessions in linked worktrees.</li><li><b>Actual working directory:</b> the session's own directory, retained for agent actions and new-session prompts.</li><li><b>Fallback:</b> when Git cannot identify a main checkout, the recorded directory remains the heading.</li></ul>"
+   },
+   {
+    "id": "review-result",
+    "title": "Review and validation",
+    "html": "<p><a href=\"https://github.com/ninjudd/projector/pull/664#pullrequestreview-6094263541\">Clean review of 8856124</a>, covering all seven changed files with no findings.</p><ul class=\"tight\"><li>All 146 focused console, managed-agent console, and artifact-panel tests passed.</li><li>The configured local gate passed, including plugin validation, hook tests, hook type checking, and diff checks.</li><li>The GitHub <code>check</code> job passed on the reviewed head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "git-discovery",
+   "title": "Find each session's main checkout",
+   "kicker": "Resolve shared Git metadata once per active checkout",
+   "intro": [
+    "Git gives linked worktrees a common metadata directory, which holds the repository data they share. The new directory resolver uses that identity to find the main checkout. This avoids guessing from folder names or remote URLs, which could combine independent clones or miss worktrees outside the main directory.",
+    "A session in the main checkout supplies its path directly. Otherwise, the resolver reads Git's worktree list, checks that its first entry is a real working checkout with the same shared metadata, and caches the result. Bare repositories and failed lookups keep the recorded session directory as the heading."
+   ],
+   "files": [
+    {
+     "path": "src/projector/session_metadata.py",
+     "note": "Add checkout discovery beside the existing session metadata reader, with a cache keyed by the shared Git directory.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 137,
+       "text": "The real temporary-repository regression passed: linked worktrees group together, while an independent clone with the same remote and an ordinary folder named like a worktree stay separate."
+      },
+      {
+       "kind": "verify",
+       "line": 149,
+       "text": "The NUL-delimited Git output preserves a checkout path containing a line break. The focused regression created such paths and passed."
+      },
+      {
+       "kind": "verify",
+       "line": 158,
+       "text": "A Git lookup exception leaves the actual directories visible and permits the next refresh to recover. The failure-and-recovery regression passed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "console-groups",
+   "title": "Use checkout groups throughout the console",
+   "kicker": "Keep headings and navigation consistent while retaining each session's directory",
+   "intro": [
+    "A console session now holds both its actual working directory and a resolved checkout group. Sorting, heading rendering, collapse controls, and footer hints all use the group. This lets one heading hide every linked-worktree session and preserves a usable selection when the session representing a collapsed group expires.",
+    "Directory discovery runs during background refresh, outside the lock used to draw the screen and handle keys. The managed-agent console inherits that refresh path and uses the same group for its hints. Its new-session prompt still takes the highlighted session's actual directory."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Traced both keyboard and mouse group controls through the shared console, then checked the managed-agent override. The collapse key, visible rows, heading target, and expansion hint all use the same group value."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Carry discovered checkout groups through refresh and use them for home-list rendering, sorting, and collapse navigation.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 86,
+       "text": "The directory property is the display-group key. The separate cwd field continues to hold the session's actual working directory."
+      },
+      {
+       "kind": "verify",
+       "line": 454,
+       "text": "Traced the refresh worker and lock boundaries: Git discovery finishes before the screen lock is acquired to apply the result."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/agent_console.py",
+     "note": "Make the managed-agent footer offer expansion when the highlighted session's checkout group is collapsed."
+    },
+    {
+     "path": "tests/test_console.py",
+     "collapsed": true,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The seven new regressions passed with real temporary Git repositories. They cover internal and external worktrees, subdirectories, independent clones, collapse selection after expiry, unusual paths, bare and separate Git metadata, and retry after Git failure."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_agent_console.py",
+     "collapsed": true,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The new managed-agent regression passed: the heading names the main checkout, the collapsed footer offers expansion, and a new-session prompt retains the linked worktree's actual directory."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "usage",
+   "title": "Explain the grouped session list",
+   "kicker": "Document headings, fallback behavior, and new-session directories",
+   "intro": [
+    "The user guides explain why linked worktrees share a heading and independent clones do not. They also make the launch behavior explicit: selecting a session under the main checkout's heading still starts a new session in the selected session's own directory."
+   ],
+   "files": [
+    {
+     "path": "docs/agents.md",
+     "collapsed": true
+    },
+    {
+     "path": "docs/cli.md",
+     "collapsed": true,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Compared the documented grouping, fallback, sort order, and launch-directory behavior with the resolver and console callers at the reviewed head."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

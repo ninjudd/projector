@@ -1,0 +1,439 @@
+diff --git a/docs/agents.md b/docs/agents.md
+index dec3ca96..39b794f2 100644
+--- a/docs/agents.md
++++ b/docs/agents.md
+@@ -46,8 +46,10 @@ for current terms. Codex uses its native signed-in configuration.
+ Highlight a session and press `n` to enter the first prompt immediately.
+ The new session uses the highlighted session's working directory and provider
+ (Claude or Codex), with the provider's native default model. For another
+-kind of process, the provider defaults to Claude. When no session supplies
+-a directory, Projector uses its current directory.
++kind of process, the provider defaults to Claude. Linked worktrees appear
++under their main checkout's heading in the session list. The new session
++starts in the highlighted session's actual working directory. When no
++session supplies a directory, Projector uses its current directory.
+ 
+ Press Up from the prompt to change settings:
+ 
+diff --git a/docs/cli.md b/docs/cli.md
+index d2c30d38..f1652d93 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3440,13 +3440,19 @@ A session appears only while its deliverer renews it and it has a registered
+ Projector agent, a watch subscription, or a visible inbox item. Delivery
+ hooks alone do not put a session in the list.
+ 
+-Directory headings sort by path and keep separate checkouts apart, even when
+-they share a repository. Paths within your home directory start with `~`.
+-Claude sessions use the working directory in their own native transcript,
+-with the Projector registration as a fallback. Sessions without a recorded
+-directory appear under `Unknown working directory`, after the other groups.
+-A blank line precedes each group, including the first. The screen leaves one
+-space at the left edge.
++Directory headings group linked Git worktrees under their main checkout,
++including worktrees outside the checkout's directory. Independent clones
++remain separate, even when they use the same remote. Sorting and collapsing
++use the checkout group. When the main checkout cannot be resolved, the
++session keeps its recorded directory as its heading.
++
++Headings sort by path. Paths within your home directory start with `~`.
++Claude sessions take their actual working directory from their native
++transcript, with the Projector registration as a fallback. Agent actions and
++new-session prompts use that actual directory, including a worktree's path.
++Sessions without a recorded directory appear under `Unknown working
++directory`, after the other groups. A blank line precedes each group,
++including the first. The screen leaves one space at the left edge.
+ 
+ The session list has four aligned fields, without headings:
+ 
+diff --git a/src/projector/agent_console.py b/src/projector/agent_console.py
+index c552d848..58695015 100644
+--- a/src/projector/agent_console.py
++++ b/src/projector/agent_console.py
+@@ -583,7 +583,7 @@ def footer(self, width=None):
+                 hint = "n new agent session"
+                 if self.sessions:
+                     session = self.viewed()
+-                    action = "Enter expand" if session and session.cwd in self.collapsed else (
++                    action = "Enter expand" if session and session.directory in self.collapsed else (
+                         "Enter open · Backspace collapse")
+                     hint += " · ↑↓ select · " + action
+                 return [Line([(console.fit(hint + " · Ctrl-C quit", width), "subtle")])]
+diff --git a/src/projector/console.py b/src/projector/console.py
+index 4be889fc..73b9243d 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -79,6 +79,11 @@ class Session:
+     # The repository inbox's entries for the repository the session works in.
+     entries: list[dict] = field(default_factory=list)
+     artifacts: list[dict] = field(default_factory=list)
++    checkout: str = ""
++
++    @property
++    def directory(self) -> str:
++        return self.checkout or self.cwd
+ 
+ 
+ @dataclass
+@@ -157,6 +162,7 @@ class Found:
+     """What a refresh read."""
+ 
+     live: Optional[dict[str, tuple[str, str, str, Optional[float], tuple, Optional[list[dict]]]]] = None
++    directories: dict[str, str] = field(default_factory=dict)
+     rows: dict[str, list[rows.Row]] = field(default_factory=dict)
+     entries: dict[str, list[dict]] = field(default_factory=dict)
+     artifacts: dict[str, list[dict]] = field(default_factory=dict)
+@@ -402,6 +408,7 @@ def __init__(self, root: Path, *, clock: Callable[[], float] = time.time,
+         self.refresh_now = threading.Event()
+         self.sessions: dict[str, Session] = {}
+         self.metadata = session_metadata.SessionMetadata()
++        self.directories = session_metadata.SessionDirectories()
+         self.view = "home"
+         self.session: Optional[str] = None
+         self.selected: Optional[str] = None
+@@ -442,6 +449,9 @@ def tick(self) -> None:
+             work = self.due(self.clock())
+         if work is not None:
+             found = self.load(work)
++            if found.live is not None:
++                # Git lookup stays outside the screen lock so a slow repository cannot block navigation.
++                found.directories = self.directories.read({name: details[2] for name, details in found.live.items()})
+             with self.lock:
+                 self.apply(found)
+ 
+@@ -503,6 +513,7 @@ def apply(self, found: Found) -> None:
+             for name, (label, host, cwd, changed, seen, items) in found.live.items():
+                 session = self.sessions.setdefault(name, Session(name, host, label))
+                 session.host, session.label, session.cwd, session.updated_at = host, label, cwd, changed
++                session.checkout = found.directories.get(name, "")
+                 session.signature = seen
+                 if items is not None:
+                     session.items = items
+@@ -533,9 +544,9 @@ def reload(self) -> None:
+     def settle_view(self) -> None:
+         """Keep collapsed groups navigable and close controls whose session, row, or option is gone."""
+         for cwd, name in list(self.collapsed.items()):
+-            if name in self.sessions and self.sessions[name].cwd == cwd:
++            if name in self.sessions and self.sessions[name].directory == cwd:
+                 continue
+-            replacement = next((session.name for session in self.home() if session.cwd == cwd), None)
++            replacement = next((session.name for session in self.home() if session.directory == cwd), None)
+             if replacement is None:
+                 del self.collapsed[cwd]
+             else:
+@@ -564,7 +575,7 @@ def now_ms(self) -> int:
+ 
+     def home(self) -> list[Session]:
+         now = self.now_ms()
+-        return sorted(self.sessions.values(), key=lambda session: (not bool(session.cwd), session.cwd,
++        return sorted(self.sessions.values(), key=lambda session: (not bool(session.directory), session.directory,
+                                                                   needs(session, now)))
+ 
+     def viewed(self) -> Optional[Session]:
+@@ -588,7 +599,7 @@ def entries(self) -> list[tuple[str, object]]:
+     def keys(self) -> list[str]:
+         if self.view == "home":
+             return [session.name for session in self.home()
+-                    if session.cwd not in self.collapsed or self.collapsed[session.cwd] == session.name]
++                    if session.directory not in self.collapsed or self.collapsed[session.directory] == session.name]
+         return [key for key, _ in self.entries()]
+ 
+     def row(self, key: Optional[str]) -> Optional[rows.Row]:
+@@ -659,10 +670,10 @@ def key(self, name: str) -> None:
+             elif self.view == "home":
+                 session = self.viewed()
+                 if session is not None:
+-                    if name == "backspace" and session.cwd not in self.collapsed:
++                    if name == "backspace" and session.directory not in self.collapsed:
+                         self.toggle_group(session.name)
+                     elif name in ("enter", "right"):
+-                        if session.cwd in self.collapsed:
++                        if session.directory in self.collapsed:
+                             self.toggle_group(session.name)
+                         else:
+                             self.open_panel(session.name)
+@@ -670,7 +681,7 @@ def key(self, name: str) -> None:
+                 self.panel_key(name)
+ 
+     def toggle_group(self, name: str) -> None:
+-        cwd = self.sessions[name].cwd
++        cwd = self.sessions[name].directory
+         if cwd in self.collapsed:
+             del self.collapsed[cwd]
+         else:
+@@ -1175,7 +1186,7 @@ def footer(self, width: Optional[int] = None) -> list[Line]:
+                 return [*lines, Line([("Press Ctrl-C again to exit", "warning")])]
+             if self.view == "home":
+                 session = self.viewed()
+-                action = "Enter or → expand group" if session and session.cwd in self.collapsed else (
++                action = "Enter or → expand group" if session and session.directory in self.collapsed else (
+                     "Enter or → focus panel · Backspace collapse group")
+                 hint = f"↑↓ select · {action} · PgUp PgDn scroll · Ctrl-C quit"
+             elif self.drawer is None:
+@@ -1218,18 +1229,18 @@ def columns(label: str, count: str, request: str, changed: str, chosen: bool = F
+         previous: Optional[str] = None
+         group_start = 0
+         for session in listed:
+-            if session.cwd != previous:
++            if session.directory != previous:
+                 lines.append(Line([]))
+                 group_start = len(lines)
+-                closed = session.cwd in self.collapsed
+-                target = self.collapsed.get(session.cwd, session.name)
++                closed = session.directory in self.collapsed
++                target = self.collapsed.get(session.directory, session.name)
+                 lines.append(Line([("▸ " if closed else "", "subtle"),
+-                                   (directory_label(session.cwd), "focus-branch" if closed and target == chosen
++                                   (directory_label(session.directory), "focus-branch" if closed and target == chosen
+                                     else "branch")], targets=[(0, width, Target(target, group=True))]))
+-                previous = session.cwd
++                previous = session.directory
+                 if closed and target == chosen:
+                     focus = (group_start, group_start)
+-            if session.cwd in self.collapsed:
++            if session.directory in self.collapsed:
+                 continue
+             start = len(lines)
+             request = headline(session, now)
+diff --git a/src/projector/session_metadata.py b/src/projector/session_metadata.py
+index 239c78ea..2fe0b20b 100644
+--- a/src/projector/session_metadata.py
++++ b/src/projector/session_metadata.py
+@@ -1,4 +1,4 @@
+-"""Read native session metadata without loading conversations into the console."""
++"""Read session metadata without loading conversations into the console."""
+ 
+ from __future__ import annotations
+ 
+@@ -7,7 +7,7 @@
+ from dataclasses import dataclass, field
+ from pathlib import Path
+ 
+-from . import watch
++from . import config, watch
+ 
+ READ_BYTES = 256 * 1024
+ 
+@@ -115,3 +115,47 @@ def read(self, sessions: dict[str, str]) -> dict[str, Metadata]:
+         self.files = {path: data for path, data in self.files.items() if path in active_paths}
+         self.claude_paths = {name: path for name, path in self.claude_paths.items() if name in sessions}
+         return found
++
++
++class SessionDirectories:
++    def __init__(self) -> None:
++        self.checkouts: dict[Path, str | None] = {}
++
++    def read(self, sessions: dict[str, str]) -> dict[str, str]:
++        """The main checkout for each session, falling back to its recorded directory."""
++        found = dict(sessions)
++        trees: dict[str, config.WorkingTree] = {}
++        active: set[Path] = set()
++        for name, cwd in sessions.items():
++            try:
++                directory = Path(cwd)
++                if not cwd or not directory.is_absolute() or not directory.is_dir():
++                    continue
++                tree = config.working_tree(directory)
++                if tree is None:
++                    continue
++                common = tree.common.resolve()
++                active.add(common)
++                trees[name] = tree
++                # A separate Git directory has no reverse pointer to its primary checkout.
++                if tree.git_dir.resolve() == common:
++                    self.checkouts[common] = str(tree.top.resolve())
++            except (OSError, ValueError, RuntimeError, config.ConfigError):
++                continue
++        for name, tree in trees.items():
++            try:
++                common = tree.common.resolve()
++                if common not in self.checkouts:
++                    listed = config.git_output(["worktree", "list", "--porcelain", "-z"], cwd=tree.top)
++                    primary = listed.split(b"\0\0", 1)[0].split(b"\0")
++                    path = Path(os.fsdecode(primary[0].removeprefix(b"worktree ")))
++                    main = config.working_tree(path) if b"bare" not in primary and path.is_absolute() else None
++                    self.checkouts[common] = str(path) if (main is not None and main.top.resolve() == path
++                        and main.common.resolve() == common) else None
++                checkout = self.checkouts[common]
++                if checkout and Path(checkout).is_dir():
++                    found[name] = checkout
++            except (OSError, ValueError, RuntimeError, config.ConfigError):
++                continue
++        self.checkouts = {common: path for common, path in self.checkouts.items() if common in active}
++        return found
+diff --git a/tests/test_agent_console.py b/tests/test_agent_console.py
+index 877e6448..2a0e6923 100644
+--- a/tests/test_agent_console.py
++++ b/tests/test_agent_console.py
+@@ -9,6 +9,7 @@
+ from projector import agent_console, console, inbox, runtime, watch
+ from projector.inbox import write_json
+ from projector.runtime_store import Store
++from tests.test_worktree import git
+ 
+ 
+ class AgentConsoleTests(unittest.TestCase):
+@@ -31,13 +32,13 @@ def replace_field(self, text):
+             self.console.key('delete')
+         self.type(text)
+ 
+-    def managed(self, name='managed-session', state='ready'):
++    def managed(self, name='managed-session', state='ready', cwd=None):
+         folder = watch.session_folder(self.root, name)
+         with inbox.locked(folder):
+             write_json(folder / 'runtime.json', {'schema_version': 1, 'session': name, 'backend': 'codex',
+-                'owner': 'managed', 'state': state, 'cwd': self.temporary.name, 'renewed_at': time.time()})
++                'owner': 'managed', 'state': state, 'cwd': cwd or self.temporary.name, 'renewed_at': time.time()})
+             write_json(folder / 'agent.json', {'schema_version': 1, 'host': 'codex',
+-                       'cwd': self.temporary.name, 'updated_at': watch.stamp(self.now)})
++                       'cwd': cwd or self.temporary.name, 'updated_at': watch.stamp(self.now)})
+         Store(folder)
+         self.console.tick()
+         return folder
+@@ -87,6 +88,21 @@ def test_stopped_managed_sessions_remain_available_to_resume(self):
+         self.console.key('up')
+         self.assertIn('r Resume', self.console.footer()[0].text)
+ 
++    def test_a_worktree_group_shows_the_main_checkout_and_launches_from_the_actual_directory(self):
++        root = Path(self.temporary.name).resolve()
++        checkout, linked = root / 'main checkout', root / 'linked checkout'
++        git(root, 'init', '--quiet', '-b', 'trunk', str(checkout))
++        git(checkout, 'commit', '--quiet', '--allow-empty', '-m', 'Initial commit')
++        git(checkout, 'worktree', 'add', '--quiet', '--detach', str(linked))
++        self.managed(cwd=str(linked))
++        lines, _ = self.console.home_lines(180)
++        headings = [line.text for line in lines if any(target.group for _, _, target in line.targets)]
++        self.assertEqual([str(checkout)], headings)
++        self.console.key('backspace')
++        self.assertIn('Enter expand', self.console.footer(100)[0].text)
++        self.console.key('n')
++        self.assertEqual(str(linked), self.console.launch_form['cwd'])
++
+     def test_a_new_prompt_uses_the_highlighted_sessions_directory(self):
+         first = Path(self.temporary.name) / 'first'
+         second = Path(self.temporary.name) / 'second'
+diff --git a/tests/test_console.py b/tests/test_console.py
+index 9d17bf65..66e3212a 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -22,6 +22,7 @@
+ 
+ from projector import cli, config, console, inbox, relay, repo_inbox, session_metadata, watch
+ from projector.inbox import read_json, write_json
++from tests.test_worktree import git
+ 
+ SOURCE = Path(cli.__file__).resolve().parents[1]
+ 
+@@ -202,6 +203,111 @@ def test_the_home_list_holds_live_claude_and_codex_sessions_and_leaves_out_a_lap
+                          sorted((one.label, one.host, one.cwd) for one in self.console.home()))
+ 
+ 
++class CheckoutGroups(ConsoleCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.checkout = (self.scratch / "main checkout").resolve()
++        git(self.scratch, "init", "--quiet", "-b", "trunk", str(self.checkout))
++        git(self.checkout, "commit", "--quiet", "--allow-empty", "-m", "Initial commit")
++        self.linked = self.checkout / ".claude" / "worktrees" / "topic"
++        self.external = (self.scratch / "external worktree").resolve()
++        git(self.checkout, "worktree", "add", "--quiet", "--detach", str(self.linked))
++        git(self.checkout, "worktree", "add", "--quiet", "--detach", str(self.external))
++
++    def register(self, name: str, cwd: Path) -> None:
++        self.codex(name, cwd=str(cwd))
++        write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
++
++    def headings(self) -> list[str]:
++        return [line.text for line in self.console.home_lines(180)[0]
++                if any(target.group for _, _, target in line.targets)]
++
++    def test_linked_worktrees_and_subdirectories_share_the_main_checkout_heading(self) -> None:
++        child = self.external / "src"
++        child.mkdir()
++        for name, cwd in (("main", self.checkout), ("linked", self.linked), ("external", child)):
++            self.register(name, cwd)
++        self.console.tick()
++
++        self.assertEqual([str(self.checkout)], self.headings())
++        self.assertEqual({"main", "linked", "external"}, set(self.console.keys()))
++        self.assertEqual(str(self.linked), self.console.sessions["linked"].cwd)
++        self.assertEqual(str(child), self.console.sessions["external"].cwd)
++
++    def test_independent_clones_and_ordinary_worktree_named_folders_stay_separate(self) -> None:
++        clone = (self.scratch / "other clone").resolve()
++        git(self.scratch, "clone", "--quiet", "--local", str(self.checkout), str(clone))
++        git(self.checkout, "remote", "add", "origin", "https://github.com/acme/app.git")
++        git(clone, "remote", "set-url", "origin", "https://github.com/acme/app.git")
++        ordinary = (self.scratch / "ordinary" / ".claude" / "worktrees" / "topic").resolve()
++        ordinary.mkdir(parents=True)
++        for name, cwd in (("main", self.checkout), ("linked", self.linked), ("clone", clone), ("other", ordinary)):
++            self.register(name, cwd)
++        self.console.tick()
++
++        self.assertEqual({str(self.checkout), str(clone), str(ordinary)}, set(self.headings()))
++        self.assertEqual({"main", "linked", "clone", "other"}, set(self.console.keys()))
++
++    def test_collapsing_a_checkout_hides_all_its_worktrees_and_survives_the_selected_session_expiring(self) -> None:
++        self.register("main", self.checkout)
++        self.register("linked", self.linked)
++        self.console.tick()
++        self.console.selected = "linked"
++        self.press("backspace")
++        self.assertEqual(["linked"], self.console.keys())
++        self.assertEqual(["▸ " + str(self.checkout)], self.headings())
++        (self.folder("linked") / "codex.json").unlink()
++        self.clock.now += console.INBOX_EVERY
++        self.console.tick()
++
++        self.assertEqual("main", self.console.viewed().name)
++        self.assertEqual(["▸ " + str(self.checkout)], self.headings())
++        self.press("enter")
++        self.assertEqual([str(self.checkout)], self.headings())
++
++    @unittest.skipIf(os.name == "nt", "Windows paths cannot contain line breaks")
++    def test_a_checkout_path_with_a_line_break_is_read_as_one_git_record(self) -> None:
++        checkout = (self.scratch / "main\ncheckout").resolve()
++        linked = (self.scratch / "linked\ncheckout").resolve()
++        git(self.scratch, "init", "--quiet", "-b", "trunk", str(checkout))
++        git(checkout, "commit", "--quiet", "--allow-empty", "-m", "Initial commit")
++        git(checkout, "worktree", "add", "--quiet", "--detach", str(linked))
++        self.register("linked", linked)
++        self.console.tick()
++
++        self.assertEqual([str(checkout)], self.headings())
++        self.assertEqual(str(linked), self.console.sessions["linked"].cwd)
++
++    def test_a_bare_repository_does_not_become_a_working_directory_heading(self) -> None:
++        bare, linked = (self.scratch / "bare.git").resolve(), (self.scratch / "bare-linked").resolve()
++        git(self.scratch, "clone", "--quiet", "--bare", str(self.checkout), str(bare))
++        git(bare, "worktree", "add", "--quiet", "--detach", str(linked))
++        self.register("linked", linked)
++        self.console.tick()
++        self.assertEqual([str(linked)], self.headings())
++
++    def test_a_primary_checkout_with_separate_git_metadata_groups_its_linked_session(self) -> None:
++        checkout, metadata, linked = ((self.scratch / name).resolve() for name in ("separate-main", "metadata", "separate-linked"))
++        git(self.scratch, "init", "--quiet", "-b", "trunk", "--separate-git-dir", str(metadata), str(checkout))
++        git(checkout, "commit", "--quiet", "--allow-empty", "-m", "Initial commit")
++        git(checkout, "worktree", "add", "--quiet", "--detach", str(linked))
++        self.register("a-linked", linked)
++        self.register("z-main", checkout)
++        self.console.tick()
++        self.assertEqual([str(checkout)], self.headings())
++
++    def test_git_failure_falls_back_to_actual_directories_and_retries_after_recovery(self) -> None:
++        self.register("external", self.external)
++        self.register("linked", self.linked)
++        unavailable = session_metadata.config.ConfigError("Git unavailable")
++        with mock.patch.object(session_metadata.config, "git_output", side_effect=unavailable):
++            self.console.tick()
++        self.assertEqual({str(self.external), str(self.linked)}, set(self.headings()))
++        self.clock.now += console.INBOX_EVERY
++        self.console.tick()
++        self.assertEqual([str(self.checkout)], self.headings())
++
++
+ class HomeOrder(ConsoleCase):
+     def test_sessions_share_a_directory_heading_without_merging_distinct_checkouts(self) -> None:
+         for name, cwd in (("first", "/work/app"), ("other", "/work/app-copy"), ("second", "/work/app"),
