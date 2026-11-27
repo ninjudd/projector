@@ -22,6 +22,7 @@ from unittest import mock
 
 from projector import cli, config, console, inbox, relay, repo_inbox, session_metadata, watch
 from projector.inbox import read_json, write_json
+from tests.test_worktree import git
 
 SOURCE = Path(cli.__file__).resolve().parents[1]
 
@@ -200,6 +201,111 @@ class SessionSet(ConsoleCase):
 
         self.assertEqual([("Unnamed session", "codex", str(checkout)), ("fixer", "claude", "")],
                          sorted((one.label, one.host, one.cwd) for one in self.console.home()))
+
+
+class CheckoutGroups(ConsoleCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.checkout = (self.scratch / "main checkout").resolve()
+        git(self.scratch, "init", "--quiet", "-b", "trunk", str(self.checkout))
+        git(self.checkout, "commit", "--quiet", "--allow-empty", "-m", "Initial commit")
+        self.linked = self.checkout / ".claude" / "worktrees" / "topic"
+        self.external = (self.scratch / "external worktree").resolve()
+        git(self.checkout, "worktree", "add", "--quiet", "--detach", str(self.linked))
+        git(self.checkout, "worktree", "add", "--quiet", "--detach", str(self.external))
+
+    def register(self, name: str, cwd: Path) -> None:
+        self.codex(name, cwd=str(cwd))
+        write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
+
+    def headings(self) -> list[str]:
+        return [line.text for line in self.console.home_lines(180)[0]
+                if any(target.group for _, _, target in line.targets)]
+
+    def test_linked_worktrees_and_subdirectories_share_the_main_checkout_heading(self) -> None:
+        child = self.external / "src"
+        child.mkdir()
+        for name, cwd in (("main", self.checkout), ("linked", self.linked), ("external", child)):
+            self.register(name, cwd)
+        self.console.tick()
+
+        self.assertEqual([str(self.checkout)], self.headings())
+        self.assertEqual({"main", "linked", "external"}, set(self.console.keys()))
+        self.assertEqual(str(self.linked), self.console.sessions["linked"].cwd)
+        self.assertEqual(str(child), self.console.sessions["external"].cwd)
+
+    def test_independent_clones_and_ordinary_worktree_named_folders_stay_separate(self) -> None:
+        clone = (self.scratch / "other clone").resolve()
+        git(self.scratch, "clone", "--quiet", "--local", str(self.checkout), str(clone))
+        git(self.checkout, "remote", "add", "origin", "https://github.com/acme/app.git")
+        git(clone, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+        ordinary = (self.scratch / "ordinary" / ".claude" / "worktrees" / "topic").resolve()
+        ordinary.mkdir(parents=True)
+        for name, cwd in (("main", self.checkout), ("linked", self.linked), ("clone", clone), ("other", ordinary)):
+            self.register(name, cwd)
+        self.console.tick()
+
+        self.assertEqual({str(self.checkout), str(clone), str(ordinary)}, set(self.headings()))
+        self.assertEqual({"main", "linked", "clone", "other"}, set(self.console.keys()))
+
+    def test_collapsing_a_checkout_hides_all_its_worktrees_and_survives_the_selected_session_expiring(self) -> None:
+        self.register("main", self.checkout)
+        self.register("linked", self.linked)
+        self.console.tick()
+        self.console.selected = "linked"
+        self.press("backspace")
+        self.assertEqual(["linked"], self.console.keys())
+        self.assertEqual(["▸ " + str(self.checkout)], self.headings())
+        (self.folder("linked") / "codex.json").unlink()
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+
+        self.assertEqual("main", self.console.viewed().name)
+        self.assertEqual(["▸ " + str(self.checkout)], self.headings())
+        self.press("enter")
+        self.assertEqual([str(self.checkout)], self.headings())
+
+    @unittest.skipIf(os.name == "nt", "Windows paths cannot contain line breaks")
+    def test_a_checkout_path_with_a_line_break_is_read_as_one_git_record(self) -> None:
+        checkout = (self.scratch / "main\ncheckout").resolve()
+        linked = (self.scratch / "linked\ncheckout").resolve()
+        git(self.scratch, "init", "--quiet", "-b", "trunk", str(checkout))
+        git(checkout, "commit", "--quiet", "--allow-empty", "-m", "Initial commit")
+        git(checkout, "worktree", "add", "--quiet", "--detach", str(linked))
+        self.register("linked", linked)
+        self.console.tick()
+
+        self.assertEqual([str(checkout)], self.headings())
+        self.assertEqual(str(linked), self.console.sessions["linked"].cwd)
+
+    def test_a_bare_repository_does_not_become_a_working_directory_heading(self) -> None:
+        bare, linked = (self.scratch / "bare.git").resolve(), (self.scratch / "bare-linked").resolve()
+        git(self.scratch, "clone", "--quiet", "--bare", str(self.checkout), str(bare))
+        git(bare, "worktree", "add", "--quiet", "--detach", str(linked))
+        self.register("linked", linked)
+        self.console.tick()
+        self.assertEqual([str(linked)], self.headings())
+
+    def test_a_primary_checkout_with_separate_git_metadata_groups_its_linked_session(self) -> None:
+        checkout, metadata, linked = ((self.scratch / name).resolve() for name in ("separate-main", "metadata", "separate-linked"))
+        git(self.scratch, "init", "--quiet", "-b", "trunk", "--separate-git-dir", str(metadata), str(checkout))
+        git(checkout, "commit", "--quiet", "--allow-empty", "-m", "Initial commit")
+        git(checkout, "worktree", "add", "--quiet", "--detach", str(linked))
+        self.register("a-linked", linked)
+        self.register("z-main", checkout)
+        self.console.tick()
+        self.assertEqual([str(checkout)], self.headings())
+
+    def test_git_failure_falls_back_to_actual_directories_and_retries_after_recovery(self) -> None:
+        self.register("external", self.external)
+        self.register("linked", self.linked)
+        unavailable = session_metadata.config.ConfigError("Git unavailable")
+        with mock.patch.object(session_metadata.config, "git_output", side_effect=unavailable):
+            self.console.tick()
+        self.assertEqual({str(self.external), str(self.linked)}, set(self.headings()))
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+        self.assertEqual([str(self.checkout)], self.headings())
 
 
 class HomeOrder(ConsoleCase):

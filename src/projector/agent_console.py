@@ -583,7 +583,7 @@ class Console(console.Console):
                 hint = "n new agent session"
                 if self.sessions:
                     session = self.viewed()
-                    action = "Enter expand" if session and session.cwd in self.collapsed else (
+                    action = "Enter expand" if session and session.directory in self.collapsed else (
                         "Enter open · Backspace collapse")
                     hint += " · ↑↓ select · " + action
                 return [Line([(console.fit(hint + " · Ctrl-C quit", width), "subtle")])]

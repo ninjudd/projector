@@ -3440,13 +3440,19 @@ A session appears only while its deliverer renews it and it has a registered
 Projector agent, a watch subscription, or a visible inbox item. Delivery
 hooks alone do not put a session in the list.
 
-Directory headings sort by path and keep separate checkouts apart, even when
-they share a repository. Paths within your home directory start with `~`.
-Claude sessions use the working directory in their own native transcript,
-with the Projector registration as a fallback. Sessions without a recorded
-directory appear under `Unknown working directory`, after the other groups.
-A blank line precedes each group, including the first. The screen leaves one
-space at the left edge.
+Directory headings group linked Git worktrees under their main checkout,
+including worktrees outside the checkout's directory. Independent clones
+remain separate, even when they use the same remote. Sorting and collapsing
+use the checkout group. When the main checkout cannot be resolved, the
+session keeps its recorded directory as its heading.
+
+Headings sort by path. Paths within your home directory start with `~`.
+Claude sessions take their actual working directory from their native
+transcript, with the Projector registration as a fallback. Agent actions and
+new-session prompts use that actual directory, including a worktree's path.
+Sessions without a recorded directory appear under `Unknown working
+directory`, after the other groups. A blank line precedes each group,
+including the first. The screen leaves one space at the left edge.
 
 The session list has four aligned fields, without headings:
 

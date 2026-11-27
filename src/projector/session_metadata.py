@@ -1,4 +1,4 @@
-"""Read native session metadata without loading conversations into the console."""
+"""Read session metadata without loading conversations into the console."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import watch
+from . import config, watch
 
 READ_BYTES = 256 * 1024
 
@@ -114,4 +114,48 @@ class SessionMetadata:
                 found[name] = Metadata(title.strip(), "claude", cwd if "\0" not in cwd and Path(cwd).is_absolute() else "")
         self.files = {path: data for path, data in self.files.items() if path in active_paths}
         self.claude_paths = {name: path for name, path in self.claude_paths.items() if name in sessions}
+        return found
+
+
+class SessionDirectories:
+    def __init__(self) -> None:
+        self.checkouts: dict[Path, str | None] = {}
+
+    def read(self, sessions: dict[str, str]) -> dict[str, str]:
+        """The main checkout for each session, falling back to its recorded directory."""
+        found = dict(sessions)
+        trees: dict[str, config.WorkingTree] = {}
+        active: set[Path] = set()
+        for name, cwd in sessions.items():
+            try:
+                directory = Path(cwd)
+                if not cwd or not directory.is_absolute() or not directory.is_dir():
+                    continue
+                tree = config.working_tree(directory)
+                if tree is None:
+                    continue
+                common = tree.common.resolve()
+                active.add(common)
+                trees[name] = tree
+                # A separate Git directory has no reverse pointer to its primary checkout.
+                if tree.git_dir.resolve() == common:
+                    self.checkouts[common] = str(tree.top.resolve())
+            except (OSError, ValueError, RuntimeError, config.ConfigError):
+                continue
+        for name, tree in trees.items():
+            try:
+                common = tree.common.resolve()
+                if common not in self.checkouts:
+                    listed = config.git_output(["worktree", "list", "--porcelain", "-z"], cwd=tree.top)
+                    primary = listed.split(b"\0\0", 1)[0].split(b"\0")
+                    path = Path(os.fsdecode(primary[0].removeprefix(b"worktree ")))
+                    main = config.working_tree(path) if b"bare" not in primary and path.is_absolute() else None
+                    self.checkouts[common] = str(path) if (main is not None and main.top.resolve() == path
+                        and main.common.resolve() == common) else None
+                checkout = self.checkouts[common]
+                if checkout and Path(checkout).is_dir():
+                    found[name] = checkout
+            except (OSError, ValueError, RuntimeError, config.ConfigError):
+                continue
+        self.checkouts = {common: path for common, path in self.checkouts.items() if common in active}
         return found

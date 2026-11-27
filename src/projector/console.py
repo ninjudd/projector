@@ -79,6 +79,11 @@ class Session:
     # The repository inbox's entries for the repository the session works in.
     entries: list[dict] = field(default_factory=list)
     artifacts: list[dict] = field(default_factory=list)
+    checkout: str = ""
+
+    @property
+    def directory(self) -> str:
+        return self.checkout or self.cwd
 
 
 @dataclass
@@ -157,6 +162,7 @@ class Found:
     """What a refresh read."""
 
     live: Optional[dict[str, tuple[str, str, str, Optional[float], tuple, Optional[list[dict]]]]] = None
+    directories: dict[str, str] = field(default_factory=dict)
     rows: dict[str, list[rows.Row]] = field(default_factory=dict)
     entries: dict[str, list[dict]] = field(default_factory=dict)
     artifacts: dict[str, list[dict]] = field(default_factory=dict)
@@ -402,6 +408,7 @@ class Console:
         self.refresh_now = threading.Event()
         self.sessions: dict[str, Session] = {}
         self.metadata = session_metadata.SessionMetadata()
+        self.directories = session_metadata.SessionDirectories()
         self.view = "home"
         self.session: Optional[str] = None
         self.selected: Optional[str] = None
@@ -442,6 +449,9 @@ class Console:
             work = self.due(self.clock())
         if work is not None:
             found = self.load(work)
+            if found.live is not None:
+                # Git lookup stays outside the screen lock so a slow repository cannot block navigation.
+                found.directories = self.directories.read({name: details[2] for name, details in found.live.items()})
             with self.lock:
                 self.apply(found)
 
@@ -503,6 +513,7 @@ class Console:
             for name, (label, host, cwd, changed, seen, items) in found.live.items():
                 session = self.sessions.setdefault(name, Session(name, host, label))
                 session.host, session.label, session.cwd, session.updated_at = host, label, cwd, changed
+                session.checkout = found.directories.get(name, "")
                 session.signature = seen
                 if items is not None:
                     session.items = items
@@ -533,9 +544,9 @@ class Console:
     def settle_view(self) -> None:
         """Keep collapsed groups navigable and close controls whose session, row, or option is gone."""
         for cwd, name in list(self.collapsed.items()):
-            if name in self.sessions and self.sessions[name].cwd == cwd:
+            if name in self.sessions and self.sessions[name].directory == cwd:
                 continue
-            replacement = next((session.name for session in self.home() if session.cwd == cwd), None)
+            replacement = next((session.name for session in self.home() if session.directory == cwd), None)
             if replacement is None:
                 del self.collapsed[cwd]
             else:
@@ -564,7 +575,7 @@ class Console:
 
     def home(self) -> list[Session]:
         now = self.now_ms()
-        return sorted(self.sessions.values(), key=lambda session: (not bool(session.cwd), session.cwd,
+        return sorted(self.sessions.values(), key=lambda session: (not bool(session.directory), session.directory,
                                                                   needs(session, now)))
 
     def viewed(self) -> Optional[Session]:
@@ -588,7 +599,7 @@ class Console:
     def keys(self) -> list[str]:
         if self.view == "home":
             return [session.name for session in self.home()
-                    if session.cwd not in self.collapsed or self.collapsed[session.cwd] == session.name]
+                    if session.directory not in self.collapsed or self.collapsed[session.directory] == session.name]
         return [key for key, _ in self.entries()]
 
     def row(self, key: Optional[str]) -> Optional[rows.Row]:
@@ -659,10 +670,10 @@ class Console:
             elif self.view == "home":
                 session = self.viewed()
                 if session is not None:
-                    if name == "backspace" and session.cwd not in self.collapsed:
+                    if name == "backspace" and session.directory not in self.collapsed:
                         self.toggle_group(session.name)
                     elif name in ("enter", "right"):
-                        if session.cwd in self.collapsed:
+                        if session.directory in self.collapsed:
                             self.toggle_group(session.name)
                         else:
                             self.open_panel(session.name)
@@ -670,7 +681,7 @@ class Console:
                 self.panel_key(name)
 
     def toggle_group(self, name: str) -> None:
-        cwd = self.sessions[name].cwd
+        cwd = self.sessions[name].directory
         if cwd in self.collapsed:
             del self.collapsed[cwd]
         else:
@@ -1175,7 +1186,7 @@ class Console:
                 return [*lines, Line([("Press Ctrl-C again to exit", "warning")])]
             if self.view == "home":
                 session = self.viewed()
-                action = "Enter or → expand group" if session and session.cwd in self.collapsed else (
+                action = "Enter or → expand group" if session and session.directory in self.collapsed else (
                     "Enter or → focus panel · Backspace collapse group")
                 hint = f"↑↓ select · {action} · PgUp PgDn scroll · Ctrl-C quit"
             elif self.drawer is None:
@@ -1218,18 +1229,18 @@ class Console:
         previous: Optional[str] = None
         group_start = 0
         for session in listed:
-            if session.cwd != previous:
+            if session.directory != previous:
                 lines.append(Line([]))
                 group_start = len(lines)
-                closed = session.cwd in self.collapsed
-                target = self.collapsed.get(session.cwd, session.name)
+                closed = session.directory in self.collapsed
+                target = self.collapsed.get(session.directory, session.name)
                 lines.append(Line([("▸ " if closed else "", "subtle"),
-                                   (directory_label(session.cwd), "focus-branch" if closed and target == chosen
+                                   (directory_label(session.directory), "focus-branch" if closed and target == chosen
                                     else "branch")], targets=[(0, width, Target(target, group=True))]))
-                previous = session.cwd
+                previous = session.directory
                 if closed and target == chosen:
                     focus = (group_start, group_start)
-            if session.cwd in self.collapsed:
+            if session.directory in self.collapsed:
                 continue
             start = len(lines)
             request = headline(session, now)

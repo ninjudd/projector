@@ -46,8 +46,10 @@ for current terms. Codex uses its native signed-in configuration.
 Highlight a session and press `n` to enter the first prompt immediately.
 The new session uses the highlighted session's working directory and provider
 (Claude or Codex), with the provider's native default model. For another
-kind of process, the provider defaults to Claude. When no session supplies
-a directory, Projector uses its current directory.
+kind of process, the provider defaults to Claude. Linked worktrees appear
+under their main checkout's heading in the session list. The new session
+starts in the highlighted session's actual working directory. When no
+session supplies a directory, Projector uses its current directory.
 
 Press Up from the prompt to change settings:
 
