@@ -100,6 +100,8 @@ is the GitHub repository:
    directly to the Pages API. It waits for Pages to finish before reporting
    the site's URL. A failed or timed-out deployment fails the workflow and
    requests cancellation; a temporary failure to read its status is retried.
+   Canceling the workflow also requests Pages cancellation before the client
+   exits, including while it waits for a status response or its next poll.
 
    A page the repository generates rather than commits, such as an HTML
    explorer or a WebAssembly module a playground loads, needs building before

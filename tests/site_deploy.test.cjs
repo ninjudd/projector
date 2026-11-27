@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const timers = require('node:timers/promises');
+const {spawn} = require('node:child_process');
+const {once} = require('node:events');
 
 const actionPath = path.resolve(__dirname, '../actions/site');
 const action = fs.readFileSync(path.join(actionPath, 'action.yml'), 'utf8');
@@ -101,3 +103,44 @@ test('does not poll or cancel a deployment that Pages refused to create', async 
   assert.equal(fake.calls.length, 1);
   assert.deepEqual(fake.outputs, {});
 });
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  test(`${signal} cancels a pending Pages deployment before the process exits`, async t => {
+    for (const phase of ['request', 'delay']) {
+      await t.test(phase, async t => {
+        const child = spawn(process.execPath, ['-e', `
+          const deploy = require(process.argv[1]);
+          process.channel.ref();
+          const github = {request: async (route, data) => {
+            if (route.endsWith('/cancel')) {
+              process.send({event: 'cancelled', id: data.deploymentId});
+              return {data: {}};
+            }
+            if (route.startsWith('POST')) return {data: {id: 'pending', page_url: 'https://example.test/'}};
+            process.send({event: 'polling'});
+            if (process.argv[2] === 'delay') return {data: {status: 'queued'}};
+            return new Promise((resolve, reject) => data.request?.signal.addEventListener('abort', () => reject(new Error('aborted'))));
+          }};
+          deploy({github, context: {repo: {owner: 'example', repo: 'site'}, sha: 'test-sha'},
+            core: {getIDToken: async () => 'test-token', warning: () => {},
+              setOutput: () => process.send({event: 'published'})}, artifactId: '123'})
+            .then(() => {process.disconnect();}, error => {
+              process.send({event: 'error', message: error.message}, () => {process.disconnect();});
+              process.exitCode = 1;
+            });
+        `, path.join(actionPath, 'deploy.cjs'), phase], {stdio: ['ignore', 'pipe', 'pipe', 'ipc']});
+        t.after(() => {child.kill('SIGKILL');});
+        const events = [];
+        child.on('message', message => events.push(message));
+        await once(child, 'message', {signal: AbortSignal.timeout(5000)});
+        const exited = once(child, 'exit', {signal: AbortSignal.timeout(5000)});
+        child.kill(signal);
+        const [code, terminated] = await exited;
+        assert.deepEqual({code, terminated}, {code: 1, terminated: null}, JSON.stringify(events));
+        assert.deepEqual(events.filter(event => event.event === 'cancelled'), [{event: 'cancelled', id: 'pending'}]);
+        assert.equal(events.some(event => event.event === 'published'), false);
+        assert.match(events.find(event => event.event === 'error')?.message || '', new RegExp(signal));
+      });
+    }
+  });
+}
