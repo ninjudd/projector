@@ -1,0 +1,142 @@
+{
+ "version": 1,
+ "name": "Focused console conversations",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 654,
+  "title": "Open console chats directly and keep actions inline",
+  "head": "15235dec6f23bbfb2b3848b45a5c298c065511b5",
+  "headRef": "console-chat-focus",
+  "base": "06db6842f838ddfed51b86d586735e17e45c7e70",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector console lists agent sessions and lets you converse with sessions it launched. This change opens those managed sessions directly in chat, with a text composer that stays ready after sending. Session actions appear in the existing hint row when you press Up, and the draft stays in place while you use menus or scroll history.",
+   "The same change adds drag selection and copying without activating a row. When delivery is uncertain after a worker restart, a message card lets you inspect native history, confirm that the message arrived, or explicitly send it again. Other messages continue only after every held message is checked."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used on this page",
+    "html": "<ul class=\"tight\"><li><b>Managed session:</b> an agent launched by the console.</li><li><b>Composer:</b> the input field holding your unsent chat draft.</li><li><b>Worker:</b> the process that serializes messages to the agent.</li><li><b>Held message:</b> input whose delivery the worker cannot confirm.</li><li><b>Native conversation:</b> the same history opened in Claude Code or Codex.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review and validation",
+    "html": "<ul class=\"tight\"><li>Clean review at <code>15235de</code>; no open finding threads.</li><li>157 focused Python tests and 270 hook tests passed.</li><li>Plugin validation, hook type-checking, whitespace validation, and the required <a href=\"https://github.com/ninjudd/projector/actions/runs/45949499634/job/140341806471\">CI check</a> passed.</li><li>No live provider session or physical terminal was exercised.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "delivery",
+   "title": "Check held messages before continuing",
+   "kicker": "The worker owns the delivery decision and durable message state.",
+   "intro": [
+    "A worker sends messages in order and records whether the native agent accepted each one. After a crash, a held message has uncertain delivery: sending it again may repeat commands or edits. The console now offers separate confirmation and resend actions, which this worker code validates before changing the stored record.",
+    "Confirming a message settles its original delivery; resending puts it back in the queue. Both paths check that Projector has control of the native connection, and resending an inbox event also checks that the original event is still eligible. The worker resumes later input only when no uncertain messages remain."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/runtime_store.py",
+     "note": "The SQLite execution store retains the uncertain-state guard and gives stale controls a clearer error message."
+    },
+    {
+     "path": "src/projector/runtime_worker.py",
+     "note": "Confirmation and resend share validation, update recovery state, and release the queue after the final held message is checked.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Worker tests confirm that later input remains paused while any message is uncertain, and that an expired inbox delivery cannot be replayed.",
+       "line": 281
+      }
+     ]
+    },
+    {
+     "path": "tests/test_runtime_worker.py",
+     "note": "Exercises two held messages resolved in different ways and a resend whose source event is no longer eligible."
+    }
+   ]
+  },
+  {
+   "id": "chat",
+   "title": "Keep the conversation ready for input",
+   "kicker": "Managed sessions open with a persistent composer and actions in one hint row.",
+   "intro": [
+    "A managed session is an agent the console launched. Opening it now focuses its composer immediately, and sending a message clears the input while keeping focus there. Each session keeps its own unsent draft. History scrolls above the docked composer, so opening actions or moving through a long reply does not move the prompt.",
+    "Pressing Up replaces the hint row with session actions, including Inbox, Queue, native handoff, and runtime details. A held-message card uses the message ID behind its controls rather than requiring you to type an ID. Resending opens a separate confirmation whose initial choice is Cancel; closing cards or canceling an edit returns to the original chat draft."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/agents.md",
+     "note": "Describes direct chat focus, inline session actions, persistent drafts, text selection, and explicit delivery recovery."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Distinguishes managed chat from the external-process panel and documents copying and typed question answers."
+    },
+    {
+     "path": "src/projector/agent_console.py",
+     "note": "Owns persistent drafts, docked chat layout, hint-row menus, held-message cards, queue edits, and typed native answers.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Console tests cover draft preservation through menus and queued-message edits, including cancellation and return from a recovery card.",
+       "line": 231
+      },
+      {
+       "kind": "context",
+       "text": "The message card rechecks the command by its stable ID before requesting confirmation or resend; the worker then validates delivery state again.",
+       "line": 464
+      }
+     ]
+    },
+    {
+     "path": "tests/test_agent_console.py",
+     "note": "Drives chat focus, menus, scrolling, typed answers, queue editing, stale recovery controls, and default-cancel resend confirmation."
+    },
+    {
+     "path": "tests/test_artifact_panel.py",
+     "note": "Updates artifact navigation to Up, then Inbox, while retaining the Open and Discuss integration assertions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The artifact integration test passes with the new navigation. Its former Enter-only path caused the earlier head to fail CI."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "terminal",
+   "title": "Select text without activating controls",
+   "kicker": "Raw mouse reports distinguish a drag from a click and copy the visible selection.",
+   "intro": [
+    "The terminal screen receives mouse input and maps visible regions to console controls. It now preserves the displayed frame while you drag a selection, even if the session refreshes in the background. Releasing a drag copies text instead of pressing the row beneath it; an ordinary click still activates its current target.",
+    "On a local Mac, copying first tries the system clipboard with a bounded wait. Otherwise it emits OSC 52, the terminal clipboard escape sequence, including the existing tmux wrapper. Ctrl-C copies an active selection and Escape clears it. Keyboard and mouse escape sequences are parsed directly while the screen retains bracketed paste and modified-Enter support."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Adds frozen selection frames, local clipboard fallback, raw SGR/X10 mouse parsing, and selection-aware key handling.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Screen tests exercise drag copying without row activation, retained selection during refresh, Ctrl-C without quitting, and a later click answering a question.",
+       "line": 1850
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "Covers selection, clipboard routing, raw mouse reports, and compatibility with subsequent clicks and terminal input."
+    }
+   ]
+  }
+ ]
+}

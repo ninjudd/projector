@@ -1,0 +1,1705 @@
+diff --git a/docs/agents.md b/docs/agents.md
+index 1f61bc28..f933fe71 100644
+--- a/docs/agents.md
++++ b/docs/agents.md
+@@ -68,37 +68,52 @@ and blank lines stay intact.
+ 
+ The runtime applies its native permission and sandbox settings, including
+ any automatic approvals you configured. Projector adds no permission bypass.
+-The form identifies those settings as the source of policy. The conversation
+-shows the effective policy when the runtime reports it; Claude reports its
+-mode when the first turn initializes. This is not a preflight permission audit.
+-
+-Select a managed session and focus its panel with Enter. Its conversation
+-appears below its pull requests and inbox items. Move to the conversation
+-with the arrow keys, or press `c` to compose a message. Enter sends it through
+-the existing Projector message route. Shift-Enter or Ctrl-J adds a line.
+-Follow-ups wait in order while another turn runs. PgUp and PgDn scroll the
+-conversation. End follows the latest output.
+-
+-Your messages appear on a gray background, without speaker labels. Agent
+-replies use the terminal's ordinary text. The prompt shows `…` while a turn
+-is active and `❯` when it is idle, including while you compose a follow-up.
+-Successful turns change the prompt without adding a completion message.
+-Failed and interrupted turns keep their visible outcome.
+-
+-| Key | Action |
++Use Up, then `p`, to inspect the settings and effective policy reported by
++the runtime. Claude reports its mode when the first turn initializes.
++
++Select a managed session and press Enter, or click it, to open its chat.
++The composer has focus immediately and stays ready after you send a message.
++Enter sends through the existing Projector message route. Shift-Enter or
++Ctrl-J adds a line. Follow-ups wait in order while another turn runs.
++
++Your messages appear on a gray background. Replies use ordinary text, without
++speaker labels or a conversation heading. The prompt shows `…` while a turn
++is active and `❯` when it is idle. Successful turns change the prompt without
++adding a completion message. Failed and interrupted turns keep their visible
++outcome.
++
++Press Up to show actions in the existing hint line. The menu adds no rows and
++does not move your prompt. Press Down or Escape to return to the same draft.
++When all choices do not fit, Left and Right show the other choices in that
++same line. Launch settings use this menu too.
++
++| Key after Up | Action |
+ | --- | --- |
+-| `c` | Compose a follow-up |
+-| `i` | Interrupt the current turn and pause later inputs |
+-| `s` | Send queued inputs after a pause |
+-| `x` | Stop the worker; retain history and pending input |
+-| `r` | Resume a stopped session, or return from native control |
+-| `o` | Open the native terminal after the current turn ends |
+-| `e`, `d` | Edit or remove a numbered queued message |
+-| `R`, `D` | Retry uncertain input, or confirm that it arrived |
+-
+-The controls show `r return to Projector` during native control and `r resume`
+-for a stopped or failed worker. `s send queued` appears when a managed worker
+-is paused. It releases held messages. Ordinary follow-ups run automatically.
++| `i` | Interrupt the current turn and pause later messages |
++| `x` | Stop the worker while retaining history and waiting messages |
++| `r` | Resume a stopped worker or return from native control |
++| `o` | Open the agent's native terminal |
++| `s` | Continue messages after a pause |
++| `q` | Inspect, edit, or remove a waiting message |
++| `k` | Check a message whose delivery Projector lost track of |
++| `b` | Open the session's inbox and pull requests |
++| `p` | Inspect runtime details and native policy |
++| `h` | Return to the session list |
++| `f` | Follow the latest output after scrolling back |
++
++The menu shows the actions that apply to the session's current state.
++PgUp, PgDn, and the mouse wheel scroll history while the composer stays in
++place. Your draft survives a trip to the inbox, menus, or another session.
++Escape closes an inbox or message card and returns to that draft. It also
++cancels an edit to a waiting message without saving it.
++
++Click rows and menu choices to use them. Drag to select visible text without
++activating the row underneath. Projector keeps that view fixed until you
++clear the selection, while the agent keeps running. Releasing the drag copies
++the selection through the local clipboard where available, or OSC 52 where
++your terminal permits it. Ctrl-C copies selected text without interrupting
++or quitting. Escape clears the selection. Your terminal's selection override
++remains available too.
+ 
+ A failed or interrupted turn stays distinct from a successful one. Completing
+ a turn does not mark a Projector project completed. Stopped sessions remain
+@@ -132,30 +147,37 @@ is not bridged. Complete those server setup steps in the native runtime. No answ
+ 
+ ## Recover and open the native terminal
+ 
+-The console records input as queued, submitting, accepted, or finished.
+-If a worker dies after submission, it marks possibly accepted input uncertain
+-and pauses later inputs. It never automatically replays that input.
++If the worker dies while handling a message, Projector holds it rather than
++risk sending it twice. A **Check message** card and a hint appear only while
++this needs your attention. Press Up, then `k`, or click the card to inspect
++the full message.
++
++Choose **Open agent conversation** to check the native history. If the
++message is there, choose **Already reached the agent**. If it is missing,
++choose **Send again**, then confirm that choice. The confirmation explains
++that sending again can repeat file edits or commands. Enter selects Cancel
++by default. You do not type message numbers or confirmation words.
+ 
+-Open the saved native session and inspect its history. After you establish
+-that the input arrived, press `D`, select its number, and type `RECEIVED`.
+-To authorize another attempt instead, press `R` and type `RETRY`. Retrying
+-can repeat tool actions. Press `s` when you want the remaining queue to run.
++Other messages continue after every held message is checked. A choice made
++in another console invalidates stale buttons. Expired or changed inbox
++events keep their delivery checks and cannot be replayed as a new event.
+ 
+ Native handoff is reversible and keeps the same conversation. It requires
+ an idle worker with no pending native requests. Interrupt and wait for the
+-turn to end first if necessary. Press `o` to
+-release the SDK connection and open the saved native conversation. Projector
+-uses a tmux pane when available; otherwise it suspends the console until the
+-native CLI exits. Codex uses `codex --no-daemon resume` so exiting releases
+-its writer. Claude uses `claude --resume` with the saved ID.
++turn to end first if necessary. Press Up, then `o`, to release the SDK
++connection and open the saved native conversation. Projector uses a tmux
++pane when available; otherwise it suspends the console until the native CLI
++exits. Codex uses `codex --no-daemon resume` so exiting releases its writer.
++Claude uses `claude --resume` with the saved ID.
+ 
+ Projector input remains queued during native control, including inbox answers
+ and review events. Close the native CLI to return to Projector. When it ran
+-in a tmux pane, press `r` to reacquire managed control. When it temporarily
+-replaced the console, Projector reacquires control automatically after it
+-exits. The same history includes turns entered in the native terminal.
+-Press `s` to release the queue. Two consoles can observe a session,
+-but the worker and native terminal cannot control it simultaneously.
++in a tmux pane, press Up, then `r`, to reacquire managed control. When it
++temporarily replaced the console, Projector reacquires control automatically
++after it exits. The same history includes turns entered in the native
++terminal. Press Up, then `s`, to continue waiting messages. Two consoles can
++observe a session, but the worker and native terminal cannot control it
++simultaneously.
+ 
+ ## Process lifetime and local state
+ 
+diff --git a/docs/cli.md b/docs/cli.md
+index 1bbe486d..fd08a87b 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3470,11 +3470,19 @@ then to the name.
+ 
+ In a terminal with mouse support, click a session row to select it, or a
+ pull request, artifact, or inbox row to focus the panel and open that row's
+-drawer. Click the row again to close its drawer. Drawer choices and actions
+-also accept clicks and keep their usual note fields and confirmations.
+-While you edit a text field, finish or cancel it before you click another
+-row or action. To select text for copying, use your terminal's mouse
+-override.
++drawer. Clicking a managed session opens its chat with the composer ready.
++Drawer choices and inline menu actions accept clicks.
++
++Drag to select text without activating the row underneath. Projector keeps
++the selected view fixed until you clear it and copies the text through the
++local clipboard where available, or OSC 52 where your terminal allows it.
++Ctrl-C copies a selection without quitting or interrupting the agent.
++Escape clears it. The agent continues running while text is selected.
++
++Managed sessions use the chat layout described in [Run agents in the
++console](agents.md). Press Up for actions in the existing hint line, without
++moving the chat or prompt. Other processes keep the list and panel layout
++below.
+ 
+ Up and down select a session and update the bottom panel immediately. Press
+ Enter or Right to move the focus into that panel. The session list stays
+@@ -3488,9 +3496,9 @@ to open its drawer:
+ 
+ - **An item's drawer** shows the item's detail and each message you sent
+   about it, after `you:`, then its controls. A question offers `1` and on
+-  for its options, the first marked `(recommended)`. The console offers no
+-  typed answer: to give the agent your own words, use `7: Discuss`. A
+-  request offers `1: Start`, or `1: Retry` once its agent reports it
++  for its options, the first marked `(recommended)`. Choose `t: Type an
++  answer` to answer in your own words. A request offers `1: Start`, or
++  `1: Retry` once its agent reports it
+   blocked, when it has a start action, and then its outcomes, or `Done`.
+   The drawer opens with the focus on the first option, and Enter picks the
+   focused one, as its number does. Picking one opens a one-line field under
+diff --git a/src/projector/agent_console.py b/src/projector/agent_console.py
+index 8fc44a76..47a49d40 100644
+--- a/src/projector/agent_console.py
++++ b/src/projector/agent_console.py
+@@ -8,6 +8,7 @@
+ import sys
+ import textwrap
+ import time
++from dataclasses import dataclass
+ from pathlib import Path
+ 
+ from . import agents, console, inbox, native_handoff, rows, runtime, watch
+@@ -17,6 +18,12 @@
+ Line = console.Line
+ Field = console.Field
+ CONVERSATION = "runtime:conversation"
++MESSAGE = "runtime:message:"
++
++
++@dataclass(frozen=True)
++class PendingMessage:
++    command: dict
+ 
+ 
+ class InlineField(Field):
+@@ -40,6 +47,10 @@ def __init__(self, *args, **kwargs):
+         self.runtime_views = {}
+         self.next_runtime = float("-inf")
+         self.follow = True
++        self.drafts = {}
++        self.queue_open = False
++        self.recovery_retry = None
++        self.menu_page = 0
+ 
+     def due(self, now):
+         work = super().due(now)
+@@ -102,16 +113,16 @@ def load(self, work):
+         return found
+ 
+     def apply(self, found):
+-        super().apply(found)
+         if hasattr(found, "runtimes"):
+             self.runtimes = found.runtimes
+-        if self.field is not None and self.field.purpose == "chat":
+-            self.field.prompt = self.message_prompt(self.session)
+-        if hasattr(found, "runtime_error"):
+-            self.status = found.runtime_error
+         if hasattr(found, "runtime_view"):
+             name, view = found.runtime_view
+             self.runtime_views[name] = view
++        super().apply(found)
++        if self.session in self.drafts:
++            self.drafts[self.session].prompt = self.message_prompt(self.session)
++        if hasattr(found, "runtime_error"):
++            self.status = found.runtime_error
+         if hasattr(found, "runtime_events"):
+             name, events = found.runtime_events
+             chat = self.chats.setdefault(name, [])
+@@ -146,6 +157,59 @@ def apply(self, found):
+                 retained.append(entry)
+             self.chats[name] = list(reversed(retained))
+ 
++    def entries(self):
++        entries = super().entries()
++        viewed = self.viewed()
++        if viewed is not None:
++            entries += [(MESSAGE + command["id"], PendingMessage(command))
++                        for command in self.runtime_views.get(viewed.name, {}).get("commands", [])
++                        if command["state"] == "uncertain" or self.queue_open]
++        return entries
++
++    def open_panel(self, name):
++        super().open_panel(name)
++        self.queue_open = False
++        if name in self.runtimes:
++            self.follow = True
++            self.compose()
++
++    def compose(self):
++        self.close_drawer()
++        self.queue_open = False
++        self.selected = CONVERSATION
++        self.field = self.drafts.setdefault(self.session, InlineField("chat", None, self.message_prompt(self.session)))
++        self.field.prompt = self.message_prompt(self.session)
++
++    def close_drawer(self):
++        self.recovery_retry = None
++        super().close_drawer()
++
++    def open_drawer(self, key):
++        if self.field is not None and self.field.purpose in ("chat", "chat-options", "chat-info"):
++            self.field = None
++        super().open_drawer(key)
++
++    def click(self, target):
++        with self.lock:
++            try:
++                self.click_target(target)
++            except (ProjectorError, OSError) as error:
++                self.status = str(error)
++
++    def click_target(self, target):
++        if (target.control is not None and target.entry is None and target.session == self.session
++                and self.field is not None and self.field.purpose in ("chat-options", "launch-settings", "launch-models")):
++            self.status = ""
++            target.control.act()
++            return
++        if target.entry is None and target.session in self.runtimes and target.session in self.sessions:
++            self.open_panel(target.session)
++            return
++        if (self.field is not None and self.field.purpose in ("chat", "chat-options", "chat-info")
++                and target.session == self.session and target.entry in dict(self.entries())):
++            self.field = None
++        super().click(target)
++
+     def keys(self):
+         keys = super().keys()
+         if self.view == "panel" and self.session in self.runtimes:
+@@ -160,18 +224,46 @@ def ring(self):
+ 
+     def press_focus(self):
+         if self.selected_key() == CONVERSATION:
+-            self.key("c")
++            self.compose()
+         else:
+             super().press_focus()
+ 
++    def panel_key(self, name):
++        if self.session in self.runtimes and self.drawer is not None and name in ("esc", "left", "0"):
++            cancel = next((control for control in self.controls() if control.key == "0"), None)
++            if name == "0" and cancel is not None:
++                self.press(cancel)
++            else:
++                self.compose()
++            return
++        super().panel_key(name)
++
+     def scroll(self, name):
+         if self.view == "panel" and self.selected_key() == CONVERSATION:
+             self.follow = name in ("end", "G")
+         super().scroll(name)
+ 
+     def panel_viewport(self, width, room):
+-        if self.session in self.runtimes and self.selected_key() == CONVERSATION and self.follow:
+-            self.offset = sys.maxsize
++        if self.session in self.runtimes and self.selected_key() == CONVERSATION:
++            draft = self.field if self.field is not None and self.field.purpose == "queue-edit" else self.drafts.get(self.session)
++            if draft is not None:
++                body, _ = self.panel_lines(width)
++                input_lines = self.field_lines(draft, max(1, width), active=self.field is draft)
++                count = min(len(input_lines), max(1, room // 2))
++                cursor = next(at for at, line in enumerate(input_lines) if line.spot)
++                first = max(0, min(cursor - count + 1, len(input_lines) - count))
++                shown_input = input_lines[first:first + count]
++                if self.field is not draft:
++                    for line in shown_input:
++                        line.cursor = None
++                history, available = body[:-len(input_lines)], room - count
++                self.room = max(1, available)
++                limit = max(0, len(history) - available)
++                self.offset = limit if self.follow else max(0, min(self.offset, limit))
++                if self.offset == limit:
++                    self.follow = True
++                shown = history[self.offset:self.offset + available]
++                return [*shown, *(Line([]) for _ in range(available - len(shown))), *shown_input]
+         return super().panel_viewport(width, room)
+ 
+     def panel_lines(self, width):
+@@ -183,12 +275,14 @@ def panel_lines(self, width):
+             lines += [Line([(current.get("error") or current.get("state", "starting"), "warning")]),
+                       Line([("r retry launch · x remove launch", "subtle")])]
+         if session is not None and session.name in self.runtimes:
+-            start = len(lines) + 1
++            if not self.entries():
++                lines = [Line([(session.label, "subtle")])]
++            start = len(lines)
+             selected = self.view == "panel" and self.selected_key() == CONVERSATION
+-            lines += [Line([]), *self.runtime_lines(session.name, width, selected)]
++            lines += self.runtime_lines(session.name, width, selected)
+             if selected:
+                 focus = (start, len(lines) - 1)
+-                cursor = next((at for at in range(start, len(lines)) if lines[at].cursor is not None), None)
++                cursor = next((at for at in range(start, len(lines)) if lines[at].spot), None)
+                 if cursor is not None:
+                     focus = (cursor, cursor)
+         return lines, focus
+@@ -218,27 +312,6 @@ def key(self, name):
+                     self.field = self.launch_prompt
+                     self.status = ""
+                     return
+-                if self.field is None and self.view == "panel" and self.drawer is None and self.session in self.runtimes:
+-                    if name == "v":
+-                        return
+-                    if name == "c":
+-                        self.selected = CONVERSATION
+-                        self.follow = True
+-                        self.field = InlineField("chat", None, self.message_prompt(self.session))
+-                        return
+-                    action = {"i": "interrupt", "x": "stop", "o": "handoff", "r": "resume", "s": "send"}.get(name)
+-                    if action:
+-                        if action == "handoff" and self.runtimes[self.session].get("state") == "handed-off":
+-                            raise UsageError("Close the native terminal, then press r to return")
+-                        runtime.control(self.root, self.session, action)
+-                        if action == "handoff":
+-                            self.pending_native = self.session
+-                        self.ensure()
+-                        self.refresh_now.set()
+-                        return
+-                    if name in ("e", "d", "R", "D"):
+-                        self.field = Field("queue-" + name, None, "Input number: ")
+-                        return
+             super().key(name)
+         except (ProjectorError, OSError) as error:
+             self.status = str(error)
+@@ -248,6 +321,29 @@ def field_key(self, name):
+         if typing is None:
+             return
+         purpose = typing.purpose
++        if purpose in ("chat-options", "launch-settings", "launch-models") and name in ("left", "right"):
++            self.menu_page += -1 if name == "left" else 1
++            return
++        if purpose in ("chat-options", "chat-info"):
++            if name in ("esc", "down", "enter", "ctrl-j"):
++                self.compose()
++            elif name == "ctrl-c":
++                self.go_home()
++            else:
++                choice = next((one for one in self.session_controls() if one.key == name), None)
++                if choice is not None:
++                    choice.act()
++            return
++        if purpose == "chat" and name == "up":
++            self.menu_page = 0
++            self.field = InlineField("chat-options", None, "")
++            return
++        if purpose == "chat" and name in ("pageup", "pagedown"):
++            self.scroll(name)
++            return
++        if purpose == "queue-edit" and name in ("esc", "ctrl-c"):
++            self.compose()
++            return
+         multiline = purpose in ("launch-prompt", "chat", "queue-edit")
+         if name == "ctrl-j" and not multiline:
+             name = "enter"
+@@ -258,61 +354,146 @@ def field_key(self, name):
+         if purpose.startswith("launch-"):
+             self.launch_key(name)
+             return
+-        if name == "enter" and (multiline or (purpose.startswith("queue-")
+-                and purpose not in ("queue-confirm", "queue-confirm-received"))):
++        if name == "enter" and purpose in ("chat", "queue-edit"):
+             if purpose == "chat":
+                 runtime.send(self.root, self.session, typing.text)
+                 self.wake(self.session, {})
+-            elif purpose == "queue-edit":
++                typing.text, typing.cursor = "", 0
++                self.follow = True
++            else:
+                 runtime.validate_text(typing.text)
+                 self.store(self.session).edit(typing.target, typing.text)
+-            else:
+-                state = "uncertain" if purpose in ("queue-R", "queue-D") else "queued"
+-                commands = self.store(self.session).commands((state,))
+-                if not typing.text.isdecimal() or not 1 <= int(typing.text) <= len(commands):
+-                    raise UsageError("Choose an input number from the queue")
+-                command = commands[int(typing.text) - 1]
+-                if purpose in ("queue-e", "queue-d") and command["source"]:
+-                    source = command["source"]
+-                    item = inbox.find(self.session, source[1]) if source[:1] == ["inbox"] else {}
+-                    if item.get("kind") != "message" or item.get("pr"):
+-                        raise UsageError("Use the item's inbox or pull request controls for this event")
+-                if purpose == "queue-e":
+-                    self.field = InlineField("queue-edit", command["id"], "Edit queued input: ",
+-                                       command["text"], len(command["text"]))
+-                    return
+-                if purpose == "queue-R":
+-                    self.field = Field("queue-confirm", command["id"], "Retry can repeat tool actions. Type RETRY: ")
+-                    return
+-                if purpose == "queue-D":
+-                    self.field = Field("queue-confirm-received", command["id"],
+-                                       "Check native history, then type RECEIVED to confirm this input arrived: ")
+-                    return
+-                else:
+-                    if command["source"] and command["source"][:1] != ["inbox"]:
+-                        raise UsageError("Use the item's inbox or pull request controls for this event")
+-                    self.store(self.session).edit(command["id"], None)
+-                if command["source"][:1] == ["inbox"]:
+-                    with contextlib.suppress(ProjectorError):
+-                        inbox.settle(self.session, command["source"][1], command["source"][3], delivered=False)
+-            self.field = None
++                self.compose()
+             self.next_inbox = float("-inf")
+             self.refresh_now.set()
+             return
+-        if purpose == "queue-confirm" and name == "enter":
+-            if typing.text != "RETRY":
+-                raise UsageError("Type RETRY to confirm, or Escape to cancel")
+-            self.store(self.session).resolve(typing.target, retry=True)
+-            self.field = None
+-            return
+-        if purpose == "queue-confirm-received" and name == "enter":
+-            if typing.text != "RECEIVED":
+-                raise UsageError("Type RECEIVED only after checking native history, or Escape to cancel")
+-            runtime.control(self.root, self.session, "confirm:" + typing.target)
+-            self.field = None
+-            return
+         super().field_key(name)
+ 
++    def session_controls(self):
++        current = self.runtimes.get(self.session, {})
++        state = current.get("state")
++        controls = []
++        if state == "handed-off":
++            controls.append(console.Control("r", "Return", lambda: self.runtime_action("resume")))
++        elif state in ("stopped", "failed"):
++            controls.append(console.Control("r", "Resume", lambda: self.runtime_action("resume")))
++        else:
++            controls += [console.Control("i", "Interrupt", lambda: self.runtime_action("interrupt")),
++                         console.Control("x", "Stop", lambda: self.runtime_action("stop"))]
++        if state != "handed-off":
++            controls.append(console.Control("o", "Native", lambda: self.runtime_action("handoff")))
++        commands = self.runtime_views.get(self.session, {}).get("commands", [])
++        checking = any(command["state"] == "uncertain" for command in commands)
++        if checking:
++            controls.append(console.Control("k", "Check", self.show_messages))
++        if any(command["state"] == "queued" for command in commands):
++            controls.append(console.Control("q", "Queue", self.show_messages))
++        if current.get("paused") and not checking and state not in ("handed-off", "stopped", "failed"):
++            controls.append(console.Control("s", "Continue", lambda: self.runtime_action("send")))
++        if not self.follow:
++            controls.append(console.Control("f", "Latest", self.follow_latest))
++        controls += [console.Control("b", "Inbox", self.show_inbox),
++                     console.Control("p", "Details", lambda: self.session_mode("chat-info")),
++                     console.Control("h", "Sessions", self.go_home)]
++        return controls
++
++    def follow_latest(self):
++        self.follow = True
++        self.compose()
++
++    def session_mode(self, purpose):
++        self.menu_page = 0
++        self.field = InlineField(purpose, None, "")
++
++    def runtime_action(self, action):
++        if action == "handoff" and self.runtimes[self.session].get("state") == "handed-off":
++            raise UsageError("Close the native terminal and return to Projector first")
++        runtime.control(self.root, self.session, action)
++        if action == "handoff":
++            self.pending_native = self.session
++        self.ensure()
++        self.compose()
++        self.refresh_now.set()
++
++    def show_inbox(self):
++        self.field = None
++        entries = [(key, entry) for key, entry in self.entries() if not key.startswith(MESSAGE)]
++        if entries:
++            self.open_drawer(entries[0][0])
++        else:
++            self.compose()
++            self.status = "No inbox items or pull requests"
++
++    def show_messages(self):
++        self.field, self.queue_open = None, True
++        messages = [(key, entry) for key, entry in self.entries() if key.startswith(MESSAGE)]
++        if messages:
++            key, _ = next((pair for pair in messages if pair[1].command["state"] == "uncertain"), messages[0])
++            self.open_drawer(key)
++        else:
++            self.compose()
++
++    def controls(self):
++        pending = dict(self.entries()).get(self.drawer)
++        if not isinstance(pending, PendingMessage):
++            return super().controls()
++        command = pending.command
++        ident = command["id"]
++        if command["state"] == "queued":
++            return [console.Control("e", "Edit message", lambda: self.edit_message(ident), True, True),
++                    console.Control("d", "Remove message", lambda: self.remove_message(ident), True),
++                    console.Control("0", "Back to chat", self.compose)]
++        state = self.runtimes[self.session].get("state")
++        if state in ("handed-off", "stopped", "failed"):
++            return [console.Control("r", "Return to Projector" if state == "handed-off" else "Resume Projector",
++                                    lambda: self.runtime_action("resume"), True, True),
++                    console.Control("o", "Open agent conversation", lambda: self.runtime_action("handoff"), True)]
++        if self.recovery_retry == ident:
++            return [console.Control("0", "Cancel", self.cancel_retry, True, True),
++                    console.Control("s", "Send this message again", lambda: self.resolve_message(ident, True), True)]
++        return [console.Control("o", "Open agent conversation", lambda: self.runtime_action("handoff"), True, True),
++                console.Control("a", "Already reached the agent", lambda: self.resolve_message(ident, False), True),
++                console.Control("s", "Send again", lambda: self.confirm_retry(ident), True)]
++
++    def confirm_retry(self, ident):
++        self.recovery_retry, self.control = ident, "0"
++
++    def cancel_retry(self):
++        self.recovery_retry, self.control = None, "s"
++
++    def resolve_message(self, ident, retry):
++        command = self.store(self.session).command(ident)
++        if command is None or command["state"] != "uncertain":
++            raise UsageError("This message no longer needs checking")
++        self.runtime_action(("retry:" if retry else "confirm:") + ident)
++
++    def editable_message(self, ident):
++        command = self.store(self.session).command(ident)
++        if command is None or command["state"] != "queued":
++            raise UsageError("This message is already being handled")
++        source = command["source"]
++        if source:
++            item = inbox.find(self.session, source[1]) if source[:1] == ["inbox"] else {}
++            if item.get("kind") != "message" or item.get("pr"):
++                raise UsageError("Use this item's inbox or pull request controls")
++        return command
++
++    def edit_message(self, ident):
++        command = self.editable_message(ident)
++        self.close_drawer()
++        self.queue_open, self.selected = False, CONVERSATION
++        self.field = InlineField("queue-edit", ident, "Edit message: ", command["text"], len(command["text"]))
++
++    def remove_message(self, ident):
++        command = self.editable_message(ident)
++        self.store(self.session).edit(ident, None)
++        source = command["source"]
++        if source[:1] == ["inbox"]:
++            with contextlib.suppress(ProjectorError):
++                inbox.settle(self.session, source[1], source[3], delivered=False)
++        self.compose()
++        self.refresh_now.set()
++
+     def launch_key(self, name):
+         typing = self.field
+         purpose = typing.purpose
+@@ -320,8 +501,12 @@ def launch_key(self, name):
+             self.field = self.launch_prompt = None
+         elif name == "esc":
+             self.field = self.launch_prompt
++        elif purpose == "launch-policy":
++            if name in ("enter", "down"):
++                self.field = self.launch_prompt
+         elif purpose == "launch-prompt":
+             if name == "up":
++                self.menu_page = 0
+                 self.field = InlineField("launch-settings", None, "")
+             elif name == "enter":
+                 runtime.launch(self.root, self.launch_form["backend"], self.launch_form["cwd"], typing.text,
+@@ -335,12 +520,16 @@ def launch_key(self, name):
+                 super().field_key(name)
+         elif purpose == "launch-settings":
+             if name in ("c", "x"):
++                self.menu_page = 0
+                 backend = "claude" if name == "c" else "codex"
+                 if backend != self.launch_form["backend"]:
+                     self.launch_form["backend"], self.launch_form["model"] = backend, ""
+                 self.field = InlineField("launch-models", None, "")
+             elif name == "m":
++                self.menu_page = 0
+                 self.field = InlineField("launch-models", None, "")
++            elif name == "p":
++                self.field = InlineField("launch-policy", None, "")
+             elif name in ("d", "n"):
+                 field, prompt = ("cwd", "Directory: ") if name == "d" else ("name", "Name (optional): ")
+                 value = self.launch_form[field]
+@@ -354,7 +543,7 @@ def launch_key(self, name):
+                 self.field = self.launch_prompt
+             elif name == "t":
+                 value = self.launch_form["model"]
+-                self.field = InlineField("launch-model", None, "Model ID (empty: native default): ", value, len(value))
++                self.field = InlineField("launch-model", None, "Model: ", value, len(value))
+             elif name in ("enter", "down"):
+                 self.field = self.launch_prompt
+         elif name == "enter":
+@@ -383,21 +572,87 @@ def model_choices(self):
+                         for key, model in zip("123456789", models)})
+         return choices
+ 
+-    def footer(self):
+-        if self.field is not None and self.field.purpose.startswith("launch-"):
+-            purpose = self.field.purpose
+-            if purpose == "launch-prompt":
+-                hint = "Enter launches · Shift-Enter/Ctrl-J newline · ↑ settings · Esc cancels"
+-            elif purpose in ("launch-settings", "launch-models"):
+-                hint = "Press a choice · ↓ or Esc returns to prompt · Ctrl-C cancels"
++    def footer(self, width=None):
++        width = max(1, width or 100)
++        typing = self.field
++        if typing is None:
++            return super().footer(width)
++        purpose = typing.purpose
++        if self.status:
++            return [Line([(console.fit(self.status, width), "error")])]
++        if purpose == "launch-settings":
++            options = [("c", "Claude"), ("x", "Codex"), ("m", "model"), ("d", "directory"),
++                       ("n", "name"), ("p", "permissions"), ("down", "prompt")]
++            return [self.menu_line([console.Control(key, label,
++                    lambda key=key: self.launch_option(purpose, key)) for key, label in options], width)]
++        elif purpose == "launch-models":
++            options = [(key, label.split(" (")[0]) for key, (label, _) in self.model_choices().items()]
++            options += [("t", "other"), ("down", "prompt")]
++            return [self.menu_line([console.Control(key, label,
++                    lambda key=key: self.launch_option(purpose, key)) for key, label in options], width)]
++        elif purpose == "launch-policy":
++            text = "Native permissions and sandbox settings apply, including configured automatic approvals. ↓ prompt"
++        elif purpose in ("launch-cwd", "launch-name", "launch-model"):
++            return [self.inline_field(typing, width)]
++        elif purpose == "chat-options":
++            return [self.menu_line(self.session_controls(), width)]
++        elif purpose == "chat-info":
++            current = self.runtimes.get(self.session, {})
++            policy = current.get("policy", {})
++            text = (f"{current.get('backend', 'Agent')} · {current.get('state', 'unknown')} · "
++                    f"approvals: {policy.get('approval') or 'native settings'} · "
++                    f"sandbox: {policy.get('sandbox') or 'native settings'} · ↓ prompt")
++        elif purpose in ("launch-prompt", "chat", "queue-edit"):
++            current = self.runtimes.get(self.session, {})
++            commands = self.runtime_views.get(self.session, {}).get("commands", [])
++            if purpose == "chat" and any(command["state"] == "uncertain" for command in commands):
++                return [Line([("Check message delivery · ↑ then k", "warning")])]
++            if purpose == "chat" and current.get("state") == "handed-off":
++                text = "Native terminal has control · ↑ then r to return"
++            elif purpose == "chat" and current.get("paused"):
++                text = "Messages paused · ↑ then s to continue"
+             else:
+-                hint = "Enter saves · Esc returns to prompt · Ctrl-C cancels"
+-            errors = [Line([(self.status, "error")])] if self.status else []
+-            return [*errors, Line([(hint, "subtle")])]
+-        if self.field is not None and self.field.purpose in ("chat", "queue-edit"):
+-            action = "saves" if self.field.purpose == "queue-edit" else "sends"
+-            return [Line([(f"Enter {action} · Shift-Enter/Ctrl-J newline · Esc cancels", "subtle")])]
+-        return super().footer()
++                text = "↑ options · Enter send · Shift-Enter or Ctrl-J newline"
++        else:
++            return super().footer(width)
++        return [Line([(console.fit(text, width), "subtle")])]
++
++    def launch_option(self, purpose, key):
++        if self.field is not None and self.field.purpose == purpose:
++            self.field_key(key)
++
++    def menu_line(self, controls, width):
++        available = max(1, width - 6)
++        pages, current, used = [], [], 0
++        for control in controls:
++            key = "↓" if control.key == "down" else control.key
++            text = console.fit(f"{key} {control.label}", available).rstrip()
++            if current and used + 2 + len(text) > available:
++                pages.append(current)
++                current, used = [], 0
++            current.append((text, control))
++            used += len(text) + (2 if len(current) > 1 else 0)
++        pages.append(current)
++        self.menu_page %= len(pages)
++        parts, targets, start = [], [], 0
++        for text, control in pages[self.menu_page]:
++            if parts:
++                parts.append(("  ", ""))
++                start += 2
++            parts.append((text, "accent"))
++            targets.append((start, start + len(text), console.Target(self.session, None, control)))
++            start += len(text)
++        if len(pages) > 1:
++            parts.append(("  ← →", "subtle"))
++        return Line(parts, targets=targets)
++
++    @staticmethod
++    def inline_field(typing, width):
++        prompt = typing.prompt[:max(1, width // 3)]
++        space = max(1, width - len(prompt) - 1)
++        start = max(0, typing.cursor - space)
++        return Line([(prompt, "bold"), (typing.text[start:start + space], "")],
++                    cursor=min(width - 1, len(prompt) + typing.cursor - start))
+ 
+     def item_controls(self, item):
+         controls = super().item_controls(item)
+@@ -409,7 +664,30 @@ def item_controls(self, item):
+                 controls = [control for control in controls if control.key not in ("6", "7", "9")]
+         return controls
+ 
++    def item_line(self, item, now, selected):
++        if isinstance(item, PendingMessage):
++            label = "Check message" if item.command["state"] == "uncertain" else "Waiting message"
++            preview = item.command["text"].replace("\n", " ")[:160]
++            return Line([(f"- {label}: {preview}", "warning")], selected)
++        return super().item_line(item, now, selected)
++
+     def item_drawer(self, item, width):
++        if isinstance(item, PendingMessage):
++            command = item.command
++            indent = " " * console.DRAWER_INDENT
++            wrap = max(1, width - len(indent))
++            lines = []
++            if command["state"] == "uncertain":
++                explanation = ("Projector lost contact before it could record what happened to this message. "
++                               "Check the agent's conversation. Other messages will continue after you check these.")
++                if self.recovery_retry == command["id"]:
++                    explanation = "Sending this message again can repeat file edits or commands. Send it again?"
++                lines.extend(Line([(indent + part, "warning")]) for part in textwrap.wrap(explanation, wrap))
++            for paragraph in command["text"].split("\n"):
++                lines.extend(Line([(indent + part, "")]) for part in textwrap.wrap(paragraph, wrap) or [""])
++            lines.append(Line([]))
++            lines.extend(self.option_line(control) for control in self.controls())
++            return lines
+         lines = super().item_drawer(item, width)
+         if item["ref"] in self.runtime_views.get(self.session, {}).get("pending_requests", {}):
+             lines.append(Line([("Native request: answer, type a clarification, or dismiss to deny/cancel.", "subtle")]))
+@@ -432,6 +710,8 @@ def lines(self, width):
+         with self.lock:
+             if self.field is not None and self.field.purpose.startswith("launch-"):
+                 return self.launch_lines(width)
++            if self.view == "panel" and self.session in self.runtimes:
++                return self.panel_lines(width)
+             return super().lines(width)
+ 
+     def viewport(self, width, room):
+@@ -440,40 +720,22 @@ def viewport(self, width, room):
+                 lines, (_, last) = self.launch_lines(width)
+                 start = max(0, last - room + 1)
+                 return lines[start:start + room]
++            if self.view == "panel" and self.session in self.runtimes:
++                return self.panel_viewport(width, room)
+             return super().viewport(width, room)
+ 
+     def launch_lines(self, width):
+         width = max(1, width)
+-        form, typing = self.launch_form, self.field
+-        lines = []
+-
+-        def append(text, style="subtle"):
+-            lines.extend(Line([(part, style)]) for part in textwrap.wrap(text, width) or [""])
+-
+-        append("New agent session", "bold")
+-        append(f"{form['backend']} · {form['model'] or 'Native default'}")
+-        append("Directory: " + form["cwd"])
++        form = self.launch_form
++        summary = f"{form['backend']} · {form['model'] or 'Native default'}"
+         if form["name"]:
+-            append("Name: " + form["name"])
+-        append("Native permission and sandbox settings apply, including configured automatic approvals.")
+-        first = len(lines)
+-        if typing.purpose == "launch-settings":
+-            append("c Claude · x Codex · m model · d directory · n name", "accent")
+-        elif typing.purpose == "launch-models":
+-            for key, (label, _) in self.model_choices().items():
+-                append(f"{key} {label}", "accent")
+-            append("t Type another model ID", "accent")
+-        last = len(lines) - 1
+-        if typing.purpose not in ("launch-prompt", "launch-settings", "launch-models"):
+-            field_lines = self.field_lines(typing, width)
+-            last = len(lines) + next(at for at, line in enumerate(field_lines) if line.cursor is not None)
+-            lines.extend(field_lines)
+-        lines.append(Line([]))
+-        prompt = self.field_lines(self.launch_prompt, width, active=typing is self.launch_prompt)
+-        if typing is self.launch_prompt:
+-            first = last = len(lines) + next(at for at, line in enumerate(prompt) if line.cursor is not None)
+-        lines.extend(prompt)
+-        return lines, (first, last)
++            summary += " · " + form["name"]
++        lines = [Line([("New agent session", "bold")]),
++                 Line([(console.fit(summary, width), "subtle")]),
++                 Line([(console.fit("Directory: " + form["cwd"], width), "subtle")]), Line([])]
++        prompt = self.field_lines(self.launch_prompt, width, active=self.field is self.launch_prompt)
++        focus = len(lines) + next(at for at, line in enumerate(prompt) if line.spot)
++        return [*lines, *prompt], (focus, focus)
+ 
+     @staticmethod
+     def field_lines(typing, width, *, active=True):
+@@ -483,11 +745,11 @@ def field_lines(typing, width, *, active=True):
+         for paragraph in text.split("\n"):
+             parts = [paragraph[at:at + width] for at in range(0, len(paragraph), width)] or [""]
+             row, column = divmod(cursor - offset, width)
+-            here = active and offset <= cursor <= offset + len(paragraph)
++            here = offset <= cursor <= offset + len(paragraph)
+             if here and row == len(parts):
+                 parts.append("")
+             lines.extend(Line([(part, "")], spot=here and row == at,
+-                              cursor=column if here and row == at else None) for at, part in enumerate(parts))
++                              cursor=column if active and here and row == at else None) for at, part in enumerate(parts))
+             offset += len(paragraph) + 1
+         return lines
+ 
+@@ -507,42 +769,12 @@ def form_line(typing):
+     def runtime_lines(self, name, width, selected):
+         lines = []
+         current = self.runtimes[name]
+-        lines.append(Line([(current.get("backend", "Agent"), "bold")]))
+         if current.get("error"):
+             lines.append(Line([(current["error"], "error")]))
+-        if current.get("state") == "handed-off":
+-            lines.append(Line([("The native terminal owns this session. Projector input waits until you return.", "warning")]))
+-        policy = current.get("policy", {})
+-        if policy:
+-            sandbox = policy.get("sandbox", {})
+-            sandbox = sandbox.get("type", "native settings") if isinstance(sandbox, dict) else sandbox
+-            lines.append(Line([(f"Approvals: {policy.get('approval', 'native settings')} · sandbox: {sandbox}", "subtle")]))
+-            if policy.get("reviewer") or policy.get("profile"):
+-                profile = policy.get("profile") or {}
+-                lines.append(Line([(f"Reviewer: {policy.get('reviewer', 'native settings')} · profile: {profile.get('id', 'native settings')}", "subtle")]))
+-        controls = ["c chat"]
+-        state = current.get("state")
+-        if state == "handed-off":
+-            controls.append("r return to Projector")
+-        elif state in ("stopped", "failed"):
+-            controls.append("r resume")
+-        else:
+-            controls.extend(["i interrupt", "x stop", "o native terminal"])
+-        if current.get("paused") and state not in ("handed-off", "stopped", "failed"):
+-            controls.append("s send queued")
+-        lines.append(Line([(" · ".join(controls), "accent")]))
+-        lines.append(Line([("e edit queued · d remove queued · R retry uncertain · D confirm received", "subtle")]))
+         view = self.runtime_views.get(name, {})
+-        if current.get("paused"):
+-            lines.append(Line([("Queued work is paused.", "warning")]))
+         result = view.get("control_result", {})
+         if result.get("error"):
+             lines.append(Line([(result["error"], "error")]))
+-        for state in ("queued", "uncertain"):
+-            for at, command in enumerate((command for command in view.get("commands", []) if command["state"] == state), 1):
+-                preview = command["text"].replace("\n", " ↵ ")[:160]
+-                lines.append(Line([(f"{state} {at}: {preview}", "warning" if state == "uncertain" else "subtle")]))
+-        lines.append(Line([("Conversation", "bold")], selected))
+         for who, text in self.chats.get(name, []):
+             lines.append(Line([]))
+             for paragraph in text.split("\n"):
+@@ -552,10 +784,16 @@ def runtime_lines(self, name, width, selected):
+                     else:
+                         lines.append(Line([(part, "subtle" if who == "tool" else "warning" if who == "status" else "")]))
+         lines.append(Line([]))
+-        if self.field is not None and self.field.purpose in ("chat", "queue-edit"):
+-            lines.extend(self.field_lines(self.field, max(1, width)))
++        composing = self.field is not None and self.field.purpose in ("chat", "chat-options", "chat-info", "queue-edit")
++        draft = self.field if composing and self.field.purpose == "queue-edit" else self.drafts.get(name)
++        if draft is not None:
++            parts = self.field_lines(draft, max(1, width), active=self.field is draft)
++            if not composing:
++                for line in parts:
++                    line.spot = False
++            lines.extend(parts)
+         else:
+-            lines.append(Line([(self.message_prompt(name), "bold"), ("c to message", "subtle")]))
++            lines.append(Line([(self.message_prompt(name), "bold")]))
+         return lines
+ 
+     def message_prompt(self, name):
+diff --git a/src/projector/console.py b/src/projector/console.py
+index 7b27c3c1..07bc24a1 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -15,6 +15,8 @@
+ import base64
+ import os
+ import signal
++import shutil
++import subprocess
+ import sys
+ import textwrap
+ import threading
+@@ -350,6 +352,16 @@ def clipboard_sequence(text: str, environ: Optional[dict] = None) -> str:
+     return sequence
+ 
+ 
++def local_clipboard(text: str) -> bool:
++    command = shutil.which("pbcopy") if sys.platform == "darwin" and not is_remote() else None
++    if command is None:
++        return False
++    try:
++        return subprocess.run([command], input=text.encode("utf-8"), capture_output=True, timeout=2, check=False).returncode == 0
++    except (OSError, subprocess.TimeoutExpired):
++        return False
++
++
+ def pull_key(pull: rows.Pull) -> str:
+     return f"pr:{pull.repo}#{pull.number}"
+ 
+@@ -1116,7 +1128,7 @@ def clamped(offset: int) -> int:
+             self.reveal = False
+             return body[self.offset:self.offset + room]
+ 
+-    def footer(self) -> list[Line]:
++    def footer(self, width: Optional[int] = None) -> list[Line]:
+         """The lines under the body: what the keys do, and the last refusal or note."""
+         with self.lock:
+             lines = [Line([(self.status, "error")])] if self.status else []
+@@ -1577,11 +1589,13 @@ def printable(text: str) -> str:
+ class Screen:
+     """Draws a `Console` with curses and feeds it keys and mouse clicks."""
+ 
+-    def __init__(self, window: Any, console: Console, curses: Any, out: Optional[TextIO] = None) -> None:
++    def __init__(self, window: Any, console: Console, curses: Any, out: Optional[TextIO] = None,
++                 copy_local: Callable[[str], bool] = local_clipboard) -> None:
+         self.window, self.console, self.curses = window, console, curses
+         # Where escape sequences that curses does not draw, such as the clipboard's, go to the terminal.
+         self.out = sys.stdout if out is None else out
+         self.styles = styles(curses)
++        self.copy_local = copy_local
+         # What `read_key` read past the end of an escape sequence, to hand over next.
+         self.pending: list[object] = []
+         self.targets: list[tuple[int, int, int, Target]] = []
+@@ -1590,9 +1604,18 @@ def __init__(self, window: Any, console: Console, curses: Any, out: Optional[Tex
+         self.paste_buffer: Optional[list[str]] = None
+         self.paste_tail = ""
+         self.paste_overflow = False
++        self.frame: dict[int, Line] = {}
++        self.selection_frame: dict[int, Line] = {}
++        self.selection_anchor: Optional[tuple[int, int]] = None
++        self.selection_end: Optional[tuple[int, int]] = None
++        self.dragging = False
++        self.cancelled_drag = False
++        self.mouse_reporting = False
+ 
+     def input_mode(self, enabled: bool) -> None:
+         if self.input_enabled != enabled:
++            if self.mouse_reporting:
++                self.out.write("\x1b[?1003l\x1b[?1006h\x1b[?1002h" if enabled else "\x1b[?1002l\x1b[?1006l")
+             self.out.write("\x1b[>1u\x1b[?2004h" if enabled else "\x1b[?2004l\x1b[<u")
+             self.out.flush()
+             self.input_enabled = enabled
+@@ -1605,24 +1628,46 @@ def put(self, y: int, line: Line, width: int) -> None:
+             lit = line.selected or at == line.lit
+             attributes = self.styles.get(style, 0) | (self.curses.A_REVERSE if lit else 0)
+             shown = printable(text)[:width - x]
+-            try:
+-                self.window.addstr(y, x, shown, attributes)
+-            except self.curses.error:
+-                pass
++            span = self.selection_span(y, width)
++            pieces = [(shown, attributes)]
++            if span is not None:
++                left, right = max(0, span[0] - x), min(len(shown), span[1] - x)
++                if left < right:
++                    pieces = [(shown[:left], attributes), (shown[left:right], attributes ^ self.curses.A_REVERSE),
++                              (shown[right:], attributes)]
++            column = x
++            for part, style in pieces:
++                if part:
++                    try:
++                        self.window.addstr(y, column, part, style)
++                    except self.curses.error:
++                        pass
++                column += len(part)
+             x += len(shown)
+ 
+     def draw(self) -> None:
+         height, width = self.window.getmaxyx()
+-        footer = self.console.footer()
++        if self.size != (height, width) and self.selection_frame:
++            self.clear_selection()
++        if self.selection_frame:
++            self.window.erase()
++            for y, line in self.selection_frame.items():
++                self.put(y, line, width)
++            try:
++                self.curses.curs_set(0)
++            except self.curses.error:
++                pass
++            self.window.refresh()
++            self.flush_clipboard()
++            return
++        footer = self.console.footer(max(1, width - 1))
+         typing = self.console.field
+         below = typing is not None and not typing.inline
+         room = max(1, height - len(footer) - (1 if below else 0))
+         shown = self.console.viewport(max(0, width - 1), room)
+-        self.targets = [(y, start + 1, min(width, end + 1), target)
+-                        for y, line in enumerate(shown[:height]) for start, end, target in line.targets
+-                        if start + 1 < min(width, end + 1)]
+         self.size = (height, width)
+         self.window.erase()
++        self.frame = {**dict(enumerate(shown)), **{room + y: line for y, line in enumerate(footer)}}
+         for y, line in enumerate(shown):
+             self.put(y, line, width)
+         for y, line in enumerate(footer, room):
+@@ -1631,24 +1676,74 @@ def draw(self) -> None:
+         if typing is not None and below:
+             space = max(1, width - len(typing.prompt) - 2)
+             start = max(0, typing.cursor - space)
+-            self.put(height - 1, Line([(typing.prompt, "bold"), (typing.text[start:start + space], "")]), width)
++            line = Line([(typing.prompt, "bold"), (typing.text[start:start + space], "")])
++            self.frame[height - 1] = line
++            self.put(height - 1, line, width)
+             at = (height - 1, min(width - 1, 1 + len(typing.prompt) + typing.cursor - start))
+         elif typing is not None:
+-            at = next(((y, min(width - 1, 1 + line.cursor)) for y, line in enumerate(shown) if line.cursor is not None),
++            positioned = [*enumerate(shown), *((room + y, line) for y, line in enumerate(footer))]
++            at = next(((y, min(width - 1, 1 + line.cursor)) for y, line in positioned if line.cursor is not None),
+                       None)
+         if at is not None:
+             self.window.move(*at)
++        self.targets = [(y, start + 1, min(width, end + 1), target)
++                        for y, line in self.frame.items() for start, end, target in line.targets
++                        if start + 1 < min(width, end + 1)]
+         try:
+             self.curses.curs_set(0 if at is None else 1)
+         except self.curses.error:
+             pass
+         self.window.refresh()
+         # After curses has written the screen, so the sequence reaches the terminal whole and is never drawn as text.
++        self.flush_clipboard()
++
++    def flush_clipboard(self) -> None:
+         copied = self.console.take_clipboard()
+-        if copied is not None:
++        if copied is not None and not self.copy_local(copied):
+             self.out.write(clipboard_sequence(copied))
+             self.out.flush()
+ 
++    def selection_span(self, y: int, width: int) -> Optional[tuple[int, int]]:
++        if self.selection_anchor is None or self.selection_end is None or self.selection_anchor == self.selection_end:
++            return None
++        first, last = sorted((self.selection_anchor, self.selection_end))
++        if not first[0] <= y <= last[0]:
++            return None
++        return (first[1] if y == first[0] else 1, last[1] + 1 if y == last[0] else width)
++
++    def selected_text(self) -> str:
++        if self.size is None:
++            return ""
++        if self.selection_anchor is None or self.selection_end is None:
++            return ""
++        lines = []
++        first, last = sorted((self.selection_anchor, self.selection_end))
++        for y in range(first[0], last[0] + 1):
++            line = self.selection_frame.get(y, Line([]))
++            span = self.selection_span(y, self.size[1])
++            if span is not None:
++                lines.append(printable(line.text)[max(0, span[0] - 1):max(0, span[1] - 1)].rstrip())
++        return "\n".join(lines)
++
++    def clear_selection(self) -> None:
++        self.cancelled_drag = self.dragging
++        self.selection_anchor = self.selection_end = None
++        self.selection_frame = {}
++        self.dragging = False
++
++    def key(self, name: str) -> None:
++        selected = self.selected_text()
++        if self.selection_frame and name == "ctrl-c":
++            if selected.strip():
++                self.console.clipboard = selected
++            self.clear_selection()
++            return
++        if self.selection_frame and name == "esc":
++            self.clear_selection()
++            return
++        self.clear_selection()
++        self.console.key(name)
++
+     def read_key(self) -> Optional[str]:
+         """Read complete keys and pastes so their control sequences cannot become prompt text."""
+         if self.paste_buffer is not None:
+@@ -1672,7 +1767,13 @@ def read_key(self) -> Optional[str]:
+             body += byte
+             if "@" <= byte <= "~":
+                 break
++        if follow == "O" and body == "M":
++            return "enter"
++        if body == "M" or (body.startswith("<") and body[-1:] in ("M", "m")):
++            self.mouse_report(body)
++            return None
+         if body == "200~":
++            self.clear_selection()
+             self.paste_buffer, self.paste_tail, self.paste_overflow = [], "", False
+             return self.read_paste()
+         return escape_key(body)
+@@ -1705,10 +1806,81 @@ def mouse(self) -> None:
+             _, x, y, _, buttons = self.curses.getmouse()
+         except self.curses.error:
+             return
+-        if not buttons & (self.curses.BUTTON1_CLICKED | self.curses.BUTTON1_RELEASED):
++        if buttons & getattr(self.curses, "BUTTON4_PRESSED", 0):
++            kind = "wheel-up"
++        elif buttons & getattr(self.curses, "BUTTON5_PRESSED", 0):
++            kind = "wheel-down"
++        elif buttons & self.curses.BUTTON1_RELEASED:
++            kind = "release" if self.dragging or self.cancelled_drag else "click"
++        elif buttons & getattr(self.curses, "BUTTON1_PRESSED", 0):
++            kind = "move" if self.dragging else "press"
++        elif buttons & self.curses.BUTTON1_CLICKED:
++            kind = "click"
++        elif buttons & getattr(self.curses, "REPORT_MOUSE_POSITION", 0):
++            kind = "move"
++        else:
++            return
++        self.pointer(x, y, kind)
++
++    def mouse_report(self, body: str) -> None:
++        try:
++            if body == "M":
++                values = [self.follow() for _ in range(3)]
++                if not all(isinstance(value, str) and len(value) == 1 for value in values):
++                    return
++                code, x, y = (ord(value) - 32 for value in values)
++                released = code & 3 == 3
++            else:
++                code, x, y = map(int, body[1:-1].split(";"))
++                released = body.endswith("m")
++            if code & 64:
++                kind = "wheel-down" if code & 1 else "wheel-up"
++            elif released:
++                if code & 3 not in (0, 3):
++                    return
++                kind = "release"
++            elif code & 3 != 0:
++                return
++            else:
++                kind = "move" if code & 32 else "press"
++        except ValueError:
+             return
++        self.pointer(x - 1, y - 1, kind)
++
++    def pointer(self, x: int, y: int, kind: str) -> None:
+         if self.size != self.window.getmaxyx():
++            self.clear_selection()
++            return
++        if kind in ("wheel-up", "wheel-down"):
++            self.clear_selection()
++            with self.console.lock:
++                self.console.scroll("pageup" if kind == "wheel-up" else "pagedown")
++            return
++        point = (max(0, min(y, self.size[0] - 1)), max(1, min(x, self.size[1] - 1)))
++        if kind == "press":
++            self.clear_selection()
++            self.cancelled_drag = False
++            self.selection_anchor = self.selection_end = point
++            self.selection_frame, self.dragging = dict(self.frame), True
++            return
++        if self.dragging:
++            self.selection_end = point
++            if kind != "release":
++                return
++            self.dragging = False
++            if self.selection_anchor != self.selection_end:
++                selected = self.selected_text()
++                if selected.strip():
++                    self.console.clipboard = selected
++                return
++            kind = "click"
++            self.clear_selection()
++        elif self.cancelled_drag and kind == "release":
++            self.cancelled_drag = False
++            return
++        if kind != "click":
+             return
++        self.clear_selection()
+         target = next((target for row, start, end, target in self.targets if row == y and start <= x < end), None)
+         if target is not None:
+             self.console.click(target)
+@@ -1726,11 +1898,16 @@ def follow(self) -> object:
+     def run(self) -> int:
+         """Draw and take keys until the console quits. The terminal's Ctrl-C reaches curses as SIGINT, which only
+         sets a flag here, so it is a key like any other and never stops the console between two of its steps."""
+-        self.window.keypad(True)
++        # curses can discard a press when several mouse reports arrive together.
++        self.window.keypad(False)
+         self.window.timeout(REDRAW_WAIT)
+         mouse_mask = mouse_interval = None
+         try:
+-            _, mouse_mask = self.curses.mousemask(self.curses.BUTTON1_CLICKED | self.curses.BUTTON1_RELEASED)
++            requested = (self.curses.BUTTON1_CLICKED | self.curses.BUTTON1_RELEASED
++                         | getattr(self.curses, "BUTTON1_PRESSED", 0) | getattr(self.curses, "REPORT_MOUSE_POSITION", 0)
++                         | getattr(self.curses, "BUTTON4_PRESSED", 0) | getattr(self.curses, "BUTTON5_PRESSED", 0))
++            available, mouse_mask = self.curses.mousemask(requested)
++            self.mouse_reporting = bool(available)
+             mouse_interval = self.curses.mouseinterval(0)
+         except (AttributeError, self.curses.error):
+             pass
+@@ -1755,7 +1932,7 @@ def refresh() -> None:
+             while not self.console.quit:
+                 if interrupted.is_set():
+                     interrupted.clear()
+-                    self.console.key("ctrl-c")
++                    self.key("ctrl-c")
+                     continue
+                 self.draw()
+                 try:
+@@ -1763,7 +1940,7 @@ def refresh() -> None:
+                 except self.curses.error:
+                     continue
+                 if name is not None:
+-                    self.console.key(name)
++                    self.key(name)
+         finally:
+             self.input_mode(False)
+             signal.signal(signal.SIGINT, previous)
+diff --git a/src/projector/runtime_store.py b/src/projector/runtime_store.py
+index 68339481..2cf6749e 100644
+--- a/src/projector/runtime_store.py
++++ b/src/projector/runtime_store.py
+@@ -116,7 +116,7 @@ def resolve(self, ident: str, retry: bool) -> None:
+         with self.connection() as db:
+             if not db.execute("UPDATE commands SET state=?,outcome=? WHERE id=? AND state='uncertain'",
+                               ("queued" if retry else "finished", None if retry else "confirmed", ident)).rowcount:
+-                raise EnvironmentError("This command no longer needs recovery")
++                raise EnvironmentError("This message no longer needs checking")
+ 
+     def edit(self, ident: str, text: str | None) -> None:
+         with self.connection() as db:
+diff --git a/src/projector/runtime_worker.py b/src/projector/runtime_worker.py
+index bcaa5be1..b382e4fa 100644
+--- a/src/projector/runtime_worker.py
++++ b/src/projector/runtime_worker.py
+@@ -272,12 +272,23 @@ async def act(self, action: str) -> None:
+             self.stopping = True
+         elif action == "send":
+             if self.store.commands(("uncertain",)):
+-                raise EnvironmentError("Resolve uncertain input before sending queued work")
++                raise EnvironmentError("Check the highlighted messages before continuing")
+             self.paused = False
+-        elif action.startswith("confirm:"):
+-            ident = action.removeprefix("confirm:")
+-            self.store.resolve(ident, retry=False)
+-            self.settle(ident)
++        elif action.startswith(("confirm:", "retry:")):
++            if self.backend is None:
++                raise EnvironmentError("Return to Projector before checking this message")
++            operation, ident = action.split(":", 1)
++            retry = operation == "retry"
++            command = self.store.command(ident)
++            if retry and command and command["source"] and not codex_watch.eligible(
++                    self.folder, {"key": json.dumps(command["source"]), "line": command["text"]}):
++                raise EnvironmentError("This delivery has changed. Check the agent conversation and the current inbox item.")
++            self.store.resolve(ident, retry=retry)
++            if not retry:
++                self.settle(ident)
++            self.paused = bool(self.store.commands(("uncertain",)))
++            self.state = "recovering" if self.paused else "ready"
++            self.snapshot()
+         elif action == "handoff":
+             if self.current or self.requests:
+                 raise EnvironmentError("Interrupt the turn and wait for it to end before opening the native terminal")
+diff --git a/tests/test_agent_console.py b/tests/test_agent_console.py
+index eecba067..4a524153 100644
+--- a/tests/test_agent_console.py
++++ b/tests/test_agent_console.py
+@@ -62,7 +62,8 @@ def test_stopped_managed_sessions_remain_available_to_resume(self):
+         self.assertEqual('stopped', self.console.runtimes['managed-session']['state'])
+         self.assertIsInstance(self.console.sessions['managed-session'].updated_at, (int, float))
+         self.console.open_panel('managed-session')
+-        self.assertIn('r resume', '\n'.join(line.text for line in self.console.lines(100)[0]))
++        self.console.key('up')
++        self.assertIn('r Resume', self.console.footer()[0].text)
+ 
+     def test_a_new_prompt_uses_the_highlighted_sessions_directory(self):
+         first = Path(self.temporary.name) / 'first'
+@@ -120,7 +121,6 @@ def test_settings_preserve_the_draft_and_offer_single_key_provider_and_model_cho
+         for key in ('up', 'x'):
+             self.console.key(key)
+         self.assertEqual('', self.console.launch_form['model'])
+-        self.assertIn('example-model', '\n'.join(line.text for line in self.console.lines(100)[0]))
+         self.console.key('1')
+         for key in ('up', 'd'):
+             self.console.key(key)
+@@ -194,7 +194,6 @@ def test_a_long_multiline_prompt_keeps_its_cursor_visible_in_a_small_terminal(se
+     def test_chat_records_input_in_the_same_inbox_as_other_person_to_session_messages(self):
+         self.managed()
+         self.console.open_panel('managed-session')
+-        self.console.key('c')
+         self.type('first\nsecond')
+         self.console.key('enter')
+         items = inbox.load_items(inbox.session_dir('managed-session'))
+@@ -203,7 +202,6 @@ def test_chat_records_input_in_the_same_inbox_as_other_person_to_session_message
+     def test_completion_changes_the_live_prompt_without_adding_a_status_message_or_losing_the_draft(self):
+         folder = self.managed(state='running')
+         self.console.open_panel('managed-session')
+-        self.console.key('c')
+         self.type('A follow-up')
+         active = self.console.field.prompt
+         store = Store(folder)
+@@ -249,7 +247,6 @@ def test_user_messages_have_a_background_and_agent_replies_have_no_speaker_label
+     def test_long_chat_input_keeps_the_cursor_visible_when_editing_earlier_lines(self):
+         self.managed()
+         self.console.open_panel('managed-session')
+-        self.console.key('c')
+         self.type('first line\n' + 'long input ' * 100 + '\nlast line')
+         self.console.key('home')
+         shown = self.console.viewport(40, 10)
+@@ -306,22 +303,158 @@ def test_stream_refresh_appends_only_new_text_and_keeps_a_terminal_failure_visib
+         self.assertEqual([('agent', 'first second'), ('status', 'failed: disk full')], chat)
+         self.assertIn('failed: disk full', '\n'.join(line.text for line in self.console.lines(100)[0]))
+ 
+-    def test_retrying_uncertain_input_requires_an_explicit_confirmation(self):
++    def test_checking_a_message_uses_its_identity_and_resending_needs_confirmation(self):
+         folder = self.managed()
++        store = Store(folder)
++        for ident in ('first', 'second'):
++            store.enqueue(ident, ident + ' message', [])
++            store.begin(ident, 'old-worker')
++        store.recover()
+         self.console.open_panel('managed-session')
++        self.now += 0.3
++        self.console.tick()
++        for key in ('up', 'k', 'down', 'down', 'down', 'enter'):
++            self.console.key(key)
++        shown = '\n'.join(line.text for line in self.console.lines(100)[0])
++        self.assertIn('second message', shown)
++        self.assertIn('Already reached the agent', shown)
++        with patch.object(runtime, 'control') as control:
++            for key in ('s', 'enter'):
++                self.console.key(key)
++            control.assert_not_called()
++            for key in ('s', 's'):
++                self.console.key(key)
++        control.assert_called_once_with(self.root, 'managed-session', 'retry:second')
++        self.assertEqual('chat', self.console.field.purpose)
++
++    def test_a_message_checked_by_another_console_cannot_be_resubmitted_from_stale_buttons(self):
++        folder = self.managed()
+         store = Store(folder)
+-        store.enqueue('uncertain', 'may have changed files', [])
+-        store.begin('uncertain', 'old-worker')
++        store.enqueue('first', 'Check this message', [])
++        store.begin('first', 'old-worker')
+         store.recover()
+-        self.console.key('R')
+-        self.type('1')
+-        self.console.key('enter')
+-        self.type('yes')
+-        self.console.key('enter')
+-        self.assertEqual('uncertain', store.command('uncertain')['state'])
+-        self.replace_field('RETRY')
++        self.console.open_panel('managed-session')
++        self.now += 0.3
++        self.console.tick()
++        for key in ('up', 'k', 's'):
++            self.console.key(key)
++        store.resolve('first', retry=False)
++        with patch.object(runtime, 'control') as control:
++            self.console.key('s')
++        control.assert_not_called()
++        self.assertIn('no longer needs checking', self.console.status)
++
++    def test_chat_is_ready_by_default_and_sending_keeps_the_composer_open(self):
++        self.managed()
++        self.console.open_panel('managed-session')
++        self.assertIsNotNone(self.console.field)
++        self.assertEqual('chat', self.console.field.purpose)
++        for text in ('first message', 'c is ordinary text'):
++            self.type(text)
++            self.console.key('enter')
++            self.assertEqual('', self.console.field.text)
++        items = inbox.load_items(inbox.session_dir('managed-session'))
++        self.assertEqual(['first message', 'c is ordinary text'], [item['messages'][0]['text'] for item in items])
++        shown = '\n'.join(line.text for line in self.console.lines(100)[0])
++        for label in ('Conversation', 'interrupt', 'retry uncertain', 'Approvals:', 'Input number:'):
++            self.assertNotIn(label, shown)
++
++    def test_opening_chat_and_launch_options_keeps_every_body_line_in_place(self):
++        self.managed()
++        for launch in (False, True):
++            with self.subTest(launch=launch):
++                if launch:
++                    self.console.go_home()
++                    self.console.key('n')
++                else:
++                    self.console.open_panel('managed-session')
++                self.type('Keep this prompt where it is')
++                before = [line.text for line in self.console.viewport(80, 12)]
++                self.console.key('up')
++                self.assertEqual(before, [line.text for line in self.console.viewport(80, 12)])
++                self.assertEqual(1, len(self.console.footer(80)))
++                self.assertIn('Native' if not launch else 'directory', self.console.footer(80)[0].text)
++                self.console.key('down')
++                self.assertEqual('Keep this prompt where it is', self.console.field.text)
++
++    def test_history_scrolls_while_the_draft_stays_in_place(self):
++        self.managed()
++        self.console.chats['managed-session'] = [('agent', f'Output line {at}') for at in range(50)]
++        self.console.open_panel('managed-session')
++        self.type('My draft')
++        before = self.console.viewport(60, 15)
++        self.console.key('pageup')
++        after = self.console.viewport(60, 15)
++        self.assertNotEqual([line.text for line in before[:-1]], [line.text for line in after[:-1]])
++        self.assertEqual(before[-1].text, after[-1].text)
++        self.assertEqual(self.console.field.text, 'My draft')
++
++    def test_clicking_an_unavailable_inline_action_keeps_the_draft_and_shows_the_error(self):
++        from tests.test_console import FakeWindow, MouseCurses
++        self.managed()
++        self.console.open_panel('managed-session')
++        self.type('Keep my draft')
++        self.console.key('up')
++        curses = MouseCurses()
++        window = FakeWindow(15, 100)
++        screen = agent_console.Screen(window, self.console, curses, io.StringIO())
++        screen.draw()
++        y, text = next((y, text) for y, text in window.rows.items() if 'o Native' in text)
++        with patch.object(runtime, 'control', side_effect=runtime.UsageError('Wait for the turn to finish')):
++            curses.events.append((0, text.index('o Native'), y, 0, curses.BUTTON1_RELEASED))
++            window.pressed.append(curses.KEY_MOUSE)
++            screen.read_key()
++        self.assertEqual('Wait for the turn to finish', self.console.status)
++        self.assertEqual('Keep my draft', self.console.drafts['managed-session'].text)
++
++    def test_editing_a_waiting_message_preserves_the_unsent_chat_draft(self):
++        folder = self.managed()
++        store = Store(folder)
++        store.enqueue('waiting', 'old message', [])
++        self.console.open_panel('managed-session')
++        self.now += 0.3
++        self.console.tick()
++        self.type('Unsent draft')
++        for key in ('up', 'q', 'enter'):
++            self.console.key(key)
++        self.replace_field('Updated message')
+         self.console.key('enter')
+-        self.assertEqual('queued', store.command('uncertain')['state'])
++        self.assertEqual('Updated message', store.command('waiting')['text'])
++        self.assertEqual('Unsent draft', self.console.field.text)
++
++    def test_canceling_a_resend_keeps_the_card_and_escape_restores_the_draft(self):
++        folder = self.managed()
++        store = Store(folder)
++        store.enqueue('held', 'Check this message', [])
++        store.begin('held', 'old-worker')
++        store.recover()
++        self.console.open_panel('managed-session')
++        self.now += 0.3
++        self.console.tick()
++        self.type('My draft')
++        for key in ('up', 'k', 's', '0'):
++            self.console.key(key)
++        self.assertEqual(agent_console.MESSAGE + 'held', self.console.drawer)
++        self.assertIsNone(self.console.recovery_retry)
++        self.console.key('esc')
++        self.assertEqual(('chat', 'My draft'), (self.console.field.purpose, self.console.field.text))
++        self.assertEqual('uncertain', store.command('held')['state'])
++
++    def test_canceling_a_waiting_message_edit_returns_to_the_chat_draft(self):
++        folder = self.managed()
++        store = Store(folder)
++        store.enqueue('waiting', 'Original message', [])
++        self.console.open_panel('managed-session')
++        self.now += 0.3
++        self.console.tick()
++        self.type('My draft')
++        for key in ('up', 'q', 'enter'):
++            self.console.key(key)
++        self.replace_field('Do not save this')
++        self.console.key('esc')
++        self.assertIsNotNone(self.console.field)
++        self.assertEqual(('chat', 'My draft'), (self.console.field.purpose, self.console.field.text))
++        self.assertEqual('Original message', store.command('waiting')['text'])
+ 
+     def test_a_typed_answer_returns_the_actual_text_without_colliding_with_five_options(self):
+         self.managed()
+diff --git a/tests/test_artifact_panel.py b/tests/test_artifact_panel.py
+index 5a7af260..c55db38b 100644
+--- a/tests/test_artifact_panel.py
++++ b/tests/test_artifact_panel.py
+@@ -337,7 +337,8 @@ def test_a_stopped_managed_session_lists_opens_and_discusses_its_artifacts(self)
+         app.apply(found)
+         self.assertEqual('explorer', app.sessions['one'].artifacts[0]['id'])
+         app.open_panel('one')
+-        app.key('enter')
++        app.key('up')
++        app.key('b')
+         with mock.patch.object(artifact_panel, 'open_url', return_value='https://example.com/artifacts/explorer/'):
+             with mock.patch.object(app, 'open_url') as opened:
+                 with mock.patch.object(agent_console.runtime, 'control') as control:
+diff --git a/tests/test_console.py b/tests/test_console.py
+index 9ff319d0..d6dcecdd 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -1138,6 +1138,7 @@ def press_terminal(self, *pressed: object) -> None:
+ class MouseCurses(FakeCurses):
+     KEY_MOUSE = 409
+     BUTTON1_RELEASED, BUTTON1_CLICKED, BUTTON1_PRESSED, BUTTON3_CLICKED = 1, 2, 4, 8
++    REPORT_MOUSE_POSITION = 16
+ 
+     def __init__(self) -> None:
+         self.events: list[tuple[int, int, int, int, int]] = []
+@@ -1153,7 +1154,7 @@ def setUp(self) -> None:
+         super().setUp()
+         self.window.height, self.window.width = 24, 180
+         self.curses = MouseCurses()
+-        self.terminal = console.Screen(self.window, self.console, self.curses)
++        self.terminal = console.Screen(self.window, self.console, self.curses, io.StringIO(), copy_local=lambda text: False)
+ 
+     def mouse_at(self, x: int, y: int, buttons: int = MouseCurses.BUTTON1_RELEASED) -> None:
+         self.curses.events.append((0, x, y, 0, buttons))
+@@ -1174,6 +1175,49 @@ def sessions(self, count: int = 2) -> None:
+                 self.ask(name, f"Question from {name}?")
+         self.console.tick()
+ 
++    def test_dragging_text_copies_without_activating_a_row_and_ctrl_c_keeps_the_console_running(self) -> None:
++        self.sessions()
++        self.draw()
++        y, row = next((y, row) for y, row in self.window.rows.items() if 'worker-01' in row)
++        start = row.index('worker-01')
++        self.mouse_at(start, y, self.curses.BUTTON1_PRESSED)
++        self.mouse_at(start + len('worker-01') - 1, y, self.curses.REPORT_MOUSE_POSITION)
++        self.mouse_at(start + len('worker-01') - 1, y, self.curses.BUTTON1_RELEASED)
++        self.assertEqual('worker-01', self.console.take_clipboard())
++        self.assertEqual('worker-00', self.console.viewed().name)
++        self.terminal.key('ctrl-c')
++        self.assertFalse(self.console.quit)
++        self.assertEqual('worker-01', self.console.take_clipboard())
++        self.click('worker-01')
++        self.assertEqual('worker-01', self.console.viewed().name)
++
++    def test_selected_text_stays_fixed_while_the_underlying_session_list_changes(self) -> None:
++        self.sessions()
++        self.draw()
++        y, row = next((y, row) for y, row in self.window.rows.items() if 'worker-01' in row)
++        start = row.index('worker-01')
++        self.mouse_at(start, y, self.curses.BUTTON1_PRESSED)
++        self.mouse_at(start + 8, y, self.curses.REPORT_MOUSE_POSITION)
++        self.mouse_at(start + 8, y, self.curses.BUTTON1_RELEASED)
++        self.console.sessions['worker-01'].label = 'changed title'
++        self.draw()
++        self.assertIn('worker-01', self.window.text())
++        self.assertNotIn('changed title', self.window.text())
++        self.terminal.key('esc')
++        self.draw()
++        self.assertIn('changed title', self.window.text())
++
++    def test_a_successful_local_copy_avoids_a_duplicate_terminal_clipboard_request(self) -> None:
++        self.sessions()
++        output = io.StringIO()
++        self.terminal.out = output
++        captured = []
++        self.terminal.copy_local = lambda text: captured.append(text) is None
++        self.console.clipboard = 'résumé'
++        self.terminal.draw()
++        self.assertEqual(['résumé'], captured)
++        self.assertEqual('', output.getvalue())
++
+     def test_clicking_a_session_then_its_question_records_only_that_sessions_clicked_choice(self) -> None:
+         self.sessions()
+         self.click("worker-01")
+@@ -1668,7 +1712,7 @@ def test_enter_sends_one_message_and_newline_keys_and_pastes_preserve_all_lines(
+                    "owner": "managed", "state": "ready", "cwd": str(self.home), "renewed_at": time.time()})
+         self.start()
+         try:
+-            self.send(b"\r", b"c", b"first\nsecond", b"\x1b[13;2uthird", b"\x1b[27;2;13~fourth")
++            self.send(b"\r", b"first\nsecond", b"\x1b[13;2uthird", b"\x1b[27;2;13~fourth")
+             self.send(b"\x1b[200~\r\npasted\r\n\r\nlast\x1b[201~")
+             items = Path(self.state) / "projector" / "inbox" / "S"
+             before = sorted(path.name for path in items.glob("*.json") if path.stem.isdecimal())
+@@ -1683,6 +1727,37 @@ def test_enter_sends_one_message_and_newline_keys_and_pastes_preserve_all_lines(
+         self.assertIn(b"\x1b[>1u", self.shown)
+         self.assertIn(b"\x1b[<u", self.shown)
+ 
++    @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
++    def test_drag_select_copies_text_and_a_later_click_can_still_answer_a_question(self) -> None:
++        import curses
++        self.prepare()
++        self.env['PROJECTOR_REMOTE'] = '1'
++        self.start()
++        curses.setupterm(self.env['TERM'])
++        prefix = curses.tigetstr('kmous')
++        def event(button, x, y, release=False):
++            if prefix == b'\x1b[<':
++                return f"\x1b[<{button};{x};{y}{'m' if release else 'M'}".encode()
++            return prefix + bytes((35 if release else button + 32, x + 32, y + 32))
++        try:
++            self.send(event(0, 4, 9) + event(32, 10, 9) + event(0, 10, 9, True))
++            selected = b'\x1b]52;c;RGVjbGluZQ==\x07' in self.shown
++            self.send(b'\x03')
++            stayed_open = self.exited(0.2, kill=False) is None
++            self.click(3, 9)
++            self.send(b'2', b'\r')
++        finally:
++            self.send(b'\x1b', b'\x1b', b'\x03')
++            code = self.exited(10)
++        item = json.loads((Path(self.state) / 'projector' / 'inbox' / 'S' / '1.json').read_text())
++        import base64
++        import re
++        copies = [base64.b64decode(value).decode('utf-8') for value in re.findall(rb'\x1b]52;c;([^\x07]*)\x07', self.shown)]
++        self.assertTrue(selected, copies)
++        self.assertTrue(stayed_open)
++        self.assertEqual('b', item['answer']['letter'])
++        self.assertEqual(0, code)
++
+     @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
+     def test_a_panel_quits_on_the_second_ctrl_c_and_not_the_first(self) -> None:
+         # Catches the terminal's Ctrl-C reaching curses as an interrupt that quits at once from a panel.
+diff --git a/tests/test_runtime_worker.py b/tests/test_runtime_worker.py
+index 02c75258..2af37296 100644
+--- a/tests/test_runtime_worker.py
++++ b/tests/test_runtime_worker.py
+@@ -47,6 +47,36 @@ def setUp(self):
+         self.worker.state = 'ready'
+         self.worker.snapshot()
+ 
++    async def test_checked_messages_continue_only_after_every_uncertain_message_is_resolved(self):
++        store = self.worker.store
++        for ident in ('resend', 'already-there'):
++            store.enqueue(ident, ident, [])
++            store.begin(ident, 'old-worker')
++        store.recover()
++        self.worker.paused = True
++        self.worker.state = 'recovering'
++        store.request_control('retry-request', 'retry:resend')
++        await self.worker.tick()
++        self.assertTrue(self.worker.paused)
++        self.assertEqual([], self.worker.backend.submitted)
++        store.request_control('confirm-request', 'confirm:already-there')
++        await self.worker.tick()
++        self.assertFalse(self.worker.paused)
++        self.assertEqual(['resend'], self.worker.backend.submitted)
++        self.assertEqual('confirmed', store.command('already-there')['outcome'])
++
++    async def test_resending_a_changed_delivery_keeps_it_held_instead_of_replaying_it(self):
++        store = self.worker.store
++        store.enqueue('stale', 'outdated answer', ['inbox', 'missing', 0, 'expired-token'])
++        store.begin('stale', 'old-worker')
++        store.recover()
++        self.worker.paused = True
++        with self.assertRaisesRegex(EnvironmentError, 'delivery has changed'):
++            await self.worker.act('retry:stale')
++        self.assertEqual('uncertain', store.command('stale')['state'])
++        self.assertTrue(self.worker.paused)
++        self.assertEqual([], self.worker.backend.submitted)
++
+     async def test_multiline_input_uses_the_existing_inbox_and_reaches_one_native_turn(self):
+         text = '-v "hi" $HOME\nsecond paragraph\n\nlast'
+         item = runtime.send(self.root, self.session, text)
