@@ -1,0 +1,295 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 0514f4e1..af7ef36d 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3451,8 +3451,8 @@ The session list has four aligned fields, without headings:
+ - **Session** shows the chat title from Codex's session index or Claude
+   Code's `/rename` metadata. It falls back to the registered session name,
+   then `Unnamed session` when neither is available. It uses normal text
+-  color. The selected session name has color and a `▸` marker; the row has
+-  no highlight.
++  color. The selected session name is bright gray with a `▸` marker; the row
++  has no highlight.
+ - **PRs** counts all open pull requests the session fixes or reviews, as
+   `1 PR` or `5 PRs`, in orange. The count is blank when there are none.
+ - **Latest request** shows the newest open, awake question or request.
+@@ -3484,6 +3484,10 @@ console](agents.md). Press Up for actions in the existing hint line, without
+ moving the chat or prompt. Other processes keep the list and panel layout
+ below.
+ 
++The bottom hint line shows shortcuts for the current view. The session list
++offers `n new agent session`; chat and prompt editors show their own
++shortcuts. An empty session list offers only the actions you can use there.
++
+ Up and down select a session and update the bottom panel immediately. Press
+ Enter or Right to move the focus into that panel. The session list stays
+ visible above it, with its own scroll position. The panel lists the pull
+@@ -3545,10 +3549,11 @@ first. Enter presses what has the focus: an option, an action
+ such as `7: Discuss` or `9: Snooze`, or a row, which opens that row's drawer
+ in place of the open one, or closes the drawer when it is the open row
+ itself. A drawer without options opens with the focus on its row, so Enter
+-twice opens and closes it. The focused pull request label, inbox subject,
+-option, or action uses the selected session name's color. Other row colors
+-stay intact. Focused text is bold so a subject that already uses that color,
+-or a terminal without colors, still shows the focus.
++twice opens and closes it. The focused label uses a brighter version of its
++existing color: blue for a question, orange for a request, and gray for a
++notice. Pull request labels, session names, and plain option and action
++labels use bright gray. Other row colors stay intact. Bold also shows focus
++in terminals without colors.
+ An option or action also has a `›` before it.
+ 
+ The note goes to the agent on the same line as your choice, as
+diff --git a/src/projector/agent_console.py b/src/projector/agent_console.py
+index 47a49d40..ce893839 100644
+--- a/src/projector/agent_console.py
++++ b/src/projector/agent_console.py
+@@ -576,6 +576,13 @@ def footer(self, width=None):
+         width = max(1, width or 100)
+         typing = self.field
+         if typing is None:
++            if self.view == "home":
++                if self.status:
++                    return [Line([(console.fit(self.status, width), "error")])]
++                hint = "n new agent session"
++                if self.sessions:
++                    hint += " · ↑↓ select · Enter open"
++                return [Line([(console.fit(hint + " · Ctrl-C quit", width), "subtle")])]
+             return super().footer(width)
+         purpose = typing.purpose
+         if self.status:
+@@ -753,13 +760,6 @@ def field_lines(typing, width, *, active=True):
+             offset += len(paragraph) + 1
+         return lines
+ 
+-    def home_lines(self, width):
+-        lines, focus = super().home_lines(width)
+-        lines.append(Line([("n new agent session", "subtle")]))
+-        if self.status:
+-            lines.append(Line([(self.status, "error")]))
+-        return lines, focus
+-
+     @staticmethod
+     def form_line(typing):
+         text = typing.text.replace("\n", " ↵ ")
+diff --git a/src/projector/console.py b/src/projector/console.py
+index 5b9d82c6..fe140dab 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -1170,9 +1170,9 @@ def home_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+         def columns(label: str, count: str, request: str, changed: str, chosen: bool = False) -> Line:
+             if width < 20:
+                 return Line([("▸ " if chosen else "  ", "subtle"),
+-                             (fit(label, max(0, width - 2)), "suggestion" if chosen else "")])
++                             (fit(label, max(0, width - 2)), "focus" if chosen else "")])
+             return Line([("▸ " if chosen else "  ", "subtle"),
+-                         (fit(label, name_width), "suggestion" if chosen else ""),
++                         (fit(label, name_width), "focus" if chosen else ""),
+                          (f"  {count.ljust(count_width)}  ", "claude"), (fit(request, request_width), ""),
+                          (f"  {changed.rjust(age_width)} ", "subtle")])
+ 
+@@ -1553,22 +1553,26 @@ def theme_name(environ: Optional[dict] = None) -> str:
+ def styles(curses: Any) -> dict[str, int]:
+     """Keep user messages distinct while preserving the terminal's background for other text."""
+     found = {"": 0, "subtle": curses.A_DIM, "bold": curses.A_BOLD}
+-    names = [*THEMES["dark"], *PALETTE, "user"]
++    names = [*THEMES["dark"], *PALETTE, "focus", "user"]
+     if os.environ.get("NO_COLOR") or not curses.has_colors():
+-        found.update({name: curses.A_BOLD if name == "error" else 0 for name in names if name != "subtle"})
++        found.update({name: curses.A_BOLD if name in ("error", "focus") else 0
++                      for name in names if name != "subtle"})
+         found["user"] = curses.A_REVERSE
+         return found
+     curses.start_color()
+     curses.use_default_colors()
+-    theme = THEMES[theme_name()]
++    current_theme = theme_name()
++    theme = THEMES[current_theme]
+     rich = getattr(curses, "COLORS", 8) >= 256
+-    for index, name in enumerate(names, 1):
++    palette = {}
++    for name in names:
++        background = -1
+         if name == "user":
+-            foreground = xterm_color((255, 255, 255)) if rich else curses.COLOR_BLACK
++            color = xterm_color((255, 255, 255)) if rich else curses.COLOR_BLACK
+             background = xterm_color((64, 64, 64)) if rich else curses.COLOR_WHITE
+-            curses.init_pair(index, foreground, background)
+-            found[name] = curses.color_pair(index)
+-            continue
++        elif name == "focus":
++            gray = (255, 255, 255) if current_theme == "dark" else (64, 64, 64)
++            color = xterm_color(gray) if rich else curses.COLOR_WHITE
+         elif name in PALETTE:
+             color = PALETTE[name]
+         elif rich:
+@@ -1577,8 +1581,17 @@ def styles(curses: Any) -> dict[str, int]:
+             color = getattr(curses, BASIC[name])
+         else:
+             continue
+-        curses.init_pair(index, color, -1)
+-        found[name] = curses.color_pair(index)
++        palette[name] = (color, background)
++        if name not in ("focus", "user"):
++            if rich and name in theme:
++                brighter = tuple((3 * channel + 255) // 4 for channel in theme[name])
++                focused = xterm_color(brighter)
++            else:
++                focused = color + 8 if getattr(curses, "COLORS", 8) >= 16 and color < 8 else color
++            palette["focus-" + name] = (focused, -1)
++    for index, (name, (foreground, background)) in enumerate(palette.items(), 1):
++        curses.init_pair(index, foreground, background)
++        found[name] = curses.color_pair(index) | (curses.A_BOLD if name == "focus" or name.startswith("focus-") else 0)
+     return found
+ 
+ 
+@@ -1629,7 +1642,7 @@ def put(self, y: int, line: Line, width: int) -> None:
+             lit = (line.selected and at == 0) or at == line.lit
+             attributes = self.styles.get(style, 0)
+             if lit:
+-                attributes = self.styles.get("suggestion", 0) | self.curses.A_BOLD
++                attributes = self.styles.get("focus-" + style, self.styles["focus"])
+             shown = printable(text)[:width - x]
+             span = self.selection_span(y, width)
+             pieces = [(shown, attributes)]
+diff --git a/tests/test_agent_console.py b/tests/test_agent_console.py
+index 4a524153..5874f122 100644
+--- a/tests/test_agent_console.py
++++ b/tests/test_agent_console.py
+@@ -175,6 +175,25 @@ def test_an_empty_session_list_still_opens_a_prompt_in_the_current_directory(sel
+         self.assertEqual('launch-prompt', self.console.field.purpose)
+         self.assertEqual(str(Path.cwd()), self.console.launch_form['cwd'])
+ 
++    def test_new_session_hint_stays_at_the_bottom_and_changes_with_the_active_view(self):
++        from tests.test_console import FakeCurses, FakeWindow
++        self.assertIn('n new agent session', self.console.footer(100)[0].text)
++        self.assertNotIn('↑↓', self.console.footer(100)[0].text)
++        self.managed()
++        window = FakeWindow(20, 100)
++        screen = agent_console.Screen(window, self.console, FakeCurses(), io.StringIO())
++        screen.draw()
++        self.assertEqual([19], [row for row, text in window.rows.items() if 'n new agent session' in text])
++        self.assertIn('↑↓', self.console.footer(100)[0].text)
++        self.console.open_panel('managed-session')
++        self.assertNotIn('new agent session', self.console.footer(100)[0].text)
++        self.assertIn('Enter send', self.console.footer(100)[0].text)
++        self.console.go_home()
++        self.console.key('n')
++        self.assertNotIn('new agent session', self.console.footer(100)[0].text)
++        self.console.key('up')
++        self.assertIn('d directory', self.console.footer(100)[0].text)
++
+     def test_a_long_multiline_prompt_keeps_its_cursor_visible_in_a_small_terminal(self):
+         self.managed()
+         self.console.key('n')
+diff --git a/tests/test_console.py b/tests/test_console.py
+index 46057bda..f534a234 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -1322,7 +1322,7 @@ def test_a_clicked_choice_keeps_the_revision_that_was_on_screen(self) -> None:
+ 
+ 
+ class SplitLayout(TerminalCase):
+-    def test_only_the_selected_agent_name_has_color_and_neither_session_row_is_reversed(self) -> None:
++    def test_selected_agent_name_is_gray_and_neither_session_row_is_reversed(self) -> None:
+         for name in ("first", "second"):
+             self.codex(name, cwd="/work/app")
+             write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
+@@ -1331,14 +1331,17 @@ def test_only_the_selected_agent_name_has_color_and_neither_session_row_is_rever
+         lines = self.console.home_lines(100)[0]
+         rows = [line for line in lines if line.text.startswith(("▸ first", "  second"))]
+         window = FakeWindow(2, 100)
+-        with mock.patch.dict(os.environ, {"NO_COLOR": ""}):
+-            screen = console.Screen(window, self.console, ColorCurses(256))
++        curses = ColorCurses(256)
++        with mock.patch.dict(os.environ, {"NO_COLOR": "", "COLORFGBG": ""}):
++            screen = console.Screen(window, self.console, curses)
+         screen.put(0, rows[0], 100)
+         screen.put(1, rows[1], 100)
+         names = {text.strip(): attributes for text, attributes in window.drawn if text.strip() in ("first", "second")}
+ 
+         self.assertGreater(names["first"] >> 8, 0)
+         self.assertEqual(0, names["second"])
++        red, green, blue = curses.rgb(names["first"])
++        self.assertEqual((red, red), (green, blue))
+         self.assertFalse(any(attributes & FakeCurses.A_REVERSE for _, attributes in window.drawn))
+ 
+     def test_narrow_rows_shorten_the_request_and_preserve_the_rightmost_update_column(self) -> None:
+@@ -1534,6 +1537,15 @@ def init_pair(self, pair: int, foreground: int, background: int) -> None:
+     def color_pair(self, pair: int) -> int:
+         return pair << 8
+ 
++    def rgb(self, attributes: int) -> tuple[int, int, int]:
++        color = self.pairs[attributes >> 8]
++        if color >= 232:
++            return (8 + (color - 232) * 10,) * 3
++        red, remainder = divmod(color - 16, 36)
++        green, blue = divmod(remainder, 6)
++        levels = (0, 95, 135, 175, 215, 255)
++        return levels[red], levels[green], levels[blue]
++
+ 
+ class Colors(ConsoleCase):
+     def attributes(self, curses: ColorCurses, environ: dict[str, str]) -> dict[str, int]:
+@@ -1547,6 +1559,36 @@ def foregrounds(self, curses: ColorCurses, environ: dict[str, str]) -> dict[str,
+         """The foreground each piece of text on the screen was drawn in, or None when it has no color."""
+         return {text: curses.pairs.get(attributes >> 8) for text, attributes in self.attributes(curses, environ).items()}
+ 
++    def test_selected_inbox_subjects_get_brighter_without_losing_their_kind_color(self) -> None:
++        self.claude('s1')
++        question = self.ask('s1', 'Question')
++        request = inbox.request('s1', 'Request')
++        notice = inbox.tell('s1', 'Notice')
++        self.console.tick()
++        for background in ('', '0;15'):
++            with self.subTest(background=background):
++                curses = ColorCurses(256)
++                environ = {'NO_COLOR': '', 'COLORFGBG': background}
++                self.console.go_home()
++                original = self.attributes(curses, environ)
++                selected = {}
++                for item in (question, request, notice):
++                    subject = '- ' + item['subject']
++                    self.console.open_panel('s1')
++                    self.console.selected = 'item:' + item['ref']
++                    focused = self.attributes(curses, environ)
++                    color = curses.rgb(focused[subject])
++                    self.assertGreater(sum(color), sum(curses.rgb(original[subject])), subject)
++                    selected[item['subject']] = color
++                red, green, blue = selected['Request']
++                self.assertGreater(red, green)
++                self.assertGreater(green, blue)
++                red, green, blue = selected['Question']
++                self.assertGreater(blue, red)
++                self.assertGreater(blue, green)
++                red, green, blue = selected['Notice']
++                self.assertEqual((red, red), (green, blue))
++
+     def test_panel_focus_colors_only_the_pr_label_and_preserves_its_other_colors(self) -> None:
+         self.claude('s1')
+         self.subscribe('s1', 'acme/app#12 fix')
+@@ -1792,11 +1834,11 @@ def event(button, x, y, release=False):
+                 return f"\x1b[<{button};{x};{y}{'m' if release else 'M'}".encode()
+             return prefix + bytes((35 if release else button + 32, x + 32, y + 32))
+         try:
+-            self.send(event(0, 4, 9) + event(32, 10, 9) + event(0, 10, 9, True))
++            self.send(event(0, 4, 8) + event(32, 10, 8) + event(0, 10, 8, True))
+             selected = b'\x1b]52;c;RGVjbGluZQ==\x07' in self.shown
+             self.send(b'\x03')
+             stayed_open = self.exited(0.2, kill=False) is None
+-            self.click(3, 9)
++            self.click(3, 8)
+             self.send(b'2', b'\r')
+         finally:
+             self.send(b'\x1b', b'\x1b', b'\x03')
+@@ -1827,8 +1869,8 @@ def test_terminal_mouse_reports_open_a_question_and_choose_the_clicked_answer(se
+         self.prepare()
+         self.start()
+         self.read_for(10, until=b"Decline the finding?")
+-        self.click(3, 9)
+-        self.click(7, 12)
++        self.click(3, 8)
++        self.click(7, 11)
+         self.send(b"\r", b"\x1b", b"\x1b", b"\x03")
+         code = self.exited(10)
+         item = json.loads((Path(self.state) / "projector" / "inbox" / "S" / "1.json").read_text())

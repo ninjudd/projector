@@ -1,0 +1,130 @@
+{
+ "version": 1,
+ "name": "Console focus and hints",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 657,
+  "title": "Brighten selected item colors and keep hints in the footer",
+  "head": "9058f9b7c00606786399cb62e9b5c3c895f8e791",
+  "headRef": "console-focus-palette",
+  "base": "ff1986c5f0d6518819be955f41a153f945a1a512",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The console lists sessions and the inbox items that need attention. Focus now brightens each item’s existing color, so a selected question stays blue and a selected request stays orange. Session names and plain labels use bright gray, with bold text to make focus visible without color.",
+   "The agent console keeps shortcuts on its bottom hint line. The session list offers new-session and navigation actions; chat and launch editors show their own actions. Removing the hint from the list also removes an extra body row."
+  ],
+  "cards": [
+   {
+    "id": "review-result",
+    "title": "Review result",
+    "html": "<p>Clean at <code>9058f9b</code>. All five changed files were reviewed; no findings, suggestions, or follow-ups remain.</p>"
+   },
+   {
+    "id": "validation",
+    "title": "Validation",
+    "html": "<ul class=\"tight\"><li>The configured review gate passed, including both plugin validations, 270 hook tests, hook type checking, and diff whitespace checks.</li><li><code>tests.test_console</code> and <code>tests.test_agent_console</code> passed all 113 tests, including native terminal mouse checks.</li><li>Additional palette checks covered dark and light themes with 8, 16, and 256 colors. No physical terminal or live provider session was exercised.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "focus-colors",
+   "title": "Keep item colors when focus moves",
+   "kicker": "Build focused styles once, then apply them to the selected text.",
+   "intro": [
+    "The shared renderer used to paint every focused label with the suggestion color. The palette now supplies a focused variant of each semantic style. Color-capable terminals brighten the existing color; bold supplies a second focus cue."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Traced session names, inbox subjects, options, and action labels through the shared renderer. Focus applies to the label text, while neighboring spans and drag selection keep their behavior."
+    },
+    {
+     "kind": "verify",
+     "text": "Confirmed palette setup happens when the screen is created rather than on each draw. The change adds no network, file, or provider calls."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Read the palette construction before the renderer: named styles get focus variants, while plain labels use the dedicated gray focus style.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Exercised 8-, 16-, and 256-color palettes under dark and light theme settings; every foreground stays within the terminal’s advertised color range.",
+       "line": 1584
+      },
+      {
+       "kind": "verify",
+       "text": "Checked the focused-style fallback and existing selection handling. Rich-color tests confirm selected inbox labels preserve their orange, blue, or gray family.",
+       "line": 1645
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "The tests check selected session names are gray and selected inbox labels brighten without losing their kind color. Native mouse coordinates move up with the removed body hint.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused test run passed the new dark- and light-theme assertions along with the existing monochrome, basic-color, clipping, drag-selection, and native mouse coverage.",
+       "line": 1562
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "view-hints",
+   "title": "Put shortcuts at the bottom",
+   "kicker": "Keep each view’s actions on one footer line.",
+   "intro": [
+    "The agent console’s home view now returns its hints from the existing footer method. An empty list omits selection and open actions, and a home-view status message occupies that same line. The old body-list hint is removed."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Followed home, chat, launch-prompt, and settings transitions. Each view reaches its own footer, and the home hint does not appear inside the other views."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/agent_console.py",
+     "note": "The home footer handles both status messages and available shortcuts; removing the home_lines override avoids reserving an extra list row.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Checked the empty and populated list branches, footer width fitting, and the existing field-specific footer paths.",
+       "line": 579
+      }
+     ]
+    },
+    {
+     "path": "tests/test_agent_console.py",
+     "note": "One flow checks the bottom row, available actions on an empty or populated session list, and hint changes when opening chat or launch settings.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The new flow passed within the 113-test focused run. Its fake screen asserts that the new-session hint appears only on the final row.",
+       "line": 178
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The CLI guide describes gray session focus, brighter semantic inbox colors, and shortcuts for the current view.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Compared the documented hints and focus colors with the updated footer and palette branches.",
+       "line": 3487
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
