@@ -1653,7 +1653,7 @@ class Colors(ConsoleCase):
         """The foreground each piece of text on the screen was drawn in, or None when it has no color."""
         return {text: curses.pairs.get(attributes >> 8) for text, attributes in self.attributes(curses, environ).items()}
 
-    def test_selected_inbox_subjects_get_brighter_without_losing_their_kind_color(self) -> None:
+    def test_selected_inbox_subjects_use_bold_and_keep_their_kind_color(self) -> None:
         self.claude('s1')
         question = self.ask('s1', 'Question')
         request = inbox.request('s1', 'Request')
@@ -1672,8 +1672,11 @@ class Colors(ConsoleCase):
                     self.console.selected = 'item:' + item['ref']
                     focused = self.attributes(curses, environ)
                     color = curses.rgb(focused[subject])
-                    self.assertGreater(sum(color), sum(curses.rgb(original[subject])), subject)
+                    self.assertGreaterEqual(sum(color), sum(curses.rgb(original[subject])), subject)
+                    self.assertTrue(focused[subject] & curses.A_BOLD, subject)
+                    self.assertFalse(original[subject] & curses.A_BOLD, subject)
                     selected[item['subject']] = color
+                self.assertEqual(curses.rgb(original['- Request']), selected['Request'])
                 red, green, blue = selected['Request']
                 self.assertGreater(red, green)
                 self.assertGreater(green, blue)

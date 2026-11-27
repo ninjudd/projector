@@ -3555,11 +3555,13 @@ first. Enter presses what has the focus: an option, an action
 such as `7: Discuss` or `9: Snooze`, or a row, which opens that row's drawer
 in place of the open one, or closes the drawer when it is the open row
 itself. A drawer without options opens with the focus on its row, so Enter
-twice opens and closes it. The focused label uses a brighter version of its
-existing color: blue for a question, orange for a request, and gray for a
-notice. Pull request labels, session names, and plain option and action
-labels use bright gray. Other row colors stay intact. Bold also shows focus
-in terminals without colors.
+twice opens and closes it. The focused label uses bold and a subtly brighter
+shade of its existing color: blue for a question, orange for a request, and
+gray for a notice. In a 256-color terminal, the selected orange stays the
+same shade and uses bold for emphasis. Pull request labels, session names,
+and plain option and action labels use a lighter gray. Other row colors
+stay intact. Fixer and branch text use your terminal palette's blue and
+cyan. Bold also shows focus in terminals without colors.
 An option or action also has a `›` before it.
 
 The note goes to the agent on the same line as your choice, as

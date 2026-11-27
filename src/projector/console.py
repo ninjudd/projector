@@ -1490,6 +1490,16 @@ THEMES: dict[str, dict[str, tuple[int, int, int]]] = {
               "inactive": (102, 102, 102), "subtle": (175, 175, 175), "success": (44, 122, 57),
               "error": (171, 43, 63), "warning": (150, 108, 30), "request": (180, 90, 40)},
 }
+FOCUS_THEMES: dict[str, dict[str, tuple[int, int, int]]] = {
+    "dark": {"focus": (227, 227, 227), "permission": (187, 194, 250), "suggestion": (187, 194, 250),
+             "claude": (220, 136, 108), "inactive": (166, 166, 166), "subtle": (102, 102, 102),
+             "success": (100, 195, 120), "error": (255, 126, 144), "warning": (255, 201, 38),
+             "request": (255, 192, 143)},
+    "light": {"focus": (51, 51, 51), "permission": (108, 124, 248), "suggestion": (108, 124, 248),
+              "claude": (220, 136, 108), "inactive": (121, 121, 121), "subtle": (185, 185, 185),
+              "success": (70, 139, 82), "error": (182, 70, 87), "warning": (163, 126, 58),
+              "request": (184, 93, 42)},
+}
 # The panel's two terminal palette colors, `ansi256(4)` for a fixer and `ansi256(6)` for a branch, which are the
 # same slot among 8 colors as among 256.
 PALETTE = {"fixer": 4, "branch": 6}
@@ -1572,8 +1582,7 @@ def styles(curses: Any) -> dict[str, int]:
             color = xterm_color((255, 255, 255)) if rich else curses.COLOR_BLACK
             background = xterm_color((64, 64, 64)) if rich else curses.COLOR_WHITE
         elif name == "focus":
-            gray = (255, 255, 255) if current_theme == "dark" else (64, 64, 64)
-            color = xterm_color(gray) if rich else curses.COLOR_WHITE
+            color = xterm_color(FOCUS_THEMES[current_theme][name]) if rich else curses.COLOR_WHITE
         elif name in PALETTE:
             color = PALETTE[name]
         elif rich:
@@ -1585,8 +1594,9 @@ def styles(curses: Any) -> dict[str, int]:
         palette[name] = (color, background)
         if name not in ("focus", "user"):
             if rich and name in theme:
-                brighter = tuple((3 * channel + 255) // 4 for channel in theme[name])
-                focused = xterm_color(brighter)
+                focused = xterm_color(FOCUS_THEMES[current_theme][name])
+            elif name in PALETTE:
+                focused = color
             else:
                 focused = color + 8 if getattr(curses, "COLORS", 8) >= 16 and color < 8 else color
             palette["focus-" + name] = (focused, -1)
