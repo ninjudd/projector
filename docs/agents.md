@@ -68,37 +68,52 @@ and blank lines stay intact.
 
 The runtime applies its native permission and sandbox settings, including
 any automatic approvals you configured. Projector adds no permission bypass.
-The form identifies those settings as the source of policy. The conversation
-shows the effective policy when the runtime reports it; Claude reports its
-mode when the first turn initializes. This is not a preflight permission audit.
+Use Up, then `p`, to inspect the settings and effective policy reported by
+the runtime. Claude reports its mode when the first turn initializes.
 
-Select a managed session and focus its panel with Enter. Its conversation
-appears below its pull requests and inbox items. Move to the conversation
-with the arrow keys, or press `c` to compose a message. Enter sends it through
-the existing Projector message route. Shift-Enter or Ctrl-J adds a line.
-Follow-ups wait in order while another turn runs. PgUp and PgDn scroll the
-conversation. End follows the latest output.
+Select a managed session and press Enter, or click it, to open its chat.
+The composer has focus immediately and stays ready after you send a message.
+Enter sends through the existing Projector message route. Shift-Enter or
+Ctrl-J adds a line. Follow-ups wait in order while another turn runs.
 
-Your messages appear on a gray background, without speaker labels. Agent
-replies use the terminal's ordinary text. The prompt shows `…` while a turn
-is active and `❯` when it is idle, including while you compose a follow-up.
-Successful turns change the prompt without adding a completion message.
-Failed and interrupted turns keep their visible outcome.
+Your messages appear on a gray background. Replies use ordinary text, without
+speaker labels or a conversation heading. The prompt shows `…` while a turn
+is active and `❯` when it is idle. Successful turns change the prompt without
+adding a completion message. Failed and interrupted turns keep their visible
+outcome.
 
-| Key | Action |
+Press Up to show actions in the existing hint line. The menu adds no rows and
+does not move your prompt. Press Down or Escape to return to the same draft.
+When all choices do not fit, Left and Right show the other choices in that
+same line. Launch settings use this menu too.
+
+| Key after Up | Action |
 | --- | --- |
-| `c` | Compose a follow-up |
-| `i` | Interrupt the current turn and pause later inputs |
-| `s` | Send queued inputs after a pause |
-| `x` | Stop the worker; retain history and pending input |
-| `r` | Resume a stopped session, or return from native control |
-| `o` | Open the native terminal after the current turn ends |
-| `e`, `d` | Edit or remove a numbered queued message |
-| `R`, `D` | Retry uncertain input, or confirm that it arrived |
+| `i` | Interrupt the current turn and pause later messages |
+| `x` | Stop the worker while retaining history and waiting messages |
+| `r` | Resume a stopped worker or return from native control |
+| `o` | Open the agent's native terminal |
+| `s` | Continue messages after a pause |
+| `q` | Inspect, edit, or remove a waiting message |
+| `k` | Check a message whose delivery Projector lost track of |
+| `b` | Open the session's inbox and pull requests |
+| `p` | Inspect runtime details and native policy |
+| `h` | Return to the session list |
+| `f` | Follow the latest output after scrolling back |
 
-The controls show `r return to Projector` during native control and `r resume`
-for a stopped or failed worker. `s send queued` appears when a managed worker
-is paused. It releases held messages. Ordinary follow-ups run automatically.
+The menu shows the actions that apply to the session's current state.
+PgUp, PgDn, and the mouse wheel scroll history while the composer stays in
+place. Your draft survives a trip to the inbox, menus, or another session.
+Escape closes an inbox or message card and returns to that draft. It also
+cancels an edit to a waiting message without saving it.
+
+Click rows and menu choices to use them. Drag to select visible text without
+activating the row underneath. Projector keeps that view fixed until you
+clear the selection, while the agent keeps running. Releasing the drag copies
+the selection through the local clipboard where available, or OSC 52 where
+your terminal permits it. Ctrl-C copies selected text without interrupting
+or quitting. Escape clears the selection. Your terminal's selection override
+remains available too.
 
 A failed or interrupted turn stays distinct from a successful one. Completing
 a turn does not mark a Projector project completed. Stopped sessions remain
@@ -132,30 +147,37 @@ is not bridged. Complete those server setup steps in the native runtime. No answ
 
 ## Recover and open the native terminal
 
-The console records input as queued, submitting, accepted, or finished.
-If a worker dies after submission, it marks possibly accepted input uncertain
-and pauses later inputs. It never automatically replays that input.
+If the worker dies while handling a message, Projector holds it rather than
+risk sending it twice. A **Check message** card and a hint appear only while
+this needs your attention. Press Up, then `k`, or click the card to inspect
+the full message.
 
-Open the saved native session and inspect its history. After you establish
-that the input arrived, press `D`, select its number, and type `RECEIVED`.
-To authorize another attempt instead, press `R` and type `RETRY`. Retrying
-can repeat tool actions. Press `s` when you want the remaining queue to run.
+Choose **Open agent conversation** to check the native history. If the
+message is there, choose **Already reached the agent**. If it is missing,
+choose **Send again**, then confirm that choice. The confirmation explains
+that sending again can repeat file edits or commands. Enter selects Cancel
+by default. You do not type message numbers or confirmation words.
+
+Other messages continue after every held message is checked. A choice made
+in another console invalidates stale buttons. Expired or changed inbox
+events keep their delivery checks and cannot be replayed as a new event.
 
 Native handoff is reversible and keeps the same conversation. It requires
 an idle worker with no pending native requests. Interrupt and wait for the
-turn to end first if necessary. Press `o` to
-release the SDK connection and open the saved native conversation. Projector
-uses a tmux pane when available; otherwise it suspends the console until the
-native CLI exits. Codex uses `codex --no-daemon resume` so exiting releases
-its writer. Claude uses `claude --resume` with the saved ID.
+turn to end first if necessary. Press Up, then `o`, to release the SDK
+connection and open the saved native conversation. Projector uses a tmux
+pane when available; otherwise it suspends the console until the native CLI
+exits. Codex uses `codex --no-daemon resume` so exiting releases its writer.
+Claude uses `claude --resume` with the saved ID.
 
 Projector input remains queued during native control, including inbox answers
 and review events. Close the native CLI to return to Projector. When it ran
-in a tmux pane, press `r` to reacquire managed control. When it temporarily
-replaced the console, Projector reacquires control automatically after it
-exits. The same history includes turns entered in the native terminal.
-Press `s` to release the queue. Two consoles can observe a session,
-but the worker and native terminal cannot control it simultaneously.
+in a tmux pane, press Up, then `r`, to reacquire managed control. When it
+temporarily replaced the console, Projector reacquires control automatically
+after it exits. The same history includes turns entered in the native
+terminal. Press Up, then `s`, to continue waiting messages. Two consoles can
+observe a session, but the worker and native terminal cannot control it
+simultaneously.
 
 ## Process lifetime and local state
 

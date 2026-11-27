@@ -3470,11 +3470,19 @@ then to the name.
 
 In a terminal with mouse support, click a session row to select it, or a
 pull request, artifact, or inbox row to focus the panel and open that row's
-drawer. Click the row again to close its drawer. Drawer choices and actions
-also accept clicks and keep their usual note fields and confirmations.
-While you edit a text field, finish or cancel it before you click another
-row or action. To select text for copying, use your terminal's mouse
-override.
+drawer. Clicking a managed session opens its chat with the composer ready.
+Drawer choices and inline menu actions accept clicks.
+
+Drag to select text without activating the row underneath. Projector keeps
+the selected view fixed until you clear it and copies the text through the
+local clipboard where available, or OSC 52 where your terminal allows it.
+Ctrl-C copies a selection without quitting or interrupting the agent.
+Escape clears it. The agent continues running while text is selected.
+
+Managed sessions use the chat layout described in [Run agents in the
+console](agents.md). Press Up for actions in the existing hint line, without
+moving the chat or prompt. Other processes keep the list and panel layout
+below.
 
 Up and down select a session and update the bottom panel immediately. Press
 Enter or Right to move the focus into that panel. The session list stays
@@ -3488,9 +3496,9 @@ to open its drawer:
 
 - **An item's drawer** shows the item's detail and each message you sent
   about it, after `you:`, then its controls. A question offers `1` and on
-  for its options, the first marked `(recommended)`. The console offers no
-  typed answer: to give the agent your own words, use `7: Discuss`. A
-  request offers `1: Start`, or `1: Retry` once its agent reports it
+  for its options, the first marked `(recommended)`. Choose `t: Type an
+  answer` to answer in your own words. A request offers `1: Start`, or
+  `1: Retry` once its agent reports it
   blocked, when it has a start action, and then its outcomes, or `Done`.
   The drawer opens with the focus on the first option, and Enter picks the
   focused one, as its number does. Picking one opens a one-line field under
