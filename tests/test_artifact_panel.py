@@ -359,7 +359,7 @@ class ArtifactPanelTests(unittest.TestCase):
         app = console.Console(artifact_panel.watch.state_root())
         with mock.patch.object(console, 'live_sessions', return_value={'one': 'codex', 'two': 'codex'}):
             with mock.patch.object(console.agents, 'record', return_value={}):
-                with mock.patch.object(app.titles, 'read', return_value={}):
+                with mock.patch.object(app.metadata, 'read', return_value={}):
                     found = app.load(console.Work(inbox=True, rows=True, signatures={}))
         app.apply(found)
         self.assertEqual(['one'], list(app.sessions))
