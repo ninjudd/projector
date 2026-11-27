@@ -1,0 +1,146 @@
+{
+ "version": 1,
+ "name": "Console message input",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 652,
+  "title": "Send console messages with Enter and simplify conversation output",
+  "head": "99fe5c01a1ef5b5b9b78285b05c54497e7181e7b",
+  "headRef": "console-message-input",
+  "base": "8fa81bf8ea42296d1e892be4720b91fafee8abec",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector’s terminal console lets you launch and message managed Claude and Codex sessions. This change makes Enter submit a draft, while Shift-Enter or Ctrl-J inserts a line. Multiline paste stays in the draft until you press Enter.",
+   "Conversation output uses a background for your messages and ordinary terminal text for agent replies. A live prompt replaces successful completion lines, while failures and interruptions remain visible. The change also removes empty pull-request counts and makes worker controls reflect the session’s state."
+  ],
+  "cards": [
+   {
+    "id": "keys",
+    "title": "What submits a draft",
+    "html": "<ul class=\"tight\"><li><b>Enter:</b> launch, send, or save a queued message.</li><li><b>Shift-Enter or Ctrl-J:</b> add a line to those drafts.</li><li><b>Paste:</b> retain embedded line breaks without submitting.</li><li><b>Escape:</b> cancel the active draft.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review evidence",
+    "html": "<p>The review is clean at <code>99fe5c0</code>. The configured gate, 117 focused Python tests, and 270 hook tests passed. The focused run includes a real pseudo-terminal test that sends newline keys and a multiline paste, then confirms one message with every line intact.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "contract",
+   "title": "Controls and conversation behavior",
+   "kicker": "The user-facing contract for submission, output, and native handoff",
+   "intro": [
+    "A managed session is a native agent connection whose worker stays running independently of the console. The documentation now explains how you submit work to that session, add line breaks without submitting, and return from its native terminal.",
+    "Shift-Enter depends on the terminal reporting it separately. Ctrl-J remains the newline alternative. Successful turns change the prompt from an active marker to an idle marker rather than adding a completion message."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/agents.md",
+     "note": "Defines Enter, newline, and paste behavior, the quieter conversation display, and the reversible native handoff.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The controls still use the existing runtime message and native-handoff routes; this change adjusts input and display rather than worker delivery."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents a blank pull-request count when a session has no open pull requests."
+    }
+   ]
+  },
+  {
+   "id": "terminal",
+   "title": "Decode complete keys and pastes",
+   "kicker": "The terminal layer distinguishes Enter from newline input and restores its modes",
+   "intro": [
+    "The terminal layer converts incoming bytes and escape sequences into named keys. It now distinguishes carriage-return Enter from Ctrl-J and understands modified Enter reports from Kitty and xterm. Key-release reports are ignored rather than becoming input.",
+    "Bracketed paste is a terminal mode that surrounds pasted text with start and end markers. The reader buffers that text, normalizes its line breaks, and inserts it into the active field without dispatching its contents as keys. Terminal modes are enabled on entry and disabled on exit. The same source file adds user-message background styles and leaves empty PR counts blank."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Adds modified-key and bracketed-paste decoding, terminal mode lifecycle, message background styles, and blank empty counts.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1497,
+       "text": "The focused key tests passed for both modified Enter encodings, Ctrl-J, Ctrl-C, ignored releases, and distinct carriage-return/newline input."
+      },
+      {
+       "kind": "verify",
+       "line": 1698,
+       "text": "The real pseudo-terminal regression preserved pasted CRLF and blank lines in the draft and recorded exactly one message after Enter."
+      },
+      {
+       "kind": "context",
+       "line": 1754,
+       "text": "The console pushes enhanced keyboard handling and enables bracketed paste; its finally block reverses both operations."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "Exercises terminal-byte decoding, aligned blank counts, and one-message submission after newline keys and multiline paste.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused console/runtime run passed all 117 tests, including the process running inside a real pseudo-terminal."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "managed",
+   "title": "Preserve drafts and show turn boundaries",
+   "kicker": "Managed conversations reuse inline editing and show state without completion clutter",
+   "intro": [
+    "Managed-session fields now share the inline editor previously used for launching. Enter follows the field’s action—launch, send, or save—while newline keys change only its text. Refreshes retain the draft and update the chat prompt as the worker becomes active or idle.",
+    "A streaming marker joins chunks from one reply and resets at user, tool, or turn-end events. This keeps separate successful replies apart even though completed-status lines are removed. Your messages receive a background, and failed or interrupted turn outcomes remain visible. Native handoff temporarily disables the console’s input modes and restores them when the CLI exits."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/agent_console.py",
+     "note": "Shares inline fields, routes Enter and newline keys, preserves reply boundaries, and updates conversation styling and state-sensitive controls.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 120,
+       "text": "The completed-turn and streamed-failure regressions passed: chunks of one reply join, separate turns stay separate, and failure text remains visible."
+      },
+      {
+       "kind": "verify",
+       "line": 254,
+       "text": "The launch and chat regressions passed with Enter submitting and Ctrl-J retaining embedded line breaks; refresh also preserved an in-progress follow-up."
+      },
+      {
+       "kind": "verify",
+       "line": 578,
+       "text": "The handoff regression passed with a successful native CLI and a simulated failure, checking that terminal input modes are restored in both cases."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_agent_console.py",
+     "note": "Pins draft preservation, user backgrounds, cursor visibility, turn separation, and keyboard-mode restoration during native handoff.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All managed-console tests passed in the focused run, with no provider sign-in or real native agent connection."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,834 @@
+diff --git a/docs/agents.md b/docs/agents.md
+index 8d67f909..1f61bc28 100644
+--- a/docs/agents.md
++++ b/docs/agents.md
+@@ -55,8 +55,14 @@ to the prompt. Switching providers clears the previous provider's model.
+ Down or Escape returns from a menu to the prompt. Escape discards edits
+ to a directory, name, or model ID without losing your prompt.
+ 
+-Enter adds a newline within the prompt; Ctrl-D launches it. Escape from the
+-prompt cancels the launch, and Ctrl-C cancels from any launch screen.
++Enter launches the prompt. Shift-Enter adds a newline when your terminal
++reports it separately. Ctrl-J also adds a newline. Projector enables the
++[Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
++in terminals that support it and accepts xterm's
++modified-key encoding. In terminals that send the same bytes for Enter and
++Shift-Enter, use Ctrl-J. Pasted line breaks stay in the draft until you
++press Enter. Escape from the prompt cancels the launch, and Ctrl-C cancels
++from any launch screen.
+ Prompts travel as structured data, so quotes, dollar signs, leading dashes,
+ and blank lines stay intact.
+ 
+@@ -68,10 +74,16 @@ mode when the first turn initializes. This is not a preflight permission audit.
+ 
+ Select a managed session and focus its panel with Enter. Its conversation
+ appears below its pull requests and inbox items. Move to the conversation
+-with the arrow keys, or press `c` to compose a message. Enter adds a line;
+-Ctrl-D sends it through the existing Projector message route. Follow-ups
+-wait in order while another turn runs. PgUp and PgDn scroll the conversation;
+-End follows the latest output.
++with the arrow keys, or press `c` to compose a message. Enter sends it through
++the existing Projector message route. Shift-Enter or Ctrl-J adds a line.
++Follow-ups wait in order while another turn runs. PgUp and PgDn scroll the
++conversation. End follows the latest output.
++
++Your messages appear on a gray background, without speaker labels. Agent
++replies use the terminal's ordinary text. The prompt shows `…` while a turn
++is active and `❯` when it is idle, including while you compose a follow-up.
++Successful turns change the prompt without adding a completion message.
++Failed and interrupted turns keep their visible outcome.
+ 
+ | Key | Action |
+ | --- | --- |
+@@ -84,6 +96,10 @@ End follows the latest output.
+ | `e`, `d` | Edit or remove a numbered queued message |
+ | `R`, `D` | Retry uncertain input, or confirm that it arrived |
+ 
++The controls show `r return to Projector` during native control and `r resume`
++for a stopped or failed worker. `s send queued` appears when a managed worker
++is paused. It releases held messages. Ordinary follow-ups run automatically.
++
+ A failed or interrupted turn stays distinct from a successful one. Completing
+ a turn does not mark a Projector project completed. Stopped sessions remain
+ in the list. A launch that fails before registration remains visible with
+@@ -125,17 +141,20 @@ that the input arrived, press `D`, select its number, and type `RECEIVED`.
+ To authorize another attempt instead, press `R` and type `RETRY`. Retrying
+ can repeat tool actions. Press `s` when you want the remaining queue to run.
+ 
+-Native handoff requires an idle worker with no pending native requests.
+-Interrupt and wait for the turn to end first if necessary. Press `o` to
++Native handoff is reversible and keeps the same conversation. It requires
++an idle worker with no pending native requests. Interrupt and wait for the
++turn to end first if necessary. Press `o` to
+ release the SDK connection and open the saved native conversation. Projector
+ uses a tmux pane when available; otherwise it suspends the console until the
+ native CLI exits. Codex uses `codex --no-daemon resume` so exiting releases
+ its writer. Claude uses `claude --resume` with the saved ID.
+ 
+ Projector input remains queued during native control, including inbox answers
+-and review events. Close the native terminal, then press `r` to reacquire
+-managed control. The same history includes turns entered in the native
+-terminal. Press `s` to release the queue. Two consoles can observe a session,
++and review events. Close the native CLI to return to Projector. When it ran
++in a tmux pane, press `r` to reacquire managed control. When it temporarily
++replaced the console, Projector reacquires control automatically after it
++exits. The same history includes turns entered in the native terminal.
++Press `s` to release the queue. Two consoles can observe a session,
+ but the worker and native terminal cannot control it simultaneously.
+ 
+ ## Process lifetime and local state
+diff --git a/docs/cli.md b/docs/cli.md
+index 5f05e031..1bbe486d 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3454,7 +3454,7 @@ The session list has four aligned fields, without headings:
+   color. The selected session name has color and a `▸` marker; the row has
+   no highlight.
+ - **PRs** counts all open pull requests the session fixes or reviews, as
+-  `0 PRs`, `1 PR`, or `5 PRs`, in orange.
++  `1 PR` or `5 PRs`, in orange. The count is blank when there are none.
+ - **Latest request** shows the newest open, awake question or request.
+   Notices and messages do not replace it. A session with none shows `—`.
+ - **Updated** leaves one space at the right edge and shows the age of the most recent
+diff --git a/src/projector/agent_console.py b/src/projector/agent_console.py
+index 8ffa75df..8fc44a76 100644
+--- a/src/projector/agent_console.py
++++ b/src/projector/agent_console.py
+@@ -19,7 +19,7 @@
+ CONVERSATION = "runtime:conversation"
+ 
+ 
+-class LaunchField(Field):
++class InlineField(Field):
+     @property
+     def inline(self):
+         return True
+@@ -36,6 +36,7 @@ def __init__(self, *args, **kwargs):
+         self.stores = {}
+         self.cursors = {}
+         self.chats = {}
++        self.streaming = set()
+         self.runtime_views = {}
+         self.next_runtime = float("-inf")
+         self.follow = True
+@@ -104,6 +105,8 @@ def apply(self, found):
+         super().apply(found)
+         if hasattr(found, "runtimes"):
+             self.runtimes = found.runtimes
++        if self.field is not None and self.field.purpose == "chat":
++            self.field.prompt = self.message_prompt(self.session)
+         if hasattr(found, "runtime_error"):
+             self.status = found.runtime_error
+         if hasattr(found, "runtime_view"):
+@@ -114,7 +117,7 @@ def apply(self, found):
+             chat = self.chats.setdefault(name, [])
+             for event in events:
+                 kind, payload = event["kind"], event["payload"]
+-                if kind == "text" and chat and chat[-1][0] == "agent":
++                if kind == "text" and name in self.streaming and chat and chat[-1][0] == "agent":
+                     chat[-1] = ("agent", (chat[-1][1] + payload.get("text", ""))[-65536:])
+                 elif kind in ("text", "user"):
+                     chat.append(("agent" if kind == "text" else "you", payload.get("text", "")))
+@@ -125,7 +128,12 @@ def apply(self, found):
+                              or item.get("output") or payload.get("preview") or "")
+                     chat.append(("tool", f"{label}: {str(value)[:4096]}"))
+                 elif kind == "turn_end":
+-                    chat.append(("status", payload.get("outcome", "") + (": " + str(payload["error"]) if payload.get("error") else "")))
++                    if payload.get("outcome") != "completed" or payload.get("error"):
++                        chat.append(("status", payload.get("outcome", "") + (": " + str(payload["error"]) if payload.get("error") else "")))
++                if kind == "text":
++                    self.streaming.add(name)
++                elif kind in ("turn_end", "user", "tool"):
++                    self.streaming.discard(name)
+                 self.cursors[name] = event["sequence"]
+                 if payload.get("truncated"):
+                     chat.append(("status", "Display truncated; inspect native history for the full content."))
+@@ -180,11 +188,12 @@ def panel_lines(self, width):
+             lines += [Line([]), *self.runtime_lines(session.name, width, selected)]
+             if selected:
+                 focus = (start, len(lines) - 1)
++                cursor = next((at for at in range(start, len(lines)) if lines[at].cursor is not None), None)
++                if cursor is not None:
++                    focus = (cursor, cursor)
+         return lines, focus
+ 
+     def key(self, name):
+-        if name == "\x04":
+-            name = "ctrl-d"
+         try:
+             with self.lock:
+                 if self.field is None and self.view == "panel" and self.session and self.session.startswith("launch-"):
+@@ -205,7 +214,7 @@ def key(self, name):
+                         if host in ("claude", "codex") and isinstance(model, str) and agents.MODEL_ID.fullmatch(model):
+                             if model not in self.launch_models[host]:
+                                 self.launch_models[host].append(model)
+-                    self.launch_prompt = LaunchField("launch-prompt", None, "Prompt: ")
++                    self.launch_prompt = InlineField("launch-prompt", None, "Prompt: ")
+                     self.field = self.launch_prompt
+                     self.status = ""
+                     return
+@@ -215,7 +224,7 @@ def key(self, name):
+                     if name == "c":
+                         self.selected = CONVERSATION
+                         self.follow = True
+-                        self.field = Field("chat", None, "Message (Enter: newline; Ctrl-D: send): ")
++                        self.field = InlineField("chat", None, self.message_prompt(self.session))
+                         return
+                     action = {"i": "interrupt", "x": "stop", "o": "handoff", "r": "resume", "s": "send"}.get(name)
+                     if action:
+@@ -239,17 +248,18 @@ def field_key(self, name):
+         if typing is None:
+             return
+         purpose = typing.purpose
+-        if purpose.startswith("launch-"):
+-            self.launch_key(name)
+-            return
+-        multiline = purpose in ("chat", "queue-edit")
+-        if multiline and name == "enter":
++        multiline = purpose in ("launch-prompt", "chat", "queue-edit")
++        if name == "ctrl-j" and not multiline:
++            name = "enter"
++        if multiline and name in ("ctrl-j", "shift-enter"):
+             typing.text = typing.text[:typing.cursor] + "\n" + typing.text[typing.cursor:]
+             typing.cursor += 1
+             return
+-        if (multiline and name == "ctrl-d") or (not multiline and name == "enter"
+-                                                and purpose not in ("queue-confirm", "queue-confirm-received")
+-                                                and purpose.startswith("queue-")):
++        if purpose.startswith("launch-"):
++            self.launch_key(name)
++            return
++        if name == "enter" and (multiline or (purpose.startswith("queue-")
++                and purpose not in ("queue-confirm", "queue-confirm-received"))):
+             if purpose == "chat":
+                 runtime.send(self.root, self.session, typing.text)
+                 self.wake(self.session, {})
+@@ -268,7 +278,7 @@ def field_key(self, name):
+                     if item.get("kind") != "message" or item.get("pr"):
+                         raise UsageError("Use the item's inbox or pull request controls for this event")
+                 if purpose == "queue-e":
+-                    self.field = Field("queue-edit", command["id"], "Edit queued input (Ctrl-D: save): ",
++                    self.field = InlineField("queue-edit", command["id"], "Edit queued input: ",
+                                        command["text"], len(command["text"]))
+                     return
+                 if purpose == "queue-R":
+@@ -312,11 +322,8 @@ def launch_key(self, name):
+             self.field = self.launch_prompt
+         elif purpose == "launch-prompt":
+             if name == "up":
+-                self.field = LaunchField("launch-settings", None, "")
++                self.field = InlineField("launch-settings", None, "")
+             elif name == "enter":
+-                typing.text = typing.text[:typing.cursor] + "\n" + typing.text[typing.cursor:]
+-                typing.cursor += 1
+-            elif name == "ctrl-d":
+                 runtime.launch(self.root, self.launch_form["backend"], self.launch_form["cwd"], typing.text,
+                     name=self.launch_form["name"], model=self.launch_form["model"],
+                     parent=os.environ.get("PROJECTOR_SESSION", ""))
+@@ -331,13 +338,13 @@ def launch_key(self, name):
+                 backend = "claude" if name == "c" else "codex"
+                 if backend != self.launch_form["backend"]:
+                     self.launch_form["backend"], self.launch_form["model"] = backend, ""
+-                self.field = LaunchField("launch-models", None, "")
++                self.field = InlineField("launch-models", None, "")
+             elif name == "m":
+-                self.field = LaunchField("launch-models", None, "")
++                self.field = InlineField("launch-models", None, "")
+             elif name in ("d", "n"):
+                 field, prompt = ("cwd", "Directory: ") if name == "d" else ("name", "Name (optional): ")
+                 value = self.launch_form[field]
+-                self.field = LaunchField("launch-" + field, None, prompt, value, len(value))
++                self.field = InlineField("launch-" + field, None, prompt, value, len(value))
+             elif name in ("enter", "down"):
+                 self.field = self.launch_prompt
+         elif purpose == "launch-models":
+@@ -347,7 +354,7 @@ def launch_key(self, name):
+                 self.field = self.launch_prompt
+             elif name == "t":
+                 value = self.launch_form["model"]
+-                self.field = LaunchField("launch-model", None, "Model ID (empty: native default): ", value, len(value))
++                self.field = InlineField("launch-model", None, "Model ID (empty: native default): ", value, len(value))
+             elif name in ("enter", "down"):
+                 self.field = self.launch_prompt
+         elif name == "enter":
+@@ -380,7 +387,7 @@ def footer(self):
+         if self.field is not None and self.field.purpose.startswith("launch-"):
+             purpose = self.field.purpose
+             if purpose == "launch-prompt":
+-                hint = "↑ settings · Enter adds a line · Ctrl-D launches · Esc cancels"
++                hint = "Enter launches · Shift-Enter/Ctrl-J newline · ↑ settings · Esc cancels"
+             elif purpose in ("launch-settings", "launch-models"):
+                 hint = "Press a choice · ↓ or Esc returns to prompt · Ctrl-C cancels"
+             else:
+@@ -388,7 +395,8 @@ def footer(self):
+             errors = [Line([(self.status, "error")])] if self.status else []
+             return [*errors, Line([(hint, "subtle")])]
+         if self.field is not None and self.field.purpose in ("chat", "queue-edit"):
+-            return [Line([("Enter adds a line · Ctrl-D sends · Esc cancels", "subtle")])]
++            action = "saves" if self.field.purpose == "queue-edit" else "sends"
++            return [Line([(f"Enter {action} · Shift-Enter/Ctrl-J newline · Esc cancels", "subtle")])]
+         return super().footer()
+ 
+     def item_controls(self, item):
+@@ -457,18 +465,18 @@ def append(text, style="subtle"):
+             append("t Type another model ID", "accent")
+         last = len(lines) - 1
+         if typing.purpose not in ("launch-prompt", "launch-settings", "launch-models"):
+-            field_lines = self.launch_field_lines(typing, width)
++            field_lines = self.field_lines(typing, width)
+             last = len(lines) + next(at for at, line in enumerate(field_lines) if line.cursor is not None)
+             lines.extend(field_lines)
+         lines.append(Line([]))
+-        prompt = self.launch_field_lines(self.launch_prompt, width, active=typing is self.launch_prompt)
++        prompt = self.field_lines(self.launch_prompt, width, active=typing is self.launch_prompt)
+         if typing is self.launch_prompt:
+             first = last = len(lines) + next(at for at, line in enumerate(prompt) if line.cursor is not None)
+         lines.extend(prompt)
+         return lines, (first, last)
+ 
+     @staticmethod
+-    def launch_field_lines(typing, width, *, active=True):
++    def field_lines(typing, width, *, active=True):
+         text = typing.prompt + typing.text
+         cursor = len(typing.prompt) + typing.cursor
+         lines, offset = [], 0
+@@ -499,7 +507,7 @@ def form_line(typing):
+     def runtime_lines(self, name, width, selected):
+         lines = []
+         current = self.runtimes[name]
+-        lines.append(Line([(f"{current.get('backend', 'Agent')} · {current.get('state', 'unknown')}", "bold")]))
++        lines.append(Line([(current.get("backend", "Agent"), "bold")]))
+         if current.get("error"):
+             lines.append(Line([(current["error"], "error")]))
+         if current.get("state") == "handed-off":
+@@ -512,11 +520,21 @@ def runtime_lines(self, name, width, selected):
+             if policy.get("reviewer") or policy.get("profile"):
+                 profile = policy.get("profile") or {}
+                 lines.append(Line([(f"Reviewer: {policy.get('reviewer', 'native settings')} · profile: {profile.get('id', 'native settings')}", "subtle")]))
+-        lines.append(Line([("c chat · i interrupt · x stop · o native terminal · r return/resume · s send queued", "accent")]))
++        controls = ["c chat"]
++        state = current.get("state")
++        if state == "handed-off":
++            controls.append("r return to Projector")
++        elif state in ("stopped", "failed"):
++            controls.append("r resume")
++        else:
++            controls.extend(["i interrupt", "x stop", "o native terminal"])
++        if current.get("paused") and state not in ("handed-off", "stopped", "failed"):
++            controls.append("s send queued")
++        lines.append(Line([(" · ".join(controls), "accent")]))
+         lines.append(Line([("e edit queued · d remove queued · R retry uncertain · D confirm received", "subtle")]))
+         view = self.runtime_views.get(name, {})
+         if current.get("paused"):
+-            lines.append(Line([("Queued work is paused. Press s when you want to send it.", "warning")]))
++            lines.append(Line([("Queued work is paused.", "warning")]))
+         result = view.get("control_result", {})
+         if result.get("error"):
+             lines.append(Line([(result["error"], "error")]))
+@@ -526,13 +544,24 @@ def runtime_lines(self, name, width, selected):
+                 lines.append(Line([(f"{state} {at}: {preview}", "warning" if state == "uncertain" else "subtle")]))
+         lines.append(Line([("Conversation", "bold")], selected))
+         for who, text in self.chats.get(name, []):
+-            for paragraph in text.splitlines() or [""]:
+-                for part in textwrap.wrap(paragraph, max(1, width - 8)) or [""]:
+-                    lines.append(Line([(who + ": ", "subtle"), (part, "accent" if who == "you" else "")]))
++            lines.append(Line([]))
++            for paragraph in text.split("\n"):
++                for part in textwrap.wrap(paragraph, max(1, width - 2)) or [""]:
++                    if who == "you":
++                        lines.append(Line([((" " + part).ljust(width), "user")]))
++                    else:
++                        lines.append(Line([(part, "subtle" if who == "tool" else "warning" if who == "status" else "")]))
++        lines.append(Line([]))
+         if self.field is not None and self.field.purpose in ("chat", "queue-edit"):
+-            lines.append(self.form_line(self.field))
++            lines.extend(self.field_lines(self.field, max(1, width)))
++        else:
++            lines.append(Line([(self.message_prompt(name), "bold"), ("c to message", "subtle")]))
+         return lines
+ 
++    def message_prompt(self, name):
++        state = self.runtimes.get(name, {}).get("state")
++        return "… " if state in ("starting", "running", "awaiting-user") else "❯ "
++
+ 
+ class Screen(console.Screen):
+     def draw(self):
+@@ -546,6 +575,7 @@ def draw(self):
+                     routed = ["env", "PYTHONPATH=" + str(Path(__file__).parent.parent), *command]
+                     subprocess.run(["tmux", "split-window", "-h", "-c", current["cwd"], shlex.join(routed)], check=True)
+                 else:
++                    self.input_mode(False)
+                     self.curses.def_prog_mode()
+                     self.curses.endwin()
+                     try:
+@@ -553,6 +583,7 @@ def draw(self):
+                     finally:
+                         self.curses.reset_prog_mode()
+                         self.window.refresh()
++                        self.input_mode(True)
+                     runtime.control(self.console.root, session, "resume")
+             except (OSError, subprocess.SubprocessError, ProjectorError) as error:
+                 self.console.status = str(error)
+diff --git a/src/projector/console.py b/src/projector/console.py
+index f9b2abf2..7b27c3c1 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -525,7 +525,7 @@ def settle_view(self) -> None:
+         keys = [key for key, _ in self.entries()]
+         if self.drawer is not None and self.drawer not in keys:
+             self.close_drawer()
+-        if self.field is not None and self.field.inline and not self.choices():
++        if self.field is not None and self.field.purpose == "note" and not self.choices():
+             self.field = None
+         if self.control is not None and self.control not in {one.key for one in self.controls()}:
+             self.control = None
+@@ -608,6 +608,8 @@ def key(self, name: str) -> None:
+         """Do what the key named `name` does: a character, or `up`, `down`, `left`, `right`, `enter`, `esc`,
+         `backspace`, `delete`, `home`, `end`, `pageup`, `pagedown`, or `ctrl-c`."""
+         with self.lock:
++            if name == "ctrl-j" and self.field is None:
++                name = "enter"
+             self.status = ""
+             self.link = None
+             if name == "ctrl-c" and self.field is None:
+@@ -996,6 +998,8 @@ def open_field(self, purpose: str, target: Optional[str], prompt: str, *, contex
+     def field_key(self, name: str) -> None:
+         typing = self.field
+         assert typing is not None
++        if name == "ctrl-j":
++            name = "enter"
+         if name in ("esc", "ctrl-c"):
+             self.field = None
+         elif name == "enter":
+@@ -1143,7 +1147,7 @@ def home_lines(self, width: int) -> tuple[list[Line], tuple[int, int]]:
+             return lines, (0, 0)
+         ages = {session.name: age(now - changed) if (changed := last_update(session)) is not None else "—"
+                 for session in listed}
+-        counts = {session.name: counted(len(session.rows), "PR") or "0 PRs" for session in listed}
++        counts = {session.name: counted(len(session.rows), "PR") or "" for session in listed}
+         count_width = max(len(value) for value in counts.values())
+         age_width = max(len(value) for value in ages.values())
+         name_width = min(max(5, *(len(session.label) for session in listed)), max(1, width // 4),
+@@ -1447,8 +1451,8 @@ def controls_line(self, controls: list[Control]) -> Line:
+ CURSES_KEYS = {"KEY_UP": "up", "KEY_DOWN": "down", "KEY_LEFT": "left", "KEY_RIGHT": "right", "KEY_ENTER": "enter",
+                "KEY_BACKSPACE": "backspace", "KEY_DC": "delete", "KEY_HOME": "home", "KEY_END": "end",
+                "KEY_PPAGE": "pageup", "KEY_NPAGE": "pagedown"}
+-CHARACTER_KEYS = {"\n": "enter", "\r": "enter", "\x1b": "esc", "\x7f": "backspace", "\b": "backspace",
+-                  "\x01": "home", "\x05": "end", "\x03": "ctrl-c"}
++CHARACTER_KEYS = {"\n": "ctrl-j", "\r": "enter", "\x1b": "esc", "\x7f": "backspace", "\b": "backspace",
++                  "\x01": "home", "\x05": "end", "\x03": "ctrl-c", "\x04": "ctrl-d"}
+ # The cursor and editing keys by the last byte of their escape sequence, or by its number and `~`. A terminal sends
+ # `ESC [` before them, or `ESC O` before an arrow in application mode; curses names only the form the terminfo
+ # entry lists, and hands over the rest of the other byte by byte.
+@@ -1490,6 +1494,32 @@ def key_name(pressed: object, curses: Any) -> Optional[str]:
+     return next((name for constant, name in CURSES_KEYS.items() if pressed == getattr(curses, constant, None)), None)
+ 
+ 
++def escape_key(body: str) -> Optional[str]:
++    if body.endswith("u") or (body.startswith("27;") and body.endswith("~")):
++        fields = body[:-1].split(";")
++        try:
++            if body.endswith("u"):
++                code = int(fields[0].split(":")[0])
++                modifiers = fields[1].split(":") if len(fields) > 1 else ["1"]
++                if len(modifiers) > 1 and modifiers[1] not in ("1", "2"):
++                    return None
++                flags = (int(modifiers[0]) - 1) & ~192
++            else:
++                code, flags = int(fields[2]), int(fields[1]) - 1
++            if code in (13, 57414):
++                return "shift-enter" if flags == 1 else "enter" if flags == 0 else None
++            if flags in (4, 5) and 97 <= code <= 122:
++                return CHARACTER_KEYS.get(chr(code - 96))
++            if flags == 0 and 0 <= code <= 0x10ffff:
++                char = chr(code)
++                return CHARACTER_KEYS.get(char, char if char.isprintable() else None)
++        except (ValueError, IndexError):
++            return None
++        return None
++    final = body[-1:]
++    return ESCAPES.get(body[:-1].split(";")[0] + final if final == "~" else final)
++
++
+ def xterm_color(rgb: tuple[int, int, int]) -> int:
+     """The xterm-256 color nearest `rgb`, from the color cube and the gray ramp. Colors 0 to 15 are left out,
+     because each terminal's palette sets them."""
+@@ -1508,19 +1538,25 @@ def theme_name(environ: Optional[dict] = None) -> str:
+ 
+ 
+ def styles(curses: Any) -> dict[str, int]:
+-    """Each style's attributes: the panel's colors on the terminal's own background, as the nearest of 256 colors
+-    or one of 8, or none under `NO_COLOR`."""
++    """Keep user messages distinct while preserving the terminal's background for other text."""
+     found = {"": 0, "subtle": curses.A_DIM, "bold": curses.A_BOLD}
+-    names = [*THEMES["dark"], *PALETTE]
++    names = [*THEMES["dark"], *PALETTE, "user"]
+     if os.environ.get("NO_COLOR") or not curses.has_colors():
+         found.update({name: curses.A_BOLD if name == "error" else 0 for name in names if name != "subtle"})
++        found["user"] = curses.A_REVERSE
+         return found
+     curses.start_color()
+     curses.use_default_colors()
+     theme = THEMES[theme_name()]
+     rich = getattr(curses, "COLORS", 8) >= 256
+     for index, name in enumerate(names, 1):
+-        if name in PALETTE:
++        if name == "user":
++            foreground = xterm_color((255, 255, 255)) if rich else curses.COLOR_BLACK
++            background = xterm_color((64, 64, 64)) if rich else curses.COLOR_WHITE
++            curses.init_pair(index, foreground, background)
++            found[name] = curses.color_pair(index)
++            continue
++        elif name in PALETTE:
+             color = PALETTE[name]
+         elif rich:
+             color = xterm_color(theme[name])
+@@ -1550,6 +1586,16 @@ def __init__(self, window: Any, console: Console, curses: Any, out: Optional[Tex
+         self.pending: list[object] = []
+         self.targets: list[tuple[int, int, int, Target]] = []
+         self.size: Optional[tuple[int, int]] = None
++        self.input_enabled = False
++        self.paste_buffer: Optional[list[str]] = None
++        self.paste_tail = ""
++        self.paste_overflow = False
++
++    def input_mode(self, enabled: bool) -> None:
++        if self.input_enabled != enabled:
++            self.out.write("\x1b[>1u\x1b[?2004h" if enabled else "\x1b[?2004l\x1b[<u")
++            self.out.flush()
++            self.input_enabled = enabled
+ 
+     def put(self, y: int, line: Line, width: int) -> None:
+         x = 1
+@@ -1604,8 +1650,9 @@ def draw(self) -> None:
+             self.out.flush()
+ 
+     def read_key(self) -> Optional[str]:
+-        """The next key's name, or None for one the console does not use. An escape sequence curses did not name
+-        is read to its last byte and named by `ESCAPES`. Raises `curses.error` when no key came in time."""
++        """Read complete keys and pastes so their control sequences cannot become prompt text."""
++        if self.paste_buffer is not None:
++            return self.read_paste()
+         pressed = self.pending.pop(0) if self.pending else self.window.get_wch()
+         if pressed == getattr(self.curses, "KEY_MOUSE", None):
+             self.mouse()
+@@ -1618,15 +1665,40 @@ def read_key(self) -> Optional[str]:
+                 self.pending.append(follow)
+             return "esc"
+         body = ""
+-        while len(body) < 8:
++        while len(body) < 32:
+             byte = self.follow()
+             if not isinstance(byte, str):
+                 break
+             body += byte
+             if "@" <= byte <= "~":
+                 break
+-        final = body[-1:]
+-        return ESCAPES.get(body[:-1].split(";")[0] + final if final == "~" else final)
++        if body == "200~":
++            self.paste_buffer, self.paste_tail, self.paste_overflow = [], "", False
++            return self.read_paste()
++        return escape_key(body)
++
++    def read_paste(self) -> None:
++        while True:
++            char = self.window.get_wch()
++            if not isinstance(char, str):
++                continue
++            self.paste_tail = (self.paste_tail + char)[-6:]
++            if len(self.paste_buffer) < 65536 + 6:
++                self.paste_buffer.append(char)
++            else:
++                self.paste_overflow = True
++            if self.paste_tail == "\x1b[201~":
++                text = "".join(self.paste_buffer)[:-6]
++                self.paste_buffer = None
++                with self.console.lock:
++                    typing = self.console.field
++                    if self.paste_overflow:
++                        self.console.status = "Paste exceeds 64 Ki characters; paste a smaller message"
++                    elif typing is not None and typing.prompt:
++                        text = text.replace("\r\n", "\n").replace("\r", "\n")
++                        typing.text = typing.text[:typing.cursor] + text + typing.text[typing.cursor:]
++                        typing.cursor += len(text)
++                return None
+ 
+     def mouse(self) -> None:
+         try:
+@@ -1678,6 +1750,8 @@ def refresh() -> None:
+         worker = threading.Thread(target=refresh, daemon=True)
+         worker.start()
+         try:
++            self.curses.nonl()
++            self.input_mode(True)
+             while not self.console.quit:
+                 if interrupted.is_set():
+                     interrupted.clear()
+@@ -1691,6 +1765,7 @@ def refresh() -> None:
+                 if name is not None:
+                     self.console.key(name)
+         finally:
++            self.input_mode(False)
+             signal.signal(signal.SIGINT, previous)
+             stop.set()
+             self.console.refresh_now.set()
+diff --git a/tests/test_agent_console.py b/tests/test_agent_console.py
+index 77a90981..eecba067 100644
+--- a/tests/test_agent_console.py
++++ b/tests/test_agent_console.py
+@@ -1,3 +1,4 @@
++import io
+ import os
+ import tempfile
+ import time
+@@ -22,7 +23,7 @@ def setUp(self):
+ 
+     def type(self, text):
+         for char in text:
+-            self.console.key('enter' if char == '\n' else char)
++            self.console.key('ctrl-j' if char == '\n' else char)
+ 
+     def replace_field(self, text):
+         self.console.key('home')
+@@ -61,7 +62,7 @@ def test_stopped_managed_sessions_remain_available_to_resume(self):
+         self.assertEqual('stopped', self.console.runtimes['managed-session']['state'])
+         self.assertIsInstance(self.console.sessions['managed-session'].updated_at, (int, float))
+         self.console.open_panel('managed-session')
+-        self.assertIn('r return/resume', '\n'.join(line.text for line in self.console.lines(100)[0]))
++        self.assertIn('r resume', '\n'.join(line.text for line in self.console.lines(100)[0]))
+ 
+     def test_a_new_prompt_uses_the_highlighted_sessions_directory(self):
+         first = Path(self.temporary.name) / 'first'
+@@ -95,7 +96,7 @@ def test_the_prompt_can_launch_without_answering_any_setup_questions(self):
+             self.console.key('n')
+             prompt='--help "hi" $HOME\n\ncdmnoxs are prompt text'
+             self.type(prompt)
+-            self.console.key('\x04')
++            self.console.key('enter')
+         self.assertEqual('', self.console.status)
+         launch = runtime.launches(self.root)[0]
+         self.assertEqual(('codex', '', prompt, 'queued'),
+@@ -133,7 +134,7 @@ def test_settings_preserve_the_draft_and_offer_single_key_provider_and_model_cho
+         self.console.key('enter')
+         self.assertEqual(('first\nsecond', cursor), (self.console.field.text, self.console.field.cursor))
+         with patch.object(runtime, 'launch') as launch:
+-            self.console.key('ctrl-d')
++            self.console.key('enter')
+         launch.assert_called_once_with(self.root, 'codex', str(destination.resolve()), 'first\nsecond',
+                                        name='parser', model='example-model',
+                                        parent=os.environ.get('PROJECTOR_SESSION', ''))
+@@ -156,7 +157,7 @@ def test_cancelled_settings_and_failed_launches_keep_the_prompt_editable(self):
+         self.type('custom-model')
+         self.console.key('enter')
+         with patch.object(runtime, 'launch', side_effect=runtime.UsageError('Try again')):
+-            self.console.key('ctrl-d')
++            self.console.key('enter')
+         self.assertEqual('Try again', self.console.status)
+         self.assertEqual('Keep this draft', self.console.field.text)
+         self.assertEqual('custom-model', self.console.launch_form['model'])
+@@ -195,10 +196,101 @@ def test_chat_records_input_in_the_same_inbox_as_other_person_to_session_message
+         self.console.open_panel('managed-session')
+         self.console.key('c')
+         self.type('first\nsecond')
+-        self.console.key('\x04')
++        self.console.key('enter')
+         items = inbox.load_items(inbox.session_dir('managed-session'))
+         self.assertEqual(['first\nsecond'], [item['messages'][0]['text'] for item in items])
+ 
++    def test_completion_changes_the_live_prompt_without_adding_a_status_message_or_losing_the_draft(self):
++        folder = self.managed(state='running')
++        self.console.open_panel('managed-session')
++        self.console.key('c')
++        self.type('A follow-up')
++        active = self.console.field.prompt
++        store = Store(folder)
++        store.event('text', {'text': 'All done.'})
++        store.event('turn_end', {'outcome': 'completed'})
++        current = runtime.record(folder)
++        write_json(folder / 'runtime.json', {**current, 'state': 'ready'})
++        self.now += 2
++        self.console.tick()
++        self.assertNotEqual(active, self.console.field.prompt)
++        self.assertEqual('A follow-up', self.console.field.text)
++        shown = '\n'.join(line.text for line in self.console.lines(100)[0])
++        self.assertIn('All done.', shown)
++        self.assertNotIn('completed', shown)
++        self.assertNotIn('agent:', shown)
++
++    def test_user_messages_have_a_background_and_agent_replies_have_no_speaker_labels(self):
++        from tests.test_console import ColorCurses, FakeWindow
++        folder = self.managed()
++        self.console.open_panel('managed-session')
++        store = Store(folder)
++        store.event('user', {'text': 'Question\n\nSecond paragraph'})
++        store.event('text', {'text': 'An answer.'})
++        self.now += 0.3
++        self.console.tick()
++        lines = self.console.runtime_lines('managed-session', 40, True)
++        curses = ColorCurses(256)
++        with patch.dict(os.environ, {'NO_COLOR': ''}):
++            window = FakeWindow(len(lines), 41)
++            screen = agent_console.Screen(window, self.console, curses)
++        for y, line in enumerate(lines):
++            screen.put(y, line, 41)
++        user = [(text, style) for text, style in window.drawn if 'Question' in text or 'Second paragraph' in text]
++        reply = next((text, style) for text, style in window.drawn if 'An answer.' in text)
++        self.assertEqual(2, len(user))
++        for text, attributes in user:
++            self.assertNotIn('you:', text)
++            self.assertEqual(40, len(text))
++            self.assertGreaterEqual(curses.backgrounds[attributes >> 8], 0)
++        self.assertNotIn('agent:', reply[0])
++        self.assertEqual(0, reply[1])
++
++    def test_long_chat_input_keeps_the_cursor_visible_when_editing_earlier_lines(self):
++        self.managed()
++        self.console.open_panel('managed-session')
++        self.console.key('c')
++        self.type('first line\n' + 'long input ' * 100 + '\nlast line')
++        self.console.key('home')
++        shown = self.console.viewport(40, 10)
++        self.assertTrue(any(line.cursor is not None and 'first line' in line.text for line in shown))
++        self.assertTrue(all(line.cursor is None or line.cursor < 40 for line in shown))
++        self.assertTrue(all(len(line.text) <= 40 for line in shown if line.cursor is not None))
++
++    def test_completed_turns_keep_separate_replies_without_a_completed_status_line(self):
++        folder = self.managed()
++        self.console.open_panel('managed-session')
++        store = Store(folder)
++        for text in ('First reply.', 'Second reply.'):
++            store.event('text', {'text': text})
++            store.event('turn_end', {'outcome': 'completed'})
++        self.now += 0.3
++        self.console.tick()
++        texts = [line.text for line in self.console.runtime_lines('managed-session', 80, True)]
++        self.assertIn('First reply.', texts)
++        self.assertIn('Second reply.', texts)
++        self.assertFalse(any('completed' in text for text in texts))
++
++    def test_native_handoff_restores_keyboard_modes_even_when_the_native_cli_fails(self):
++        from tests.test_console import FakeCurses, FakeWindow
++        self.managed(state='handed-off')
++        for fails in (False, True):
++            with self.subTest(fails=fails):
++                output = io.StringIO()
++                screen = agent_console.Screen(FakeWindow(30), self.console, FakeCurses, output)
++                screen.input_mode(True)
++                self.console.pending_native = 'managed-session'
++                def native(command):
++                    self.assertTrue(output.getvalue().endswith('\x1b[?2004l\x1b[<u'))
++                    if fails:
++                        raise OSError('Native CLI failed')
++                    return 0
++                with patch.dict(os.environ, {'TMUX': ''}), patch.object(agent_console.native_handoff, 'wait', native), \
++                        patch.object(runtime, 'control'), patch.multiple(FakeCurses, create=True,
++                        def_prog_mode=lambda: None, endwin=lambda: None, reset_prog_mode=lambda: None):
++                    screen.draw()
++                self.assertTrue(output.getvalue().endswith('\x1b[>1u\x1b[?2004h'))
++
+     def test_stream_refresh_appends_only_new_text_and_keeps_a_terminal_failure_visible(self):
+         folder = self.managed()
+         self.console.open_panel('managed-session')
+diff --git a/tests/test_console.py b/tests/test_console.py
+index c7ab9df1..9ff319d0 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -317,6 +317,8 @@ def test_session_titles_replace_ids_and_pr_counts_start_in_one_column(self) -> N
+                    {"schema_version": 1, "name": "build-fixer", "cwd": "/work/app", "repo": "acme/app"})
+         self.subscribe(anonymous, "acme/app#12 fix")
+         self.subscribe("named", "acme/app#12 fix", "acme/app#13 fix")
++        self.claude("idle")
++        write_json(self.folder("idle") / "agent.json", {'schema_version': 1, 'name': 'no-pulls', 'cwd': '/work/app'})
+         self.cache("acme/app", 12)
+         self.cache("acme/app", 13)
+ 
+@@ -324,8 +326,10 @@ def test_session_titles_replace_ids_and_pr_counts_start_in_one_column(self) -> N
+         lines = [line.text for line in self.console.lines(100)[0]]
+         codex = next(line for line in lines if "Build the preview" in line)
+         named = next(line for line in lines if "build-fixer" in line)
++        idle = next(line for line in lines if 'no-pulls' in line)
+ 
+         self.assertEqual(codex.index("1 PR"), named.index("2 PRs"))
++        self.assertEqual('', idle[codex.index('1 PR'):codex.index('1 PR') + len('2 PRs')].strip())
+         self.assertNotIn("00000000c0de", "\n".join(lines))
+         self.assertNotIn("acme/app", "\n".join(lines))
+ 
+@@ -351,7 +355,7 @@ def test_session_rows_follow_the_directory_without_field_headings(self) -> None:
+         self.assertEqual("", lines[1].text)
+         self.assertEqual("/work/app", lines[2].text)
+         self.assertTrue(lines[3].text.startswith("▸ "))
+-        self.assertIn("0 PRs", lines[3].text)
++        self.assertNotIn("PR", lines[3].text)
+ 
+     def test_a_newer_notice_does_not_replace_the_latest_open_request(self) -> None:
+         self.claude("s1")
+@@ -797,6 +801,12 @@ def test_escape_sequences_the_terminal_sends_for_the_arrows_are_read_as_the_arro
+                  (["\x1b", "[", "D"], ["left"]), (["\x1b", "[", "6", "~"], ["pagedown"]),
+                  (["\x1b", "[", "1", ";", "5", "B"], ["down"]), (["\x1b"], ["esc"]),
+                  (["\x1b", "\x1b"], ["esc", "esc"]), (["\x03"], ["ctrl-c"]))
++        cases += ((list("\x1b[13;2u"), ["shift-enter"]),
++                  (list("\x1b[27;2;13~"), ["shift-enter"]),
++                  (list("\x1b[106;5u"), ["ctrl-j"]),
++                  (list("\x1b[99;5u"), ["ctrl-c"]),
++                  (list("\x1b[13;2:3u") + ["x"], [None, "x"]),
++                  (["\r", "\n"], ["enter", "ctrl-j"]))
+         for pressed, names in cases:
+             with self.subTest(pressed=pressed):
+                 window = FakeWindow(12)
+@@ -1462,6 +1472,7 @@ class ColorCurses(FakeCurses):
+     def __init__(self, colors: int) -> None:
+         self.COLORS = colors
+         self.pairs: dict[int, int] = {}
++        self.backgrounds: dict[int, int] = {}
+ 
+     def has_colors(self) -> bool:
+         return True
+@@ -1474,6 +1485,7 @@ def use_default_colors(self) -> None:
+ 
+     def init_pair(self, pair: int, foreground: int, background: int) -> None:
+         self.pairs[pair] = foreground
++        self.backgrounds[pair] = background
+ 
+     def color_pair(self, pair: int) -> int:
+         return pair << 8
+@@ -1634,7 +1646,7 @@ def test_a_new_session_opens_the_prompt_before_any_settings_in_a_real_terminal(s
+             self.shown.clear()
+             self.send(b"n")
+             initial = bytes(self.shown)
+-            self.send(b"A multiline prompt\rSecond line", b"\x1b[A", b"c", b"s")
++            self.send(b"A multiline prompt\nSecond line", b"\x1b[A", b"c", b"s")
+             changed = bytes(self.shown)
+         finally:
+             self.send(b"\x1b", b"\x03")
+@@ -1648,6 +1660,29 @@ def test_a_new_session_opens_the_prompt_before_any_settings_in_a_real_terminal(s
+         self.assertEqual(0, code)
+         self.assertNotIn(b"Traceback", changed)
+ 
++    @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
++    def test_enter_sends_one_message_and_newline_keys_and_pastes_preserve_all_lines(self) -> None:
++        self.prepare()
++        folder = watch.session_folder(Path(self.state) / "projector" / "watch", "S")
++        write_json(folder / "runtime.json", {"schema_version": 1, "session": "S", "backend": "codex",
++                   "owner": "managed", "state": "ready", "cwd": str(self.home), "renewed_at": time.time()})
++        self.start()
++        try:
++            self.send(b"\r", b"c", b"first\nsecond", b"\x1b[13;2uthird", b"\x1b[27;2;13~fourth")
++            self.send(b"\x1b[200~\r\npasted\r\n\r\nlast\x1b[201~")
++            items = Path(self.state) / "projector" / "inbox" / "S"
++            before = sorted(path.name for path in items.glob("*.json") if path.stem.isdecimal())
++            self.send(b"\r")
++        finally:
++            self.send(b"\x1b", b"\x1b", b"\x03")
++            code = self.exited(10)
++        self.assertEqual(["1.json"], before)
++        message = json.loads((items / "2.json").read_text())
++        self.assertEqual('first\nsecond\nthird\nfourth\npasted\n\nlast', message['messages'][0]['text'])
++        self.assertEqual(0, code)
++        self.assertIn(b"\x1b[>1u", self.shown)
++        self.assertIn(b"\x1b[<u", self.shown)
++
+     @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
+     def test_a_panel_quits_on_the_second_ctrl_c_and_not_the_first(self) -> None:
+         # Catches the terminal's Ctrl-C reaching curses as an interrupt that quits at once from a panel.
