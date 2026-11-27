@@ -32,11 +32,33 @@ for current terms. Codex uses its native signed-in configuration.
 
 ## Launch and converse
 
-Press `n` in the session list. Choose a backend, working directory, optional
-name, and optional model, then enter the first prompt. Tab switches backends.
-Enter advances each field and adds a newline within the prompt; Ctrl-D
-launches it. Escape cancels. Prompts travel as structured data, so quotes,
-dollar signs, leading dashes, and blank lines stay intact.
+Highlight a session and press `n` to enter the first prompt immediately.
+The new session uses the highlighted session's working directory and provider
+(Claude or Codex), with the provider's native default model. For another
+kind of process, the provider defaults to Claude. When no session supplies
+a directory, Projector uses its current directory.
+
+Press Up from the prompt to change settings:
+
+| Key | Action |
+| --- | --- |
+| `c`, `x` | Choose Claude or Codex, then choose a model |
+| `m` | Choose a model for the current provider |
+| `d` | Edit the working directory; Enter saves it |
+| `n` | Set an optional session name; Enter saves it |
+
+In the model menu, press `0` for the native default, `o` for Claude Opus,
+or `s` for Claude Sonnet. Numbered choices reuse model IDs registered by
+your Projector sessions. These choices do not check provider availability.
+Press `t` to type another native model ID. Selecting a model returns
+to the prompt. Switching providers clears the previous provider's model.
+Down or Escape returns from a menu to the prompt. Escape discards edits
+to a directory, name, or model ID without losing your prompt.
+
+Enter adds a newline within the prompt; Ctrl-D launches it. Escape from the
+prompt cancels the launch, and Ctrl-C cancels from any launch screen.
+Prompts travel as structured data, so quotes, dollar signs, leading dashes,
+and blank lines stay intact.
 
 The runtime applies its native permission and sandbox settings, including
 any automatic approvals you configured. Projector adds no permission bypass.

@@ -1625,6 +1625,30 @@ class Terminal(unittest.TestCase):
                 self.assertNotIn(b"Traceback", bytes(self.shown))
 
     @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
+    def test_a_new_session_opens_the_prompt_before_any_settings_in_a_real_terminal(self) -> None:
+        self.prepare()
+        folder = watch.session_folder(Path(self.state) / "projector" / "watch", "S")
+        write_json(folder / "agent.json", {"schema_version": 1, "host": "claude", "cwd": str(self.home)})
+        self.start()
+        try:
+            self.shown.clear()
+            self.send(b"n")
+            initial = bytes(self.shown)
+            self.send(b"A multiline prompt\rSecond line", b"\x1b[A", b"c", b"s")
+            changed = bytes(self.shown)
+        finally:
+            self.send(b"\x1b", b"\x03")
+            code = self.exited(10)
+
+        self.assertIn(b"New agent session", initial)
+        self.assertIn(b"Prompt:", initial)
+        self.assertNotIn(b"Agent (claude or codex):", initial)
+        self.assertIn(b"c Claude", changed)
+        self.assertIn(b"sonnet", changed)
+        self.assertEqual(0, code)
+        self.assertNotIn(b"Traceback", changed)
+
+    @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
     def test_a_panel_quits_on_the_second_ctrl_c_and_not_the_first(self) -> None:
         # Catches the terminal's Ctrl-C reaching curses as an interrupt that quits at once from a panel.
         self.prepare()
