@@ -3494,11 +3494,22 @@ The bottom hint line shows shortcuts for the current view. The session list
 offers `n new agent session`; chat and prompt editors show their own
 shortcuts. An empty session list offers only the actions you can use there.
 
-Up and down select a session and update the bottom panel immediately. Press
-Enter or Right to move the focus into that panel. The session list stays
-visible above it, with its own scroll position. The panel lists the pull
-requests the session subscribes to, as Projector's panel does, then its
-inbox items, newest first. Pull request statuses occupy a column as wide as
+Up and down select a session and update the bottom panel immediately. The
+list uses the available screen space, reserving at least three rows for the
+panel when the terminal is tall enough. Sessions stay in place while you
+move the selection. The list scrolls only when the selected row no longer
+fits, keeping its directory heading visible.
+
+At the top level, Backspace collapses the selected session's directory group
+into its heading. Up and down skip the hidden sessions. Enter or Right
+expands the group again; clicking a directory heading also toggles its group.
+Groups start expanded when you open the console, and stay collapsed through
+refreshes until you expand them. Backspace in a text field still edits text.
+
+In an expanded group, Enter or Right moves the focus into the selected
+session's panel. The session list stays visible above it, with its own
+scroll position. The panel lists the pull requests the session subscribes
+to, as Projector's panel does, then its inbox items, newest first. Pull request statuses occupy a column as wide as
 the longest status, so the authors and titles after them line up. Each item
 line shows its subject, its state words (`sending`, `unclear`, and a request's `starting`,
 `ready`, or `blocked`), its pull request, and its age. Press Enter on a row
@@ -3578,7 +3589,8 @@ leave the session's panel.
 | Key | Effect |
 | --- | --- |
 | Up and down, or `k` and `j` | In the session list, select a session and update its bottom panel. In the panel, move the focus through the rows, and the open drawer's options and actions, and stay put at the first and the last |
-| Enter, or Right in the session list | Moves the focus into the selected session's panel. In the panel, Enter presses the focused option or action, closes the open drawer when its row has the focus, opens the focused row's drawer in place of the open one |
+| Backspace in the session list | Collapses the selected session's directory group. Enter or Right expands a collapsed group |
+| Enter, or Right in the session list | Expands a collapsed directory group, or moves the focus into the selected session's panel. In the panel, Enter presses the focused option or action, closes the open drawer when its row has the focus, opens the focused row's drawer in place of the open one |
 | An option's or action's own key, such as `2` or `8` | Presses it in the open drawer, as Enter on it does |
 | Left, Esc, or `0` | Closes the open drawer, leaving the focus on its row, or, with no drawer open, returns the focus to the session list |
 | `7` in a panel with no drawer open | Sends a message about the session |

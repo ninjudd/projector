@@ -82,6 +82,9 @@ any automatic approvals you configured. Projector adds no permission bypass.
 Use Up, then `p`, to inspect the settings and effective policy reported by
 the runtime. Claude reports its mode when the first turn initializes.
 
+In the session list, Backspace collapses the selected directory group.
+Enter or Right expands it again. Click the directory heading to toggle it.
+
 Select a managed session and press Enter, or click it, to open its chat.
 The composer has focus immediately and stays ready after you send a message.
 Enter sends through the existing Projector message route. Shift-Enter or

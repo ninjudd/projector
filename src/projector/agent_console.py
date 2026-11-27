@@ -202,7 +202,8 @@ class Console(console.Console):
             self.status = ""
             target.control.act()
             return
-        if target.entry is None and target.session in self.runtimes and target.session in self.sessions:
+        if (not target.group and target.entry is None and target.session in self.runtimes
+                and target.session in self.sessions):
             self.open_panel(target.session)
             return
         if (self.field is not None and self.field.purpose in ("chat", "chat-options", "chat-info")
@@ -581,7 +582,10 @@ class Console(console.Console):
                     return [Line([(console.fit(self.status, width), "error")])]
                 hint = "n new agent session"
                 if self.sessions:
-                    hint += " · ↑↓ select · Enter open"
+                    session = self.viewed()
+                    action = "Enter expand" if session and session.cwd in self.collapsed else (
+                        "Enter open · Backspace collapse")
+                    hint += " · ↑↓ select · " + action
                 return [Line([(console.fit(hint + " · Ctrl-C quit", width), "subtle")])]
             return super().footer(width)
         purpose = typing.purpose

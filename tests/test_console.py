@@ -1416,6 +1416,82 @@ class Mouse(TerminalCase):
 
 
 class SplitLayout(TerminalCase):
+    def grouped_sessions(self) -> None:
+        for group in ("a", "b", "c"):
+            for number in (1, 2):
+                name = f"worker-{group}{number}"
+                self.codex(name, cwd=f"/work/{group}")
+                write_json(self.folder(name) / "agent.json", {"schema_version": 1, "name": name})
+        self.console.tick()
+
+    def session_positions(self) -> dict[str, int]:
+        self.draw()
+        return {name: y for y, line in self.window.rows.items() for name in self.console.sessions
+                if line.startswith((" ▸ " + name, "   " + name))}
+
+    def test_all_sessions_stay_visible_when_the_list_and_panel_fit_the_screen(self) -> None:
+        self.window.height, self.window.width = 18, 100
+        self.grouped_sessions()
+        original = self.session_positions()
+        self.assertEqual(set(self.console.sessions), set(original))
+
+        for _ in range(5):
+            self.press_terminal(FakeCurses.KEY_DOWN)
+            self.assertEqual(original, self.session_positions())
+        self.assertIn("No pull requests or items", self.draw())
+
+    def test_crossing_a_visible_directory_keeps_earlier_rows_until_scrolling_is_needed(self) -> None:
+        self.window.height, self.window.width = 14, 100
+        self.grouped_sessions()
+        original = self.session_positions()
+        self.assertEqual({"worker-a1", "worker-a2", "worker-b1", "worker-b2"}, set(original))
+
+        for _ in range(3):
+            self.press_terminal(FakeCurses.KEY_DOWN)
+            self.assertEqual(original, self.session_positions())
+        self.press_terminal(FakeCurses.KEY_DOWN)
+        self.assertIn("worker-c1", self.session_positions())
+        self.assertIn("/work/c", self.draw())
+        self.press_terminal(FakeCurses.KEY_HOME)
+        self.assertEqual(original, self.session_positions())
+        self.window.height = 20
+        self.assertEqual(set(self.console.sessions), set(self.session_positions()))
+
+    def test_backspace_collapses_only_the_current_group_and_enter_or_right_reopens_it(self) -> None:
+        self.window.height, self.window.width = 30, 100
+        self.grouped_sessions()
+        self.press_terminal(FakeCurses.KEY_DOWN, "backspace", "backspace")
+        self.assertEqual({"worker-b1", "worker-b2", "worker-c1", "worker-c2"}, set(self.session_positions()))
+        self.assertIn("/work/a", self.draw())
+        self.assertIn("expand", self.console.footer()[-1].text)
+        self.press_terminal(FakeCurses.KEY_DOWN)
+        self.assertEqual("worker-b1", self.console.viewed().name)
+        self.press_terminal("up", "right")
+        self.assertEqual("home", self.console.view)
+        self.assertEqual(set(self.console.sessions), set(self.session_positions()))
+        self.press_terminal("enter", "backspace")
+        self.assertEqual("panel", self.console.view)
+        self.assertEqual(set(self.console.sessions), set(self.session_positions()))
+        self.press_terminal("esc", "backspace", "enter")
+        self.assertEqual("home", self.console.view)
+        self.assertEqual(set(self.console.sessions), set(self.session_positions()))
+
+    def test_a_collapsed_group_stays_closed_when_its_first_session_expires(self) -> None:
+        self.window.height, self.window.width = 30, 100
+        self.grouped_sessions()
+        self.press_terminal(FakeCurses.KEY_DOWN, FakeCurses.KEY_DOWN, "backspace")
+        (self.folder("worker-b1") / "codex.json").unlink()
+        self.clock.now += console.INBOX_EVERY
+        self.console.tick()
+
+        self.assertEqual("worker-b2", self.console.viewed().name)
+        self.assertNotIn("worker-b2", self.session_positions())
+        self.assertIn("/work/b", self.draw())
+        self.press_terminal(FakeCurses.KEY_DOWN)
+        self.assertEqual("worker-c1", self.console.viewed().name)
+        self.press_terminal("up", "enter")
+        self.assertIn("worker-b2", self.session_positions())
+
     def test_selected_agent_name_is_gray_and_neither_session_row_is_reversed(self) -> None:
         for name in ("first", "second"):
             self.codex(name, cwd="/work/app")
