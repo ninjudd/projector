@@ -3545,8 +3545,11 @@ first. Enter presses what has the focus: an option, an action
 such as `7: Discuss` or `9: Snooze`, or a row, which opens that row's drawer
 in place of the open one, or closes the drawer when it is the open row
 itself. A drawer without options opens with the focus on its row, so Enter
-twice opens and closes it. The focused row, option, or action is drawn
-reversed, with a `›` before an option or an action.
+twice opens and closes it. The focused pull request label, inbox subject,
+option, or action uses the selected session name's color. Other row colors
+stay intact. Focused text is bold so a subject that already uses that color,
+or a terminal without colors, still shows the focus.
+An option or action also has a `›` before it.
 
 The note goes to the agent on the same line as your choice, as
 `project inbox answer --note` and `done --note` send it, such as

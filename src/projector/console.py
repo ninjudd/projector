@@ -121,8 +121,8 @@ class Target:
 
 @dataclass
 class Line:
-    """One line of the screen: its parts, each text with a style name, and whether the focus is on it: on the whole
-    line for a row or an option, or on the part at `lit` for one of a line of actions. A `spot` line, the focus or
+    """One line of the screen: its parts, each text with a style name, and whether the focus is on it: on the first
+    part for a row or an option, or on the part at `lit` for one of a line of actions. A `spot` line, the focus or
     a note field, scrolls into view when the focus moves, and `cursor` is the column of the terminal's cursor on
     the note field's line."""
 
@@ -1626,8 +1626,10 @@ class Screen:
         for at, (text, style) in enumerate(line.parts):
             if x >= width:
                 break
-            lit = line.selected or at == line.lit
-            attributes = self.styles.get(style, 0) | (self.curses.A_REVERSE if lit else 0)
+            lit = (line.selected and at == 0) or at == line.lit
+            attributes = self.styles.get(style, 0)
+            if lit:
+                attributes = self.styles.get("suggestion", 0) | self.curses.A_BOLD
             shown = printable(text)[:width - x]
             span = self.selection_span(y, width)
             pieces = [(shown, attributes)]
