@@ -1536,13 +1536,65 @@ class ColorCurses(FakeCurses):
 
 
 class Colors(ConsoleCase):
-    def foregrounds(self, curses: ColorCurses, environ: dict[str, str]) -> dict[str, object]:
-        """The foreground each piece of text on the screen was drawn in, or None when it has no color."""
+    def attributes(self, curses: ColorCurses, environ: dict[str, str]) -> dict[str, int]:
         window = FakeWindow(30, 120)
         with mock.patch.dict(os.environ, environ):
             screen = console.Screen(window, self.console, curses)
         screen.draw()
-        return {text.strip(): curses.pairs.get(attributes >> 8) for text, attributes in window.drawn}
+        return {text.strip(): attributes for text, attributes in window.drawn}
+
+    def foregrounds(self, curses: ColorCurses, environ: dict[str, str]) -> dict[str, object]:
+        """The foreground each piece of text on the screen was drawn in, or None when it has no color."""
+        return {text: curses.pairs.get(attributes >> 8) for text, attributes in self.attributes(curses, environ).items()}
+
+    def test_panel_focus_colors_only_the_pr_label_and_preserves_its_other_colors(self) -> None:
+        self.claude('s1')
+        self.subscribe('s1', 'acme/app#12 fix')
+        self.cache('acme/app', 12, mergeable='CONFLICTING')
+        self.ask('s1')
+        self.console.tick()
+        cases = ((256, {'NO_COLOR': '', 'COLORFGBG': ''}, True),
+                 (256, {'NO_COLOR': '', 'COLORFGBG': '0;15'}, True),
+                 (8, {'NO_COLOR': '', 'COLORFGBG': ''}, True),
+                 (256, {'NO_COLOR': '1'}, False))
+        for colors, environ, colored in cases:
+            with self.subTest(colors=colors, environ=environ):
+                curses = ColorCurses(colors)
+                self.console.open_panel('s1')
+                focused = self.attributes(curses, environ)
+                self.press('down')
+                unfocused = self.attributes(curses, environ)
+                self.assertNotEqual(0, focused['#12'])
+                self.assertEqual(0, unfocused['#12'])
+                self.assertEqual(colored, bool(focused['#12'] >> 8))
+                for text in ('conflict', 'Pull request 12'):
+                    self.assertEqual(unfocused[text], focused[text], text)
+                self.assertFalse(any(value & curses.A_REVERSE for value in focused.values()))
+
+    def test_inbox_focus_moves_from_subject_to_option_and_action_without_inverting_text(self) -> None:
+        self.claude('s1')
+        self.ask('s1')
+        self.console.tick()
+        self.console.open_panel('s1')
+        curses = ColorCurses(256)
+        environ = {'NO_COLOR': ''}
+        subject = self.attributes(curses, environ)
+        self.press('enter')
+        first = self.attributes(curses, environ)
+        self.press('down')
+        second = self.attributes(curses, environ)
+        self.press('down')
+        action = self.attributes(curses, environ)
+        self.assertNotEqual(first['- Decline the finding?'], subject['- Decline the finding?'])
+        self.assertEqual(subject['0s'], first['0s'])
+        self.assertNotEqual(0, first['› 1: Decline it (recommended)'])
+        self.assertEqual(0, first['2: Fix it'])
+        self.assertEqual(0, second['1: Decline it (recommended)'])
+        self.assertNotEqual(0, second['› 2: Fix it'])
+        self.assertNotEqual(0, action["6: I don't understand"])
+        self.assertEqual(0, action['2: Fix it'])
+        for drawn in (subject, first, second, action):
+            self.assertFalse(any(value & curses.A_REVERSE for value in drawn.values()))
 
     def test_a_question_line_and_a_conflict_draw_in_the_panels_permission_and_error_colors(self) -> None:
         # Catches the console drawing in colors of its own rather than the panel's: a question in cyan, as it did,
