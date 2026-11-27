@@ -1,0 +1,66 @@
+{
+ "version": 1,
+ "name": "Console selection colors",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 661,
+  "title": "Apply the approved console selection palette",
+  "head": "b29b6e2e222dbae0dbc7bb39cdd96796b2b28613",
+  "headRef": "console-approved-palette",
+  "base": "181e12b24903f4fb7ef2a4982e7a2387df1e4eef",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The terminal console lists sessions, pull requests, and inbox items. Its selected label needs to stand out while still showing the item’s kind. This change applies the approved softer selection palette to both dark and light themes.",
+   "Selected requests keep their normal orange shade in a 256-color terminal and use bold for emphasis. Plain labels use softer gray, while fixer and branch text keep the terminal’s own blue and cyan palette slots."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "selection",
+   "title": "Keep selected labels recognizable",
+   "kicker": "Selection colors, renderer coverage, and the console guide",
+   "intro": [
+    "Focus is the label the keyboard currently selects. The console now stores a separate focus palette rather than deriving every selected color with one brightening formula. The palette uses the approved preview’s 50% softness values, so color still identifies a question, request, notice, or status when its label is selected.",
+    "The renderer continues to apply bold to that selected label and keeps the other pieces of the row unchanged. Limited-color terminals retain the existing fallback behavior; fixer and branch accents now keep their normal terminal palette slots when focused."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Read the dark and light focus palettes, then their selection in the curses style initializer.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Compared all 18 selected label and status colors with the approved preview export at 50% softness after terminal-color conversion; both themes match.",
+       "line": 1493
+      },
+      {
+       "kind": "verify",
+       "text": "Checked the initialized color pairs: focused fixer and branch text retain the same terminal palette slots as their normal styles.",
+       "line": 1598
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "The selection regression checks bold emphasis and preserves the request’s orange shade in both themes.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The updated request-color assertion fails against the base in both themes and passes at this head. All 116 focused console and managed-console tests passed.",
+       "line": 1679
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The console guide describes the softer selected colors, orange requests, and native terminal accents."
+    }
+   ]
+  }
+ ]
+}
