@@ -317,6 +317,8 @@ class SessionColumns(ConsoleCase):
                    {"schema_version": 1, "name": "build-fixer", "cwd": "/work/app", "repo": "acme/app"})
         self.subscribe(anonymous, "acme/app#12 fix")
         self.subscribe("named", "acme/app#12 fix", "acme/app#13 fix")
+        self.claude("idle")
+        write_json(self.folder("idle") / "agent.json", {'schema_version': 1, 'name': 'no-pulls', 'cwd': '/work/app'})
         self.cache("acme/app", 12)
         self.cache("acme/app", 13)
 
@@ -324,8 +326,10 @@ class SessionColumns(ConsoleCase):
         lines = [line.text for line in self.console.lines(100)[0]]
         codex = next(line for line in lines if "Build the preview" in line)
         named = next(line for line in lines if "build-fixer" in line)
+        idle = next(line for line in lines if 'no-pulls' in line)
 
         self.assertEqual(codex.index("1 PR"), named.index("2 PRs"))
+        self.assertEqual('', idle[codex.index('1 PR'):codex.index('1 PR') + len('2 PRs')].strip())
         self.assertNotIn("00000000c0de", "\n".join(lines))
         self.assertNotIn("acme/app", "\n".join(lines))
 
@@ -351,7 +355,7 @@ class SessionColumns(ConsoleCase):
         self.assertEqual("", lines[1].text)
         self.assertEqual("/work/app", lines[2].text)
         self.assertTrue(lines[3].text.startswith("▸ "))
-        self.assertIn("0 PRs", lines[3].text)
+        self.assertNotIn("PR", lines[3].text)
 
     def test_a_newer_notice_does_not_replace_the_latest_open_request(self) -> None:
         self.claude("s1")
@@ -797,6 +801,12 @@ class Keys(ConsoleCase):
                  (["\x1b", "[", "D"], ["left"]), (["\x1b", "[", "6", "~"], ["pagedown"]),
                  (["\x1b", "[", "1", ";", "5", "B"], ["down"]), (["\x1b"], ["esc"]),
                  (["\x1b", "\x1b"], ["esc", "esc"]), (["\x03"], ["ctrl-c"]))
+        cases += ((list("\x1b[13;2u"), ["shift-enter"]),
+                  (list("\x1b[27;2;13~"), ["shift-enter"]),
+                  (list("\x1b[106;5u"), ["ctrl-j"]),
+                  (list("\x1b[99;5u"), ["ctrl-c"]),
+                  (list("\x1b[13;2:3u") + ["x"], [None, "x"]),
+                  (["\r", "\n"], ["enter", "ctrl-j"]))
         for pressed, names in cases:
             with self.subTest(pressed=pressed):
                 window = FakeWindow(12)
@@ -1462,6 +1472,7 @@ class ColorCurses(FakeCurses):
     def __init__(self, colors: int) -> None:
         self.COLORS = colors
         self.pairs: dict[int, int] = {}
+        self.backgrounds: dict[int, int] = {}
 
     def has_colors(self) -> bool:
         return True
@@ -1474,6 +1485,7 @@ class ColorCurses(FakeCurses):
 
     def init_pair(self, pair: int, foreground: int, background: int) -> None:
         self.pairs[pair] = foreground
+        self.backgrounds[pair] = background
 
     def color_pair(self, pair: int) -> int:
         return pair << 8
@@ -1634,7 +1646,7 @@ class Terminal(unittest.TestCase):
             self.shown.clear()
             self.send(b"n")
             initial = bytes(self.shown)
-            self.send(b"A multiline prompt\rSecond line", b"\x1b[A", b"c", b"s")
+            self.send(b"A multiline prompt\nSecond line", b"\x1b[A", b"c", b"s")
             changed = bytes(self.shown)
         finally:
             self.send(b"\x1b", b"\x03")
@@ -1647,6 +1659,29 @@ class Terminal(unittest.TestCase):
         self.assertIn(b"sonnet", changed)
         self.assertEqual(0, code)
         self.assertNotIn(b"Traceback", changed)
+
+    @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
+    def test_enter_sends_one_message_and_newline_keys_and_pastes_preserve_all_lines(self) -> None:
+        self.prepare()
+        folder = watch.session_folder(Path(self.state) / "projector" / "watch", "S")
+        write_json(folder / "runtime.json", {"schema_version": 1, "session": "S", "backend": "codex",
+                   "owner": "managed", "state": "ready", "cwd": str(self.home), "renewed_at": time.time()})
+        self.start()
+        try:
+            self.send(b"\r", b"c", b"first\nsecond", b"\x1b[13;2uthird", b"\x1b[27;2;13~fourth")
+            self.send(b"\x1b[200~\r\npasted\r\n\r\nlast\x1b[201~")
+            items = Path(self.state) / "projector" / "inbox" / "S"
+            before = sorted(path.name for path in items.glob("*.json") if path.stem.isdecimal())
+            self.send(b"\r")
+        finally:
+            self.send(b"\x1b", b"\x1b", b"\x03")
+            code = self.exited(10)
+        self.assertEqual(["1.json"], before)
+        message = json.loads((items / "2.json").read_text())
+        self.assertEqual('first\nsecond\nthird\nfourth\npasted\n\nlast', message['messages'][0]['text'])
+        self.assertEqual(0, code)
+        self.assertIn(b"\x1b[>1u", self.shown)
+        self.assertIn(b"\x1b[<u", self.shown)
 
     @unittest.skipUnless(hasattr(os, "openpty"), "needs a pseudo-terminal")
     def test_a_panel_quits_on_the_second_ctrl_c_and_not_the_first(self) -> None:

@@ -19,7 +19,7 @@ Field = console.Field
 CONVERSATION = "runtime:conversation"
 
 
-class LaunchField(Field):
+class InlineField(Field):
     @property
     def inline(self):
         return True
@@ -36,6 +36,7 @@ class Console(console.Console):
         self.stores = {}
         self.cursors = {}
         self.chats = {}
+        self.streaming = set()
         self.runtime_views = {}
         self.next_runtime = float("-inf")
         self.follow = True
@@ -104,6 +105,8 @@ class Console(console.Console):
         super().apply(found)
         if hasattr(found, "runtimes"):
             self.runtimes = found.runtimes
+        if self.field is not None and self.field.purpose == "chat":
+            self.field.prompt = self.message_prompt(self.session)
         if hasattr(found, "runtime_error"):
             self.status = found.runtime_error
         if hasattr(found, "runtime_view"):
@@ -114,7 +117,7 @@ class Console(console.Console):
             chat = self.chats.setdefault(name, [])
             for event in events:
                 kind, payload = event["kind"], event["payload"]
-                if kind == "text" and chat and chat[-1][0] == "agent":
+                if kind == "text" and name in self.streaming and chat and chat[-1][0] == "agent":
                     chat[-1] = ("agent", (chat[-1][1] + payload.get("text", ""))[-65536:])
                 elif kind in ("text", "user"):
                     chat.append(("agent" if kind == "text" else "you", payload.get("text", "")))
@@ -125,7 +128,12 @@ class Console(console.Console):
                              or item.get("output") or payload.get("preview") or "")
                     chat.append(("tool", f"{label}: {str(value)[:4096]}"))
                 elif kind == "turn_end":
-                    chat.append(("status", payload.get("outcome", "") + (": " + str(payload["error"]) if payload.get("error") else "")))
+                    if payload.get("outcome") != "completed" or payload.get("error"):
+                        chat.append(("status", payload.get("outcome", "") + (": " + str(payload["error"]) if payload.get("error") else "")))
+                if kind == "text":
+                    self.streaming.add(name)
+                elif kind in ("turn_end", "user", "tool"):
+                    self.streaming.discard(name)
                 self.cursors[name] = event["sequence"]
                 if payload.get("truncated"):
                     chat.append(("status", "Display truncated; inspect native history for the full content."))
@@ -180,11 +188,12 @@ class Console(console.Console):
             lines += [Line([]), *self.runtime_lines(session.name, width, selected)]
             if selected:
                 focus = (start, len(lines) - 1)
+                cursor = next((at for at in range(start, len(lines)) if lines[at].cursor is not None), None)
+                if cursor is not None:
+                    focus = (cursor, cursor)
         return lines, focus
 
     def key(self, name):
-        if name == "\x04":
-            name = "ctrl-d"
         try:
             with self.lock:
                 if self.field is None and self.view == "panel" and self.session and self.session.startswith("launch-"):
@@ -205,7 +214,7 @@ class Console(console.Console):
                         if host in ("claude", "codex") and isinstance(model, str) and agents.MODEL_ID.fullmatch(model):
                             if model not in self.launch_models[host]:
                                 self.launch_models[host].append(model)
-                    self.launch_prompt = LaunchField("launch-prompt", None, "Prompt: ")
+                    self.launch_prompt = InlineField("launch-prompt", None, "Prompt: ")
                     self.field = self.launch_prompt
                     self.status = ""
                     return
@@ -215,7 +224,7 @@ class Console(console.Console):
                     if name == "c":
                         self.selected = CONVERSATION
                         self.follow = True
-                        self.field = Field("chat", None, "Message (Enter: newline; Ctrl-D: send): ")
+                        self.field = InlineField("chat", None, self.message_prompt(self.session))
                         return
                     action = {"i": "interrupt", "x": "stop", "o": "handoff", "r": "resume", "s": "send"}.get(name)
                     if action:
@@ -239,17 +248,18 @@ class Console(console.Console):
         if typing is None:
             return
         purpose = typing.purpose
-        if purpose.startswith("launch-"):
-            self.launch_key(name)
-            return
-        multiline = purpose in ("chat", "queue-edit")
-        if multiline and name == "enter":
+        multiline = purpose in ("launch-prompt", "chat", "queue-edit")
+        if name == "ctrl-j" and not multiline:
+            name = "enter"
+        if multiline and name in ("ctrl-j", "shift-enter"):
             typing.text = typing.text[:typing.cursor] + "\n" + typing.text[typing.cursor:]
             typing.cursor += 1
             return
-        if (multiline and name == "ctrl-d") or (not multiline and name == "enter"
-                                                and purpose not in ("queue-confirm", "queue-confirm-received")
-                                                and purpose.startswith("queue-")):
+        if purpose.startswith("launch-"):
+            self.launch_key(name)
+            return
+        if name == "enter" and (multiline or (purpose.startswith("queue-")
+                and purpose not in ("queue-confirm", "queue-confirm-received"))):
             if purpose == "chat":
                 runtime.send(self.root, self.session, typing.text)
                 self.wake(self.session, {})
@@ -268,7 +278,7 @@ class Console(console.Console):
                     if item.get("kind") != "message" or item.get("pr"):
                         raise UsageError("Use the item's inbox or pull request controls for this event")
                 if purpose == "queue-e":
-                    self.field = Field("queue-edit", command["id"], "Edit queued input (Ctrl-D: save): ",
+                    self.field = InlineField("queue-edit", command["id"], "Edit queued input: ",
                                        command["text"], len(command["text"]))
                     return
                 if purpose == "queue-R":
@@ -312,11 +322,8 @@ class Console(console.Console):
             self.field = self.launch_prompt
         elif purpose == "launch-prompt":
             if name == "up":
-                self.field = LaunchField("launch-settings", None, "")
+                self.field = InlineField("launch-settings", None, "")
             elif name == "enter":
-                typing.text = typing.text[:typing.cursor] + "\n" + typing.text[typing.cursor:]
-                typing.cursor += 1
-            elif name == "ctrl-d":
                 runtime.launch(self.root, self.launch_form["backend"], self.launch_form["cwd"], typing.text,
                     name=self.launch_form["name"], model=self.launch_form["model"],
                     parent=os.environ.get("PROJECTOR_SESSION", ""))
@@ -331,13 +338,13 @@ class Console(console.Console):
                 backend = "claude" if name == "c" else "codex"
                 if backend != self.launch_form["backend"]:
                     self.launch_form["backend"], self.launch_form["model"] = backend, ""
-                self.field = LaunchField("launch-models", None, "")
+                self.field = InlineField("launch-models", None, "")
             elif name == "m":
-                self.field = LaunchField("launch-models", None, "")
+                self.field = InlineField("launch-models", None, "")
             elif name in ("d", "n"):
                 field, prompt = ("cwd", "Directory: ") if name == "d" else ("name", "Name (optional): ")
                 value = self.launch_form[field]
-                self.field = LaunchField("launch-" + field, None, prompt, value, len(value))
+                self.field = InlineField("launch-" + field, None, prompt, value, len(value))
             elif name in ("enter", "down"):
                 self.field = self.launch_prompt
         elif purpose == "launch-models":
@@ -347,7 +354,7 @@ class Console(console.Console):
                 self.field = self.launch_prompt
             elif name == "t":
                 value = self.launch_form["model"]
-                self.field = LaunchField("launch-model", None, "Model ID (empty: native default): ", value, len(value))
+                self.field = InlineField("launch-model", None, "Model ID (empty: native default): ", value, len(value))
             elif name in ("enter", "down"):
                 self.field = self.launch_prompt
         elif name == "enter":
@@ -380,7 +387,7 @@ class Console(console.Console):
         if self.field is not None and self.field.purpose.startswith("launch-"):
             purpose = self.field.purpose
             if purpose == "launch-prompt":
-                hint = "↑ settings · Enter adds a line · Ctrl-D launches · Esc cancels"
+                hint = "Enter launches · Shift-Enter/Ctrl-J newline · ↑ settings · Esc cancels"
             elif purpose in ("launch-settings", "launch-models"):
                 hint = "Press a choice · ↓ or Esc returns to prompt · Ctrl-C cancels"
             else:
@@ -388,7 +395,8 @@ class Console(console.Console):
             errors = [Line([(self.status, "error")])] if self.status else []
             return [*errors, Line([(hint, "subtle")])]
         if self.field is not None and self.field.purpose in ("chat", "queue-edit"):
-            return [Line([("Enter adds a line · Ctrl-D sends · Esc cancels", "subtle")])]
+            action = "saves" if self.field.purpose == "queue-edit" else "sends"
+            return [Line([(f"Enter {action} · Shift-Enter/Ctrl-J newline · Esc cancels", "subtle")])]
         return super().footer()
 
     def item_controls(self, item):
@@ -457,18 +465,18 @@ class Console(console.Console):
             append("t Type another model ID", "accent")
         last = len(lines) - 1
         if typing.purpose not in ("launch-prompt", "launch-settings", "launch-models"):
-            field_lines = self.launch_field_lines(typing, width)
+            field_lines = self.field_lines(typing, width)
             last = len(lines) + next(at for at, line in enumerate(field_lines) if line.cursor is not None)
             lines.extend(field_lines)
         lines.append(Line([]))
-        prompt = self.launch_field_lines(self.launch_prompt, width, active=typing is self.launch_prompt)
+        prompt = self.field_lines(self.launch_prompt, width, active=typing is self.launch_prompt)
         if typing is self.launch_prompt:
             first = last = len(lines) + next(at for at, line in enumerate(prompt) if line.cursor is not None)
         lines.extend(prompt)
         return lines, (first, last)
 
     @staticmethod
-    def launch_field_lines(typing, width, *, active=True):
+    def field_lines(typing, width, *, active=True):
         text = typing.prompt + typing.text
         cursor = len(typing.prompt) + typing.cursor
         lines, offset = [], 0
@@ -499,7 +507,7 @@ class Console(console.Console):
     def runtime_lines(self, name, width, selected):
         lines = []
         current = self.runtimes[name]
-        lines.append(Line([(f"{current.get('backend', 'Agent')} · {current.get('state', 'unknown')}", "bold")]))
+        lines.append(Line([(current.get("backend", "Agent"), "bold")]))
         if current.get("error"):
             lines.append(Line([(current["error"], "error")]))
         if current.get("state") == "handed-off":
@@ -512,11 +520,21 @@ class Console(console.Console):
             if policy.get("reviewer") or policy.get("profile"):
                 profile = policy.get("profile") or {}
                 lines.append(Line([(f"Reviewer: {policy.get('reviewer', 'native settings')} · profile: {profile.get('id', 'native settings')}", "subtle")]))
-        lines.append(Line([("c chat · i interrupt · x stop · o native terminal · r return/resume · s send queued", "accent")]))
+        controls = ["c chat"]
+        state = current.get("state")
+        if state == "handed-off":
+            controls.append("r return to Projector")
+        elif state in ("stopped", "failed"):
+            controls.append("r resume")
+        else:
+            controls.extend(["i interrupt", "x stop", "o native terminal"])
+        if current.get("paused") and state not in ("handed-off", "stopped", "failed"):
+            controls.append("s send queued")
+        lines.append(Line([(" · ".join(controls), "accent")]))
         lines.append(Line([("e edit queued · d remove queued · R retry uncertain · D confirm received", "subtle")]))
         view = self.runtime_views.get(name, {})
         if current.get("paused"):
-            lines.append(Line([("Queued work is paused. Press s when you want to send it.", "warning")]))
+            lines.append(Line([("Queued work is paused.", "warning")]))
         result = view.get("control_result", {})
         if result.get("error"):
             lines.append(Line([(result["error"], "error")]))
@@ -526,12 +544,23 @@ class Console(console.Console):
                 lines.append(Line([(f"{state} {at}: {preview}", "warning" if state == "uncertain" else "subtle")]))
         lines.append(Line([("Conversation", "bold")], selected))
         for who, text in self.chats.get(name, []):
-            for paragraph in text.splitlines() or [""]:
-                for part in textwrap.wrap(paragraph, max(1, width - 8)) or [""]:
-                    lines.append(Line([(who + ": ", "subtle"), (part, "accent" if who == "you" else "")]))
+            lines.append(Line([]))
+            for paragraph in text.split("\n"):
+                for part in textwrap.wrap(paragraph, max(1, width - 2)) or [""]:
+                    if who == "you":
+                        lines.append(Line([((" " + part).ljust(width), "user")]))
+                    else:
+                        lines.append(Line([(part, "subtle" if who == "tool" else "warning" if who == "status" else "")]))
+        lines.append(Line([]))
         if self.field is not None and self.field.purpose in ("chat", "queue-edit"):
-            lines.append(self.form_line(self.field))
+            lines.extend(self.field_lines(self.field, max(1, width)))
+        else:
+            lines.append(Line([(self.message_prompt(name), "bold"), ("c to message", "subtle")]))
         return lines
+
+    def message_prompt(self, name):
+        state = self.runtimes.get(name, {}).get("state")
+        return "… " if state in ("starting", "running", "awaiting-user") else "❯ "
 
 
 class Screen(console.Screen):
@@ -546,6 +575,7 @@ class Screen(console.Screen):
                     routed = ["env", "PYTHONPATH=" + str(Path(__file__).parent.parent), *command]
                     subprocess.run(["tmux", "split-window", "-h", "-c", current["cwd"], shlex.join(routed)], check=True)
                 else:
+                    self.input_mode(False)
                     self.curses.def_prog_mode()
                     self.curses.endwin()
                     try:
@@ -553,6 +583,7 @@ class Screen(console.Screen):
                     finally:
                         self.curses.reset_prog_mode()
                         self.window.refresh()
+                        self.input_mode(True)
                     runtime.control(self.console.root, session, "resume")
             except (OSError, subprocess.SubprocessError, ProjectorError) as error:
                 self.console.status = str(error)
