@@ -1,0 +1,79 @@
+{
+ "version": 1,
+ "name": "Pages progress handling",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 660,
+  "title": "Wait through GitHub Pages synchronization states",
+  "head": "4fcb962dc626e11eda3e7f7bb7d5b2376d6dba52",
+  "headRef": "fix-pages-progress-states",
+  "base": "8d34ac2398e1adacfa536b11fb246aca339d5587",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector site action uploads the built website and asks GitHub Pages to publish it. A polling client then reads the deployment status until the site is ready. The client currently rejects <code>syncing_files</code>, an intermediate state Pages returns while copying the site files, and cancels the deployment.",
+   "This change makes the client stop on known terminal failures rather than require every progress state to appear in a fixed list. File synchronization and unfamiliar progress states keep polling. Success, timeout, temporary request retries, and interruption cleanup retain their existing behavior."
+  ],
+  "cards": [
+   {
+    "id": "completion",
+    "title": "When polling ends",
+    "html": "<ul class=\"tight\"><li><code>succeed</code> publishes the site URL.</li><li>Five known terminal failure states fail the action and request cancellation.</li><li>Other status values keep polling within the existing ten-minute limit.</li><li>Timeout and SIGINT/SIGTERM interruption fail and request cancellation.</li></ul>"
+   },
+   {
+    "id": "evidence",
+    "title": "Review evidence",
+    "html": "Clean review at <code>4fcb962</code>. All 15 Node deployment tests, 9 Python workflow tests, and the configured gate passed, including 270 hook tests and required CI. The new synchronization regression fails against the base client and passes at this head. No live Pages deployment was created; hosted verification waits for the normal main-branch workflow."
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "deployment-status",
+   "title": "Wait for a final deployment state",
+   "kicker": "A new progress value cannot cancel a healthy Pages deployment",
+   "intro": [
+    "Pages returns a status value for each deployment poll. The client first recognizes success, then checks a list of known terminal failures. Every other value reaches the existing five-second delay and next poll, so <code>syncing_files</code> and future progress states receive time to finish.",
+    "The regression drives the actual composite-action script through synchronization, an unfamiliar progress state, and success. It checks that all three status requests happen and that the URL appears only after success. Existing tests still exercise failure cancellation, bounded retries, timeout, and both workflow interruption signals."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "actions/site/deploy.cjs",
+     "note": "Changes the failure decision from rejecting unlisted progress values to matching known terminal failures.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 48,
+       "text": "Traced the success, terminal-failure, and continued-polling branches. The terminal-failure list and treatment of other states match GitHub’s upstream deployment action."
+      }
+     ]
+    },
+    {
+     "path": "tests/site_deploy.test.cjs",
+     "note": "Adds the synchronization-to-success regression through the composite-action script.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 60,
+       "text": "The new regression fails against the base client with “Pages deployment failed: syncing_files” and passes at this head. All 15 deployment tests and 9 Python workflow tests passed."
+      }
+     ]
+    },
+    {
+     "path": "docs/site.md",
+     "note": "Documents that intermediate deployment states remain pending until a completion or failure condition.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 103,
+       "text": "This describes the polling contract. Live deployment verification still requires the normal main-branch workflow, which is permitted by the Pages environment."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

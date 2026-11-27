@@ -1,0 +1,48 @@
+diff --git a/actions/site/deploy.cjs b/actions/site/deploy.cjs
+index 8e5e7778..70d8a040 100644
+--- a/actions/site/deploy.cjs
++++ b/actions/site/deploy.cjs
+@@ -45,7 +45,8 @@ module.exports = async ({github, context, core, artifactId}) => {
+         core.setOutput('page_url', deployment.page_url);
+         return;
+       }
+-      if (!['queued', 'deployment_in_progress', 'unknown_status', 'not_found', 'deployment_attempt_error'].includes(status)) {
++      if (['deployment_failed', 'deployment_perms_error', 'deployment_content_failed',
++        'deployment_cancelled', 'deployment_lost'].includes(status)) {
+         throw new Error(`Pages deployment failed: ${status}.`);
+       }
+       await timers.setTimeout(5000, undefined, {signal: controller.signal});
+diff --git a/docs/site.md b/docs/site.md
+index af328e00..bb463dd1 100644
+--- a/docs/site.md
++++ b/docs/site.md
+@@ -100,6 +100,9 @@ is the GitHub repository:
+    directly to the Pages API. It waits for Pages to finish before reporting
+    the site's URL. A failed or timed-out deployment fails the workflow and
+    requests cancellation; a temporary failure to read its status is retried.
++   Intermediate states, including file synchronization, keep the deployment
++   pending. Only success, a terminal failure, interruption, or the timeout
++   ends the wait.
+    Canceling the workflow also requests Pages cancellation before the client
+    exits, including while it waits for a status response or its next poll.
+ 
+diff --git a/tests/site_deploy.test.cjs b/tests/site_deploy.test.cjs
+index f40edcfe..12979849 100644
+--- a/tests/site_deploy.test.cjs
++++ b/tests/site_deploy.test.cjs
+@@ -55,6 +55,15 @@ test('fails before authenticating when the upload has no usable ID', async t =>
+   }
+ });
+ 
++test('waits through file synchronization and future progress states', async t => {
++  const fake = runner(t, [{id: 'syncing', page_url: 'https://example.test/site/'},
++    {status: 'syncing_files'}, {status: 'future_progress_state'}, {status: 'succeed'}]);
++  await fake.run();
++  assert.deepEqual(fake.outputs, {page_url: 'https://example.test/site/'});
++  assert.deepEqual(fake.calls.slice(1).map(call => call.route),
++    Array(3).fill('GET /repos/{owner}/{repo}/pages/deployments/{deploymentId}'));
++});
++
+ test('reports a terminal Pages failure and cancels the deployment', async t => {
+   for (const status of ['deployment_failed', 'deployment_perms_error', 'deployment_content_failed', 'deployment_cancelled', 'deployment_lost']) {
+     const fake = runner(t, [{id: 'failed', page_url: 'https://example.test/'}, {status}, {}]);
