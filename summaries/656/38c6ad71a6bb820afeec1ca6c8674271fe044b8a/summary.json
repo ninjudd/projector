@@ -1,0 +1,93 @@
+{
+ "version": 1,
+ "name": "Console focus colors",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 656,
+  "title": "Color selected panel labels instead of inverting rows",
+  "head": "38c6ad71a6bb820afeec1ca6c8674271fe044b8a",
+  "headRef": "console-selection-color",
+  "base": "e7d4c5f58d87ab152762bd8ba17d9527adec16cd",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector console shows a session list above the selected session’s pull requests and inbox items. Keyboard focus tells you which row, answer, or action Enter will activate.",
+   "This change highlights the focused label in the selected session name’s color and makes it bold. Other parts of a row keep their status colors and normal background, so moving focus does not change how a conflict, title, or age looks."
+  ],
+  "cards": [
+   {
+    "id": "focus-contract",
+    "title": "What receives focus styling",
+    "html": "<ul class=\"tight\"><li><b>Rows and answer options:</b> their first text part receives the focus style.</li><li><b>Inline actions:</b> only the action at <code>Line.lit</code> receives it.</li><li><b>Other text:</b> status words, titles, and ages keep their own styles. A drag selection can still reverse the selected text.</li></ul>"
+   },
+   {
+    "id": "review-evidence",
+    "title": "Review evidence",
+    "html": "<p>The exact head has a clean review with no findings. The configured gate, 111 focused Python tests, and 270 hook tests passed. Rendering tests cover dark, light, eight-color, and monochrome terminals; no physical terminal display or live provider session was exercised.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "focused-labels",
+   "title": "Preserve the meaning of row colors",
+   "kicker": "The shared renderer highlights the focused label",
+   "intro": [
+    "Each console line contains text parts with separate styles. A pull request row, for example, keeps its label separate from its status and title. The renderer now applies focus styling to the first part of a selected row, rather than inverting every part.",
+    "An inline action already identifies its focused part with <code>lit</code>. That part uses the same color and bold styling. Bold also distinguishes focus when the label already has the focus color or colors are disabled."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/console.py",
+     "note": "Defines focused line parts and applies their style before clipping and drag-selection rendering.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1632,
+       "text": "Traced every selected Line producer and the managed-console subclass. Focus reuses the selected session name’s suggestion style; text, click targets, clipping, and drag-selection spans stay unchanged. All 111 focused console tests passed."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "collapsed": true,
+     "note": "Describes label-only color, the bold fallback, and the existing option/action marker.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 3548,
+       "text": "The navigation contract is unchanged: Enter still activates the focused row, option, or action. This paragraph describes the visual cue for that same focus."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "palette-regressions",
+   "title": "Check focus without altering other text",
+   "kicker": "Behavioral rendering tests cover palette and navigation cases",
+   "intro": [
+    "The tests capture the attributes used to draw each piece of text. They move focus away from a pull request and through an inbox subject, answer options, and actions, then compare the resulting attributes.",
+    "A table covers dark, light, eight-color, and monochrome terminals. It checks that the focused label stays distinguishable while the conflict status and pull request title retain their original styling."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_console.py",
+     "collapsed": true,
+     "note": "Adds focus-attribute regressions while preserving the existing foreground-color checks.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1564,
+       "text": "Ran tests.test_console and tests.test_agent_console: all 111 tests passed. The focused and unfocused pull request renderings preserve status/title attributes, and the inbox regression verifies that focus leaves the age and inactive controls unchanged."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

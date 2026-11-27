@@ -1,0 +1,119 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index fd08a87b..0514f4e1 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3545,8 +3545,11 @@ first. Enter presses what has the focus: an option, an action
+ such as `7: Discuss` or `9: Snooze`, or a row, which opens that row's drawer
+ in place of the open one, or closes the drawer when it is the open row
+ itself. A drawer without options opens with the focus on its row, so Enter
+-twice opens and closes it. The focused row, option, or action is drawn
+-reversed, with a `›` before an option or an action.
++twice opens and closes it. The focused pull request label, inbox subject,
++option, or action uses the selected session name's color. Other row colors
++stay intact. Focused text is bold so a subject that already uses that color,
++or a terminal without colors, still shows the focus.
++An option or action also has a `›` before it.
+ 
+ The note goes to the agent on the same line as your choice, as
+ `project inbox answer --note` and `done --note` send it, such as
+diff --git a/src/projector/console.py b/src/projector/console.py
+index e6a30ec4..5b9d82c6 100644
+--- a/src/projector/console.py
++++ b/src/projector/console.py
+@@ -121,8 +121,8 @@ class Target:
+ 
+ @dataclass
+ class Line:
+-    """One line of the screen: its parts, each text with a style name, and whether the focus is on it: on the whole
+-    line for a row or an option, or on the part at `lit` for one of a line of actions. A `spot` line, the focus or
++    """One line of the screen: its parts, each text with a style name, and whether the focus is on it: on the first
++    part for a row or an option, or on the part at `lit` for one of a line of actions. A `spot` line, the focus or
+     a note field, scrolls into view when the focus moves, and `cursor` is the column of the terminal's cursor on
+     the note field's line."""
+ 
+@@ -1626,8 +1626,10 @@ def put(self, y: int, line: Line, width: int) -> None:
+         for at, (text, style) in enumerate(line.parts):
+             if x >= width:
+                 break
+-            lit = line.selected or at == line.lit
+-            attributes = self.styles.get(style, 0) | (self.curses.A_REVERSE if lit else 0)
++            lit = (line.selected and at == 0) or at == line.lit
++            attributes = self.styles.get(style, 0)
++            if lit:
++                attributes = self.styles.get("suggestion", 0) | self.curses.A_BOLD
+             shown = printable(text)[:width - x]
+             span = self.selection_span(y, width)
+             pieces = [(shown, attributes)]
+diff --git a/tests/test_console.py b/tests/test_console.py
+index 2079a6a6..46057bda 100644
+--- a/tests/test_console.py
++++ b/tests/test_console.py
+@@ -1536,13 +1536,65 @@ def color_pair(self, pair: int) -> int:
+ 
+ 
+ class Colors(ConsoleCase):
+-    def foregrounds(self, curses: ColorCurses, environ: dict[str, str]) -> dict[str, object]:
+-        """The foreground each piece of text on the screen was drawn in, or None when it has no color."""
++    def attributes(self, curses: ColorCurses, environ: dict[str, str]) -> dict[str, int]:
+         window = FakeWindow(30, 120)
+         with mock.patch.dict(os.environ, environ):
+             screen = console.Screen(window, self.console, curses)
+         screen.draw()
+-        return {text.strip(): curses.pairs.get(attributes >> 8) for text, attributes in window.drawn}
++        return {text.strip(): attributes for text, attributes in window.drawn}
++
++    def foregrounds(self, curses: ColorCurses, environ: dict[str, str]) -> dict[str, object]:
++        """The foreground each piece of text on the screen was drawn in, or None when it has no color."""
++        return {text: curses.pairs.get(attributes >> 8) for text, attributes in self.attributes(curses, environ).items()}
++
++    def test_panel_focus_colors_only_the_pr_label_and_preserves_its_other_colors(self) -> None:
++        self.claude('s1')
++        self.subscribe('s1', 'acme/app#12 fix')
++        self.cache('acme/app', 12, mergeable='CONFLICTING')
++        self.ask('s1')
++        self.console.tick()
++        cases = ((256, {'NO_COLOR': '', 'COLORFGBG': ''}, True),
++                 (256, {'NO_COLOR': '', 'COLORFGBG': '0;15'}, True),
++                 (8, {'NO_COLOR': '', 'COLORFGBG': ''}, True),
++                 (256, {'NO_COLOR': '1'}, False))
++        for colors, environ, colored in cases:
++            with self.subTest(colors=colors, environ=environ):
++                curses = ColorCurses(colors)
++                self.console.open_panel('s1')
++                focused = self.attributes(curses, environ)
++                self.press('down')
++                unfocused = self.attributes(curses, environ)
++                self.assertNotEqual(0, focused['#12'])
++                self.assertEqual(0, unfocused['#12'])
++                self.assertEqual(colored, bool(focused['#12'] >> 8))
++                for text in ('conflict', 'Pull request 12'):
++                    self.assertEqual(unfocused[text], focused[text], text)
++                self.assertFalse(any(value & curses.A_REVERSE for value in focused.values()))
++
++    def test_inbox_focus_moves_from_subject_to_option_and_action_without_inverting_text(self) -> None:
++        self.claude('s1')
++        self.ask('s1')
++        self.console.tick()
++        self.console.open_panel('s1')
++        curses = ColorCurses(256)
++        environ = {'NO_COLOR': ''}
++        subject = self.attributes(curses, environ)
++        self.press('enter')
++        first = self.attributes(curses, environ)
++        self.press('down')
++        second = self.attributes(curses, environ)
++        self.press('down')
++        action = self.attributes(curses, environ)
++        self.assertNotEqual(first['- Decline the finding?'], subject['- Decline the finding?'])
++        self.assertEqual(subject['0s'], first['0s'])
++        self.assertNotEqual(0, first['› 1: Decline it (recommended)'])
++        self.assertEqual(0, first['2: Fix it'])
++        self.assertEqual(0, second['1: Decline it (recommended)'])
++        self.assertNotEqual(0, second['› 2: Fix it'])
++        self.assertNotEqual(0, action["6: I don't understand"])
++        self.assertEqual(0, action['2: Fix it'])
++        for drawn in (subject, first, second, action):
++            self.assertFalse(any(value & curses.A_REVERSE for value in drawn.values()))
+ 
+     def test_a_question_line_and_a_conflict_draw_in_the_panels_permission_and_error_colors(self) -> None:
+         # Catches the console drawing in colors of its own rather than the panel's: a question in cyan, as it did,
