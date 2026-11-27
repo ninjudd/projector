@@ -45,7 +45,8 @@ module.exports = async ({github, context, core, artifactId}) => {
         core.setOutput('page_url', deployment.page_url);
         return;
       }
-      if (!['queued', 'deployment_in_progress', 'unknown_status', 'not_found', 'deployment_attempt_error'].includes(status)) {
+      if (['deployment_failed', 'deployment_perms_error', 'deployment_content_failed',
+        'deployment_cancelled', 'deployment_lost'].includes(status)) {
         throw new Error(`Pages deployment failed: ${status}.`);
       }
       await timers.setTimeout(5000, undefined, {signal: controller.signal});
