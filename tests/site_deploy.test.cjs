@@ -105,7 +105,7 @@ test('does not poll or cancel a deployment that Pages refused to create', async 
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  test(`${signal} cancels a pending Pages deployment before the process exits`, async t => {
+  test(`${signal} cancels a pending Pages deployment before the process exits`, {skip: process.platform === 'win32'}, async t => {
     for (const phase of ['request', 'delay']) {
       await t.test(phase, async t => {
         const child = spawn(process.execPath, ['-e', `
