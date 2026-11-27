@@ -1,3 +1,4 @@
+import io
 import os
 import tempfile
 import time
@@ -22,7 +23,7 @@ class AgentConsoleTests(unittest.TestCase):
 
     def type(self, text):
         for char in text:
-            self.console.key('enter' if char == '\n' else char)
+            self.console.key('ctrl-j' if char == '\n' else char)
 
     def replace_field(self, text):
         self.console.key('home')
@@ -61,7 +62,7 @@ class AgentConsoleTests(unittest.TestCase):
         self.assertEqual('stopped', self.console.runtimes['managed-session']['state'])
         self.assertIsInstance(self.console.sessions['managed-session'].updated_at, (int, float))
         self.console.open_panel('managed-session')
-        self.assertIn('r return/resume', '\n'.join(line.text for line in self.console.lines(100)[0]))
+        self.assertIn('r resume', '\n'.join(line.text for line in self.console.lines(100)[0]))
 
     def test_a_new_prompt_uses_the_highlighted_sessions_directory(self):
         first = Path(self.temporary.name) / 'first'
@@ -95,7 +96,7 @@ class AgentConsoleTests(unittest.TestCase):
             self.console.key('n')
             prompt='--help "hi" $HOME\n\ncdmnoxs are prompt text'
             self.type(prompt)
-            self.console.key('\x04')
+            self.console.key('enter')
         self.assertEqual('', self.console.status)
         launch = runtime.launches(self.root)[0]
         self.assertEqual(('codex', '', prompt, 'queued'),
@@ -133,7 +134,7 @@ class AgentConsoleTests(unittest.TestCase):
         self.console.key('enter')
         self.assertEqual(('first\nsecond', cursor), (self.console.field.text, self.console.field.cursor))
         with patch.object(runtime, 'launch') as launch:
-            self.console.key('ctrl-d')
+            self.console.key('enter')
         launch.assert_called_once_with(self.root, 'codex', str(destination.resolve()), 'first\nsecond',
                                        name='parser', model='example-model',
                                        parent=os.environ.get('PROJECTOR_SESSION', ''))
@@ -156,7 +157,7 @@ class AgentConsoleTests(unittest.TestCase):
         self.type('custom-model')
         self.console.key('enter')
         with patch.object(runtime, 'launch', side_effect=runtime.UsageError('Try again')):
-            self.console.key('ctrl-d')
+            self.console.key('enter')
         self.assertEqual('Try again', self.console.status)
         self.assertEqual('Keep this draft', self.console.field.text)
         self.assertEqual('custom-model', self.console.launch_form['model'])
@@ -195,9 +196,100 @@ class AgentConsoleTests(unittest.TestCase):
         self.console.open_panel('managed-session')
         self.console.key('c')
         self.type('first\nsecond')
-        self.console.key('\x04')
+        self.console.key('enter')
         items = inbox.load_items(inbox.session_dir('managed-session'))
         self.assertEqual(['first\nsecond'], [item['messages'][0]['text'] for item in items])
+
+    def test_completion_changes_the_live_prompt_without_adding_a_status_message_or_losing_the_draft(self):
+        folder = self.managed(state='running')
+        self.console.open_panel('managed-session')
+        self.console.key('c')
+        self.type('A follow-up')
+        active = self.console.field.prompt
+        store = Store(folder)
+        store.event('text', {'text': 'All done.'})
+        store.event('turn_end', {'outcome': 'completed'})
+        current = runtime.record(folder)
+        write_json(folder / 'runtime.json', {**current, 'state': 'ready'})
+        self.now += 2
+        self.console.tick()
+        self.assertNotEqual(active, self.console.field.prompt)
+        self.assertEqual('A follow-up', self.console.field.text)
+        shown = '\n'.join(line.text for line in self.console.lines(100)[0])
+        self.assertIn('All done.', shown)
+        self.assertNotIn('completed', shown)
+        self.assertNotIn('agent:', shown)
+
+    def test_user_messages_have_a_background_and_agent_replies_have_no_speaker_labels(self):
+        from tests.test_console import ColorCurses, FakeWindow
+        folder = self.managed()
+        self.console.open_panel('managed-session')
+        store = Store(folder)
+        store.event('user', {'text': 'Question\n\nSecond paragraph'})
+        store.event('text', {'text': 'An answer.'})
+        self.now += 0.3
+        self.console.tick()
+        lines = self.console.runtime_lines('managed-session', 40, True)
+        curses = ColorCurses(256)
+        with patch.dict(os.environ, {'NO_COLOR': ''}):
+            window = FakeWindow(len(lines), 41)
+            screen = agent_console.Screen(window, self.console, curses)
+        for y, line in enumerate(lines):
+            screen.put(y, line, 41)
+        user = [(text, style) for text, style in window.drawn if 'Question' in text or 'Second paragraph' in text]
+        reply = next((text, style) for text, style in window.drawn if 'An answer.' in text)
+        self.assertEqual(2, len(user))
+        for text, attributes in user:
+            self.assertNotIn('you:', text)
+            self.assertEqual(40, len(text))
+            self.assertGreaterEqual(curses.backgrounds[attributes >> 8], 0)
+        self.assertNotIn('agent:', reply[0])
+        self.assertEqual(0, reply[1])
+
+    def test_long_chat_input_keeps_the_cursor_visible_when_editing_earlier_lines(self):
+        self.managed()
+        self.console.open_panel('managed-session')
+        self.console.key('c')
+        self.type('first line\n' + 'long input ' * 100 + '\nlast line')
+        self.console.key('home')
+        shown = self.console.viewport(40, 10)
+        self.assertTrue(any(line.cursor is not None and 'first line' in line.text for line in shown))
+        self.assertTrue(all(line.cursor is None or line.cursor < 40 for line in shown))
+        self.assertTrue(all(len(line.text) <= 40 for line in shown if line.cursor is not None))
+
+    def test_completed_turns_keep_separate_replies_without_a_completed_status_line(self):
+        folder = self.managed()
+        self.console.open_panel('managed-session')
+        store = Store(folder)
+        for text in ('First reply.', 'Second reply.'):
+            store.event('text', {'text': text})
+            store.event('turn_end', {'outcome': 'completed'})
+        self.now += 0.3
+        self.console.tick()
+        texts = [line.text for line in self.console.runtime_lines('managed-session', 80, True)]
+        self.assertIn('First reply.', texts)
+        self.assertIn('Second reply.', texts)
+        self.assertFalse(any('completed' in text for text in texts))
+
+    def test_native_handoff_restores_keyboard_modes_even_when_the_native_cli_fails(self):
+        from tests.test_console import FakeCurses, FakeWindow
+        self.managed(state='handed-off')
+        for fails in (False, True):
+            with self.subTest(fails=fails):
+                output = io.StringIO()
+                screen = agent_console.Screen(FakeWindow(30), self.console, FakeCurses, output)
+                screen.input_mode(True)
+                self.console.pending_native = 'managed-session'
+                def native(command):
+                    self.assertTrue(output.getvalue().endswith('\x1b[?2004l\x1b[<u'))
+                    if fails:
+                        raise OSError('Native CLI failed')
+                    return 0
+                with patch.dict(os.environ, {'TMUX': ''}), patch.object(agent_console.native_handoff, 'wait', native), \
+                        patch.object(runtime, 'control'), patch.multiple(FakeCurses, create=True,
+                        def_prog_mode=lambda: None, endwin=lambda: None, reset_prog_mode=lambda: None):
+                    screen.draw()
+                self.assertTrue(output.getvalue().endswith('\x1b[>1u\x1b[?2004h'))
 
     def test_stream_refresh_appends_only_new_text_and_keeps_a_terminal_failure_visible(self):
         folder = self.managed()

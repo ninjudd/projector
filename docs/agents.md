@@ -55,8 +55,14 @@ to the prompt. Switching providers clears the previous provider's model.
 Down or Escape returns from a menu to the prompt. Escape discards edits
 to a directory, name, or model ID without losing your prompt.
 
-Enter adds a newline within the prompt; Ctrl-D launches it. Escape from the
-prompt cancels the launch, and Ctrl-C cancels from any launch screen.
+Enter launches the prompt. Shift-Enter adds a newline when your terminal
+reports it separately. Ctrl-J also adds a newline. Projector enables the
+[Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+in terminals that support it and accepts xterm's
+modified-key encoding. In terminals that send the same bytes for Enter and
+Shift-Enter, use Ctrl-J. Pasted line breaks stay in the draft until you
+press Enter. Escape from the prompt cancels the launch, and Ctrl-C cancels
+from any launch screen.
 Prompts travel as structured data, so quotes, dollar signs, leading dashes,
 and blank lines stay intact.
 
@@ -68,10 +74,16 @@ mode when the first turn initializes. This is not a preflight permission audit.
 
 Select a managed session and focus its panel with Enter. Its conversation
 appears below its pull requests and inbox items. Move to the conversation
-with the arrow keys, or press `c` to compose a message. Enter adds a line;
-Ctrl-D sends it through the existing Projector message route. Follow-ups
-wait in order while another turn runs. PgUp and PgDn scroll the conversation;
-End follows the latest output.
+with the arrow keys, or press `c` to compose a message. Enter sends it through
+the existing Projector message route. Shift-Enter or Ctrl-J adds a line.
+Follow-ups wait in order while another turn runs. PgUp and PgDn scroll the
+conversation. End follows the latest output.
+
+Your messages appear on a gray background, without speaker labels. Agent
+replies use the terminal's ordinary text. The prompt shows `…` while a turn
+is active and `❯` when it is idle, including while you compose a follow-up.
+Successful turns change the prompt without adding a completion message.
+Failed and interrupted turns keep their visible outcome.
 
 | Key | Action |
 | --- | --- |
@@ -83,6 +95,10 @@ End follows the latest output.
 | `o` | Open the native terminal after the current turn ends |
 | `e`, `d` | Edit or remove a numbered queued message |
 | `R`, `D` | Retry uncertain input, or confirm that it arrived |
+
+The controls show `r return to Projector` during native control and `r resume`
+for a stopped or failed worker. `s send queued` appears when a managed worker
+is paused. It releases held messages. Ordinary follow-ups run automatically.
 
 A failed or interrupted turn stays distinct from a successful one. Completing
 a turn does not mark a Projector project completed. Stopped sessions remain
@@ -125,17 +141,20 @@ that the input arrived, press `D`, select its number, and type `RECEIVED`.
 To authorize another attempt instead, press `R` and type `RETRY`. Retrying
 can repeat tool actions. Press `s` when you want the remaining queue to run.
 
-Native handoff requires an idle worker with no pending native requests.
-Interrupt and wait for the turn to end first if necessary. Press `o` to
+Native handoff is reversible and keeps the same conversation. It requires
+an idle worker with no pending native requests. Interrupt and wait for the
+turn to end first if necessary. Press `o` to
 release the SDK connection and open the saved native conversation. Projector
 uses a tmux pane when available; otherwise it suspends the console until the
 native CLI exits. Codex uses `codex --no-daemon resume` so exiting releases
 its writer. Claude uses `claude --resume` with the saved ID.
 
 Projector input remains queued during native control, including inbox answers
-and review events. Close the native terminal, then press `r` to reacquire
-managed control. The same history includes turns entered in the native
-terminal. Press `s` to release the queue. Two consoles can observe a session,
+and review events. Close the native CLI to return to Projector. When it ran
+in a tmux pane, press `r` to reacquire managed control. When it temporarily
+replaced the console, Projector reacquires control automatically after it
+exits. The same history includes turns entered in the native terminal.
+Press `s` to release the queue. Two consoles can observe a session,
 but the worker and native terminal cannot control it simultaneously.
 
 ## Process lifetime and local state

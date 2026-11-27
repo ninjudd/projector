@@ -3454,7 +3454,7 @@ The session list has four aligned fields, without headings:
   color. The selected session name has color and a `▸` marker; the row has
   no highlight.
 - **PRs** counts all open pull requests the session fixes or reviews, as
-  `0 PRs`, `1 PR`, or `5 PRs`, in orange.
+  `1 PR` or `5 PRs`, in orange. The count is blank when there are none.
 - **Latest request** shows the newest open, awake question or request.
   Notices and messages do not replace it. A session with none shows `—`.
 - **Updated** leaves one space at the right edge and shows the age of the most recent

@@ -525,7 +525,7 @@ class Console:
         keys = [key for key, _ in self.entries()]
         if self.drawer is not None and self.drawer not in keys:
             self.close_drawer()
-        if self.field is not None and self.field.inline and not self.choices():
+        if self.field is not None and self.field.purpose == "note" and not self.choices():
             self.field = None
         if self.control is not None and self.control not in {one.key for one in self.controls()}:
             self.control = None
@@ -608,6 +608,8 @@ class Console:
         """Do what the key named `name` does: a character, or `up`, `down`, `left`, `right`, `enter`, `esc`,
         `backspace`, `delete`, `home`, `end`, `pageup`, `pagedown`, or `ctrl-c`."""
         with self.lock:
+            if name == "ctrl-j" and self.field is None:
+                name = "enter"
             self.status = ""
             self.link = None
             if name == "ctrl-c" and self.field is None:
@@ -996,6 +998,8 @@ class Console:
     def field_key(self, name: str) -> None:
         typing = self.field
         assert typing is not None
+        if name == "ctrl-j":
+            name = "enter"
         if name in ("esc", "ctrl-c"):
             self.field = None
         elif name == "enter":
@@ -1143,7 +1147,7 @@ class Console:
             return lines, (0, 0)
         ages = {session.name: age(now - changed) if (changed := last_update(session)) is not None else "—"
                 for session in listed}
-        counts = {session.name: counted(len(session.rows), "PR") or "0 PRs" for session in listed}
+        counts = {session.name: counted(len(session.rows), "PR") or "" for session in listed}
         count_width = max(len(value) for value in counts.values())
         age_width = max(len(value) for value in ages.values())
         name_width = min(max(5, *(len(session.label) for session in listed)), max(1, width // 4),
@@ -1447,8 +1451,8 @@ class Console:
 CURSES_KEYS = {"KEY_UP": "up", "KEY_DOWN": "down", "KEY_LEFT": "left", "KEY_RIGHT": "right", "KEY_ENTER": "enter",
                "KEY_BACKSPACE": "backspace", "KEY_DC": "delete", "KEY_HOME": "home", "KEY_END": "end",
                "KEY_PPAGE": "pageup", "KEY_NPAGE": "pagedown"}
-CHARACTER_KEYS = {"\n": "enter", "\r": "enter", "\x1b": "esc", "\x7f": "backspace", "\b": "backspace",
-                  "\x01": "home", "\x05": "end", "\x03": "ctrl-c"}
+CHARACTER_KEYS = {"\n": "ctrl-j", "\r": "enter", "\x1b": "esc", "\x7f": "backspace", "\b": "backspace",
+                  "\x01": "home", "\x05": "end", "\x03": "ctrl-c", "\x04": "ctrl-d"}
 # The cursor and editing keys by the last byte of their escape sequence, or by its number and `~`. A terminal sends
 # `ESC [` before them, or `ESC O` before an arrow in application mode; curses names only the form the terminfo
 # entry lists, and hands over the rest of the other byte by byte.
@@ -1490,6 +1494,32 @@ def key_name(pressed: object, curses: Any) -> Optional[str]:
     return next((name for constant, name in CURSES_KEYS.items() if pressed == getattr(curses, constant, None)), None)
 
 
+def escape_key(body: str) -> Optional[str]:
+    if body.endswith("u") or (body.startswith("27;") and body.endswith("~")):
+        fields = body[:-1].split(";")
+        try:
+            if body.endswith("u"):
+                code = int(fields[0].split(":")[0])
+                modifiers = fields[1].split(":") if len(fields) > 1 else ["1"]
+                if len(modifiers) > 1 and modifiers[1] not in ("1", "2"):
+                    return None
+                flags = (int(modifiers[0]) - 1) & ~192
+            else:
+                code, flags = int(fields[2]), int(fields[1]) - 1
+            if code in (13, 57414):
+                return "shift-enter" if flags == 1 else "enter" if flags == 0 else None
+            if flags in (4, 5) and 97 <= code <= 122:
+                return CHARACTER_KEYS.get(chr(code - 96))
+            if flags == 0 and 0 <= code <= 0x10ffff:
+                char = chr(code)
+                return CHARACTER_KEYS.get(char, char if char.isprintable() else None)
+        except (ValueError, IndexError):
+            return None
+        return None
+    final = body[-1:]
+    return ESCAPES.get(body[:-1].split(";")[0] + final if final == "~" else final)
+
+
 def xterm_color(rgb: tuple[int, int, int]) -> int:
     """The xterm-256 color nearest `rgb`, from the color cube and the gray ramp. Colors 0 to 15 are left out,
     because each terminal's palette sets them."""
@@ -1508,19 +1538,25 @@ def theme_name(environ: Optional[dict] = None) -> str:
 
 
 def styles(curses: Any) -> dict[str, int]:
-    """Each style's attributes: the panel's colors on the terminal's own background, as the nearest of 256 colors
-    or one of 8, or none under `NO_COLOR`."""
+    """Keep user messages distinct while preserving the terminal's background for other text."""
     found = {"": 0, "subtle": curses.A_DIM, "bold": curses.A_BOLD}
-    names = [*THEMES["dark"], *PALETTE]
+    names = [*THEMES["dark"], *PALETTE, "user"]
     if os.environ.get("NO_COLOR") or not curses.has_colors():
         found.update({name: curses.A_BOLD if name == "error" else 0 for name in names if name != "subtle"})
+        found["user"] = curses.A_REVERSE
         return found
     curses.start_color()
     curses.use_default_colors()
     theme = THEMES[theme_name()]
     rich = getattr(curses, "COLORS", 8) >= 256
     for index, name in enumerate(names, 1):
-        if name in PALETTE:
+        if name == "user":
+            foreground = xterm_color((255, 255, 255)) if rich else curses.COLOR_BLACK
+            background = xterm_color((64, 64, 64)) if rich else curses.COLOR_WHITE
+            curses.init_pair(index, foreground, background)
+            found[name] = curses.color_pair(index)
+            continue
+        elif name in PALETTE:
             color = PALETTE[name]
         elif rich:
             color = xterm_color(theme[name])
@@ -1550,6 +1586,16 @@ class Screen:
         self.pending: list[object] = []
         self.targets: list[tuple[int, int, int, Target]] = []
         self.size: Optional[tuple[int, int]] = None
+        self.input_enabled = False
+        self.paste_buffer: Optional[list[str]] = None
+        self.paste_tail = ""
+        self.paste_overflow = False
+
+    def input_mode(self, enabled: bool) -> None:
+        if self.input_enabled != enabled:
+            self.out.write("\x1b[>1u\x1b[?2004h" if enabled else "\x1b[?2004l\x1b[<u")
+            self.out.flush()
+            self.input_enabled = enabled
 
     def put(self, y: int, line: Line, width: int) -> None:
         x = 1
@@ -1604,8 +1650,9 @@ class Screen:
             self.out.flush()
 
     def read_key(self) -> Optional[str]:
-        """The next key's name, or None for one the console does not use. An escape sequence curses did not name
-        is read to its last byte and named by `ESCAPES`. Raises `curses.error` when no key came in time."""
+        """Read complete keys and pastes so their control sequences cannot become prompt text."""
+        if self.paste_buffer is not None:
+            return self.read_paste()
         pressed = self.pending.pop(0) if self.pending else self.window.get_wch()
         if pressed == getattr(self.curses, "KEY_MOUSE", None):
             self.mouse()
@@ -1618,15 +1665,40 @@ class Screen:
                 self.pending.append(follow)
             return "esc"
         body = ""
-        while len(body) < 8:
+        while len(body) < 32:
             byte = self.follow()
             if not isinstance(byte, str):
                 break
             body += byte
             if "@" <= byte <= "~":
                 break
-        final = body[-1:]
-        return ESCAPES.get(body[:-1].split(";")[0] + final if final == "~" else final)
+        if body == "200~":
+            self.paste_buffer, self.paste_tail, self.paste_overflow = [], "", False
+            return self.read_paste()
+        return escape_key(body)
+
+    def read_paste(self) -> None:
+        while True:
+            char = self.window.get_wch()
+            if not isinstance(char, str):
+                continue
+            self.paste_tail = (self.paste_tail + char)[-6:]
+            if len(self.paste_buffer) < 65536 + 6:
+                self.paste_buffer.append(char)
+            else:
+                self.paste_overflow = True
+            if self.paste_tail == "\x1b[201~":
+                text = "".join(self.paste_buffer)[:-6]
+                self.paste_buffer = None
+                with self.console.lock:
+                    typing = self.console.field
+                    if self.paste_overflow:
+                        self.console.status = "Paste exceeds 64 Ki characters; paste a smaller message"
+                    elif typing is not None and typing.prompt:
+                        text = text.replace("\r\n", "\n").replace("\r", "\n")
+                        typing.text = typing.text[:typing.cursor] + text + typing.text[typing.cursor:]
+                        typing.cursor += len(text)
+                return None
 
     def mouse(self) -> None:
         try:
@@ -1678,6 +1750,8 @@ class Screen:
         worker = threading.Thread(target=refresh, daemon=True)
         worker.start()
         try:
+            self.curses.nonl()
+            self.input_mode(True)
             while not self.console.quit:
                 if interrupted.is_set():
                     interrupted.clear()
@@ -1691,6 +1765,7 @@ class Screen:
                 if name is not None:
                     self.console.key(name)
         finally:
+            self.input_mode(False)
             signal.signal(signal.SIGINT, previous)
             stop.set()
             self.console.refresh_now.set()
