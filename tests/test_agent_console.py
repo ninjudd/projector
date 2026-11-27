@@ -42,6 +42,28 @@ class AgentConsoleTests(unittest.TestCase):
         self.console.tick()
         return folder
 
+    def test_a_managed_group_reopens_without_entering_chat_and_backspace_still_edits_the_prompt(self):
+        self.managed()
+        self.console.key('backspace')
+        self.assertIn('Enter expand', self.console.footer(100)[0].text)
+        lines, _ = self.console.home_lines(100)
+        target = next(target for line in lines for _, _, target in line.targets if target.group)
+        self.console.click(target)
+        self.assertEqual(('home', None), (self.console.view, self.console.field))
+        self.assertIn('Backspace collapse', self.console.footer(100)[0].text)
+        self.console.key('enter')
+        self.type('ab')
+        self.console.key('backspace')
+        self.assertEqual(('panel', 'a'), (self.console.view, self.console.field.text))
+        self.console.key('up')
+        self.console.key('h')
+        self.console.key('backspace')
+        self.console.key('n')
+        self.assertEqual(self.temporary.name, self.console.launch_form['cwd'])
+        self.type('ab')
+        self.console.key('backspace')
+        self.assertEqual('a', self.console.field.text)
+
     def test_a_registered_generic_process_keeps_its_inbox_without_managed_controls(self):
         folder = watch.session_folder(self.root, 'generic-session')
         watch.renew(self.root, 'generic-session', 'stream', time.time())

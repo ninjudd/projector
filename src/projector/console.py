@@ -43,6 +43,7 @@ NOUNS = {"pr": "pull request", "review": "review request", **{kind: kind for kin
 SNOOZES = (("15 min", 15), ("1 hour", 60), ("4 hours", 240), ("1 day", 1440))
 SUBSCRIPTION_ROLE = {held: role for role, held in rows.ROLE_OF.items()}
 DRAWER_INDENT = 4
+MIN_PANEL_ROWS = 3
 # Page Down or Space, Page Up or `b`, End or `G`, and Home or `g`: the second of each pair for a terminal that keeps
 # the first for its own scrollback.
 SCROLL_KEYS = ("pagedown", " ", "pageup", "b", "end", "G", "home", "g")
@@ -117,6 +118,7 @@ class Target:
     session: str
     entry: Optional[str] = None
     control: Optional[Control] = None
+    group: bool = False
 
 
 @dataclass
@@ -424,6 +426,8 @@ class Console:
         self.kept_note: Optional[tuple[str, str, str]] = None
         self.offset = 0
         self.home_offset = 1
+        # Keep a session as each collapsed directory's target so reopening it preserves the selection.
+        self.collapsed: dict[str, str] = {}
         self.home_room = 1
         self.room = 1
         self.status = ""
@@ -527,8 +531,17 @@ class Console:
         self.settle_view()
 
     def settle_view(self) -> None:
-        """Leave a panel whose session is gone, close a drawer whose row is gone, and close a note field whose
-        option is gone."""
+        """Keep collapsed groups navigable and close controls whose session, row, or option is gone."""
+        for cwd, name in list(self.collapsed.items()):
+            if name in self.sessions and self.sessions[name].cwd == cwd:
+                continue
+            replacement = next((session.name for session in self.home() if session.cwd == cwd), None)
+            if replacement is None:
+                del self.collapsed[cwd]
+            else:
+                self.collapsed[cwd] = replacement
+                if self.view == "home" and self.selected == name:
+                    self.selected = replacement
         if self.view == "panel" and self.session not in self.sessions:
             self.status = "The selected session is no longer live"
             self.go_home()
@@ -574,7 +587,8 @@ class Console:
 
     def keys(self) -> list[str]:
         if self.view == "home":
-            return [session.name for session in self.home()]
+            return [session.name for session in self.home()
+                    if session.cwd not in self.collapsed or self.collapsed[session.cwd] == session.name]
         return [key for key, _ in self.entries()]
 
     def row(self, key: Optional[str]) -> Optional[rows.Row]:
@@ -603,6 +617,8 @@ class Console:
                     self.go_home()
                 self.selected = target.session
                 self.offset = 0
+                if target.group:
+                    self.toggle_group(target.session)
             else:
                 viewed = self.viewed()
                 if viewed is None or viewed.name != target.session or target.entry not in dict(self.entries()):
@@ -641,10 +657,25 @@ class Console:
             elif name in SCROLL_KEYS:
                 self.scroll(name)
             elif self.view == "home":
-                if name in ("enter", "right") and self.selected_key() is not None:
-                    self.open_panel(self.selected_key())
+                session = self.viewed()
+                if session is not None:
+                    if name == "backspace" and session.cwd not in self.collapsed:
+                        self.toggle_group(session.name)
+                    elif name in ("enter", "right"):
+                        if session.cwd in self.collapsed:
+                            self.toggle_group(session.name)
+                        else:
+                            self.open_panel(session.name)
             else:
                 self.panel_key(name)
+
+    def toggle_group(self, name: str) -> None:
+        cwd = self.sessions[name].cwd
+        if cwd in self.collapsed:
+            del self.collapsed[cwd]
+        else:
+            self.collapsed[cwd] = name
+        self.selected = name
 
     def scroll(self, name: str) -> None:
         """Page between sessions in the list, or scroll a panel's open drawer."""
@@ -1084,7 +1115,7 @@ class Console:
             home, focus = self.home_lines(width)
             if self.viewed() is None:
                 return home[:room]
-            self.home_room = min(len(home), max(1, room // 2))
+            self.home_room = min(len(home), max(1, room - MIN_PANEL_ROWS - 1))
             listed = self.home_viewport(home, focus, self.home_room)
             if room < 3:
                 return listed[:room]
@@ -1094,6 +1125,7 @@ class Console:
     def home_viewport(self, lines: list[Line], focus: tuple[int, int], room: int) -> list[Line]:
         """Keep the selected session and its directory heading visible as the list scrolls."""
         if len(lines) <= room:
+            self.home_offset = 1
             return lines
         first, last = focus
         if room == 1:
@@ -1105,8 +1137,8 @@ class Console:
         if last - first + 1 > space:
             self.home_offset = min(max(self.home_offset, last - space + 2), last)
             return [*prefix, lines[first], *lines[self.home_offset:self.home_offset + space - 1]]
-        self.home_offset = first + 1
-        return [*prefix, *lines[first:first + space]]
+        self.home_offset = max(len(prefix), min(max(self.home_offset, last - space + 1), first, len(lines) - space))
+        return [*prefix, *lines[self.home_offset:self.home_offset + space]]
 
     def panel_viewport(self, width: int, room: int) -> list[Line]:
         """The body's lines that fit in `room` rows. The offset survives each redraw and moves only as far as it
@@ -1142,7 +1174,10 @@ class Console:
             if self.exit_at is not None and self.clock() - self.exit_at < EXIT_WINDOW:
                 return [*lines, Line([("Press Ctrl-C again to exit", "warning")])]
             if self.view == "home":
-                hint = "↑↓ or click session · Enter or → focus panel · PgUp PgDn scroll · Ctrl-C quit"
+                session = self.viewed()
+                action = "Enter or → expand group" if session and session.cwd in self.collapsed else (
+                    "Enter or → focus panel · Backspace collapse group")
+                hint = f"↑↓ select · {action} · PgUp PgDn scroll · Ctrl-C quit"
             elif self.drawer is None:
                 hint = ("↑↓ move · Enter or click open · 7 message this session · ← or Esc back"
                         " · Ctrl-C twice quit")
@@ -1186,8 +1221,16 @@ class Console:
             if session.cwd != previous:
                 lines.append(Line([]))
                 group_start = len(lines)
-                lines.append(Line([(directory_label(session.cwd), "branch")]))
+                closed = session.cwd in self.collapsed
+                target = self.collapsed.get(session.cwd, session.name)
+                lines.append(Line([("▸ " if closed else "", "subtle"),
+                                   (directory_label(session.cwd), "focus-branch" if closed and target == chosen
+                                    else "branch")], targets=[(0, width, Target(target, group=True))]))
                 previous = session.cwd
+                if closed and target == chosen:
+                    focus = (group_start, group_start)
+            if session.cwd in self.collapsed:
+                continue
             start = len(lines)
             request = headline(session, now)
             lines.append(columns(session.label, counts[session.name], request["subject"] if request else "—",
