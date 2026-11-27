@@ -1,0 +1,131 @@
+{
+ "version": 1,
+ "name": "Prompt-first agent launches",
+ "project": "console/launch",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 650,
+  "title": "Open new agent sessions directly in the prompt",
+  "head": "c4e2effaa756a3bf8e667e9c1355dd9b295168a4",
+  "headRef": "prompt-first-launch",
+  "base": "830ad624623a4a6c3edefc8c88b9a77eefda5c5c",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector console launches and steers Claude and Codex sessions. Starting a new session previously required stepping through provider, directory, name, and model fields before reaching the prompt. This change opens the prompt immediately when you press <code>n</code>.",
+   "The highlighted session supplies the provider and working directory. The model starts at the provider’s native default. Press Up to change optional settings, then return to the same prompt and cursor. A dedicated launch view replaces the session panels while you compose the request.",
+   "The launch still goes through the existing runtime and its native permission and sandbox settings. The model menu offers aliases and IDs seen in registered sessions; it does not discover which models your account can use."
+  ],
+  "cards": [
+   {
+    "id": "interaction",
+    "title": "The shortest launch path",
+    "html": "<ol class=\"tight\"><li>Highlight a session and press <code>n</code>.</li><li>Type the prompt. Enter inserts a newline; Ctrl-D launches.</li><li>Use Up only when you want settings. Escape from a setting discards unfinished edits and returns to the draft; Escape from the prompt cancels.</li></ol>"
+   },
+   {
+    "id": "verification",
+    "title": "Review evidence",
+    "html": "<ul class=\"tight\"><li>Clean review at <code>c4e2eff</code>, with no finding threads.</li><li>All 96 focused console and runtime tests passed, including a real pseudo-terminal regression.</li><li>The configured gate passed, including 270 hook tests and the required CI check.</li><li>Additional checks covered empty paragraphs, exact-width cursor boundaries, and settings cancellation.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "contract",
+   "title": "Launch controls and defaults",
+   "kicker": "The user-facing launch contract",
+   "intro": [
+    "You can start typing before making configuration choices. The highlighted session supplies a directory and provider; an unrelated process defaults to Claude, and a missing directory falls back to the console’s current directory.",
+    "The guide defines the optional settings keys, model shortcuts, cancellation behavior, and submission keys. Native permission settings continue to apply after this form hands the prompt to the runtime."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/agents.md",
+     "note": "Documents the direct prompt, inherited defaults, and optional settings controls.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 45,
+       "text": "Traced each documented settings key through the launch input handler and checked prompt preservation, provider switching, and cancellation in the focused console tests."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "launch",
+   "title": "Preserve the draft through settings",
+   "kicker": "Separate prompt state from optional field edits",
+   "intro": [
+    "The console keeps one prompt field while settings use temporary fields. Returning from settings restores the same prompt object, including its multiline text and cursor. Switching providers clears the model selected for the previous provider.",
+    "The model menu combines the native default with Claude aliases and up to nine valid model IDs already recorded for that provider. A separate field accepts another ID. Directory changes validate an existing path without stripping spaces from its name.",
+    "The launch view wraps the prompt into terminal rows and keeps the row containing its cursor visible. This avoids spending the launch screen on the highlighted session’s usual panel."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/agent_console.py",
+     "note": "Opens the prompt immediately, manages settings without replacing the draft, and lays out a dedicated launch screen.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 200,
+       "text": "The selection regression chooses a session in another directory, opens the launch prompt, and verifies that later changes to the session record do not alter the chosen directory."
+      },
+      {
+       "kind": "verify",
+       "line": 320,
+       "text": "The focused launch test preserves quotes, dollar signs, leading dashes, and blank lines in the saved runtime launch record. A launch error keeps the draft editable."
+      },
+      {
+       "kind": "verify",
+       "line": 333,
+       "text": "The settings test switches from Claude to Codex, checks that the old model is cleared, selects a recorded Codex model, and verifies that the prompt text and cursor are unchanged."
+      },
+      {
+       "kind": "verify",
+       "line": 476,
+       "text": "Checked one visible cursor at widths 1, 2, 7, 20, and 40 across every cursor position in empty, multiline, and exact-width inputs. The committed small-viewport test also passed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "regressions",
+   "title": "Check the launch flow at both boundaries",
+   "kicker": "Console state tests and a native terminal exercise",
+   "intro": [
+    "Console tests cover the chosen provider and directory, model selection, edited paths with spaces, cancellation, launch failures, and narrow prompt layouts. They use temporary state and fake native executables rather than starting a paid agent session.",
+    "A pseudo-terminal test drives the actual console process with native key bytes. It requires the prompt immediately after <code>n</code>, opens settings with Up, and chooses a Claude model shortcut before leaving the console."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_agent_console.py",
+     "note": "Exercises prompt-first launches, optional settings, draft preservation, failure recovery, and cursor visibility.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 134,
+       "text": "The passing settings test checks the exact multiline draft and cursor after changing provider, model, directory, and name; it also checks the runtime call’s resulting arguments."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_console.py",
+     "note": "Adds a real-terminal regression that reaches the prompt before any settings fields.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1643,
+       "text": "Ran the pseudo-terminal test as part of the 96-test focused suite; it observed Prompt immediately after n, then provider choices and the Sonnet selection without a traceback."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
