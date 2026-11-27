@@ -55,6 +55,15 @@ test('fails before authenticating when the upload has no usable ID', async t => 
   }
 });
 
+test('waits through file synchronization and future progress states', async t => {
+  const fake = runner(t, [{id: 'syncing', page_url: 'https://example.test/site/'},
+    {status: 'syncing_files'}, {status: 'future_progress_state'}, {status: 'succeed'}]);
+  await fake.run();
+  assert.deepEqual(fake.outputs, {page_url: 'https://example.test/site/'});
+  assert.deepEqual(fake.calls.slice(1).map(call => call.route),
+    Array(3).fill('GET /repos/{owner}/{repo}/pages/deployments/{deploymentId}'));
+});
+
 test('reports a terminal Pages failure and cancels the deployment', async t => {
   for (const status of ['deployment_failed', 'deployment_perms_error', 'deployment_content_failed', 'deployment_cancelled', 'deployment_lost']) {
     const fake = runner(t, [{id: 'failed', page_url: 'https://example.test/'}, {status}, {}]);
