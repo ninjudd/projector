@@ -1,0 +1,306 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index f75115de..3688263c 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1088,6 +1088,7 @@ reads, which are these:
+ | `instructions.ios` | boolean | whether the repository has an Xcode project that builds for iOS, or sets `ios.project` | `init` and `check`, to put the rules for `project ios` in the Projector section |
+ | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
+ | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
++| `site.image` | string | none | `site build` and `site serve`, as the path inside the repository of a PNG, JPEG, GIF, or WebP image that a link to the site previews with |
+ | `review.username` | string | the authenticated user | `review-pr` and `review-repo`, as the GitHub login that posts reviews, and `project watch add --role review`, as the login a review subscription names |
+ | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+ | `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing every `project` command but the few that reach outside Projector's own state to your Claude Code settings and Codex rules |
+@@ -1862,6 +1863,22 @@ wrote _site/index.html: 15 projects, 1 proposed project, 23 reviews, 0 reviews s
+ A proposed project leaves the site with the deploy that runs when its pull
+ request merges or closes.
+ 
++Every page carries Open Graph and Twitter card tags, so a link to the site
++previews with the repository's name and its GitHub description. To show an
++image in that preview, commit one, ideally 1200 by 630 pixels, and name it in
++`site.image`:
++
++```sh
++project config set site.image docs/social.png
++```
++
++The build copies the image to the site's root under a name derived from its
++content, such as `social-3f9a1c0b7d2e.png`, so a changed image gets an address
++that no preview has cached. A preview needs the image's absolute address, so
++the build asks GitHub for the Pages site's URL and leaves the image out of the
++tags when `gh` cannot answer. A `site.image` that names no image file inside
++the repository stops the build.
++
+ For pages or files the repository generates rather than commits, `site build`
+ first runs the shell command `site.prepare` names, in the checkout, through
+ the system shell, and says so on stderr. `--prepare` runs a given command in
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 201784dc..a72b38f4 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -3339,9 +3339,32 @@ def trunk_branch(root: Path) -> str:
+     return head.split("/", 1)[1] if "/" in head else head
+ 
+ 
++def site_card(repo: str) -> dict:
++    """The site's address and the repository's description, which a link preview shows; none when GitHub cannot say."""
++    if not repo:
++        return {}
++    try:
++        return summary.site_card(repo)
++    except summary.SummaryError:
++        return {}
++
++
++def site_image(root: Path) -> Optional[Path]:
++    """The image file `site.image` names, which must be an image inside the checkout."""
++    setting = load_config(root).setting("site.image")
++    if not setting:
++        return None
++    path = (root / setting).resolve()
++    if not path.is_relative_to(root.resolve()) or not path.is_file() or path.suffix.lower() not in site.CARD_IMAGES:
++        raise summary.SummaryError(f"site.image is {setting}, which is not a {', '.join(site.CARD_IMAGES)} file "
++                                   "in the repository")
++    return path
++
++
+ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, repo: str,
+-                   artifacts: dict | None = None) -> str:
+-    """Build the site from a checkout, and summarize what it holds."""
++                   artifacts: dict | None = None, card: dict | None = None) -> str:
++    """Build the site from a checkout, and summarize what it holds. `card` is what `site_card` found."""
++    image = site_image(root)
+     projects, projects_dir = site_projects(root)
+ 
+     # A stack is a fact on GitHub; when it cannot be asked, the review shows none.
+@@ -3381,6 +3404,8 @@ def repo_stacks() -> Optional[tuple[list, int]]:
+         status_lookup=pr_status if repo else None,
+         counted=review.extra_reviewers(load_config(root).setting("review.reviewers")),
+         stacks_lookup=repo_stacks if repo else None,
++        card=card,
++        image=image,
+     )
+     return (f"{len(projects)} projects, {len(proposed)} proposed project{'' if len(proposed) == 1 else 's'}, "
+             f"{len(entries)} reviews, {len(failures)} reviews skipped")
+@@ -3399,7 +3424,7 @@ def run_site_build(arguments: argparse.Namespace) -> int:
+     summaries = Path(arguments.summaries) if arguments.summaries else None
+     artifacts = artifact.read_saved(artifact.DirectoryReader(arguments.artifacts)) if arguments.artifacts else \
+         artifact.read_refs(root, "origin")
+-    built = build_checkout(root, Path(arguments.out), summaries, arguments.base, repo, artifacts)
++    built = build_checkout(root, Path(arguments.out), summaries, arguments.base, repo, artifacts, site_card(repo))
+     print(f"wrote {arguments.out}/index.html: {built}")
+     return 0
+ 
+@@ -3449,8 +3474,9 @@ def build(out: Path) -> str:
+                     saved = artifacts.setdefault(preview.id, artifact.Saved())
+                     saved.versions[preview.version] = preview
+                     saved.latest, saved.preview = preview.version, True
+-                return build_checkout(root, out, summaries, base, repo, artifacts)
++                return build_checkout(root, out, summaries, base, repo, artifacts, card)
+ 
++    card = site_card(repo)
+     command = prepare_command(root, arguments)
+     site_state = serve.Site(build, sources, (lambda: run_prepare(root, command)) if command else None)
+     try:
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 9030922f..1921f61b 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -89,6 +89,7 @@
+     "instructions.ios": bool,
+     "site.enabled": bool,
+     "site.prepare": str,
++    "site.image": str,
+     "review.username": str,
+     "review.allow_approve": bool,
+     "review.publish_rule": bool,
+diff --git a/src/projector/site/__init__.py b/src/projector/site/__init__.py
+index e368b713..e1ce3965 100644
+--- a/src/projector/site/__init__.py
++++ b/src/projector/site/__init__.py
+@@ -977,12 +977,35 @@ def assign_routes(docs: list[dict], projects: list[dict]) -> None:
+         entry["route"] = route
+ 
+ 
+-def home_page(repo: str, base: str) -> str:
++# The image types a link preview can show, as `site.image` may name them.
++CARD_IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
++
++
++def card_tags(repo: str, card: dict) -> str:
++    """The Open Graph and Twitter tags a link to the site previews with.
++
++    `card` holds the site's absolute `url`, the repository's `description`,
++    and `image`, the card image's path under the site. A preview needs the
++    image's absolute address, so without `url` the tags name no image.
++    """
++    title = repo or "Projector"
++    tags = [("property", "og:type", "website"), ("property", "og:site_name", title), ("property", "og:title", title)]
++    if card.get("description"):
++        tags += [("name", "description", card["description"]), ("property", "og:description", card["description"])]
++    if card.get("url") and card.get("image"):
++        tags += [("property", "og:image", card["url"] + card["image"]), ("name", "twitter:card", "summary_large_image")]
++    else:
++        tags.append(("name", "twitter:card", "summary"))
++    return "\n".join(f'<meta {kind}="{escape(key)}" content="{escape(value)}">' for kind, key, value in tags)
++
++
++def home_page(repo: str, base: str, card: dict | None = None) -> str:
+     assets = escape(f"{base}assets/")
+     return f"""<!doctype html>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <title>{escape(repo or "Projector")}</title>
++{card_tags(repo, card or {})}
+ {icon_link()}
+ <link rel="stylesheet" href="{FONTS}">
+ <link rel="stylesheet" href="{assets}summary.css">
+@@ -1052,7 +1075,8 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+                projects: list[Project] | None = None, projects_dir: Path | None = None,
+                repo: str = "", branch: str = "main", base: str = "/",
+                trunk: str | None = None, lookup=None, status_lookup=None,
+-               stacks_lookup=None, counted: tuple[str, ...] = (), artifacts: dict | None = None) -> tuple[list[dict], list[str], list[dict]]:
++               stacks_lookup=None, counted: tuple[str, ...] = (), artifacts: dict | None = None,
++               card: dict | None = None, image: Path | None = None) -> tuple[list[dict], list[str], list[dict]]:
+     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
+ 
+     `branch` is the checked-out branch the site's GitHub links point at, and
+@@ -1068,6 +1092,10 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     can propose the first plan of. Each project, proposed ones included,
+     carries the `stacks` that `project_stacks` files under it. Returns the
+     reviews, the summaries skipped, and the proposed projects.
++    `card` is the site's address and description that `card_tags` previews
++    a link with, and `image` the file it shows, which the build copies to
++    the site's root under a name its content decides, so a changed image
++    gets an address no preview has cached.
+     """
+     trunk = trunk or branch
+     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
+@@ -1113,7 +1141,12 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None
+     index = search_index(out / CONTENT, readme, docs, described, projects_readme) if repo_root else []
+     index.extend(artifact_search)
+     (out / "search.json").write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+-    shell = home_page(repo, base)
++    card = dict(card or {})
++    if image is not None:
++        data = image.read_bytes()
++        card["image"] = f"social-{hashlib.sha256(data).hexdigest()[:12]}{image.suffix.lower()}"
++        (out / card["image"]).write_bytes(data)
++    shell = home_page(repo, base, card)
+     for route in sorted(set(site_routes(docs, described) + artifact_routes)):
+         (out / route).mkdir(parents=True, exist_ok=True)
+         (out / route / "index.html").write_text(shell, encoding="utf-8")
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index 0478b4ab..e1f15a27 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -570,6 +570,21 @@ def require_private_site(repo: str) -> None:
+         raise SummaryError(f"{exposed}; make the site private or the repository public before deploying")
+ 
+ 
++def site_card(repo: str) -> dict:
++    """What a link to the repository's Pages site previews: `url`, the site's address ending in a slash, and
++    `description`, the repository's. A key GitHub has no value for is left out."""
++    card = {}
++    pages = gh_lookup("api", f"repos/{repo}/pages")
++    url = (json.loads(pages).get("html_url") or "") if pages else ""
++    if url:
++        card["url"] = url.rstrip("/") + "/"
++    about = gh_lookup("api", f"repos/{repo}")
++    description = ((json.loads(about).get("description") or "") if about else "").strip()
++    if description:
++        card["description"] = description
++    return card
++
++
+ def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str = "") -> dict:
+     """Give the repository a Pages site that GitHub Actions deploys, private if the repository is.
+ 
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 993d6335..689addb5 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -48,7 +48,7 @@ def setUp(self) -> None:
+         # A build that knows its repository asks GitHub for its stacks and for each
+         # pull request's state and reviews. No test reaches GitHub; one that needs
+         # them supplies them.
+-        for name in ("pr_status", "repo_stacks"):
++        for name in ("pr_status", "repo_stacks", "site_card"):
+             offline = mock.patch.object(summary, name, side_effect=summary.SummaryError("gh api failed: offline"))
+             offline.start()
+             self.addCleanup(offline.stop)
+@@ -107,6 +107,57 @@ def test_the_home_page_loads_the_site_script_and_its_libraries(self) -> None:
+         for asset in ("site.js", "site.css", "summary.js", "summary.css"):
+             self.assertTrue((self.out / "assets" / asset).is_file(), asset)
+ 
++    def test_a_link_to_the_site_previews_the_image_site_image_names(self) -> None:
++        image = b"\x89PNG\r\n\x1a\n card"
++        (self.repo / ".projector.toml").write_text('[site]\nimage = "docs/card.PNG"\n')
++        (self.repo / "docs/card.PNG").write_bytes(image)
++        card = {"url": "https://owner.example.io/example/", "description": "Runs <sessions> & more."}
++
++        with mock.patch.object(summary, "site_card", return_value=card):
++            code, _, err = self.build()
++
++        self.assertEqual(0, code, err)
++        home = (self.out / "index.html").read_text()
++        name = re.search(r'<meta property="og:image" content="https://owner\.example\.io/example/(social-[0-9a-f]{12}\.png)">',
++                         home).group(1)
++        self.assertEqual(image, (self.out / name).read_bytes())
++        for tag in ('<meta property="og:title" content="owner/example">',
++                    '<meta name="description" content="Runs &lt;sessions&gt; &amp; more.">',
++                    '<meta property="og:description" content="Runs &lt;sessions&gt; &amp; more.">',
++                    '<meta name="twitter:card" content="summary_large_image">'):
++            self.assertIn(tag, home)
++        self.assertEqual(home, (self.out / "docs" / "guide" / "index.html").read_text(), "every route previews alike")
++
++        (self.repo / "docs/card.PNG").write_bytes(image + b" changed")
++        with mock.patch.object(summary, "site_card", return_value=card):
++            self.build()
++        self.assertNotIn(name, (self.out / "index.html").read_text(), "a changed image gets an address no cache holds")
++
++    def test_without_the_site_address_a_preview_names_no_image(self) -> None:
++        (self.repo / ".projector.toml").write_text('[site]\nimage = "docs/card.png"\n')
++        (self.repo / "docs/card.png").write_bytes(b"\x89PNG")
++
++        code, _, err = self.build()
++
++        self.assertEqual(0, code, err)
++        home = (self.out / "index.html").read_text()
++        self.assertIn('<meta property="og:title" content="owner/example">', home)
++        self.assertIn('<meta name="twitter:card" content="summary">', home)
++        self.assertNotIn("og:image", home)
++        self.assertNotIn('name="description"', home)
++
++    def test_a_site_image_that_is_not_an_image_in_the_repository_stops_the_build(self) -> None:
++        outside = Path(tempfile.mkdtemp()) / "card.png"
++        outside.write_bytes(b"\x89PNG")
++        (self.repo / "docs/notes.txt").write_text("text")
++        for setting in (f"../{outside.parent.name}/card.png", "docs/missing.png", "docs/notes.txt"):
++            (self.repo / ".projector.toml").write_text(f'[site]\nimage = "{setting}"\n')
++
++            code, _, err = self.build()
++
++            self.assertNotEqual(0, code, setting)
++            self.assertIn(f"site.image is {setting}, which is not a .png, .jpg, .jpeg, .gif, .webp file", err)
++
+     def test_every_view_has_a_real_path_with_the_same_shell(self) -> None:
+         self.build()
+ 
+@@ -4584,3 +4635,17 @@ def test_the_directory_filters_latest_metadata_and_escapes_its_title(self):
+         self.assertIn('/demo/artifacts/second/', rendered)
+         self.assertIn('&lt;b&gt;Needle&lt;/b&gt;', rendered)
+         self.assertNotIn('/demo/artifacts/first/', rendered)
++
++
++class SiteCardTests(unittest.TestCase):
++    def test_reads_the_pages_address_and_the_repository_description(self) -> None:
++        answers = {"repos/owner/example/pages": json.dumps({"html_url": "https://owner.example.io/example"}),
++                   "repos/owner/example": json.dumps({"description": " A runtime. "})}
++        with mock.patch.object(summary, "gh_lookup", side_effect=lambda _, path: answers[path]):
++            self.assertEqual({"url": "https://owner.example.io/example/", "description": "A runtime."},
++                             summary.site_card("owner/example"))
++
++    def test_leaves_out_what_github_does_not_have(self) -> None:
++        answers = {"repos/owner/example/pages": None, "repos/owner/example": json.dumps({"description": None})}
++        with mock.patch.object(summary, "gh_lookup", side_effect=lambda _, path: answers[path]):
++            self.assertEqual({}, summary.site_card("owner/example"))

@@ -1,0 +1,133 @@
+{
+ "version": 1,
+ "name": "Site link previews",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 663,
+  "title": "Preview links to the site with an Open Graph card and a site.image",
+  "head": "da592a8d4def386fc230f9b847eb4d95325fada8",
+  "headRef": "site-social-image",
+  "base": "99d4b1067c0e0a27926938f833e97120626db4ec",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector site serves project plans, documentation, and pull request reviews. Links to those pages previously had no social preview metadata; this change adds Open Graph and Twitter card tags so a chat application can show the repository name, description, and an optional image.",
+   "You choose an image with <code>site.image</code>, a path inside the checkout. A build copies that file to the site root under a content-derived name, then combines that name with the GitHub Pages address to produce an absolute image URL. Every route receives the same repository-wide card."
+  ],
+  "cards": [
+   {
+    "title": "Metadata inputs",
+    "html": "<ul><li>The repository name supplies the title.</li><li>GitHub supplies the description and Pages address.</li><li><code>site.image</code> supplies an optional PNG, JPEG, GIF, or WebP file.</li><li>Without a Pages address, the card omits the image URL.</li></ul>"
+   },
+   {
+    "title": "Review result",
+    "html": "<p>One P2 finding remains: the local preview server does not watch a configured image outside its existing watched directories. Editing that image leaves the preview stale until another input changes.</p><p>The configured gate passed. Focused site, configuration, and summary checks passed: 482 tests, one skipped.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "metadata-inputs",
+   "title": "Read the card inputs",
+   "kicker": "Configuration selects the image; GitHub supplies the description and site address.",
+   "intro": [
+    "A social card needs an absolute image URL because the application displaying a link does not resolve paths against the page. The metadata lookup reads the repository’s GitHub Pages address and description, while the new string setting records the image path. Missing GitHub values remain absent."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Register site.image as a string setting without a default."
+    },
+    {
+     "path": "src/projector/summary.py",
+     "note": "Read the GitHub Pages address and repository description for the card.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The focused tests passed for normalizing the Pages address, trimming the description, and omitting missing metadata."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "card-rendering",
+   "title": "Build one card for every route",
+   "kicker": "Write escaped metadata and copy the image under a content-derived filename.",
+   "intro": [
+    "Open Graph tags describe a page to link-preview readers; the Twitter card tag selects the preview layout. The site builder inserts these tags into its shared HTML shell, so the home page and nested routes describe the same repository.",
+    "When an image is configured, the builder hashes its bytes and copies them to a filename beginning with <code>social-</code>. Changing the bytes produces a new URL on the next build, avoiding an old image cache entry."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/site/__init__.py",
+     "note": "Generate the social metadata and copy the selected image into the built site.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The site tests passed for escaped description text, identical metadata on nested routes, copied image bytes, and a new filename after the image content changes."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "build-and-preview",
+   "title": "Connect builds and local previews",
+   "kicker": "Both CLI paths load the image and pass metadata into the site builder.",
+   "intro": [
+    "The build command writes a static site, while <code>site serve</code> rebuilds a local preview when watched inputs change. Both paths now load <code>site.image</code> and validate that its resolved path stays inside the checkout, exists, and has an accepted suffix.",
+    "GitHub lookup failures leave the build usable without the optional metadata. The local server obtains that metadata once when it starts."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Resolve the image path and wire card data into static builds and the local preview server.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Image validation checks location, existence, and filename suffix. The setting may name a file anywhere inside the checkout."
+      },
+      {
+       "kind": "flag",
+       "line": 3477,
+       "text": "With <code>site.image = \"images/card.png\"</code>, the local server copies the image on its initial build but does not watch it. Editing only that file leaves the old copied bytes and <code>og:image</code> URL until another watched input changes. Add the resolved image path to the inputs the server fingerprints. A temporary-repository reproduction confirmed that the image edit triggers no rebuild and a subsequent README edit picks it up."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "usage-and-tests",
+   "title": "Document and exercise the contract",
+   "kicker": "Explain the setting and cover generated cards, invalid paths, and missing metadata.",
+   "intro": [
+    "The CLI reference explains how to select the image and how the published address affects a preview. The tests exercise the real site build with GitHub lookups replaced at the network boundary, so they can check generated files without depending on a live repository."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Document the image setting, supported suffixes, Pages address, and cache behavior.",
+     "collapsed": true
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Cover metadata generation, image copying, content-derived names, invalid image paths, and absent GitHub values.",
+     "collapsed": true,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Ran the site, configuration, and summary test modules: 482 tests passed, with one skipped. The configured local gate and CI check also passed at this head."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
