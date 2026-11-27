@@ -1,0 +1,68 @@
+.inspector {
+  --inspector-bg: #1c1c1c;
+  --inspector-fg: #d0d0d0;
+  --inspector-muted: #9d9d9d;
+  --inspector-line: #404040;
+  --inspector-hover: #292929;
+  --inspector-active: #333333;
+  --inspector-accent: #9ac1aa;
+  --line: var(--inspector-line);
+  --green: var(--inspector-accent);
+  color: var(--inspector-fg);
+  background: var(--inspector-bg);
+  border-color: var(--inspector-line);
+}
+.inspector button {
+  color: var(--inspector-muted);
+  background: transparent;
+  border-color: var(--inspector-line);
+}
+.inspector button:hover {background: var(--inspector-hover);}
+.inspector .segmented {background: var(--inspector-hover); border-color: var(--inspector-line);}
+.inspector .segmented button[aria-pressed=true] {
+  color: var(--inspector-fg);
+  background: var(--inspector-active);
+  box-shadow: none;
+}
+.inspector .section-title {color: var(--inspector-fg);}
+.inspector .section-title output {
+  color: var(--inspector-muted);
+  background: var(--inspector-hover);
+  border-color: var(--inspector-line);
+}
+.inspector .range-caption,
+.inspector .softness-note,
+.inspector .palette-description,
+.inspector .column-headings,
+.inspector .role-name small,
+.inspector .no-selected,
+.inspector .inspector-bottom {color: var(--inspector-muted);}
+.inspector .palette-description {font-size: 10px;}
+.inspector .softness-note button {
+  color: var(--inspector-accent);
+  background: var(--inspector-hover);
+}
+.inspector .group-tabs button[aria-selected=true] {
+  color: var(--inspector-accent);
+  border-bottom-color: var(--inspector-accent);
+}
+.inspector .palette {scrollbar-color: var(--inspector-line) transparent;}
+.inspector .color-row + .color-row {border-top-color: var(--inspector-line);}
+.inspector .color-row.active {
+  background: var(--inspector-hover);
+  border-color: var(--inspector-line);
+}
+.inspector .role-name {font-size: 12px;}
+.inspector .color-control {
+  background: var(--cell-bg, var(--inspector-bg));
+  border-color: var(--inspector-line);
+}
+.inspector .hex-input {
+  color: var(--cell-fg, var(--inspector-fg));
+  font-weight: var(--cell-weight, 400);
+}
+.inspector .hex-input.invalid {color: #e66e6e;}
+.inspector .inspector-bottom i {background: var(--inspector-accent);}
+@media(max-width:500px) {
+  .inspector .role-name {font-size: 11px;}
+}
