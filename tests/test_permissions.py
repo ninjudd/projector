@@ -254,8 +254,8 @@ class PermissionRulesTests(unittest.TestCase):
                 while re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0], re.DOTALL):
                     words.pop(0)
                 if words[0] == "projector":
-                    from projector import human
-                    human.parser().parse_args(words[1:])
+                    from projector import console
+                    console.parser().parse_args(words[1:])
                     continue
                 if not words[1].startswith("-"):
                     parser.parse_args(words[1:])
