@@ -89,6 +89,7 @@ SETTINGS: dict[str, type] = {
     "instructions.ios": bool,
     "site.enabled": bool,
     "site.prepare": str,
+    "site.image": str,
     "review.username": str,
     "review.allow_approve": bool,
     "review.publish_rule": bool,

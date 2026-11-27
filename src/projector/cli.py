@@ -3339,9 +3339,32 @@ def trunk_branch(root: Path) -> str:
     return head.split("/", 1)[1] if "/" in head else head
 
 
+def site_card(repo: str) -> dict:
+    """The site's address and the repository's description, which a link preview shows; none when GitHub cannot say."""
+    if not repo:
+        return {}
+    try:
+        return summary.site_card(repo)
+    except summary.SummaryError:
+        return {}
+
+
+def site_image(root: Path) -> Optional[Path]:
+    """The image file `site.image` names, which must be an image inside the checkout."""
+    setting = load_config(root).setting("site.image")
+    if not setting:
+        return None
+    path = (root / setting).resolve()
+    if not path.is_relative_to(root.resolve()) or not path.is_file() or path.suffix.lower() not in site.CARD_IMAGES:
+        raise summary.SummaryError(f"site.image is {setting}, which is not a {', '.join(site.CARD_IMAGES)} file "
+                                   "in the repository")
+    return path
+
+
 def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, repo: str,
-                   artifacts: dict | None = None) -> str:
-    """Build the site from a checkout, and summarize what it holds."""
+                   artifacts: dict | None = None, card: dict | None = None) -> str:
+    """Build the site from a checkout, and summarize what it holds. `card` is what `site_card` found."""
+    image = site_image(root)
     projects, projects_dir = site_projects(root)
 
     # A stack is a fact on GitHub; when it cannot be asked, the review shows none.
@@ -3381,6 +3404,8 @@ def build_checkout(root: Path, out: Path, summaries: Optional[Path], base: str, 
         status_lookup=pr_status if repo else None,
         counted=review.extra_reviewers(load_config(root).setting("review.reviewers")),
         stacks_lookup=repo_stacks if repo else None,
+        card=card,
+        image=image,
     )
     return (f"{len(projects)} projects, {len(proposed)} proposed project{'' if len(proposed) == 1 else 's'}, "
             f"{len(entries)} reviews, {len(failures)} reviews skipped")
@@ -3399,7 +3424,7 @@ def run_site_build(arguments: argparse.Namespace) -> int:
     summaries = Path(arguments.summaries) if arguments.summaries else None
     artifacts = artifact.read_saved(artifact.DirectoryReader(arguments.artifacts)) if arguments.artifacts else \
         artifact.read_refs(root, "origin")
-    built = build_checkout(root, Path(arguments.out), summaries, arguments.base, repo, artifacts)
+    built = build_checkout(root, Path(arguments.out), summaries, arguments.base, repo, artifacts, site_card(repo))
     print(f"wrote {arguments.out}/index.html: {built}")
     return 0
 
@@ -3449,8 +3474,9 @@ def run_site_serve(arguments: argparse.Namespace) -> int:
                     saved = artifacts.setdefault(preview.id, artifact.Saved())
                     saved.versions[preview.version] = preview
                     saved.latest, saved.preview = preview.version, True
-                return build_checkout(root, out, summaries, base, repo, artifacts)
+                return build_checkout(root, out, summaries, base, repo, artifacts, card)
 
+    card = site_card(repo)
     command = prepare_command(root, arguments)
     site_state = serve.Site(build, sources, (lambda: run_prepare(root, command)) if command else None)
     try:

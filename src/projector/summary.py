@@ -570,6 +570,21 @@ def require_private_site(repo: str) -> None:
         raise SummaryError(f"{exposed}; make the site private or the repository public before deploying")
 
 
+def site_card(repo: str) -> dict:
+    """What a link to the repository's Pages site previews: `url`, the site's address ending in a slash, and
+    `description`, the repository's. A key GitHub has no value for is left out."""
+    card = {}
+    pages = gh_lookup("api", f"repos/{repo}/pages")
+    url = (json.loads(pages).get("html_url") or "") if pages else ""
+    if url:
+        card["url"] = url.rstrip("/") + "/"
+    about = gh_lookup("api", f"repos/{repo}")
+    description = ((json.loads(about).get("description") or "") if about else "").strip()
+    if description:
+        card["description"] = description
+    return card
+
+
 def enable_pages(repo: str, admin: bool = True, takeover: bool = False, url: str = "") -> dict:
     """Give the repository a Pages site that GitHub Actions deploys, private if the repository is.
 

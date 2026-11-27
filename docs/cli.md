@@ -1088,6 +1088,7 @@ reads, which are these:
 | `instructions.ios` | boolean | whether the repository has an Xcode project that builds for iOS, or sets `ios.project` | `init` and `check`, to put the rules for `project ios` in the Projector section |
 | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
+| `site.image` | string | none | `site build` and `site serve`, as the path inside the repository of a PNG, JPEG, GIF, or WebP image that a link to the site previews with |
 | `review.username` | string | the authenticated user | `review-pr` and `review-repo`, as the GitHub login that posts reviews, and `project watch add --role review`, as the login a review subscription names |
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
 | `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing every `project` command but the few that reach outside Projector's own state to your Claude Code settings and Codex rules |
@@ -1861,6 +1862,22 @@ wrote _site/index.html: 15 projects, 1 proposed project, 23 reviews, 0 reviews s
 
 A proposed project leaves the site with the deploy that runs when its pull
 request merges or closes.
+
+Every page carries Open Graph and Twitter card tags, so a link to the site
+previews with the repository's name and its GitHub description. To show an
+image in that preview, commit one, ideally 1200 by 630 pixels, and name it in
+`site.image`:
+
+```sh
+project config set site.image docs/social.png
+```
+
+The build copies the image to the site's root under a name derived from its
+content, such as `social-3f9a1c0b7d2e.png`, so a changed image gets an address
+that no preview has cached. A preview needs the image's absolute address, so
+the build asks GitHub for the Pages site's URL and leaves the image out of the
+tags when `gh` cannot answer. A `site.image` that names no image file inside
+the repository stops the build.
 
 For pages or files the repository generates rather than commits, `site build`
 first runs the shell command `site.prepare` names, in the checkout, through

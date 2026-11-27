@@ -48,7 +48,7 @@ class SiteRepoCase(unittest.TestCase):
         # A build that knows its repository asks GitHub for its stacks and for each
         # pull request's state and reviews. No test reaches GitHub; one that needs
         # them supplies them.
-        for name in ("pr_status", "repo_stacks"):
+        for name in ("pr_status", "repo_stacks", "site_card"):
             offline = mock.patch.object(summary, name, side_effect=summary.SummaryError("gh api failed: offline"))
             offline.start()
             self.addCleanup(offline.stop)
@@ -106,6 +106,57 @@ class SiteBuildTests(SiteRepoCase):
                         "site.js draws with the helpers summary.js shares")
         for asset in ("site.js", "site.css", "summary.js", "summary.css"):
             self.assertTrue((self.out / "assets" / asset).is_file(), asset)
+
+    def test_a_link_to_the_site_previews_the_image_site_image_names(self) -> None:
+        image = b"\x89PNG\r\n\x1a\n card"
+        (self.repo / ".projector.toml").write_text('[site]\nimage = "docs/card.PNG"\n')
+        (self.repo / "docs/card.PNG").write_bytes(image)
+        card = {"url": "https://owner.example.io/example/", "description": "Runs <sessions> & more."}
+
+        with mock.patch.object(summary, "site_card", return_value=card):
+            code, _, err = self.build()
+
+        self.assertEqual(0, code, err)
+        home = (self.out / "index.html").read_text()
+        name = re.search(r'<meta property="og:image" content="https://owner\.example\.io/example/(social-[0-9a-f]{12}\.png)">',
+                         home).group(1)
+        self.assertEqual(image, (self.out / name).read_bytes())
+        for tag in ('<meta property="og:title" content="owner/example">',
+                    '<meta name="description" content="Runs &lt;sessions&gt; &amp; more.">',
+                    '<meta property="og:description" content="Runs &lt;sessions&gt; &amp; more.">',
+                    '<meta name="twitter:card" content="summary_large_image">'):
+            self.assertIn(tag, home)
+        self.assertEqual(home, (self.out / "docs" / "guide" / "index.html").read_text(), "every route previews alike")
+
+        (self.repo / "docs/card.PNG").write_bytes(image + b" changed")
+        with mock.patch.object(summary, "site_card", return_value=card):
+            self.build()
+        self.assertNotIn(name, (self.out / "index.html").read_text(), "a changed image gets an address no cache holds")
+
+    def test_without_the_site_address_a_preview_names_no_image(self) -> None:
+        (self.repo / ".projector.toml").write_text('[site]\nimage = "docs/card.png"\n')
+        (self.repo / "docs/card.png").write_bytes(b"\x89PNG")
+
+        code, _, err = self.build()
+
+        self.assertEqual(0, code, err)
+        home = (self.out / "index.html").read_text()
+        self.assertIn('<meta property="og:title" content="owner/example">', home)
+        self.assertIn('<meta name="twitter:card" content="summary">', home)
+        self.assertNotIn("og:image", home)
+        self.assertNotIn('name="description"', home)
+
+    def test_a_site_image_that_is_not_an_image_in_the_repository_stops_the_build(self) -> None:
+        outside = Path(tempfile.mkdtemp()) / "card.png"
+        outside.write_bytes(b"\x89PNG")
+        (self.repo / "docs/notes.txt").write_text("text")
+        for setting in (f"../{outside.parent.name}/card.png", "docs/missing.png", "docs/notes.txt"):
+            (self.repo / ".projector.toml").write_text(f'[site]\nimage = "{setting}"\n')
+
+            code, _, err = self.build()
+
+            self.assertNotEqual(0, code, setting)
+            self.assertIn(f"site.image is {setting}, which is not a .png, .jpg, .jpeg, .gif, .webp file", err)
 
     def test_every_view_has_a_real_path_with_the_same_shell(self) -> None:
         self.build()
@@ -4584,3 +4635,17 @@ process.stdout.write(list.innerHTML);
         self.assertIn('/demo/artifacts/second/', rendered)
         self.assertIn('&lt;b&gt;Needle&lt;/b&gt;', rendered)
         self.assertNotIn('/demo/artifacts/first/', rendered)
+
+
+class SiteCardTests(unittest.TestCase):
+    def test_reads_the_pages_address_and_the_repository_description(self) -> None:
+        answers = {"repos/owner/example/pages": json.dumps({"html_url": "https://owner.example.io/example"}),
+                   "repos/owner/example": json.dumps({"description": " A runtime. "})}
+        with mock.patch.object(summary, "gh_lookup", side_effect=lambda _, path: answers[path]):
+            self.assertEqual({"url": "https://owner.example.io/example/", "description": "A runtime."},
+                             summary.site_card("owner/example"))
+
+    def test_leaves_out_what_github_does_not_have(self) -> None:
+        answers = {"repos/owner/example/pages": None, "repos/owner/example": json.dumps({"description": None})}
+        with mock.patch.object(summary, "gh_lookup", side_effect=lambda _, path: answers[path]):
+            self.assertEqual({}, summary.site_card("owner/example"))

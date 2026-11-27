@@ -977,12 +977,35 @@ def assign_routes(docs: list[dict], projects: list[dict]) -> None:
         entry["route"] = route
 
 
-def home_page(repo: str, base: str) -> str:
+# The image types a link preview can show, as `site.image` may name them.
+CARD_IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+
+
+def card_tags(repo: str, card: dict) -> str:
+    """The Open Graph and Twitter tags a link to the site previews with.
+
+    `card` holds the site's absolute `url`, the repository's `description`,
+    and `image`, the card image's path under the site. A preview needs the
+    image's absolute address, so without `url` the tags name no image.
+    """
+    title = repo or "Projector"
+    tags = [("property", "og:type", "website"), ("property", "og:site_name", title), ("property", "og:title", title)]
+    if card.get("description"):
+        tags += [("name", "description", card["description"]), ("property", "og:description", card["description"])]
+    if card.get("url") and card.get("image"):
+        tags += [("property", "og:image", card["url"] + card["image"]), ("name", "twitter:card", "summary_large_image")]
+    else:
+        tags.append(("name", "twitter:card", "summary"))
+    return "\n".join(f'<meta {kind}="{escape(key)}" content="{escape(value)}">' for kind, key, value in tags)
+
+
+def home_page(repo: str, base: str, card: dict | None = None) -> str:
     assets = escape(f"{base}assets/")
     return f"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(repo or "Projector")}</title>
+{card_tags(repo, card or {})}
 {icon_link()}
 <link rel="stylesheet" href="{FONTS}">
 <link rel="stylesheet" href="{assets}summary.css">
@@ -1052,7 +1075,8 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
                projects: list[Project] | None = None, projects_dir: Path | None = None,
                repo: str = "", branch: str = "main", base: str = "/",
                trunk: str | None = None, lookup=None, status_lookup=None,
-               stacks_lookup=None, counted: tuple[str, ...] = (), artifacts: dict | None = None) -> tuple[list[dict], list[str], list[dict]]:
+               stacks_lookup=None, counted: tuple[str, ...] = (), artifacts: dict | None = None,
+               card: dict | None = None, image: Path | None = None) -> tuple[list[dict], list[str], list[dict]]:
     """Build the whole site: the shell pages, the manifest, the projects, the reviews, and the docs.
 
     `branch` is the checked-out branch the site's GitHub links point at, and
@@ -1068,6 +1092,10 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     can propose the first plan of. Each project, proposed ones included,
     carries the `stacks` that `project_stacks` files under it. Returns the
     reviews, the summaries skipped, and the proposed projects.
+    `card` is the site's address and description that `card_tags` previews
+    a link with, and `image` the file it shows, which the build copies to
+    the site's root under a name its content decides, so a changed image
+    gets an address no preview has cached.
     """
     trunk = trunk or branch
     base = "/" + base.strip("/") + "/" if base.strip("/") else "/"
@@ -1113,7 +1141,12 @@ def build_site(out: Path, summaries: Path | None = None, repo_root: Path | None 
     index = search_index(out / CONTENT, readme, docs, described, projects_readme) if repo_root else []
     index.extend(artifact_search)
     (out / "search.json").write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    shell = home_page(repo, base)
+    card = dict(card or {})
+    if image is not None:
+        data = image.read_bytes()
+        card["image"] = f"social-{hashlib.sha256(data).hexdigest()[:12]}{image.suffix.lower()}"
+        (out / card["image"]).write_bytes(data)
+    shell = home_page(repo, base, card)
     for route in sorted(set(site_routes(docs, described) + artifact_routes)):
         (out / route).mkdir(parents=True, exist_ok=True)
         (out / route / "index.html").write_text(shell, encoding="utf-8")
