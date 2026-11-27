@@ -1,0 +1,281 @@
+diff --git a/actions/site/action.yml b/actions/site/action.yml
+index f3e79d04..948c579f 100644
+--- a/actions/site/action.yml
++++ b/actions/site/action.yml
+@@ -68,8 +68,15 @@ runs:
+         python3 -P -m projector site build --out "$RUNNER_TEMP/summary-site" --check-visibility \
+           --base "${BASE:-/}" --repo-root "$GITHUB_WORKSPACE" ${SUMMARIES:+--summaries "$SUMMARIES"} \
+           ${PREPARE:+--prepare "$PREPARE"}
+-    - uses: actions/upload-pages-artifact@v3
++    - id: upload
++      uses: actions/upload-pages-artifact@v3
+       with:
+         path: ${{ runner.temp }}/summary-site
+     - id: deploy
+-      uses: actions/deploy-pages@v4
++      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
++      env:
++        PAGES_ARTIFACT_ID: ${{ steps.upload.outputs.artifact_id }}
++        PROJECTOR_DEPLOY_SCRIPT: ${{ github.action_path }}/deploy.cjs
++      with:
++        script: |
++          return await require(process.env.PROJECTOR_DEPLOY_SCRIPT)({github, context, core, artifactId: process.env.PAGES_ARTIFACT_ID});
+diff --git a/actions/site/deploy.cjs b/actions/site/deploy.cjs
+new file mode 100644
+index 00000000..8e5e7778
+--- /dev/null
++++ b/actions/site/deploy.cjs
+@@ -0,0 +1,66 @@
++const timers = require('node:timers/promises');
++
++module.exports = async ({github, context, core, artifactId}) => {
++  if (!/^\d+$/.test(artifactId || '') || !Number.isSafeInteger(Number(artifactId)) || Number(artifactId) <= 0) {
++    throw new Error('The site upload did not return a valid artifact ID.');
++  }
++  const controller = new AbortController();
++  let interrupted, parameters;
++  const handlers = ['SIGINT', 'SIGTERM'].map(signal => [signal, () => {
++    interrupted ||= new Error(`Pages deployment interrupted by ${signal}.`);
++    controller.abort();
++  }]);
++  for (const [signal, handler] of handlers) process.on(signal, handler);
++  try {
++    const {data: deployment} = await github.request('POST /repos/{owner}/{repo}/pages/deployments', {
++      ...context.repo,
++      artifact_id: Number(artifactId),
++      pages_build_version: context.sha,
++      oidc_token: await core.getIDToken(),
++    });
++    const deploymentId = deployment.id || deployment.status_url?.split('/').pop() || context.sha;
++    parameters = {...context.repo, deploymentId};
++    const deadline = Date.now() + 600000;
++    let errors = 0;
++    while (Date.now() < deadline) {
++      if (interrupted) throw interrupted;
++      let status;
++      try {
++        const response = await github.request('GET /repos/{owner}/{repo}/pages/deployments/{deploymentId}', {
++          ...parameters, request: {signal: controller.signal},
++        });
++        status = response.data.status;
++        errors = 0;
++      } catch (error) {
++        if ((error.status === 429 || error.status >= 500) && ++errors <= 10) {
++          core.warning(`Pages status request failed (${error.status}); retrying.`);
++          await timers.setTimeout(5000, undefined, {signal: controller.signal});
++          continue;
++        }
++        throw error;
++      }
++      if (interrupted) throw interrupted;
++      if (status === 'succeed') {
++        if (!deployment.page_url) throw new Error('Pages completed without returning the site URL.');
++        core.setOutput('page_url', deployment.page_url);
++        return;
++      }
++      if (!['queued', 'deployment_in_progress', 'unknown_status', 'not_found', 'deployment_attempt_error'].includes(status)) {
++        throw new Error(`Pages deployment failed: ${status}.`);
++      }
++      await timers.setTimeout(5000, undefined, {signal: controller.signal});
++    }
++    throw new Error('Pages deployment timed out after 10 minutes.');
++  } catch (error) {
++    if (parameters) {
++      try {
++        await github.request('POST /repos/{owner}/{repo}/pages/deployments/{deploymentId}/cancel', parameters);
++      } catch {
++        core.warning('Could not cancel the Pages deployment.');
++      }
++    }
++    throw interrupted || error;
++  } finally {
++    for (const [signal, handler] of handlers) process.removeListener(signal, handler);
++  }
++};
+diff --git a/docs/site.md b/docs/site.md
+index e2206e67..af328e00 100644
+--- a/docs/site.md
++++ b/docs/site.md
+@@ -96,6 +96,13 @@ is the GitHub repository:
+    `@v0.5.0`, or a full commit SHA, to change only when you choose, with
+    `--action-ref`.
+ 
++   The action uploads the built site and passes the returned artifact ID
++   directly to the Pages API. It waits for Pages to finish before reporting
++   the site's URL. A failed or timed-out deployment fails the workflow and
++   requests cancellation; a temporary failure to read its status is retried.
++   Canceling the workflow also requests Pages cancellation before the client
++   exits, including while it waits for a status response or its next poll.
++
+    A page the repository generates rather than commits, such as an HTML
+    explorer or a WebAssembly module a playground loads, needs building before
+    the site. Name the command that builds it as `site.prepare` in the
+diff --git a/tests/site_deploy.test.cjs b/tests/site_deploy.test.cjs
+new file mode 100644
+index 00000000..f40edcfe
+--- /dev/null
++++ b/tests/site_deploy.test.cjs
+@@ -0,0 +1,146 @@
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const path = require('node:path');
++const test = require('node:test');
++const timers = require('node:timers/promises');
++const {spawn} = require('node:child_process');
++const {once} = require('node:events');
++
++const actionPath = path.resolve(__dirname, '../actions/site');
++const action = fs.readFileSync(path.join(actionPath, 'action.yml'), 'utf8');
++const script = action.match(/      script: \|\n((?:        .*\n?)+)/)?.[1];
++const uploadStep = action.match(/- id: (\S+)\n\s+uses: actions\/upload-pages-artifact@/)?.[1];
++const deploymentEnv = action.split('    - id: deploy\n')[1]?.match(/      env:\n((?:        [A-Z_]+: .*\n)+)/)?.[1] || '';
++const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
++
++function runner(t, responses) {
++  const calls = [], outputs = {}, warnings = [];
++  t.mock.method(timers, 'setTimeout', async () => {});
++  const github = {request: async (route, data) => {
++    calls.push({route, data});
++    const response = responses.shift();
++    if (response instanceof Error) throw response;
++    assert.notEqual(response, undefined, `Unexpected request: ${route}`);
++    return {data: response};
++  }};
++  const core = {getIDToken: async () => 'test-oidc-token',
++    setOutput: (key, value) => {outputs[key] = value;}, warning: text => warnings.push(text)};
++  const context = {repo: {owner: 'example', repo: 'site'}, sha: 'build-sha'};
++  return {calls, outputs, warnings, run: async (artifactId = '123456') => {
++    assert.ok(script, 'The action must deploy the uploader’s ID through its Pages API script');
++    const expressions = {github: {action_path: actionPath}, steps: {[uploadStep]: {outputs: {artifact_id: artifactId}}}};
++    const env = Object.fromEntries([...deploymentEnv.matchAll(/        ([A-Z_]+): (.*)/g)].map(([, key, value]) =>
++      [key, value.replace(/\$\{\{ ([\w.]+) \}\}/g, (_, name) =>
++        name.split('.').reduce((value, key) => value?.[key], expressions) ?? '')]));
++    const process = {env};
++    return new AsyncFunction('github', 'context', 'core', 'require', 'process', script)(github, context, core, require, process);
++  }};
++}
++
++test('deploys the uploader ID without listing artifacts, and publishes the URL only after success', async t => {
++  const fake = runner(t, [{id: 'deployment', page_url: 'https://example.test/site/'},
++    {status: 'queued'}, {status: 'deployment_in_progress'}, {status: 'succeed'}]);
++  await fake.run();
++  assert.deepEqual(fake.calls[0], {route: 'POST /repos/{owner}/{repo}/pages/deployments', data: {
++    owner: 'example', repo: 'site', artifact_id: 123456, pages_build_version: 'build-sha', oidc_token: 'test-oidc-token'}});
++  assert.deepEqual(fake.calls.slice(1).map(call => call.route), Array(3).fill('GET /repos/{owner}/{repo}/pages/deployments/{deploymentId}'));
++  assert.deepEqual(fake.outputs, {page_url: 'https://example.test/site/'});
++});
++
++test('fails before authenticating when the upload has no usable ID', async t => {
++  for (const value of ['', 'missing', '0', '-1', '1.2', '9007199254740992']) {
++    const fake = runner(t, []);
++    await assert.rejects(fake.run(value), /upload.*artifact ID/i);
++    assert.deepEqual(fake.calls, []);
++  }
++});
++
++test('reports a terminal Pages failure and cancels the deployment', async t => {
++  for (const status of ['deployment_failed', 'deployment_perms_error', 'deployment_content_failed', 'deployment_cancelled', 'deployment_lost']) {
++    const fake = runner(t, [{id: 'failed', page_url: 'https://example.test/'}, {status}, {}]);
++    await assert.rejects(fake.run(), new RegExp(status));
++    assert.equal(fake.calls.at(-1).route, 'POST /repos/{owner}/{repo}/pages/deployments/{deploymentId}/cancel');
++    assert.deepEqual(fake.outputs, {});
++  }
++});
++
++test('retries a temporary status request failure without creating another deployment', async t => {
++  const fake = runner(t, [{id: 'retry', page_url: 'https://example.test/'},
++    Object.assign(new Error('temporarily unavailable'), {status: 503}), {status: 'succeed'}]);
++  await fake.run();
++  assert.equal(fake.calls.filter(call => call.route.startsWith('POST')).length, 1);
++  assert.deepEqual(fake.outputs, {page_url: 'https://example.test/'});
++});
++
++test('fails and cancels when status requests keep failing', async t => {
++  const unavailable = Object.assign(new Error('Pages unavailable'), {status: 503});
++  const fake = runner(t, [{id: 'unavailable'}, ...Array(11).fill(unavailable), {}]);
++  await assert.rejects(fake.run(), error => error === unavailable);
++  assert.equal(fake.calls.at(-1).route, 'POST /repos/{owner}/{repo}/pages/deployments/{deploymentId}/cancel');
++  assert.deepEqual(fake.outputs, {});
++});
++
++test('stops polling and cancels when Pages never finishes', async t => {
++  const fake = runner(t, [{id: 'stuck'}, {status: 'queued'}, {}]);
++  const times = [0, 0, 600001];
++  t.mock.method(Date, 'now', () => times.shift() ?? 600001);
++  await assert.rejects(fake.run(), /timed out/i);
++  assert.equal(fake.calls.at(-1).data.deploymentId, 'stuck');
++  assert.equal(fake.calls.at(-1).route, 'POST /repos/{owner}/{repo}/pages/deployments/{deploymentId}/cancel');
++  assert.deepEqual(fake.outputs, {});
++});
++
++test('preserves a polling error when cancellation also fails', async t => {
++  const failure = Object.assign(new Error('Pages access denied'), {status: 403});
++  const fake = runner(t, [{id: 'denied'}, failure, new Error('cancel unavailable')]);
++  await assert.rejects(fake.run(), error => error === failure);
++  assert.deepEqual(fake.outputs, {});
++});
++
++test('does not poll or cancel a deployment that Pages refused to create', async t => {
++  const fake = runner(t, [new Error('creation refused')]);
++  await assert.rejects(fake.run(), /creation refused/);
++  assert.equal(fake.calls.length, 1);
++  assert.deepEqual(fake.outputs, {});
++});
++
++for (const signal of ['SIGINT', 'SIGTERM']) {
++  test(`${signal} cancels a pending Pages deployment before the process exits`, {skip: process.platform === 'win32'}, async t => {
++    for (const phase of ['request', 'delay']) {
++      await t.test(phase, async t => {
++        const child = spawn(process.execPath, ['-e', `
++          const deploy = require(process.argv[1]);
++          process.channel.ref();
++          const github = {request: async (route, data) => {
++            if (route.endsWith('/cancel')) {
++              process.send({event: 'cancelled', id: data.deploymentId});
++              return {data: {}};
++            }
++            if (route.startsWith('POST')) return {data: {id: 'pending', page_url: 'https://example.test/'}};
++            process.send({event: 'polling'});
++            if (process.argv[2] === 'delay') return {data: {status: 'queued'}};
++            return new Promise((resolve, reject) => data.request?.signal.addEventListener('abort', () => reject(new Error('aborted'))));
++          }};
++          deploy({github, context: {repo: {owner: 'example', repo: 'site'}, sha: 'test-sha'},
++            core: {getIDToken: async () => 'test-token', warning: () => {},
++              setOutput: () => process.send({event: 'published'})}, artifactId: '123'})
++            .then(() => {process.disconnect();}, error => {
++              process.send({event: 'error', message: error.message}, () => {process.disconnect();});
++              process.exitCode = 1;
++            });
++        `, path.join(actionPath, 'deploy.cjs'), phase], {stdio: ['ignore', 'pipe', 'pipe', 'ipc']});
++        t.after(() => {child.kill('SIGKILL');});
++        const events = [];
++        child.on('message', message => events.push(message));
++        await once(child, 'message', {signal: AbortSignal.timeout(5000)});
++        const exited = once(child, 'exit', {signal: AbortSignal.timeout(5000)});
++        child.kill(signal);
++        const [code, terminated] = await exited;
++        assert.deepEqual({code, terminated}, {code: 1, terminated: null}, JSON.stringify(events));
++        assert.deepEqual(events.filter(event => event.event === 'cancelled'), [{event: 'cancelled', id: 'pending'}]);
++        assert.equal(events.some(event => event.event === 'published'), false);
++        assert.match(events.find(event => event.event === 'error')?.message || '', new RegExp(signal));
++      });
++    }
++  });
++}
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 0684f377..993d6335 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -4390,6 +4390,12 @@ def earlier_workflows(projects_dir: str | None = None) -> list[str]:
+ 
+ 
+ class WorkflowTests(unittest.TestCase):
++    @unittest.skipUnless(shutil.which("node"), "Pages deployment checks need node")
++    def test_pages_deploys_the_upload_id_and_reports_the_result(self) -> None:
++        result = subprocess.run(["node", "--test", str(Path(__file__).with_name("site_deploy.test.cjs"))],
++                                capture_output=True, text=True)
++        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
++
+     def test_the_action_hands_its_prepare_input_to_the_build_after_its_checkout(self) -> None:
+         action = (Path(__file__).parents[1] / "actions" / "site" / "action.yml").read_text()
+ 

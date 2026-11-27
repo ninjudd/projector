@@ -1,0 +1,125 @@
+{
+ "version": 1,
+ "name": "Pages artifact deployment",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 659,
+  "title": "Deploy Pages from the uploaded artifact ID",
+  "head": "ef7f35dc40da47305c527d6cf6b2c931de94546a",
+  "headRef": "fix-pages-artifact-lookup",
+  "base": "cf027735532d7d5de6479a639f25a19bb45f5f25",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector site action builds a repository’s documentation, review guides, and interactive artifacts, then publishes that output to GitHub Pages. Uploading can succeed while the existing deploy action fails to find the upload by name, leaving new pages unavailable.",
+   "This change passes the upload’s numeric artifact ID directly to the Pages deployment API. A small client waits for a successful deployment before reporting the URL, retries temporary status-request failures, and requests cancellation after a polling error, timeout, or workflow interruption."
+  ],
+  "cards": [
+   {
+    "id": "result",
+    "title": "Review result",
+    "html": "<p>Clean at <code>ef7f35d</code>. The earlier P2 is fixed: workflow interruption now aborts the polling wait, requests Pages cancellation, and fails without publishing a URL. The finding thread is resolved, and the head is signed off.</p>"
+   },
+   {
+    "id": "validation",
+    "title": "Validation and limits",
+    "html": "<ul class=\"tight\"><li>The configured gate and required CI check pass at the reviewed head.</li><li>All 14 Node tests and 9 Python workflow tests pass.</li><li>Child processes verify SIGINT and SIGTERM during both a pending status request and the polling delay. These Unix signal cases are skipped on Windows.</li><li>No live Pages deployment was created; production verification waits for the normal main-branch deployment.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "deployment",
+   "title": "Deploy the exact uploaded site",
+   "kicker": "Replace artifact-name lookup with the upload’s ID and wait for the Pages result.",
+   "intro": [
+    "The upload step produces an artifact ID, GitHub’s identifier for this particular site bundle. The composite action passes that ID to a pinned GitHub Script action, which loads the local deployment client. The caller’s existing Pages and identity-token permissions remain the authority to deploy.",
+    "The client validates the ID before requesting an identity token. It creates one Pages deployment and polls that deployment every five seconds, with a ten-minute deadline. Temporary HTTP 429 or server errors retry; a terminal status, exhausted errors, or deadline failure requests cancellation. SIGINT and SIGTERM interrupt an in-flight status request or polling delay, then request cancellation before the client fails."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "actions/site/action.yml",
+     "note": "Connect the uploader’s artifact ID to the pinned deployment script and preserve the composite action’s page_url output.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 78,
+       "text": "The Node regressions evaluate the action’s script and environment expressions. The create request receives the upload ID, and the successful path issues no artifact-listing request."
+      }
+     ]
+    },
+    {
+     "path": "actions/site/deploy.cjs",
+     "note": "Validate the upload, create and poll the deployment, and report its result or request cleanup.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 4,
+       "text": "The deployment tests reject absent, zero, negative, fractional, and unsafe numeric IDs before making an API request."
+      },
+      {
+       "kind": "verify",
+       "line": 43,
+       "text": "The passing deployment regressions cover success, terminal failures, transient request failures, exhausted retries, timeout, and failed cancellation."
+      },
+      {
+       "kind": "verify",
+       "line": 9,
+       "text": "All four child-process cases pass: SIGINT and SIGTERM during a pending status request or the polling delay each send one Pages cancellation request, report failure, and publish no URL."
+      },
+      {
+       "kind": "context",
+       "line": 64,
+       "text": "The finally block removes the signal handlers on success or failure, so the client leaves no process listeners behind."
+      }
+     ]
+    },
+    {
+     "path": "docs/site.md",
+     "collapsed": true,
+     "note": "Describe the upload-ID deployment contract, status retries, failure cleanup, and workflow cancellation."
+    }
+   ]
+  },
+  {
+   "id": "regressions",
+   "title": "Exercise the action and deployment lifecycle",
+   "kicker": "Run the actual action script against a fake GitHub API and include it in the Python gate.",
+   "intro": [
+    "The Node suite reads the composite action’s deployment script and environment expressions, then runs that script with a fake GitHub API. It tests the handoff between the YAML action and the client, including the exact upload ID and the requests made after failures. The fake replaces the remote API, while the deployment client itself runs unchanged.",
+    "Separate child processes exercise workflow interruption without signaling the test runner. Each waits until deployment polling begins, then receives SIGINT or SIGTERM and must cancel the pending deployment before exiting with failure. The suite covers both a pending API response and the interval between polls; these Unix signal cases are skipped on Windows.",
+    "A Python workflow test runs the Node suite so normal repository validation catches these regressions. The existing eight workflow tests continue to pass as well."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/site_deploy.test.cjs",
+     "collapsed": true,
+     "note": "Cover the upload-ID contract, deployment statuses, retry limits, timeout, cancellation-error propagation, and workflow interruption.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 40,
+       "text": "node --test tests/site_deploy.test.cjs passes all 14 tests. Requests are recorded at the API boundary while the real deploy.cjs implementation executes."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_site.py",
+     "collapsed": true,
+     "note": "Make the Pages deployment regressions part of the repository’s workflow-test suite.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 4394,
+       "text": "PYTHONPATH=src python3.12 -m unittest tests.test_site.WorkflowTests passes all 9 tests, including the Node deployment suite."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

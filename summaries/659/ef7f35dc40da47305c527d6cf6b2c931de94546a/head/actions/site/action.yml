@@ -1,0 +1,82 @@
+name: Projector site
+description: Build the repository's Projector site with projects, docs, review summaries, and versioned artifacts, and deploy it to GitHub Pages.
+inputs:
+  ref:
+    description: The hidden ref holding <root>/<number>/<head>/summary.json files.
+    default: refs/projector/summaries
+  root:
+    description: Directory inside the ref that holds the summaries.
+    default: summaries
+  prepare:
+    description: A shell command to run in the checkout before the build, to generate pages or files the repository does not commit, such as an HTML page or a WebAssembly module, in place of the repository's site.prepare setting. Set up any toolchain it needs in earlier steps.
+    default: ''
+outputs:
+  page_url:
+    description: The deployed site's URL.
+    value: ${{ steps.deploy.outputs.page_url }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+    - name: Fetch the summaries
+      shell: bash
+      env:
+        REF: ${{ inputs.ref }}
+        ROOT: ${{ inputs.root }}
+      # A repository that has published no summary yet has no ref to fetch,
+      # and still gets a site of its README, docs and plans. One that has not
+      # published since walkthroughs were renamed summaries has only the old
+      # walkthroughs ref, with its summaries under walkthroughs/, so the default
+      # ref falls back to it until the next publish seeds the new one.
+      run: |
+        if [ "$REF" = refs/projector/summaries ] && [ "$ROOT" = summaries ] \
+          && ! git ls-remote --exit-code origin "$REF" >/dev/null \
+          && git ls-remote --exit-code origin refs/projector/walkthroughs >/dev/null; then
+          REF=refs/projector/walkthroughs
+          ROOT=walkthroughs
+        fi
+        if git ls-remote --exit-code origin "$REF" >/dev/null; then
+          git fetch --no-tags origin "+$REF:$REF"
+          git worktree add --detach "$RUNNER_TEMP/summaries-ref" "$REF"
+          echo "SUMMARIES=$RUNNER_TEMP/summaries-ref/$ROOT" >> "$GITHUB_ENV"
+        fi
+    - name: Fetch the artifacts
+      shell: bash
+      run: |
+        if git ls-remote --exit-code origin refs/projector/artifacts >/dev/null; then
+          git fetch --no-tags origin "+refs/projector/artifacts:refs/projector/remotes/origin/artifacts"
+        fi
+    - id: pages
+      uses: actions/configure-pages@v5
+    - name: Build the Projector site
+      shell: bash
+      env:
+        BASE: ${{ steps.pages.outputs.base_path }}
+        GH_TOKEN: ${{ github.token }}
+        PREPARE: ${{ inputs.prepare }}
+        PYTHONPATH: ${{ github.action_path }}/../../src
+      # -P keeps the caller's checkout, the working directory, off sys.path, so a
+      # repository with its own top-level projector module cannot shadow this one.
+      # --check-visibility fails the deploy when a private repository's site is
+      # public, since the site copies the README, docs, plans and diffs into it.
+      # --base is the path Pages serves the site under, /projector for a project
+      # site, so every page can link to the others and to the shared assets.
+      # The build runs the repository's site.prepare, or the prepare input in its
+      # place, after this action's checkout, which removes untracked files, so
+      # what the command generates is still there when the build copies it.
+      run: |
+        python3 -P -m projector site build --out "$RUNNER_TEMP/summary-site" --check-visibility \
+          --base "${BASE:-/}" --repo-root "$GITHUB_WORKSPACE" ${SUMMARIES:+--summaries "$SUMMARIES"} \
+          ${PREPARE:+--prepare "$PREPARE"}
+    - id: upload
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: ${{ runner.temp }}/summary-site
+    - id: deploy
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+      env:
+        PAGES_ARTIFACT_ID: ${{ steps.upload.outputs.artifact_id }}
+        PROJECTOR_DEPLOY_SCRIPT: ${{ github.action_path }}/deploy.cjs
+      with:
+        script: |
+          return await require(process.env.PROJECTOR_DEPLOY_SCRIPT)({github, context, core, artifactId: process.env.PAGES_ARTIFACT_ID});
