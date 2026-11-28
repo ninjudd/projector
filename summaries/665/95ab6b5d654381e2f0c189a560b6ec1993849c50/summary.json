@@ -55,6 +55,10 @@
       {
        "kind": "verify",
        "text": "Verified that the internal call-count test and its unused probe are removed. The focused run passes all 54 tests, including the retained timeout and interruption cleanup regressions."
+      },
+      {
+       "kind": "verify",
+       "text": "The timeout test still guards the change: with the timeout's <code>kill_group(process)</code> replaced by <code>process.kill()</code>, <code>test_a_chunk_past_its_timeout_is_stopped_with_its_children_and_fails</code> fails after 60 seconds, because the chunk's child keeps the output pipes open."
       }
      ]
     }
