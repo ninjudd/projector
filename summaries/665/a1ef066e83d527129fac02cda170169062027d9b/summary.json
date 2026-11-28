@@ -1,0 +1,65 @@
+{
+ "version": 1,
+ "name": "Test process cleanup",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 665,
+  "title": "Stop test chunks with the shared process-group helpers",
+  "head": "a1ef066e83d527129fac02cda170169062027d9b",
+  "headRef": "runner-process-helpers",
+  "base": "ebe85778d9206add444efa0cff2f0a2d6e4188d5",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The parallel test runner divides tests into chunks, with each chunk running in its own worker process. A chunk that hangs must end together with its child processes, or those children can keep the output pipes open and stall the whole run.",
+   "This change uses Projector’s existing process-group helpers to start and stop each chunk. Unix keeps the same group cleanup; Windows gains the shared <code>taskkill /T</code> path, which stops a process tree.",
+   "The production change passes its checks. The review requests one test change: assert on cleanup behavior instead of the number of calls to an internal helper."
+  ],
+  "cards": [
+   {
+    "id": "validation",
+    "title": "Review evidence",
+    "html": "<ul class=\"tight\"><li>55 runner, process-helper, and CI tests pass.</li><li>The configured gate passes, including 270 hook tests and the required CI check.</li><li>Windows behavior is checked through the shared helper’s mocked regression; a native Windows run was unavailable.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "cleanup",
+   "title": "Stop each test process tree",
+   "kicker": "Share process creation and cleanup across platforms",
+   "intro": [
+    "A process group lets the runner stop a worker and its descendants together. The runner now starts chunks with <code>process_group()</code> and stops them with <code>kill_group()</code>, the same helpers used by other Projector commands.",
+    "Timeouts, Ctrl-C, and a chunk that starts after interruption all use the shared cleanup path. The test edit replaces a simulated missing Unix API with a spy on the shared helper, but the new assertion depends on an internal call rather than the cleanup result."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/__main__.py",
+     "note": "The parallel test runner starts isolated workers and stops their whole process trees on timeout or interruption.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Traced all three cleanup paths to the shared helper and ran the timeout and Ctrl-C regression tests. On Unix, the shared helper sends the same group signal as the removed local helper.",
+       "line": 96
+      }
+     ]
+    },
+    {
+     "path": "tests/test_runner.py",
+     "note": "Runner regressions cover closed stdin, timeout cleanup, interruption cleanup, and the timeout help text.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "P2: The call-count assertion rejects a behavior-preserving call through core.kill_group(process), although the existing child-cleanup test still passes. Replace it with a cleanup outcome test at the subprocess boundary, or remove the duplicate internal-call test. The probe here starts no child, so it does not establish Windows tree cleanup.",
+       "line": 87
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

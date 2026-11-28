@@ -1,0 +1,101 @@
+diff --git a/tests/__main__.py b/tests/__main__.py
+index 57c14a55..9a18ea31 100644
+--- a/tests/__main__.py
++++ b/tests/__main__.py
+@@ -18,10 +18,8 @@
+ from __future__ import annotations
+ 
+ import argparse
+-import contextlib
+ import os
+ import re
+-import signal
+ import subprocess
+ import sys
+ import threading
+@@ -31,6 +29,8 @@
+ from concurrent.futures import ThreadPoolExecutor
+ from pathlib import Path
+ 
++from projector.core import kill_group, process_group
++
+ ROOT = Path(__file__).resolve().parents[1]
+ CHUNK = 8
+ # The slowest chunk takes under a minute, so one that runs five is waiting on something that never comes.
+@@ -65,18 +65,7 @@ def chunks(names: list[str]) -> list[list[str]]:
+     return sorted(jobs, key=len, reverse=True)
+ 
+ 
+-def stop(process: subprocess.Popen) -> None:
+-    """Kill a chunk with every process it started."""
+-    if hasattr(os, "killpg"):
+-        with contextlib.suppress(ProcessLookupError):
+-            os.killpg(process.pid, signal.SIGKILL)
+-    else:
+-        # Windows has no process groups to kill, so only the chunk itself stops, and a process it started
+-        # that holds its output open still keeps `communicate` waiting.
+-        process.kill()
+-
+-
+-# A chunk runs in a session of its own, so Ctrl-C reaches only the runner, which stops these itself.
++# A chunk runs in a process group of its own, so Ctrl-C reaches only the runner, which stops these itself.
+ running: set[subprocess.Popen] = set()
+ running_lock = threading.Lock()
+ interrupted = threading.Event()
+@@ -88,7 +77,7 @@ def interrupt(pool: ThreadPoolExecutor) -> None:
+     with running_lock:
+         interrupted.set()
+         for process in running:
+-            stop(process)
++            kill_group(process)
+ 
+ 
+ def run(ids: list[str], verbose: bool, timeout: float = TIMEOUT) -> subprocess.CompletedProcess:
+@@ -96,15 +85,15 @@ def run(ids: list[str], verbose: bool, timeout: float = TIMEOUT) -> subprocess.C
+     killed: a process a test started that waits on input would otherwise hold the output pipes open."""
+     command = [sys.executable, "-m", "unittest", *(["-v"] if verbose else []), *ids]
+     with subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+-                          stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
++                          stderr=subprocess.PIPE, text=True, **process_group()) as process:
+         with running_lock:
+             running.add(process)
+             if interrupted.is_set():
+-                stop(process)
++                kill_group(process)
+         try:
+             out, err = process.communicate(timeout=timeout)
+         except subprocess.TimeoutExpired:
+-            stop(process)
++            kill_group(process)
+             out, err = process.communicate()
+             err += f"\nThe chunk ran past {timeout:g} seconds and was stopped.\n"
+             return subprocess.CompletedProcess(command, 1, out, err)
+diff --git a/tests/test_runner.py b/tests/test_runner.py
+index 8ab78f42..6aede8a6 100644
+--- a/tests/test_runner.py
++++ b/tests/test_runner.py
+@@ -77,18 +77,14 @@ def test_a_chunk_past_its_timeout_is_stopped_with_its_children_and_fails(self) -
+         self.assertEqual(1, result.returncode)
+         self.assertIn("The chunk ran past 1 seconds and was stopped.", result.stderr)
+ 
+-    def test_a_chunk_past_its_timeout_fails_where_process_groups_cannot_be_killed(self) -> None:
+-        # Windows has no `os.killpg`.
+-        killpg = os.killpg
+-        del os.killpg
+-        self.addCleanup(setattr, os, "killpg", killpg)
+-        start = time.monotonic()
+-
+-        result = runner.run(["runner_probe.Probe.test_never_ends"], False, timeout=1)
++    def test_a_chunk_past_its_timeout_is_stopped_by_kill_group(self) -> None:
++        # `kill_group` ends the tree with `taskkill /T` on Windows, which has no process group to signal, so a
++        # runner that killed chunks its own way would leave their children holding the output open there.
++        with mock.patch.object(runner, "kill_group", wraps=runner.kill_group) as kill:
++            result = runner.run(["runner_probe.Probe.test_never_ends"], False, timeout=1)
+ 
+-        self.assertLess(time.monotonic() - start, 10)
+         self.assertEqual(1, result.returncode)
+-        self.assertIn("The chunk ran past 1 seconds and was stopped.", result.stderr)
++        self.assertEqual(1, kill.call_count)
+ 
+     def test_an_interrupt_stops_the_running_chunks_with_their_children(self) -> None:
+         # Each chunk runs in a session of its own, so the SIGINT that Ctrl-C sends the terminal's foreground
