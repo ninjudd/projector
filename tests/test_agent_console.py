@@ -9,6 +9,7 @@ from unittest.mock import patch
 from projector import agent_console, console, inbox, runtime, watch
 from projector.inbox import write_json
 from projector.runtime_store import Store
+from tests.test_worktree import git
 
 
 class AgentConsoleTests(unittest.TestCase):
@@ -31,13 +32,13 @@ class AgentConsoleTests(unittest.TestCase):
             self.console.key('delete')
         self.type(text)
 
-    def managed(self, name='managed-session', state='ready'):
+    def managed(self, name='managed-session', state='ready', cwd=None):
         folder = watch.session_folder(self.root, name)
         with inbox.locked(folder):
             write_json(folder / 'runtime.json', {'schema_version': 1, 'session': name, 'backend': 'codex',
-                'owner': 'managed', 'state': state, 'cwd': self.temporary.name, 'renewed_at': time.time()})
+                'owner': 'managed', 'state': state, 'cwd': cwd or self.temporary.name, 'renewed_at': time.time()})
             write_json(folder / 'agent.json', {'schema_version': 1, 'host': 'codex',
-                       'cwd': self.temporary.name, 'updated_at': watch.stamp(self.now)})
+                       'cwd': cwd or self.temporary.name, 'updated_at': watch.stamp(self.now)})
         Store(folder)
         self.console.tick()
         return folder
@@ -86,6 +87,21 @@ class AgentConsoleTests(unittest.TestCase):
         self.console.open_panel('managed-session')
         self.console.key('up')
         self.assertIn('r Resume', self.console.footer()[0].text)
+
+    def test_a_worktree_group_shows_the_main_checkout_and_launches_from_the_actual_directory(self):
+        root = Path(self.temporary.name).resolve()
+        checkout, linked = root / 'main checkout', root / 'linked checkout'
+        git(root, 'init', '--quiet', '-b', 'trunk', str(checkout))
+        git(checkout, 'commit', '--quiet', '--allow-empty', '-m', 'Initial commit')
+        git(checkout, 'worktree', 'add', '--quiet', '--detach', str(linked))
+        self.managed(cwd=str(linked))
+        lines, _ = self.console.home_lines(180)
+        headings = [line.text for line in lines if any(target.group for _, _, target in line.targets)]
+        self.assertEqual([str(checkout)], headings)
+        self.console.key('backspace')
+        self.assertIn('Enter expand', self.console.footer(100)[0].text)
+        self.console.key('n')
+        self.assertEqual(str(linked), self.console.launch_form['cwd'])
 
     def test_a_new_prompt_uses_the_highlighted_sessions_directory(self):
         first = Path(self.temporary.name) / 'first'
