@@ -77,18 +77,14 @@ class RunTests(unittest.TestCase):
         self.assertEqual(1, result.returncode)
         self.assertIn("The chunk ran past 1 seconds and was stopped.", result.stderr)
 
-    def test_a_chunk_past_its_timeout_fails_where_process_groups_cannot_be_killed(self) -> None:
-        # Windows has no `os.killpg`.
-        killpg = os.killpg
-        del os.killpg
-        self.addCleanup(setattr, os, "killpg", killpg)
-        start = time.monotonic()
+    def test_a_chunk_past_its_timeout_is_stopped_by_kill_group(self) -> None:
+        # `kill_group` ends the tree with `taskkill /T` on Windows, which has no process group to signal, so a
+        # runner that killed chunks its own way would leave their children holding the output open there.
+        with mock.patch.object(runner, "kill_group", wraps=runner.kill_group) as kill:
+            result = runner.run(["runner_probe.Probe.test_never_ends"], False, timeout=1)
 
-        result = runner.run(["runner_probe.Probe.test_never_ends"], False, timeout=1)
-
-        self.assertLess(time.monotonic() - start, 10)
         self.assertEqual(1, result.returncode)
-        self.assertIn("The chunk ran past 1 seconds and was stopped.", result.stderr)
+        self.assertEqual(1, kill.call_count)
 
     def test_an_interrupt_stops_the_running_chunks_with_their_children(self) -> None:
         # Each chunk runs in a session of its own, so the SIGINT that Ctrl-C sends the terminal's foreground
