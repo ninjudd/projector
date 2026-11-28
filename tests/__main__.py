@@ -18,10 +18,8 @@ Ctrl-C stops every running chunk the same way.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import os
 import re
-import signal
 import subprocess
 import sys
 import threading
@@ -30,6 +28,8 @@ import unittest
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from projector.core import kill_group, process_group
 
 ROOT = Path(__file__).resolve().parents[1]
 CHUNK = 8
@@ -65,18 +65,7 @@ def chunks(names: list[str]) -> list[list[str]]:
     return sorted(jobs, key=len, reverse=True)
 
 
-def stop(process: subprocess.Popen) -> None:
-    """Kill a chunk with every process it started."""
-    if hasattr(os, "killpg"):
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
-    else:
-        # Windows has no process groups to kill, so only the chunk itself stops, and a process it started
-        # that holds its output open still keeps `communicate` waiting.
-        process.kill()
-
-
-# A chunk runs in a session of its own, so Ctrl-C reaches only the runner, which stops these itself.
+# A chunk runs in a process group of its own, so Ctrl-C reaches only the runner, which stops these itself.
 running: set[subprocess.Popen] = set()
 running_lock = threading.Lock()
 interrupted = threading.Event()
@@ -88,7 +77,7 @@ def interrupt(pool: ThreadPoolExecutor) -> None:
     with running_lock:
         interrupted.set()
         for process in running:
-            stop(process)
+            kill_group(process)
 
 
 def run(ids: list[str], verbose: bool, timeout: float = TIMEOUT) -> subprocess.CompletedProcess:
@@ -96,15 +85,15 @@ def run(ids: list[str], verbose: bool, timeout: float = TIMEOUT) -> subprocess.C
     killed: a process a test started that waits on input would otherwise hold the output pipes open."""
     command = [sys.executable, "-m", "unittest", *(["-v"] if verbose else []), *ids]
     with subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
+                          stderr=subprocess.PIPE, text=True, **process_group()) as process:
         with running_lock:
             running.add(process)
             if interrupted.is_set():
-                stop(process)
+                kill_group(process)
         try:
             out, err = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            stop(process)
+            kill_group(process)
             out, err = process.communicate()
             err += f"\nThe chunk ran past {timeout:g} seconds and was stopped.\n"
             return subprocess.CompletedProcess(command, 1, out, err)
